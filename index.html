@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Festival Sound System Simulator</title>
+    <link rel="stylesheet" href="style.css">
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+</head>
+<body>
+    <div id="overlay">
+        <div id="start-screen">
+            <h1>🎶 Festival Sound Simulator</h1>
+            <p>Chargez un fichier audio puis cliquez pour entrer dans la simulation.</p>
+            <div id="file-section">
+                <label for="audio-file" id="file-label">📂 Charger un fichier audio (.mp3 / .wav)</label>
+                <input type="file" id="audio-file" accept=".mp3,.wav,audio/mpeg,audio/wav">
+                <span id="file-name"></span>
+            </div>
+            <button id="enter-btn" disabled>▶ Entrer dans la simulation</button>
+        </div>
+    </div>
+
+    <div id="hud" class="hidden">
+        <div id="hud-left">
+            <div id="position-display">X: 0 &nbsp; Y: 1.7 &nbsp; Z: 50</div>
+            <div id="foh-distance">Distance FOH: 0 m</div>
+            <div id="volume-controls">
+                <div class="vol-slider">
+                    <label for="vol-sub">SUB</label>
+                    <input type="range" id="vol-sub" min="0" max="150" value="100" step="1" data-default="100">
+                    <span id="vol-sub-val">100%</span>
+                    <button class="reset-btn" data-target="vol-sub" title="Reset">↺</button>
+                </div>
+                <div class="vol-slider">
+                    <label for="vol-mid">MID</label>
+                    <input type="range" id="vol-mid" min="0" max="150" value="100" step="1" data-default="100">
+                    <span id="vol-mid-val">100%</span>
+                    <button class="reset-btn" data-target="vol-mid" title="Reset">↺</button>
+                </div>
+                <div class="vol-slider">
+                    <label for="vol-top">TOP</label>
+                    <input type="range" id="vol-top" min="0" max="150" value="100" step="1" data-default="100">
+                    <span id="vol-top-val">100%</span>
+                    <button class="reset-btn" data-target="vol-top" title="Reset">↺</button>
+                </div>
+                <div class="vol-slider">
+                    <label for="vol-fill">FILL</label>
+                    <input type="range" id="vol-fill" min="0" max="150" value="20" step="1" data-default="20">
+                    <span id="vol-fill-val">20%</span>
+                    <button class="reset-btn" data-target="vol-fill" title="Reset">↺</button>
+                </div>
+            </div>
+            <div id="range-controls">
+                <div class="vol-slider">
+                    <label for="range-sub">SUB ⟷</label>
+                    <input type="range" id="range-sub" min="0" max="200" value="150" step="1" data-default="150">
+                    <span id="range-sub-val">150</span>
+                    <button class="reset-btn" data-target="range-sub" title="Reset">↺</button>
+                </div>
+                <div class="vol-slider">
+                    <label for="range-mid">MID ⟷</label>
+                    <input type="range" id="range-mid" min="0" max="200" value="50" step="1" data-default="50">
+                    <span id="range-mid-val">50</span>
+                    <button class="reset-btn" data-target="range-mid" title="Reset">↺</button>
+                </div>
+                <div class="vol-slider">
+                    <label for="range-top">TOP ⟷</label>
+                    <input type="range" id="range-top" min="0" max="200" value="50" step="1" data-default="50">
+                    <span id="range-top-val">50</span>
+                    <button class="reset-btn" data-target="range-top" title="Reset">↺</button>
+                </div>
+                <div class="vol-slider">
+                    <label for="range-fill">FILL ⟷</label>
+                    <input type="range" id="range-fill" min="0" max="200" value="50" step="1" data-default="50">
+                    <span id="range-fill-val">50</span>
+                    <button class="reset-btn" data-target="range-fill" title="Reset">↺</button>
+                </div>
+            </div>
+            <div id="clarity-controls">
+                <div class="vol-slider">
+                    <label for="clarity-top">Clarté</label>
+                    <input type="range" id="clarity-top" min="0" max="200" value="85" step="1" data-default="85">
+                    <span id="clarity-top-val">85</span>
+                    <button class="reset-btn" data-target="clarity-top" title="Reset">↺</button>
+                </div>
+            </div>
+            <button id="reset-all-btn" class="hud-btn">↺ Reset All</button>
+        </div>
+        <div id="hud-center">
+            <div id="meters">
+                <div class="meter" id="meter-sub">
+                    <div class="meter-label">SUB</div>
+                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                    <div class="meter-clip">CLIP</div>
+                </div>
+                <div class="meter" id="meter-mid">
+                    <div class="meter-label">MID</div>
+                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                    <div class="meter-clip">CLIP</div>
+                </div>
+                <div class="meter" id="meter-top">
+                    <div class="meter-label">TOP</div>
+                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                    <div class="meter-clip">CLIP</div>
+                </div>
+                <div class="meter" id="meter-fill">
+                    <div class="meter-label">FILL</div>
+                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                    <div class="meter-clip">CLIP</div>
+                </div>
+                <div class="meter" id="meter-master">
+                    <div class="meter-label">OUT</div>
+                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                    <div class="meter-clip">CLIP</div>
+                </div>
+            </div>
+        </div>
+        <div id="hud-right">
+            <div id="cones-dropdown" class="dropdown">
+                <button id="cones-btn" class="hud-btn">💠 Cônes ▾</button>
+                <div id="cones-menu" class="dropdown-menu">
+                    <label><input type="checkbox" data-cone-bus="all"> Tous</label>
+                    <label><input type="checkbox" data-cone-bus="sub"> SUB</label>
+                    <label><input type="checkbox" data-cone-bus="mid"> MID</label>
+                    <label><input type="checkbox" data-cone-bus="top"> TOP</label>
+                    <label><input type="checkbox" data-cone-bus="fill"> FILL</label>
+                </div>
+            </div>            <button id="mode-btn" class="hud-btn">🎮 Mode: Vol libre</button>            <button id="doppler-btn" class="hud-btn">� Doppler: OFF</button>
+            <button id="play-btn" class="hud-btn">⏸ Pause</button>
+            <button id="stop-btn" class="hud-btn">⏹ Stop</button>
+        </div>
+        <div id="hud-bottom">
+            <span>ZQSD / WASD / Flèches : se déplacer &nbsp;|&nbsp; Souris : regarder &nbsp;|&nbsp; Space / Shift : monter / descendre &nbsp;|&nbsp; F : mode personnage &nbsp;|&nbsp; ESC : libérer la souris</span>
+        </div>
+    </div>
+
+    <canvas id="canvas"></canvas>
+
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>

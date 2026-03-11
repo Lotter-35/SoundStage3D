@@ -1,0 +1,379 @@
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+body {
+    overflow: hidden;
+    background: #000;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    color: #fff;
+}
+
+#canvas {
+    display: block;
+    width: 100vw;
+    height: 100vh;
+}
+
+/* Start screen overlay */
+#overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(0, 0, 0, 0.85);
+    backdrop-filter: blur(10px);
+}
+
+#overlay.hidden {
+    display: none;
+}
+
+#start-screen {
+    text-align: center;
+    max-width: 500px;
+    padding: 40px;
+}
+
+#start-screen h1 {
+    font-size: 2rem;
+    margin-bottom: 12px;
+}
+
+#start-screen p {
+    color: #aaa;
+    margin-bottom: 28px;
+    line-height: 1.5;
+}
+
+#file-section {
+    margin-bottom: 24px;
+}
+
+#audio-file {
+    display: none;
+}
+
+#file-label {
+    display: inline-block;
+    padding: 12px 24px;
+    background: #222;
+    border: 1px solid #444;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s;
+}
+
+#file-label:hover {
+    background: #333;
+}
+
+#file-name {
+    display: block;
+    margin-top: 10px;
+    color: #6f6;
+    font-size: 0.9rem;
+    min-height: 1.2em;
+}
+
+#enter-btn {
+    padding: 14px 36px;
+    font-size: 1.1rem;
+    background: #1a6;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: background 0.2s, opacity 0.2s;
+}
+
+#enter-btn:disabled {
+    opacity: 0.4;
+    cursor: default;
+}
+
+#enter-btn:not(:disabled):hover {
+    background: #1c8;
+}
+
+/* HUD overlay */
+#hud {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    pointer-events: none;
+    padding: 16px;
+}
+
+#hud.hidden {
+    display: none;
+}
+
+#hud-left {
+    position: absolute;
+    top: 16px;
+    left: 16px;
+    font-size: 0.85rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 10px 14px;
+    border-radius: 8px;
+}
+
+#position-display {
+    margin-bottom: 4px;
+}
+
+#foh-distance {
+    color: #aaa;
+}
+
+#volume-controls {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#range-controls {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#range-controls .vol-slider label {
+    width: 42px;
+}
+
+#clarity-controls {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.1);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+#clarity-controls .vol-slider label {
+    width: 42px;
+}
+
+.vol-slider {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 0.75rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    pointer-events: auto;
+}
+
+.vol-slider label {
+    width: 28px;
+    text-align: right;
+    color: #aaa;
+}
+
+.reset-btn {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.15);
+    color: #888;
+    font-size: 0.7rem;
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, border-color 0.15s;
+    flex-shrink: 0;
+}
+
+.reset-btn:hover {
+    color: #fff;
+    border-color: rgba(255,255,255,0.4);
+}
+
+#reset-all-btn {
+    margin-top: 8px;
+    width: 100%;
+    font-size: 0.7rem;
+    padding: 5px 0;
+    pointer-events: auto;
+}
+
+.vol-slider input[type="range"] {
+    width: 80px;
+    accent-color: #1a6;
+    cursor: pointer;
+}
+
+.vol-slider span {
+    width: 34px;
+    color: #ccc;
+    font-size: 0.7rem;
+}
+
+#hud-right {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    display: flex;
+    gap: 8px;
+    pointer-events: auto;
+}
+
+.hud-btn {
+    padding: 8px 16px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid #555;
+    color: #fff;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    transition: background 0.2s;
+}
+
+.hud-btn:hover {
+    background: rgba(60, 60, 60, 0.8);
+}
+
+/* Cone dropdown */
+.dropdown {
+    position: relative;
+}
+
+.dropdown-menu {
+    display: none;
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    background: rgba(0, 0, 0, 0.85);
+    border: 1px solid #555;
+    border-radius: 6px;
+    padding: 6px 0;
+    min-width: 120px;
+    z-index: 200;
+}
+
+.dropdown-menu.open {
+    display: block;
+}
+
+.dropdown-menu label {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 14px;
+    font-size: 0.8rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.15s;
+}
+
+.dropdown-menu label:hover {
+    background: rgba(80, 80, 80, 0.6);
+}
+
+.dropdown-menu input[type="checkbox"] {
+    accent-color: #4af;
+    width: 14px;
+    height: 14px;
+}
+
+/* Level meters */
+#hud-center {
+    position: absolute;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    pointer-events: none;
+}
+
+#meters {
+    display: flex;
+    gap: 6px;
+    background: rgba(0, 0, 0, 0.6);
+    padding: 8px 12px;
+    border-radius: 8px;
+}
+
+.meter {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+    width: 36px;
+}
+
+.meter-label {
+    font-size: 0.6rem;
+    color: #888;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    letter-spacing: 0.5px;
+}
+
+.meter-track {
+    position: relative;
+    width: 8px;
+    height: 80px;
+    background: #1a1a1a;
+    border-radius: 4px;
+    overflow: hidden;
+}
+
+.meter-fill {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    height: 0%;
+    border-radius: 4px;
+    background: linear-gradient(to top, #2d8 0%, #fd3 60%, #f44 90%);
+    transition: height 0.06s linear;
+}
+
+.meter-peak {
+    position: absolute;
+    bottom: 0;
+    width: 100%;
+    height: 2px;
+    background: #fff;
+    transition: bottom 0.06s linear;
+    opacity: 0.8;
+}
+
+.meter-clip {
+    font-size: 0.55rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #555;
+    font-weight: bold;
+    transition: color 0.1s;
+}
+
+.meter-clip.active {
+    color: #f44;
+    text-shadow: 0 0 6px #f44;
+}
+
+#hud-bottom {
+    position: absolute;
+    bottom: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.75rem;
+    color: #888;
+    background: rgba(0, 0, 0, 0.5);
+    padding: 8px 16px;
+    border-radius: 6px;
+    white-space: nowrap;
+}
