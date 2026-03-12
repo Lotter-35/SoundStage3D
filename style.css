@@ -113,57 +113,7 @@ body {
     display: none;
 }
 
-#hud-left {
-    position: absolute;
-    top: 16px;
-    left: 16px;
-    font-size: 0.85rem;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    background: rgba(0, 0, 0, 0.5);
-    padding: 10px 14px;
-    border-radius: 8px;
-}
-
-#position-display {
-    margin-bottom: 4px;
-}
-
-#foh-distance {
-    color: #aaa;
-}
-
-#volume-controls {
-    margin-top: 8px;
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-#range-controls {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255,255,255,0.1);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-#range-controls .vol-slider label {
-    width: 42px;
-}
-
-#clarity-controls {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255,255,255,0.1);
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-}
-
-#clarity-controls .vol-slider label {
-    width: 42px;
-}
+/* hud-left removed — meters now serve as top-left panel */
 
 .vol-slider {
     display: flex;
@@ -203,13 +153,7 @@ body {
     border-color: rgba(255,255,255,0.4);
 }
 
-#reset-all-btn {
-    margin-top: 8px;
-    width: 100%;
-    font-size: 0.7rem;
-    padding: 5px 0;
-    pointer-events: auto;
-}
+/* reset-all-btn removed */
 
 .vol-slider input[type="range"] {
     width: 80px;
@@ -225,11 +169,13 @@ body {
 
 #hud-right {
     position: absolute;
-    top: 16px;
+    bottom: 16px;
     right: 16px;
     display: flex;
     gap: 8px;
     pointer-events: auto;
+    align-items: flex-end;
+    z-index: 120;
 }
 
 .hud-btn {
@@ -252,9 +198,9 @@ body {
 }
 .hud-slider-drop {
     position: absolute;
-    top: 100%;
+    bottom: 100%;
     right: 0;
-    margin-top: 4px;
+    margin-bottom: 4px;
     display: flex;
     align-items: center;
     padding: 6px 12px;
@@ -297,9 +243,9 @@ body {
 .dropdown-menu {
     display: none;
     position: absolute;
-    top: 100%;
+    bottom: 100%;
     right: 0;
-    margin-top: 4px;
+    margin-bottom: 4px;
     background: rgba(0, 0, 0, 0.85);
     border: 1px solid #555;
     border-radius: 6px;
@@ -342,17 +288,51 @@ body {
     pointer-events: none;
 }
 
+/* ─── Oscilloscope ─── */
+#oscilloscope {
+    position: fixed;
+    bottom: 50px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: min(900px, 80vw);
+    height: 160px;
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid #444;
+    border-radius: 8px;
+    z-index: 110;
+    pointer-events: none;
+}
+#oscilloscope.hidden {
+    display: none;
+}
+
 #meters {
     position: fixed;
     left: 16px;
-    bottom: 60px;
+    top: 16px;
     display: flex;
+    flex-direction: column;
     gap: 6px;
     background: rgba(0, 0, 0, 0.6);
     padding: 8px 12px;
     border-radius: 8px;
     z-index: 100;
     pointer-events: none;
+}
+
+#position-display {
+    font-size: 0.6rem;
+    color: #fff;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    white-space: nowrap;
+    margin-bottom: 2px;
+    text-align: center;
+    width: 100%;
+}
+
+#meters-tracks {
+    display: flex;
+    gap: 6px;
 }
 
 .meter {
@@ -365,7 +345,7 @@ body {
 
 .meter-label {
     font-size: 0.6rem;
-    color: #888;
+    color: #fff;
     font-family: 'SF Mono', 'Fira Code', monospace;
     letter-spacing: 0.5px;
 }
@@ -402,7 +382,7 @@ body {
 .meter-clip {
     font-size: 0.55rem;
     font-family: 'SF Mono', 'Fira Code', monospace;
-    color: #555;
+    color: #fff;
     font-weight: bold;
     transition: color 0.1s;
 }
@@ -414,31 +394,70 @@ body {
 
 #hud-bottom {
     position: absolute;
-    bottom: 16px;
+    bottom: 2px;
     left: 50%;
     transform: translateX(-50%);
-    font-size: 0.75rem;
-    color: #888;
-    background: rgba(0, 0, 0, 0.5);
-    padding: 8px 16px;
-    border-radius: 6px;
+    font-size: 0.68rem;
+    line-height: 1;
+    color: #fff;
+    background: transparent;
+    padding: 0;
+    border-radius: 0;
     white-space: nowrap;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    z-index: 90;
 }
 
 /* ─── DSP Panels ─── */
 #dsp-panels {
     position: fixed;
-    top: 60px;
+    bottom: 64px;
+    left: 16px;
     right: 16px;
     z-index: 60;
     display: flex;
-    flex-direction: column;
+    flex-direction: row;
+    align-items: flex-end;
     gap: 8px;
+    pointer-events: none;
+}
+#dsp-panels > * {
     pointer-events: auto;
 }
 
+/* Panel ordering: TOP MID [spacer] FILL SUB */
+#dsp-panel-top  { order: 1; }
+#dsp-panel-mid  { order: 2; }
+.dsp-spacer     { order: 3; flex: 1; }
+#dsp-panel-fill { order: 4; }
+#dsp-panel-sub  { order: 5; }
+
 #dsp-panels.hidden {
     display: none;
+}
+
+/* Master panel — top-right corner */
+#dsp-master-wrap {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 60;
+}
+#dsp-master-wrap.hidden {
+    display: none;
+}
+
+/* Now playing track name */
+#now-playing {
+    position: fixed;
+    bottom: 2px;
+    right: 16px;
+    color: #4f4;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.68rem;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0.85;
 }
 
 .dsp-panel {
@@ -586,7 +605,7 @@ body {
     visibility: visible;
 }
 
-/* Arrow on right side of tooltip (pointing toward the panel) */
+/* Arrow on right side of tooltip (pointing toward a right-side panel) */
 #dsp-tooltip::after {
     content: '';
     position: absolute;
@@ -595,4 +614,11 @@ body {
     transform: translateY(-50%);
     border: 6px solid transparent;
     border-left-color: rgba(15, 15, 20, 0.95);
+}
+/* Arrow on left side (tooltip appears to the right of a left-side panel) */
+#dsp-tooltip.arrow-right::after {
+    right: auto;
+    left: -11px;
+    border-left-color: transparent;
+    border-right-color: rgba(15, 15, 20, 0.95);
 }

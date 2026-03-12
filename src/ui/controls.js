@@ -12,7 +12,6 @@ export class Controls {
         this.playBtn = document.getElementById('play-btn');
         this.changeMp3Btn = document.getElementById('change-mp3-btn');
         this.positionDisplay = document.getElementById('position-display');
-        this.fohDisplay = document.getElementById('foh-distance');
 
         // Level meters
         this._meters = ['sub', 'mid', 'top', 'fill', 'master'].map(id => {
@@ -33,6 +32,9 @@ export class Controls {
         this._onChangeMp3 = null;
         this._onDopplerToggle = null;
         this._dopplerOn = false;
+
+        this._onOscilloscopeToggle = null;
+        this._oscilloscopeOn = false;
 
         this._onConesToggle = null; // cb(bus, visible) or cb('all', visible)
 
@@ -65,6 +67,13 @@ export class Controls {
             this._dopplerOn = !this._dopplerOn;
             this.dopplerBtn.textContent = this._dopplerOn ? '🔊 Doppler: ON' : '🔇 Doppler: OFF';
             if (this._onDopplerToggle) this._onDopplerToggle(this._dopplerOn);
+        });
+
+        this.oscilloscopeBtn = document.getElementById('oscilloscope-btn');
+        this.oscilloscopeBtn.addEventListener('click', () => {
+            this._oscilloscopeOn = !this._oscilloscopeOn;
+            this.oscilloscopeBtn.textContent = this._oscilloscopeOn ? '📈 Oscillo: ON' : '📈 Oscillo: OFF';
+            if (this._onOscilloscopeToggle) this._onOscilloscopeToggle(this._oscilloscopeOn);
         });
 
         this.conesBtn = document.getElementById('cones-btn');
@@ -107,83 +116,17 @@ export class Controls {
             });
         });
 
-        // Volume sliders
-        this._onVolumeChange = null;
-        this.volSubSlider = document.getElementById('vol-sub');
-        this.volSubVal = document.getElementById('vol-sub-val');
-        this.volMidSlider = document.getElementById('vol-mid');
-        this.volMidVal = document.getElementById('vol-mid-val');
-        this.volTopSlider = document.getElementById('vol-top');
-        this.volTopVal = document.getElementById('vol-top-val');
-        this.volFillSlider = document.getElementById('vol-fill');
-        this.volFillVal = document.getElementById('vol-fill-val');
-
-        this.volSubSlider.addEventListener('input', () => {
-            const v = this.volSubSlider.value / 100;
-            this.volSubVal.textContent = this.volSubSlider.value + '%';
-            if (this._onVolumeChange) this._onVolumeChange('sub', v);
-        });
-        this.volMidSlider.addEventListener('input', () => {
-            const v = this.volMidSlider.value / 100;
-            this.volMidVal.textContent = this.volMidSlider.value + '%';
-            if (this._onVolumeChange) this._onVolumeChange('mid', v);
-        });
-        this.volTopSlider.addEventListener('input', () => {
-            const v = this.volTopSlider.value / 100;
-            this.volTopVal.textContent = this.volTopSlider.value + '%';
-            if (this._onVolumeChange) this._onVolumeChange('top', v);
-        });
-        this.volFillSlider.addEventListener('input', () => {
-            const v = this.volFillSlider.value / 100;
-            this.volFillVal.textContent = this.volFillSlider.value + '%';
-            if (this._onVolumeChange) this._onVolumeChange('fill', v);
-        });
-
-        // Range (propagation) sliders
-        this._onRangeChange = null;
-        this.rangeSubSlider = document.getElementById('range-sub');
-        this.rangeSubVal = document.getElementById('range-sub-val');
-        this.rangeMidSlider = document.getElementById('range-mid');
-        this.rangeMidVal = document.getElementById('range-mid-val');
-        this.rangeTopSlider = document.getElementById('range-top');
-        this.rangeTopVal = document.getElementById('range-top-val');
-        this.rangeFillSlider = document.getElementById('range-fill');
-        this.rangeFillVal = document.getElementById('range-fill-val');
-
-        this.rangeSubSlider.addEventListener('input', () => {
-            this.rangeSubVal.textContent = this.rangeSubSlider.value;
-            if (this._onRangeChange) this._onRangeChange('sub', Number(this.rangeSubSlider.value));
-        });
-        this.rangeMidSlider.addEventListener('input', () => {
-            this.rangeMidVal.textContent = this.rangeMidSlider.value;
-            if (this._onRangeChange) this._onRangeChange('mid', Number(this.rangeMidSlider.value));
-        });
-        this.rangeTopSlider.addEventListener('input', () => {
-            this.rangeTopVal.textContent = this.rangeTopSlider.value;
-            if (this._onRangeChange) this._onRangeChange('top', Number(this.rangeTopSlider.value));
-        });
-        this.rangeFillSlider.addEventListener('input', () => {
-            this.rangeFillVal.textContent = this.rangeFillSlider.value;
-            if (this._onRangeChange) this._onRangeChange('fill', Number(this.rangeFillSlider.value));
-        });
-
-        // Clarity (air absorption) slider
-        this._onClarityChange = null;
-        this.claritySlider = document.getElementById('clarity-top');
-        this.clarityVal = document.getElementById('clarity-top-val');
-
-        this.claritySlider.addEventListener('input', () => {
-            this.clarityVal.textContent = this.claritySlider.value;
-            if (this._onClarityChange) this._onClarityChange(Number(this.claritySlider.value));
-        });
+        // Volume sliders (now managed by DSP panels)
 
         // ─── DSP Panel toggle ─────────────────────────────────────────
         this.dspBtn = document.getElementById('dsp-btn');
         this.dspPanels = document.getElementById('dsp-panels');
+        this.dspMasterWrap = document.getElementById('dsp-master-wrap');
         this._dspVisible = false;
         this.dspBtn.addEventListener('click', () => {
             this._dspVisible = !this._dspVisible;
             this.dspPanels.classList.toggle('hidden', !this._dspVisible);
+            this.dspMasterWrap.classList.toggle('hidden', !this._dspVisible);
             this.dspBtn.classList.toggle('active', this._dspVisible);
         });
 
@@ -207,11 +150,66 @@ export class Controls {
             'comp-release':  { suffix: ' ms' },
             'sat-drive':     { suffix: '%' },
             'sat-mix':       { suffix: '%' },
+            'bus-volume':    { suffix: '%' },
             'dist-k':        { format: v => (v / 1000).toFixed(3) },
-            'air-abs':       { suffix: ' Hz/m' },
             'refl-gain':     { format: v => (v / 100).toFixed(2) },
             'refl-lpf':      { suffix: ' Hz' },
             'lim-threshold': { suffix: ' dB' },
+        });
+
+        // ─── DSP Mid panel callbacks ──────────────────────────────────
+        this._onMidDsp = null; // cb(param, value)
+        this._initDspSliders('mid', {
+            'xover-low':     { suffix: ' Hz' },
+            'xover-high':    { suffix: ' Hz' },
+            'comp-threshold':{ suffix: ' dB' },
+            'comp-knee':     { suffix: ' dB' },
+            'comp-ratio':    { suffix: ':1' },
+            'comp-attack':   { suffix: ' ms' },
+            'comp-release':  { suffix: ' ms' },
+            'sat-drive':     { suffix: '%' },
+            'sat-mix':       { suffix: '%' },
+            'bus-volume':    { suffix: '%' },
+            'dist-k':        { format: v => (v / 1000).toFixed(3) },
+            'refl-gain':     { format: v => (v / 100).toFixed(2) },
+            'refl-lpf':      { suffix: ' Hz' },
+            'lim-threshold': { suffix: ' dB' },
+        });
+
+        // ─── DSP Top panel callbacks ──────────────────────────────────
+        this._onTopDsp = null;
+        this._initDspSliders('top', {
+            'xover-freq':    { suffix: ' Hz' },
+            'comp-threshold':{ suffix: ' dB' },
+            'comp-knee':     { suffix: ' dB' },
+            'comp-ratio':    { suffix: ':1' },
+            'comp-attack':   { suffix: ' ms' },
+            'comp-release':  { suffix: ' ms' },
+            'sat-drive':     { suffix: '%' },
+            'sat-mix':       { suffix: '%' },
+            'bus-volume':    { suffix: '%' },
+            'dist-k':        { format: v => (v / 1000).toFixed(3) },
+            'refl-gain':     { format: v => (v / 100).toFixed(2) },
+            'refl-lpf':      { suffix: ' Hz' },
+            'lim-threshold': { suffix: ' dB' },
+        });
+
+        // ─── DSP Fill panel callbacks ─────────────────────────────────
+        this._onFillDsp = null;
+        this._initDspSliders('fill', {
+            'merge-gain':    { format: v => (v / 100).toFixed(2) },
+            'bus-volume':    { suffix: '%' },
+            'dist-k':        { format: v => (v / 1000).toFixed(3) },
+            'refl-gain':     { format: v => (v / 100).toFixed(2) },
+            'refl-lpf':      { suffix: ' Hz' },
+            'lim-threshold': { suffix: ' dB' },
+        });
+
+        // ─── DSP Master panel callbacks ────────────────────────────────
+        this._onMasterDsp = null;
+        this._initDspSliders('master', {
+            'air-abs':       { suffix: ' Hz/m' },
+            'treble':        { suffix: ' dB' },
         });
 
         // ─── DSP Tooltip (position: fixed, to escape overflow clips) ───
@@ -223,13 +221,30 @@ export class Controls {
                 const text = el.getAttribute('data-tooltip');
                 if (!text) return;
                 this._tooltipEl.textContent = text;
-                // Position: to the left of the DSP panel
                 const rect = el.getBoundingClientRect();
-                const panelRect = document.getElementById('dsp-panels').getBoundingClientRect();
                 const ttWidth = 280; // matches CSS width
                 let top = rect.top + rect.height / 2;
-                let left = panelRect.left - ttWidth - 16;
-                // Avoid going off-screen top/bottom
+                let left;
+
+                // Determine which panel this element belongs to
+                const panel = el.closest('.dsp-panel');
+                const panelId = panel ? panel.id : '';
+                const isLeftGroup = (panelId === 'dsp-panel-top' || panelId === 'dsp-panel-mid');
+                // FILL, SUB, and Master → tooltip to the left
+
+                if (isLeftGroup) {
+                    // Tooltip to the RIGHT of this panel
+                    const panelRect = panel.getBoundingClientRect();
+                    left = panelRect.right + 16;
+                    this._tooltipEl.classList.add('arrow-right');
+                } else {
+                    // Tooltip to the LEFT of this panel
+                    const panelRect = panel ? panel.getBoundingClientRect() : rect;
+                    left = panelRect.left - ttWidth - 16;
+                    this._tooltipEl.classList.remove('arrow-right');
+                }
+
+                // Avoid going off-screen
                 this._tooltipEl.classList.add('visible');
                 this._tooltipEl.style.left = Math.max(8, left) + 'px';
                 // Measure actual height to center vertically
@@ -265,13 +280,6 @@ export class Controls {
         // Double-click on any slider to reset
         document.querySelectorAll('.vol-slider input[type="range"], .dsp-param input[type="range"], .hud-slider-drop input[type="range"]').forEach(slider => {
             slider.addEventListener('dblclick', () => {
-                this._resetSlider(slider);
-            });
-        });
-
-        // Reset All button
-        document.getElementById('reset-all-btn').addEventListener('click', () => {
-            document.querySelectorAll('.vol-slider input[type="range"][data-default], .dsp-param input[type="range"][data-default], .hud-slider-drop input[type="range"][data-default]').forEach(slider => {
                 this._resetSlider(slider);
             });
         });
@@ -346,6 +354,7 @@ export class Controls {
 
     /** Register doppler toggle callback */
     onDopplerToggle(cb) { this._onDopplerToggle = cb; }
+    onOscilloscopeToggle(cb) { this._onOscilloscopeToggle = cb; }
 
     /** Register HRTF toggle callback */
     onHrtfToggle(cb) { this._onHrtfToggle = cb; }
@@ -356,17 +365,20 @@ export class Controls {
     /** Register cones toggle callback */
     onConesToggle(cb) { this._onConesToggle = cb; }
 
-    /** Register volume change callback */
-    onVolumeChange(cb) { this._onVolumeChange = cb; }
-
-    /** Register range (propagation) change callback */
-    onRangeChange(cb) { this._onRangeChange = cb; }
-
     /** Register clarity (air absorption) change callback */
-    onClarityChange(cb) { this._onClarityChange = cb; }
+    onMasterDsp(cb) { this._onMasterDsp = cb; }
 
     /** Register SUB DSP panel change callback: cb(param, value) */
     onSubDsp(cb) { this._onSubDsp = cb; }
+
+    /** Register MID DSP panel change callback: cb(param, value) */
+    onMidDsp(cb) { this._onMidDsp = cb; }
+
+    /** Register TOP DSP panel change callback: cb(param, value) */
+    onTopDsp(cb) { this._onTopDsp = cb; }
+
+    /** Register FILL DSP panel change callback: cb(param, value) */
+    onFillDsp(cb) { this._onFillDsp = cb; }
 
     /** Switch from start screen to HUD */
     showHUD() {
@@ -388,7 +400,6 @@ export class Controls {
     updatePosition(pos, fohDist) {
         this.positionDisplay.textContent =
             `X: ${pos.x.toFixed(1)}  Y: ${pos.y.toFixed(1)}  Z: ${pos.z.toFixed(1)}`;
-        this.fohDisplay.textContent = `Distance FOH: ${fohDist.toFixed(1)} m`;
     }
 
     /**

@@ -168,16 +168,12 @@ class Speaker {
         // --- Wiring ---
         this.distanceGain.connect(this.propagationDelay);
 
-        if (this._isMid || this._isFill) {
-            // Mid/Fill speakers: bypass air absorption & high-shelf (signal already band-limited)
-            this.propagationDelay.connect(this.panner);
-        } else {
-            // Sub & Top: full chain with air absorption
-            this.propagationDelay.connect(this.airAbsorption1);
-            this.airAbsorption1.connect(this.airAbsorption2);
-            this.airAbsorption2.connect(this.highShelf);
-            this.highShelf.connect(this.panner);
-        }
+        // All speakers: full chain with air absorption & high-shelf
+        this.propagationDelay.connect(this.airAbsorption1);
+        this.airAbsorption1.connect(this.airAbsorption2);
+        this.airAbsorption2.connect(this.highShelf);
+        this.highShelf.connect(this.panner);
+
         this.panner.connect(output);
 
         // Reflection branch: distanceGain → reflection.input → ... → reflection.panner → output
@@ -212,12 +208,11 @@ class Speaker {
         }
 
         // Air absorption: high-frequency rolloff with distance (24 dB/oct cascaded)
-        // Skip for mid/fill speakers (already band-limited by crossover)
-        if (!this._isMid && !this._isFill) {
-            const cutoff = Math.max(500, 18000 - distance * this._airAbsCoeff);
-            this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
-            this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
-        }
+        // MID/FILL have a higher cutoff floor to preserve their useful band (90–2kHz)
+        const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
+        const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
+        this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
+        this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
     }
 
     setDoppler(enabled) {
@@ -326,17 +321,44 @@ export class SpeakerSystem {
         this.subAnalyser.fftSize = 256;
         this.subVolume.connect(this.subAnalyser);
 
+        // MID bus limiter (brick-wall)
+        this.midLimiter = ctx.createDynamicsCompressor();
+        this.midLimiter.threshold.value = -3;
+        this.midLimiter.knee.value = 2;
+        this.midLimiter.ratio.value = 20;
+        this.midLimiter.attack.value = 0.001;
+        this.midLimiter.release.value = 0.05;
+        this.midVolume.connect(this.midLimiter);
+
         this.midAnalyser = ctx.createAnalyser();
         this.midAnalyser.fftSize = 256;
-        this.midVolume.connect(this.midAnalyser);
+        this.midLimiter.connect(this.midAnalyser);
+
+        // TOP bus limiter (brick-wall)
+        this.topLimiter = ctx.createDynamicsCompressor();
+        this.topLimiter.threshold.value = -3;
+        this.topLimiter.knee.value = 2;
+        this.topLimiter.ratio.value = 20;
+        this.topLimiter.attack.value = 0.001;
+        this.topLimiter.release.value = 0.05;
+        this.topVolume.connect(this.topLimiter);
 
         this.topAnalyser = ctx.createAnalyser();
         this.topAnalyser.fftSize = 256;
-        this.topVolume.connect(this.topAnalyser);
+        this.topLimiter.connect(this.topAnalyser);
+
+        // FILL bus limiter (brick-wall)
+        this.fillLimiter = ctx.createDynamicsCompressor();
+        this.fillLimiter.threshold.value = -3;
+        this.fillLimiter.knee.value = 2;
+        this.fillLimiter.ratio.value = 20;
+        this.fillLimiter.attack.value = 0.001;
+        this.fillLimiter.release.value = 0.05;
+        this.fillVolume.connect(this.fillLimiter);
 
         this.fillAnalyser = ctx.createAnalyser();
         this.fillAnalyser.fftSize = 256;
-        this.fillVolume.connect(this.fillAnalyser);
+        this.fillLimiter.connect(this.fillAnalyser);
 
         // Master output chain: masterOutput → limiter → ctx.destination
         this.masterOutput = ctx.createGain();
@@ -373,11 +395,11 @@ export class SpeakerSystem {
             if (def.bus === 'sub') {
                 this.subVolume.connect(speaker.input);
             } else if (def.bus === 'mid') {
-                this.midVolume.connect(speaker.input);
+                this.midLimiter.connect(speaker.input);
             } else if (def.bus === 'fill') {
-                this.fillVolume.connect(speaker.input);
+                this.fillLimiter.connect(speaker.input);
             } else {
-                this.topVolume.connect(speaker.input);
+                this.topLimiter.connect(speaker.input);
             }
         }
     }
@@ -451,26 +473,18 @@ export class SpeakerSystem {
     }
 
     /**
-     * Set air absorption (clarity) for line arrays and mids.
-     * @param {number} sliderValue — 0 (max absorption) to 100 (neutral) to 200 (boosted brightness)
+     * Set a global Master DSP parameter (air absorption or treble boost).
+     * @param {string} param — parameter key from the Master panel
+     * @param {number} value — raw slider value
      */
-    setClarity(sliderValue) {
-        if (sliderValue <= 100) {
-            const coeff = (1 - sliderValue / 100) * 300;
-            for (const speaker of this.speakers) {
-                if (!speaker._isSub) {
-                    speaker.setAirAbsCoeff(coeff);
-                    speaker.setHighShelfGain(0);
-                }
-            }
-        } else {
-            const boostDb = ((sliderValue - 100) / 100) * 15;
-            for (const speaker of this.speakers) {
-                if (!speaker._isSub) {
-                    speaker.setAirAbsCoeff(0);
-                    speaker.setHighShelfGain(boostDb);
-                }
-            }
+    setMasterDspParam(param, value) {
+        switch (param) {
+            case 'air-abs':
+                for (const s of this.speakers) s.setAirAbsCoeff(value);
+                break;
+            case 'treble':
+                for (const s of this.speakers) s.setHighShelfGain(value);
+                break;
         }
     }
 
@@ -509,11 +523,11 @@ export class SpeakerSystem {
             case 'sat-mix':
                 if (this._effects.subSat.setMix) this._effects.subSat.setMix(value);
                 break;
+            case 'bus-volume':
+                this.subVolume.gain.setTargetAtTime(value / 100, t, 0.04);
+                break;
             case 'dist-k':
                 for (const s of subSpeakers) s.setDistanceK(value / 1000);
-                break;
-            case 'air-abs':
-                for (const s of subSpeakers) s.setAirAbsCoeff(value);
                 break;
             case 'refl-gain':
                 for (const s of subSpeakers) s.setReflectionGain(value / 100);
@@ -523,6 +537,146 @@ export class SpeakerSystem {
                 break;
             case 'lim-threshold':
                 this.masterLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                break;
+        }
+    }
+
+    /**
+     * Set a DSP parameter for the MID bus.
+     * @param {string} param — parameter key from the DSP panel
+     * @param {number} value — raw slider value
+     * @param {object} deps — { crossover, effects } external node references
+     */
+    setMidDspParam(param, value, deps) {
+        const t = this.ctx.currentTime;
+        const midSpeakers = this.speakers.filter(s => s._isMid);
+
+        switch (param) {
+            case 'xover-low':
+                if (deps.crossover) deps.crossover.setLowFreq(value);
+                break;
+            case 'xover-high':
+                if (deps.crossover) deps.crossover.setHighFreq(value);
+                break;
+            case 'comp-threshold':
+                this._effects.midComp.threshold.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-knee':
+                this._effects.midComp.knee.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-ratio':
+                this._effects.midComp.ratio.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-attack':
+                this._effects.midComp.attack.setTargetAtTime(value / 1000, t, 0.04);
+                break;
+            case 'comp-release':
+                this._effects.midComp.release.setTargetAtTime(value / 1000, t, 0.04);
+                break;
+            case 'sat-drive':
+                if (this._effects.midSat.setDrive) this._effects.midSat.setDrive(value);
+                break;
+            case 'sat-mix':
+                if (this._effects.midSat.setMix) this._effects.midSat.setMix(value);
+                break;
+            case 'bus-volume':
+                this.midVolume.gain.setTargetAtTime(value / 100, t, 0.04);
+                break;
+            case 'dist-k':
+                for (const s of midSpeakers) s.setDistanceK(value / 1000);
+                break;
+            case 'refl-gain':
+                for (const s of midSpeakers) s.setReflectionGain(value / 100);
+                break;
+            case 'refl-lpf':
+                for (const s of midSpeakers) s.setReflectionLpf(value);
+                break;
+            case 'lim-threshold':
+                this.midLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                break;
+        }
+    }
+
+    /**
+     * Set a DSP parameter for the TOP bus.
+     * @param {string} param — parameter key from the DSP panel
+     * @param {number} value — raw slider value
+     * @param {object} deps — { crossover, effects } external node references
+     */
+    setTopDspParam(param, value, deps) {
+        const t = this.ctx.currentTime;
+        const topSpeakers = this.speakers.filter(s => !s._isSub && !s._isMid && !s._isFill);
+
+        switch (param) {
+            case 'xover-freq':
+                if (deps.crossover) deps.crossover.setHighFreq(value);
+                break;
+            case 'comp-threshold':
+                this._effects.topComp.threshold.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-knee':
+                this._effects.topComp.knee.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-ratio':
+                this._effects.topComp.ratio.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-attack':
+                this._effects.topComp.attack.setTargetAtTime(value / 1000, t, 0.04);
+                break;
+            case 'comp-release':
+                this._effects.topComp.release.setTargetAtTime(value / 1000, t, 0.04);
+                break;
+            case 'sat-drive':
+                if (this._effects.topSat.setDrive) this._effects.topSat.setDrive(value);
+                break;
+            case 'sat-mix':
+                if (this._effects.topSat.setMix) this._effects.topSat.setMix(value);
+                break;
+            case 'bus-volume':
+                this.topVolume.gain.setTargetAtTime(value / 100, t, 0.04);
+                break;
+            case 'dist-k':
+                for (const s of topSpeakers) s.setDistanceK(value / 1000);
+                break;
+            case 'refl-gain':
+                for (const s of topSpeakers) s.setReflectionGain(value / 100);
+                break;
+            case 'refl-lpf':
+                for (const s of topSpeakers) s.setReflectionLpf(value);
+                break;
+            case 'lim-threshold':
+                this.topLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                break;
+        }
+    }
+
+    /**
+     * Set a DSP parameter for the FILL bus.
+     * @param {string} param — parameter key from the DSP panel
+     * @param {number} value — raw slider value
+     */
+    setFillDspParam(param, value) {
+        const t = this.ctx.currentTime;
+        const fillSpeakers = this.speakers.filter(s => s._isFill);
+
+        switch (param) {
+            case 'merge-gain':
+                this.fillMerge.gain.setTargetAtTime(value / 100, t, 0.04);
+                break;
+            case 'bus-volume':
+                this.fillVolume.gain.setTargetAtTime(value / 100, t, 0.04);
+                break;
+            case 'dist-k':
+                for (const s of fillSpeakers) s.setDistanceK(value / 1000);
+                break;
+            case 'refl-gain':
+                for (const s of fillSpeakers) s.setReflectionGain(value / 100);
+                break;
+            case 'refl-lpf':
+                for (const s of fillSpeakers) s.setReflectionLpf(value);
+                break;
+            case 'lim-threshold':
+                this.fillLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
     }
