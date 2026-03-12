@@ -247,6 +247,48 @@ body {
     background: rgba(60, 60, 60, 0.8);
 }
 
+#hrtf-wrapper {
+    position: relative;
+}
+.hud-slider-drop {
+    position: absolute;
+    top: 100%;
+    right: 0;
+    margin-top: 4px;
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    background: rgba(0, 0, 0, 0.75);
+    border: 1px solid #555;
+    border-radius: 6px;
+    font-size: 0.8rem;
+    color: #fff;
+    white-space: nowrap;
+    z-index: 200;
+}
+.hud-slider-drop.hidden {
+    display: none;
+}
+.hud-slider-drop label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+.hud-slider-drop input[type="range"] {
+    width: 80px;
+    accent-color: #f0c040;
+}
+.hud-slider-drop span {
+    min-width: 42px;
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+
+.hud-btn.active {
+    background: rgba(40, 100, 180, 0.5);
+    border-color: #4af;
+}
+
 /* Cone dropdown */
 .dropdown {
     position: relative;
@@ -301,11 +343,16 @@ body {
 }
 
 #meters {
+    position: fixed;
+    left: 16px;
+    bottom: 60px;
     display: flex;
     gap: 6px;
     background: rgba(0, 0, 0, 0.6);
     padding: 8px 12px;
     border-radius: 8px;
+    z-index: 100;
+    pointer-events: none;
 }
 
 .meter {
@@ -376,4 +423,176 @@ body {
     padding: 8px 16px;
     border-radius: 6px;
     white-space: nowrap;
+}
+
+/* ─── DSP Panels ─── */
+#dsp-panels {
+    position: fixed;
+    top: 60px;
+    right: 16px;
+    z-index: 60;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    pointer-events: auto;
+}
+
+#dsp-panels.hidden {
+    display: none;
+}
+
+.dsp-panel {
+    background: rgba(0, 0, 0, 0.82);
+    border: 1px solid #444;
+    border-radius: 8px;
+    min-width: 280px;
+    max-width: 320px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.72rem;
+    backdrop-filter: blur(6px);
+    overflow: visible;
+}
+
+.dsp-panel-body {
+    padding: 6px 12px 10px;
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
+    scrollbar-width: thin;
+    scrollbar-color: #555 transparent;
+}
+
+.dsp-panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255,255,255,0.1);
+    cursor: pointer;
+    user-select: none;
+}
+
+.dsp-panel-title {
+    font-size: 0.8rem;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+}
+
+.dsp-panel-toggle {
+    background: none;
+    border: 1px solid rgba(255,255,255,0.2);
+    color: #aaa;
+    width: 20px;
+    height: 20px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    line-height: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.dsp-panel-toggle:hover {
+    color: #fff;
+    border-color: rgba(255,255,255,0.4);
+}
+
+.dsp-panel-body.collapsed {
+    display: none;
+}
+
+.dsp-section {
+    margin-top: 6px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255,255,255,0.06);
+}
+
+.dsp-section:first-child {
+    margin-top: 0;
+    padding-top: 0;
+    border-top: none;
+}
+
+.dsp-section-title {
+    color: #6cf;
+    font-size: 0.68rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.8px;
+    margin-bottom: 4px;
+}
+
+.dsp-param {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 3px;
+}
+
+.dsp-param label {
+    width: 62px;
+    text-align: right;
+    color: #999;
+    font-size: 0.68rem;
+    flex-shrink: 0;
+}
+
+.dsp-param input[type="range"] {
+    width: 80px;
+    accent-color: #4af;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.dsp-param span {
+    width: 52px;
+    color: #ccc;
+    font-size: 0.68rem;
+    flex-shrink: 0;
+}
+
+.dsp-param .reset-btn {
+    flex-shrink: 0;
+}
+
+/* ─── Tooltips (data-tooltip) — handled by JS ─── */
+[data-tooltip] {
+    cursor: help;
+}
+
+#dsp-tooltip {
+    position: fixed;
+    background: rgba(15, 15, 20, 0.95);
+    color: #ddd;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    font-size: 0.74rem;
+    font-weight: 400;
+    line-height: 1.5;
+    padding: 10px 14px;
+    border-radius: 6px;
+    border: 1px solid rgba(100, 170, 255, 0.3);
+    width: 280px;
+    white-space: normal;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.18s ease, visibility 0.18s ease;
+    z-index: 9999;
+    box-shadow: 0 6px 24px rgba(0,0,0,0.6);
+}
+
+#dsp-tooltip.visible {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Arrow on right side of tooltip (pointing toward the panel) */
+#dsp-tooltip::after {
+    content: '';
+    position: absolute;
+    right: -11px;
+    top: 50%;
+    transform: translateY(-50%);
+    border: 6px solid transparent;
+    border-left-color: rgba(15, 15, 20, 0.95);
 }

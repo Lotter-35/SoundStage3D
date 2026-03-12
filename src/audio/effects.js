@@ -10,16 +10,74 @@
  * Curve: f(x) = 1.5x - 0.5x^3  (smooth Chebyshev polynomial)
  */
 export function createSaturation(ctx) {
+    // Wet/dry structure: input → shaper (wet) + dry bypass → output
+    const input = ctx.createGain();
+    input.gain.value = 1;
+
     const shaper = ctx.createWaveShaper();
+    shaper.oversample = '2x';
+
+    const dry = ctx.createGain();
+    dry.gain.value = 0; // 100% wet by default
+
+    const wet = ctx.createGain();
+    wet.gain.value = 1;
+
+    const output = ctx.createGain();
+    output.gain.value = 1;
+
+    // Generate default curve (drive=50%)
+    _applySatCurve(shaper, 50);
+
+    input.connect(shaper);
+    shaper.connect(wet);
+    wet.connect(output);
+    input.connect(dry);
+    dry.connect(output);
+
+    // Return the input GainNode as the main node (so upstream can .connect(sat))
+    // Attach output and controls as extra properties
+    input._output = output;
+    input._shaper = shaper;
+    input._wet = wet;
+    input._dry = dry;
+    input._ctx = ctx;
+
+    // Override connect so that downstream connects from the output
+    const origConnect = input.connect.bind(input);
+    input.connect = function(dest, ...args) {
+        // If connecting to downstream, use output node
+        return output.connect(dest, ...args);
+    };
+    // Keep a way to connect to input for upstream
+    input._connectUpstream = origConnect;
+
+    /** Set drive amount 0–100 */
+    input.setDrive = (drive) => {
+        _applySatCurve(shaper, drive);
+    };
+
+    /** Set wet/dry mix 0–100 (0=full dry, 100=full wet) */
+    input.setMix = (mix) => {
+        const w = mix / 100;
+        wet.gain.setTargetAtTime(w, ctx.currentTime, 0.04);
+        dry.gain.setTargetAtTime(1 - w, ctx.currentTime, 0.04);
+    };
+
+    return input;
+}
+
+/** Build wave-shaper curve with variable drive. */
+function _applySatCurve(shaper, drive) {
     const samples = 8192;
     const curve = new Float32Array(samples);
+    // drive 0 = linear, drive 100 = hard clip
+    const amount = Math.max(0.01, drive / 50); // 0..2 range
     for (let i = 0; i < samples; i++) {
-        const x = (i * 2) / samples - 1; // -1 … +1
-        curve[i] = 1.5 * x - 0.5 * x * x * x;
+        const x = (i * 2) / samples - 1;
+        curve[i] = (1 + amount) * x / (1 + amount * Math.abs(x));
     }
     shaper.curve = curve;
-    shaper.oversample = '2x';
-    return shaper;
 }
 
 /**
@@ -91,5 +149,5 @@ export function createGroundReflection(ctx, speakerPos, options = {}) {
     lpf.connect(gain);
     gain.connect(panner);
 
-    return { input, panner, delayNode: delay, gainNode: gain, reflectPos };
+    return { input, panner, delayNode: delay, gainNode: gain, reflectPos, _lpf: lpf };
 }

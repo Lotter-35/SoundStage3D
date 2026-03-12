@@ -12,6 +12,10 @@ export class AudioEngine {
     }
 
     init() {
+        if (this.ctx) {
+            if (this.ctx.state === 'suspended') this.ctx.resume();
+            return this.ctx;
+        }
         this.ctx = new (window.AudioContext || window.webkitAudioContext)();
         if (this.ctx.state === 'suspended') {
             this.ctx.resume();

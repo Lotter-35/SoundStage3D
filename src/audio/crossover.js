@@ -92,4 +92,28 @@ export class Crossover {
         this.topHp1.connect(this.topHp2);
         this.topHp2.connect(this.topBusOutput);
     }
+
+    /**
+     * Update the low crossover frequency (SUB ↔ MID boundary).
+     * @param {number} freq — Hz
+     */
+    setLowFreq(freq) {
+        const t = this.ctx.currentTime;
+        this.subLp1.frequency.setTargetAtTime(freq, t, 0.04);
+        this.subLp2.frequency.setTargetAtTime(freq, t, 0.04);
+        this.midHp1.frequency.setTargetAtTime(freq, t, 0.04);
+        this.midHp2.frequency.setTargetAtTime(freq, t, 0.04);
+    }
+
+    /**
+     * Update the high crossover frequency (MID ↔ TOP boundary).
+     * @param {number} freq — Hz
+     */
+    setHighFreq(freq) {
+        const t = this.ctx.currentTime;
+        this.midLp1.frequency.setTargetAtTime(freq, t, 0.04);
+        this.midLp2.frequency.setTargetAtTime(freq, t, 0.04);
+        this.topHp1.frequency.setTargetAtTime(freq, t, 0.04);
+        this.topHp2.frequency.setTargetAtTime(freq, t, 0.04);
+    }
 }

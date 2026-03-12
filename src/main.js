@@ -92,15 +92,27 @@ controls.onPlayPause(() => {
     }
 });
 
-controls.onStop(() => {
+controls.onChangeMp3(async (file) => {
     if (!audioReady) return;
     audioEngine.stop();
-    controls.setPlayState(false);
+    await audioEngine.loadFile(file);
+    audioEngine.play(crossover.input);
+    controls.setPlayState(true);
 });
 
 controls.onDopplerToggle((enabled) => {
     if (!audioReady) return;
     speakerSystem.setDoppler(enabled);
+});
+
+controls.onHrtfToggle((enabled) => {
+    if (!audioReady) return;
+    speakerSystem.setPanningModel(enabled ? 'HRTF' : 'equalpower');
+});
+
+controls.onHrtfBrightness((db) => {
+    if (!audioReady) return;
+    speakerSystem.setHrtfBrightness(db);
 });
 
 controls.onConesToggle((bus, visible) => {
@@ -127,6 +139,11 @@ controls.onRangeChange((bus, value) => {
 controls.onClarityChange((value) => {
     if (!audioReady) return;
     speakerSystem.setClarity(value);
+});
+
+controls.onSubDsp((param, value) => {
+    if (!audioReady) return;
+    speakerSystem.setSubDspParam(param, value, { crossover, effects });
 });
 
 // ─── Pointer lock ↔ overlay management ──────────────────────────

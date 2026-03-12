@@ -95,33 +95,6 @@
             <button id="reset-all-btn" class="hud-btn">↺ Reset All</button>
         </div>
         <div id="hud-center">
-            <div id="meters">
-                <div class="meter" id="meter-sub">
-                    <div class="meter-label">SUB</div>
-                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
-                    <div class="meter-clip">CLIP</div>
-                </div>
-                <div class="meter" id="meter-mid">
-                    <div class="meter-label">MID</div>
-                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
-                    <div class="meter-clip">CLIP</div>
-                </div>
-                <div class="meter" id="meter-top">
-                    <div class="meter-label">TOP</div>
-                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
-                    <div class="meter-clip">CLIP</div>
-                </div>
-                <div class="meter" id="meter-fill">
-                    <div class="meter-label">FILL</div>
-                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
-                    <div class="meter-clip">CLIP</div>
-                </div>
-                <div class="meter" id="meter-master">
-                    <div class="meter-label">OUT</div>
-                    <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
-                    <div class="meter-clip">CLIP</div>
-                </div>
-            </div>
         </div>
         <div id="hud-right">
             <div id="cones-dropdown" class="dropdown">
@@ -133,12 +106,156 @@
                     <label><input type="checkbox" data-cone-bus="top"> TOP</label>
                     <label><input type="checkbox" data-cone-bus="fill"> FILL</label>
                 </div>
-            </div>            <button id="mode-btn" class="hud-btn">🎮 Mode: Vol libre</button>            <button id="doppler-btn" class="hud-btn">� Doppler: OFF</button>
+            </div>            <button id="mode-btn" class="hud-btn">🎮 Mode: Vol libre</button>            <button id="dsp-btn" class="hud-btn">🎛 DSP</button>            <div id="hrtf-wrapper"><button id="hrtf-btn" class="hud-btn">🎧 HRTF: OFF</button><div id="hrtf-comp" class="hud-slider-drop hidden"><label>✨ Brillance <input type="range" id="hrtf-brightness" min="0" max="12" step="0.5" value="4" data-default="4"><span id="hrtf-brightness-val">+4 dB</span></label></div></div>            <button id="doppler-btn" class="hud-btn">🔇 Doppler: OFF</button>
             <button id="play-btn" class="hud-btn">⏸ Pause</button>
-            <button id="stop-btn" class="hud-btn">⏹ Stop</button>
+            <button id="change-mp3-btn" class="hud-btn">📂 Changer MP3</button>
         </div>
         <div id="hud-bottom">
             <span>ZQSD / WASD / Flèches : se déplacer &nbsp;|&nbsp; Souris : regarder &nbsp;|&nbsp; Space / Shift : monter / descendre &nbsp;|&nbsp; F : mode personnage &nbsp;|&nbsp; ESC : libérer la souris</span>
+        </div>
+        <!-- Level meters (bottom-left, inside HUD so only visible in-game) -->
+        <div id="meters">
+            <div class="meter" id="meter-sub">
+                <div class="meter-label">SUB</div>
+                <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                <div class="meter-clip">CLIP</div>
+            </div>
+            <div class="meter" id="meter-mid">
+                <div class="meter-label">MID</div>
+                <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                <div class="meter-clip">CLIP</div>
+            </div>
+            <div class="meter" id="meter-top">
+                <div class="meter-label">TOP</div>
+                <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                <div class="meter-clip">CLIP</div>
+            </div>
+            <div class="meter" id="meter-fill">
+                <div class="meter-label">FILL</div>
+                <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                <div class="meter-clip">CLIP</div>
+            </div>
+            <div class="meter" id="meter-master">
+                <div class="meter-label">OUT</div>
+                <div class="meter-track"><div class="meter-fill"></div><div class="meter-peak"></div></div>
+                <div class="meter-clip">CLIP</div>
+            </div>
+        </div>
+    </div>
+
+    <!-- ─── DSP Panels (per-bus pipeline controls) ─── -->
+    <div id="dsp-tooltip"></div>
+    <div id="dsp-panels" class="hidden">
+        <!-- SUB Panel -->
+        <div id="dsp-panel-sub" class="dsp-panel">
+            <div class="dsp-panel-header">
+                <span class="dsp-panel-title">🔊 SUB Pipeline</span>
+                <button class="dsp-panel-toggle" data-panel="sub">−</button>
+            </div>
+            <div class="dsp-panel-body">
+                <!-- Crossover -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Filtre séparateur Linkwitz-Riley 24 dB/oct. Isole les basses fréquences envoyées aux subwoofers. Tout ce qui est au-dessus de cette fréquence est coupé et redirigé vers les enceintes MID.">Crossover LR4</div>
+                    <div class="dsp-param">
+                        <label for="sub-xover-freq" data-tooltip="Fréquence de coupure du crossover. En dessous de cette valeur, le son passe dans les subs. Au-dessus, il va dans les mids. Monter = subs plus larges en spectre (plus de punch). Baisser = subs plus profonds, uniquement l'infra-grave.">Fréquence</label>
+                        <input type="range" id="sub-xover-freq" min="40" max="200" value="90" step="1" data-default="90">
+                        <span id="sub-xover-freq-val">90 Hz</span>
+                        <button class="reset-btn" data-target="sub-xover-freq" title="Reset">↺</button>
+                    </div>
+                </div>
+                <!-- Compressor -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Compresseur dynamique sur le bus SUB. Réduit automatiquement le volume quand le signal dépasse un seuil. Permet de contrôler les pics de basses et d'obtenir un son plus régulier et puissant, comme un vrai système PA.">Compresseur</div>
+                    <div class="dsp-param">
+                        <label for="sub-comp-threshold" data-tooltip="Seuil de déclenchement de la compression. Quand le signal dépasse ce niveau (en dB), le compresseur entre en action. Plus bas = compression plus agressive (son plus écrasé, plus constant). Plus haut = compression légère, plus de dynamique naturelle.">Threshold</label>
+                        <input type="range" id="sub-comp-threshold" min="-60" max="0" value="-24" step="1" data-default="-24">
+                        <span id="sub-comp-threshold-val">-24 dB</span>
+                        <button class="reset-btn" data-target="sub-comp-threshold" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-comp-knee" data-tooltip="Zone de transition autour du seuil. Un knee élevé = transition douce et progressive (compression transparente). Un knee bas = transition brutale, la compression s'enclenche net (plus agressif, style limiteur).">Knee</label>
+                        <input type="range" id="sub-comp-knee" min="0" max="40" value="30" step="1" data-default="30">
+                        <span id="sub-comp-knee-val">30 dB</span>
+                        <button class="reset-btn" data-target="sub-comp-knee" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-comp-ratio" data-tooltip="Taux de compression. 1:1 = aucune compression. 4:1 = pour chaque 4 dB au-dessus du seuil, seul 1 dB passe. 20:1 = quasi limiteur. Plus le ratio est élevé, plus les basses sont écrasées et uniformes.">Ratio</label>
+                        <input type="range" id="sub-comp-ratio" min="1" max="20" value="4" step="0.5" data-default="4">
+                        <span id="sub-comp-ratio-val">4:1</span>
+                        <button class="reset-btn" data-target="sub-comp-ratio" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-comp-attack" data-tooltip="Temps de réaction du compresseur (en ms). Court = attrape les transitoires et pic de kick instantanément (son plus contrôlé). Long = laisse passer l'attaque du kick avant de comprimer (plus de punch et d'impact).">Attack</label>
+                        <input type="range" id="sub-comp-attack" min="0" max="100" value="3" step="1" data-default="3">
+                        <span id="sub-comp-attack-val">3 ms</span>
+                        <button class="reset-btn" data-target="sub-comp-attack" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-comp-release" data-tooltip="Temps de relâchement (en ms). Après compression, combien de temps avant de revenir au volume normal. Court = son qui 'pompe' (effet respirant). Long = compression lisse et naturelle, le sub reste constant.">Release</label>
+                        <input type="range" id="sub-comp-release" min="10" max="1000" value="250" step="10" data-default="250">
+                        <span id="sub-comp-release-val">250 ms</span>
+                        <button class="reset-btn" data-target="sub-comp-release" title="Reset">↺</button>
+                    </div>
+                </div>
+                <!-- Saturation -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Simule la saturation naturelle des amplificateurs de puissance PA. Ajoute des harmoniques au signal pour donner de la chaleur et de la présence aux basses. Un sub saturé sonne plus gros et plus 'vivant' qu'un signal propre.">Saturation</div>
+                    <div class="dsp-param">
+                        <label for="sub-sat-drive" data-tooltip="Intensité de la distorsion harmonique. 0% = signal complètement propre. 50% = saturation douce et musicale (défaut). 100% = saturation lourde, les basses deviennent grasses et agressives. Simule un ampli PA poussé à fond.">Drive</label>
+                        <input type="range" id="sub-sat-drive" min="0" max="100" value="50" step="1" data-default="50">
+                        <span id="sub-sat-drive-val">50%</span>
+                        <button class="reset-btn" data-target="sub-sat-drive" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-sat-mix" data-tooltip="Balance entre le signal original (dry) et le signal saturé (wet). 0% = aucune saturation audible. 100% = uniquement le signal saturé. Entre les deux = mélange parallèle, idéal pour garder la clarté tout en ajoutant de la chaleur.">Mix</label>
+                        <input type="range" id="sub-sat-mix" min="0" max="100" value="100" step="1" data-default="100">
+                        <span id="sub-sat-mix-val">100%</span>
+                        <button class="reset-btn" data-target="sub-sat-mix" title="Reset">↺</button>
+                    </div>
+                </div>
+                <!-- Propagation -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Simule le comportement physique du son dans l'air : perte de volume avec la distance et absorption des hautes fréquences. Plus vous êtes loin des subs, plus le son est atténué et filtré, comme dans la réalité.">Propagation</div>
+                    <div class="dsp-param">
+                        <label for="sub-dist-k" data-tooltip="Coefficient d'atténuation avec la distance. Plus la valeur est élevée, plus le volume chute rapidement en s'éloignant des subs (courte portée). Une valeur basse donne des basses qui portent très loin dans le public. Formule : gain = 1/(1 + k × distance).">Atténuation</label>
+                        <input type="range" id="sub-dist-k" min="1" max="200" value="60" step="1" data-default="60">
+                        <span id="sub-dist-k-val">0.060</span>
+                        <button class="reset-btn" data-target="sub-dist-k" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-air-abs" data-tooltip="Absorption atmosphérique : les hautes fréquences sont absorbées par l'air avec la distance. Plus la valeur est élevée, plus le son perd ses aigus rapidement. Pour les subs (< 90 Hz), l'effet est subtil car les basses traversent l'air facilement. Utile surtout pour les fréquences proches de la coupure du crossover.">Abs. air</label>
+                        <input type="range" id="sub-air-abs" min="0" max="200" value="40" step="1" data-default="40">
+                        <span id="sub-air-abs-val">40 Hz/m</span>
+                        <button class="reset-btn" data-target="sub-air-abs" title="Reset">↺</button>
+                    </div>
+                </div>
+                <!-- Ground Reflection -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Simule le rebond du son sur le sol. En festival, les basses rebondissent sur le terrain et créent une copie retardée et filtrée du signal. Cela ajoute du corps et une sensation de 'sol qui vibre'. L'effet dépend de la hauteur des subs.">Réflexion sol</div>
+                    <div class="dsp-param">
+                        <label for="sub-refl-gain" data-tooltip="Volume de la réflexion par rapport au son direct. 0 = pas de réflexion. 0.20 (défaut) = réflexion subtile et réaliste. Monter = le sol amplifie les basses (sensation plus immersive mais potentiellement brouillon). Trop haut = son flou et réverbéré.">Gain</label>
+                        <input type="range" id="sub-refl-gain" min="0" max="100" value="20" step="1" data-default="20">
+                        <span id="sub-refl-gain-val">0.20</span>
+                        <button class="reset-btn" data-target="sub-refl-gain" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-refl-lpf" data-tooltip="Fréquence du filtre passe-bas sur la réflexion. Le sol absorbe les hautes fréquences : la réflexion est naturellement plus sourde que le son direct. Baisser = réflexion très étouffée (réaliste). Monter = réflexion plus brillante et présente (moins naturel mais plus audible).">LP Freq</label>
+                        <input type="range" id="sub-refl-lpf" min="200" max="5000" value="1500" step="50" data-default="1500">
+                        <span id="sub-refl-lpf-val">1500 Hz</span>
+                        <button class="reset-btn" data-target="sub-refl-lpf" title="Reset">↺</button>
+                    </div>
+                </div>
+                <!-- Master Limiter -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Limiteur brick-wall en sortie master. Empêche le signal de dépasser un niveau maximum pour protéger vos oreilles et éviter la distorsion numérique (clipping). Agit comme un mur : rien ne passe au-dessus du seuil. Ratio 20:1.">Limiter</div>
+                    <div class="dsp-param">
+                        <label for="sub-lim-threshold" data-tooltip="Niveau maximum autorisé en sortie (en dB). -3 dB (défaut) = marge de sécurité standard. Monter vers 0 dB = plus fort mais risque de distorsion. Baisser = protection plus agressive, volume max réduit. En festival réel, le limiteur protège les enceintes et le public.">Threshold</label>
+                        <input type="range" id="sub-lim-threshold" min="-20" max="0" value="-3" step="0.5" data-default="-3">
+                        <span id="sub-lim-threshold-val">-3 dB</span>
+                        <button class="reset-btn" data-target="sub-lim-threshold" title="Reset">↺</button>
+                    </div>
+                </div>
+            </div>
         </div>
     </div>
 

@@ -251,6 +251,20 @@ class Speaker {
         this.highShelf.gain.setTargetAtTime(db, this.ctx.currentTime, 0.04);
     }
 
+    /** Set ground reflection gain (0..1) */
+    setReflectionGain(value) {
+        this.reflection.gainNode.gain.setTargetAtTime(value, this.ctx.currentTime, 0.04);
+    }
+
+    /** Set ground reflection lowpass frequency */
+    setReflectionLpf(freq) {
+        // The lpf is between delay and gain in the reflection chain
+        // Access via the reflection's internal nodes — we need to expose it
+        if (this.reflection._lpf) {
+            this.reflection._lpf.frequency.setTargetAtTime(freq, this.ctx.currentTime, 0.04);
+        }
+    }
+
     /** The node to connect the bus output to. */
     get input() {
         return this.distanceGain;
@@ -336,7 +350,14 @@ export class SpeakerSystem {
         this.masterLimiter.attack.value = 0.001;
         this.masterLimiter.release.value = 0.05;
 
-        this.masterOutput.connect(this.masterLimiter);
+        // HRTF brightness compensation: high-shelf boost to counter HRTF dullness
+        this.hrtfShelf = ctx.createBiquadFilter();
+        this.hrtfShelf.type = 'highshelf';
+        this.hrtfShelf.frequency.value = 2500;
+        this.hrtfShelf.gain.value = 0; // off by default (equalpower mode)
+
+        this.masterOutput.connect(this.hrtfShelf);
+        this.hrtfShelf.connect(this.masterLimiter);
         this.masterLimiter.connect(ctx.destination);
 
         // Master analyser taps after limiter (what the listener actually hears)
@@ -379,6 +400,25 @@ export class SpeakerSystem {
         for (const speaker of this.speakers) {
             speaker.setDoppler(enabled);
         }
+    }
+
+    /**
+     * Switch panning model for all speakers.
+     * @param {'equalpower'|'HRTF'} model
+     */
+    setPanningModel(model) {
+        for (const speaker of this.speakers) {
+            speaker.panner.panningModel = model;
+            speaker.reflection.panner.panningModel = model;
+        }
+    }
+
+    /**
+     * Set HRTF high-shelf brightness compensation.
+     * @param {number} db — boost in dB (0 = no compensation)
+     */
+    setHrtfBrightness(db) {
+        this.hrtfShelf.gain.setTargetAtTime(db, this.ctx.currentTime, 0.05);
     }
 
     /**
@@ -431,6 +471,59 @@ export class SpeakerSystem {
                     speaker.setHighShelfGain(boostDb);
                 }
             }
+        }
+    }
+
+    /**
+     * Set a DSP parameter for the SUB bus.
+     * @param {string} param — parameter key from the DSP panel
+     * @param {number} value — raw slider value
+     * @param {object} deps — { crossover, effects } external node references
+     */
+    setSubDspParam(param, value, deps) {
+        const t = this.ctx.currentTime;
+        const subSpeakers = this.speakers.filter(s => s._isSub);
+
+        switch (param) {
+            case 'xover-freq':
+                if (deps.crossover) deps.crossover.setLowFreq(value);
+                break;
+            case 'comp-threshold':
+                this._effects.subComp.threshold.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-knee':
+                this._effects.subComp.knee.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-ratio':
+                this._effects.subComp.ratio.setTargetAtTime(value, t, 0.04);
+                break;
+            case 'comp-attack':
+                this._effects.subComp.attack.setTargetAtTime(value / 1000, t, 0.04);
+                break;
+            case 'comp-release':
+                this._effects.subComp.release.setTargetAtTime(value / 1000, t, 0.04);
+                break;
+            case 'sat-drive':
+                if (this._effects.subSat.setDrive) this._effects.subSat.setDrive(value);
+                break;
+            case 'sat-mix':
+                if (this._effects.subSat.setMix) this._effects.subSat.setMix(value);
+                break;
+            case 'dist-k':
+                for (const s of subSpeakers) s.setDistanceK(value / 1000);
+                break;
+            case 'air-abs':
+                for (const s of subSpeakers) s.setAirAbsCoeff(value);
+                break;
+            case 'refl-gain':
+                for (const s of subSpeakers) s.setReflectionGain(value / 100);
+                break;
+            case 'refl-lpf':
+                for (const s of subSpeakers) s.setReflectionLpf(value);
+                break;
+            case 'lim-threshold':
+                this.masterLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                break;
         }
     }
 
