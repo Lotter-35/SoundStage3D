@@ -387,6 +387,15 @@ export class SpeakerSystem {
         this.masterAnalyser.fftSize = 256;
         this.masterLimiter.connect(this.masterAnalyser);
 
+        // Pre-allocated buffers for level metering (avoid GC)
+        this._meterBufs = {
+            sub: new Float32Array(256),
+            mid: new Float32Array(256),
+            top: new Float32Array(256),
+            fill: new Float32Array(256),
+            master: new Float32Array(256),
+        };
+
         // Create speakers
         for (const def of SPEAKER_DEFS) {
             const speaker = new Speaker(ctx, def, this.masterOutput);
@@ -402,16 +411,46 @@ export class SpeakerSystem {
                 this.topLimiter.connect(speaker.input);
             }
         }
+
+        // Staggered update state: alternate which half of speakers update each frame
+        this._updateFrame = 0;
+        this._lastPos = { x: NaN, y: NaN, z: NaN };
+        // Debug stats
+        this._debugStats = { skippedFrames: 0, updatedSpeakers: 0, totalFrames: 0 };
     }
 
     /**
      * Update all speakers with current listener position.
+     * Uses dirty checking (skip if listener barely moved) and staggered updates
+     * (half the speakers per frame) to reduce main-thread overhead.
      * @param {{x:number,y:number,z:number}} listenerPos
      */
     update(listenerPos) {
-        for (const speaker of this.speakers) {
-            speaker.update(listenerPos);
+        this._debugStats.totalFrames++;
+
+        // Dirty check: skip entirely if listener hasn't moved enough
+        const dx = listenerPos.x - this._lastPos.x;
+        const dy = listenerPos.y - this._lastPos.y;
+        const dz = listenerPos.z - this._lastPos.z;
+        const moved2 = dx * dx + dy * dy + dz * dz;
+        if (moved2 < 0.0025) {
+            this._debugStats.skippedFrames++;
+            return;
         }
+
+        this._lastPos.x = listenerPos.x;
+        this._lastPos.y = listenerPos.y;
+        this._lastPos.z = listenerPos.z;
+
+        // Stagger: update even-indexed speakers on even frames, odd on odd
+        const parity = this._updateFrame & 1;
+        this._updateFrame++;
+        let count = 0;
+        for (let i = parity; i < this.speakers.length; i += 2) {
+            this.speakers[i].update(listenerPos);
+            count++;
+        }
+        this._debugStats.updatedSpeakers = count;
     }
 
     /**
@@ -687,18 +726,17 @@ export class SpeakerSystem {
      */
     getLevels() {
         return {
-            fill: peakLevel(this.fillAnalyser),
-            sub: peakLevel(this.subAnalyser),
-            mid: peakLevel(this.midAnalyser),
-            top: peakLevel(this.topAnalyser),
-            master: peakLevel(this.masterAnalyser),
+            fill: peakLevel(this.fillAnalyser, this._meterBufs.fill),
+            sub: peakLevel(this.subAnalyser, this._meterBufs.sub),
+            mid: peakLevel(this.midAnalyser, this._meterBufs.mid),
+            top: peakLevel(this.topAnalyser, this._meterBufs.top),
+            master: peakLevel(this.masterAnalyser, this._meterBufs.master),
         };
     }
 }
 
 /** Read peak amplitude from an AnalyserNode, returns 0..1 */
-function peakLevel(analyser) {
-    const buf = new Float32Array(analyser.fftSize);
+function peakLevel(analyser, buf) {
     analyser.getFloatTimeDomainData(buf);
     let peak = 0;
     for (let i = 0; i < buf.length; i++) {

@@ -460,6 +460,32 @@ body {
     opacity: 0.85;
 }
 
+/* ─── Debug Performance Panel ─── */
+#debug-panel {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.88);
+    border: 1px solid #555;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.65rem;
+    color: #ccc;
+    line-height: 1.6;
+    backdrop-filter: blur(6px);
+    pointer-events: none;
+    min-width: 340px;
+}
+#debug-panel.hidden { display: none; }
+#debug-content { white-space: pre; }
+.dbg-title { color: #4af; font-weight: bold; }
+.dbg-val { color: #4f4; }
+.dbg-warn { color: #fa3; }
+.dbg-bad { color: #f44; }
+
 .dsp-panel {
     background: rgba(0, 0, 0, 0.82);
     border: 1px solid #444;

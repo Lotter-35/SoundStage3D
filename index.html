@@ -45,6 +45,7 @@
             <button id="oscilloscope-btn" class="hud-btn">📈 Oscillo: OFF</button>
             <button id="play-btn" class="hud-btn">⏸ Pause</button>
             <button id="change-mp3-btn" class="hud-btn">📂 Changer MP3</button>
+            <button id="debug-btn" class="hud-btn">🐛 Debug</button>
         </div>
         <!-- Oscilloscope canvas -->
         <canvas id="oscilloscope" class="hidden" width="900" height="160"></canvas>
@@ -533,6 +534,11 @@
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Debug performance overlay -->
+    <div id="debug-panel" class="hidden">
+        <div id="debug-content"></div>
     </div>
 
     <div id="now-playing"></div>

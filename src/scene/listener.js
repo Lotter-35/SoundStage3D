@@ -48,6 +48,11 @@ export class Listener {
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
 
+        // Pre-allocated vectors to avoid GC pressure in per-frame methods
+        this._direction = new THREE.Vector3();
+        this._forward = new THREE.Vector3();
+        this._up = new THREE.Vector3();
+
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
     }
@@ -108,7 +113,8 @@ export class Listener {
     update(dt) {
         if (!this.controls.isLocked) return;
 
-        const direction = new THREE.Vector3();
+        const direction = this._direction;
+        direction.set(0, 0, 0);
 
         if (this.move.forward)  direction.z -= 1;
         if (this.move.backward) direction.z += 1;
@@ -170,10 +176,11 @@ export class Listener {
         }
 
         // Orientation: forward and up vectors from camera
-        const forward = new THREE.Vector3();
+        const forward = this._forward;
         this.camera.getWorldDirection(forward);
 
-        const up = new THREE.Vector3(0, 1, 0);
+        const up = this._up;
+        up.set(0, 1, 0);
         up.applyQuaternion(this.camera.quaternion);
 
         if (audioListener.forwardX) {

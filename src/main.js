@@ -15,11 +15,11 @@ import { Controls } from './ui/controls.js';
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -129,12 +129,18 @@ function oscStart() {
     }
     const analyser = speakerSystem._oscAnalyser;
     const sampleRate = speakerSystem.ctx.sampleRate;
+    const W = oscCanvas.width;
     // ~5 seconds of samples
     const totalSamples = Math.ceil(sampleRate * 5);
     oscBuffer = new Float32Array(totalSamples);
     oscWritePos = 0;
     oscRunning = true;
     const timeBuf = new Float32Array(analyser.fftSize);
+
+    // Pre-computed per-pixel min/max columns for O(W) drawing instead of O(totalSamples)
+    const colMin = new Float32Array(W);
+    const colMax = new Float32Array(W);
+    const samplesPerPx = totalSamples / W;
 
     function draw() {
         if (!oscRunning) return;
@@ -147,8 +153,6 @@ function oscStart() {
             oscWritePos++;
         }
 
-        // Draw
-        const W = oscCanvas.width;
         const H = oscCanvas.height;
         oscCtx.clearRect(0, 0, W, H);
 
@@ -169,30 +173,29 @@ function oscStart() {
         }
         oscCtx.fillText('now', W - 22, H - 4);
 
-        // Waveform
+        // Waveform — compute min/max per pixel column in a single pass
         const filled = Math.min(oscWritePos, totalSamples);
         if (filled < 2) return;
-        // We want to display the last `totalSamples` samples across W pixels
-        const samplesPerPx = totalSamples / W;
 
+        const readStart = oscWritePos >= totalSamples ? oscWritePos : 0;
+
+        // Single pass: compute min/max for each pixel column
+        for (let px = 0; px < W; px++) { colMin[px] = 1; colMax[px] = -1; }
+        for (let s = 0; s < totalSamples; s++) {
+            const idx = (readStart + s) % totalSamples;
+            if (idx >= filled && oscWritePos < totalSamples) continue;
+            const px = Math.min((s / samplesPerPx) | 0, W - 1);
+            const v = oscBuffer[idx];
+            if (v < colMin[px]) colMin[px] = v;
+            if (v > colMax[px]) colMax[px] = v;
+        }
+
+        // Draw center waveform line
         oscCtx.beginPath();
         oscCtx.strokeStyle = '#4af';
         oscCtx.lineWidth = 1.2;
-
-        const readStart = oscWritePos >= totalSamples ? oscWritePos : 0;
         for (let px = 0; px < W; px++) {
-            const sampleIdx = Math.floor(px * samplesPerPx);
-            // Compute min/max in this pixel's sample range for better visual
-            const rangeEnd = Math.min(Math.floor((px + 1) * samplesPerPx), totalSamples);
-            let mn = 1, mx = -1;
-            for (let s = sampleIdx; s < rangeEnd; s++) {
-                const idx = (readStart + s) % totalSamples;
-                if (idx < filled || oscWritePos >= totalSamples) {
-                    const v = oscBuffer[idx];
-                    if (v < mn) mn = v;
-                    if (v > mx) mx = v;
-                }
-            }
+            let mn = colMin[px], mx = colMax[px];
             if (mn > mx) { mn = 0; mx = 0; }
             const yMid = ((1 - ((mn + mx) / 2)) / 2) * H;
             if (px === 0) oscCtx.moveTo(px, yMid);
@@ -200,21 +203,12 @@ function oscStart() {
         }
         oscCtx.stroke();
 
-        // Draw an envelope (min/max) for thickness
+        // Draw envelope fill
         oscCtx.beginPath();
         oscCtx.fillStyle = 'rgba(68,170,255,0.15)';
         // Top envelope
         for (let px = 0; px < W; px++) {
-            const sampleIdx = Math.floor(px * samplesPerPx);
-            const rangeEnd = Math.min(Math.floor((px + 1) * samplesPerPx), totalSamples);
-            let mx = -1;
-            for (let s = sampleIdx; s < rangeEnd; s++) {
-                const idx = (readStart + s) % totalSamples;
-                if (idx < filled || oscWritePos >= totalSamples) {
-                    const v = oscBuffer[idx];
-                    if (v > mx) mx = v;
-                }
-            }
+            let mx = colMax[px];
             if (mx === -1) mx = 0;
             const y = ((1 - mx) / 2) * H;
             if (px === 0) oscCtx.moveTo(px, y);
@@ -222,16 +216,7 @@ function oscStart() {
         }
         // Bottom envelope (reverse)
         for (let px = W - 1; px >= 0; px--) {
-            const sampleIdx = Math.floor(px * samplesPerPx);
-            const rangeEnd = Math.min(Math.floor((px + 1) * samplesPerPx), totalSamples);
-            let mn = 1;
-            for (let s = sampleIdx; s < rangeEnd; s++) {
-                const idx = (readStart + s) % totalSamples;
-                if (idx < filled || oscWritePos >= totalSamples) {
-                    const v = oscBuffer[idx];
-                    if (v < mn) mn = v;
-                }
-            }
+            let mn = colMin[px];
             if (mn === 1) mn = 0;
             const y = ((1 - mn) / 2) * H;
             oscCtx.lineTo(px, y);
@@ -322,6 +307,115 @@ window.addEventListener('resize', () => {
 
 // ─── Render loop ─────────────────────────────────────────────────
 const clock = new THREE.Clock();
+let _meterAccum = 0;
+let _posAccum = 0;
+const METER_INTERVAL = 1 / 15;  // ~15 fps for meters
+const POS_INTERVAL = 1 / 10;    // ~10 fps for position text
+
+// ─── Debug performance panel ────────────────────────────────────
+const debugPanel = document.getElementById('debug-panel');
+const debugContent = document.getElementById('debug-content');
+const debugBtn = document.getElementById('debug-btn');
+let _debugVisible = false;
+debugBtn.addEventListener('click', () => {
+    _debugVisible = !_debugVisible;
+    debugPanel.classList.toggle('hidden', !_debugVisible);
+    debugBtn.classList.toggle('active', _debugVisible);
+    renderer.info.autoReset = !_debugVisible; // keep stats when debug is on
+});
+
+// FPS tracking
+let _debugAccum = 0;
+let _frameCount = 0;
+let _fps = 0;
+let _frameTimes = [];
+let _frameTimeAvg = 0;
+let _frameTimeMax = 0;
+const DEBUG_INTERVAL = 0.5; // refresh debug every 500ms
+
+function updateDebug(dt) {
+    _debugAccum += dt;
+    _frameCount++;
+    _frameTimes.push(dt * 1000);
+
+    if (_debugAccum < DEBUG_INTERVAL) return;
+
+    // Compute FPS stats
+    _fps = Math.round(_frameCount / _debugAccum);
+    _frameTimeAvg = _frameTimes.reduce((a, b) => a + b, 0) / _frameTimes.length;
+    _frameTimeMax = Math.max(..._frameTimes);
+    _debugAccum = 0;
+    _frameCount = 0;
+    _frameTimes = [];
+
+    // Renderer info (Three.js)
+    const ri = renderer.info;
+    const mem = ri.memory;
+    const ren = ri.render;
+
+    // Audio context info
+    let audioLines = '';
+    if (audioReady) {
+        const ctx = audioEngine.context;
+        const ss = speakerSystem._debugStats;
+        const skipPct = ss.totalFrames > 0 ? ((ss.skippedFrames / ss.totalFrames) * 100).toFixed(0) : '0';
+        audioLines =
+`<span class="dbg-title">── AUDIO ──────────────────────</span>
+  Context state    <span class="dbg-val">${ctx.state}</span>
+  Sample rate      <span class="dbg-val">${ctx.sampleRate} Hz</span>
+  Base latency     <span class="dbg-val">${(ctx.baseLatency * 1000).toFixed(1)} ms</span>
+  Output latency   <span class="dbg-val">${(ctx.outputLatency * 1000).toFixed(1)} ms</span>
+  Current time     <span class="dbg-val">${ctx.currentTime.toFixed(1)} s</span>
+<span class="dbg-title">── SPEAKERS ───────────────────</span>
+  Total speakers   <span class="dbg-val">${speakerSystem.speakers.length}</span>
+  Updated/frame    <span class="dbg-val">${ss.updatedSpeakers} / ${speakerSystem.speakers.length}</span>  (stagger)
+  Skipped frames   <span class="${skipPct > 50 ? 'dbg-val' : 'dbg-warn'}">${skipPct}%</span>  (dirty check)
+  Doppler          <span class="dbg-val">${speakerSystem.speakers[0]?._dopplerEnabled ? 'ON' : 'OFF'}</span>
+  Panning model    <span class="dbg-val">${speakerSystem.speakers[0]?.panner.panningModel}</span>
+  Oscillo          <span class="dbg-val">${oscRunning ? 'ON' : 'OFF'}</span>`;
+
+        // Reset frame counters
+        ss.skippedFrames = 0;
+        ss.totalFrames = 0;
+    }
+
+    // JS Memory (Chrome only)
+    let memLines = '';
+    if (performance.memory) {
+        const m = performance.memory;
+        memLines =
+`<span class="dbg-title">── JS MEMORY ──────────────────</span>
+  Heap used        <span class="dbg-val">${(m.usedJSHeapSize / 1048576).toFixed(1)} MB</span>
+  Heap total       <span class="dbg-val">${(m.totalJSHeapSize / 1048576).toFixed(1)} MB</span>
+  Heap limit       <span class="dbg-val">${(m.jsHeapSizeLimit / 1048576).toFixed(0)} MB</span>
+`;
+    }
+
+    // FPS color
+    const fpsClass = _fps >= 55 ? 'dbg-val' : _fps >= 30 ? 'dbg-warn' : 'dbg-bad';
+    const ftClass = _frameTimeAvg <= 18 ? 'dbg-val' : _frameTimeAvg <= 33 ? 'dbg-warn' : 'dbg-bad';
+    const ftMaxClass = _frameTimeMax <= 20 ? 'dbg-val' : _frameTimeMax <= 50 ? 'dbg-warn' : 'dbg-bad';
+
+    debugContent.innerHTML =
+`<span class="dbg-title">── FRAME ──────────────────────</span>
+  FPS              <span class="${fpsClass}">${_fps}</span>
+  Frame time avg   <span class="${ftClass}">${_frameTimeAvg.toFixed(1)} ms</span>
+  Frame time max   <span class="${ftMaxClass}">${_frameTimeMax.toFixed(1)} ms</span>
+  Pixel ratio      <span class="dbg-val">${renderer.getPixelRatio()}</span>
+  Resolution       <span class="dbg-val">${renderer.domElement.width}×${renderer.domElement.height}</span>
+<span class="dbg-title">── THREE.JS RENDER ────────────</span>
+  Draw calls       <span class="dbg-val">${ren.calls}</span>
+  Triangles        <span class="dbg-val">${ren.triangles.toLocaleString()}</span>
+  Points           <span class="dbg-val">${ren.points}</span>
+  Lines            <span class="dbg-val">${ren.lines}</span>
+<span class="dbg-title">── THREE.JS MEMORY ────────────</span>
+  Geometries       <span class="dbg-val">${mem.geometries}</span>
+  Textures         <span class="dbg-val">${mem.textures}</span>
+${audioLines}
+${memLines}`;
+
+    if (!ri.autoReset) ri.reset();
+}
 
 function animate() {
     requestAnimationFrame(animate);
@@ -342,16 +436,27 @@ function animate() {
         speakerSystem.update(listener.position);
     }
 
-    // Update HUD
-    controls.updatePosition(listener.position, listener.distanceToFOH);
+    // Update HUD (throttled)
+    _posAccum += dt;
+    if (_posAccum >= POS_INTERVAL) {
+        _posAccum = 0;
+        controls.updatePosition(listener.position, listener.distanceToFOH);
+    }
 
-    // Update level meters
+    // Update level meters (throttled)
     if (audioReady) {
-        controls.updateMeters(speakerSystem.getLevels());
+        _meterAccum += dt;
+        if (_meterAccum >= METER_INTERVAL) {
+            _meterAccum = 0;
+            controls.updateMeters(speakerSystem.getLevels());
+        }
     }
 
     // Render
     renderer.render(scene, camera);
+
+    // Debug overlay (throttled internally)
+    if (_debugVisible) updateDebug(dt);
 }
 
 animate();

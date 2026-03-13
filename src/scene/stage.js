@@ -138,8 +138,8 @@ export function createStage(scene) {
     const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
     dirLight.position.set(30, 60, 40);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 1024;
-    dirLight.shadow.mapSize.height = 1024;
+    dirLight.shadow.mapSize.width = 512;
+    dirLight.shadow.mapSize.height = 512;
     dirLight.shadow.camera.near = 0.5;
     dirLight.shadow.camera.far = 150;
     dirLight.shadow.camera.left = -60;
