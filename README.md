@@ -6,7 +6,7 @@
 
 ---
 
-### ✨ **[🚀 ACCÉDER À LA DÉMONSTRATION LIVE 🚀](https://Lotter-35.github.io/SoundStage3D/)** ✨
+<h2 align="center">✨ <a href="https://Lotter-35.github.io/SoundStage3D/">🚀 ACCÉDER À LA DÉMONSTRATION LIVE 🚀</a> ✨</h2>
 
 *(Note : L'expérience est optimisée pour les ordinateurs de bureau. Pour une immersion maximale, l'utilisation d'un casque audio de qualité avec une bonne restitution des basses est fortement recommandée.)*
 
