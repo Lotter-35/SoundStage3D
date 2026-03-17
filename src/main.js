@@ -350,7 +350,7 @@ let _frameTimeAvg = 0;
 let _frameTimeMax = 0;
 const DEBUG_INTERVAL = 0.5; // refresh debug every 500ms
 
-function updateDebug(dt) {
+function updateFpsCounter(dt) {
     _debugAccum += dt;
     _frameCount++;
     _frameTimes.push(dt * 1000);
@@ -361,9 +361,17 @@ function updateDebug(dt) {
     _fps = Math.round(_frameCount / _debugAccum);
     _frameTimeAvg = _frameTimes.reduce((a, b) => a + b, 0) / _frameTimes.length;
     _frameTimeMax = Math.max(..._frameTimes);
+
+    // Always update the small FPS counter
+    const fpsEl = document.getElementById('fps-counter');
+    if (fpsEl) fpsEl.textContent = _fps;
+
     _debugAccum = 0;
     _frameCount = 0;
     _frameTimes = [];
+}
+
+function updateDebug(dt) {
 
     // Renderer info (Three.js)
     const ri = renderer.info;
@@ -479,6 +487,7 @@ function animate() {
     renderer.render(scene, camera);
 
     // Debug overlay (throttled internally)
+    updateFpsCounter(dt);
     if (_debugVisible) updateDebug(dt);
 }
 

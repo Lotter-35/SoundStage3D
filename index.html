@@ -166,7 +166,7 @@
                     <div class="dsp-section-title" data-tooltip="Volume du bus MID après compression et saturation. Contrôle le niveau global envoyé aux 2 enceintes medium (L/R). Agit aussi sur le feed des front-fills.">Volume Bus</div>
                     <div class="dsp-param">
                         <label for="mid-bus-volume" data-tooltip="Niveau du bus MID. 0% = muet. 100% = gain unitaire. Au-dessus = boost.">Volume</label>
-                        <input type="range" id="mid-bus-volume" min="0" max="150" value="100" step="1" data-default="100">
+                        <input type="range" id="mid-bus-volume" min="0" max="200" value="100" step="1" data-default="100">
                         <span id="mid-bus-volume-val">100%</span>
                         <button class="reset-btn" data-target="mid-bus-volume" title="Reset">↺</button>
                     </div>
@@ -282,7 +282,7 @@
                     <div class="dsp-section-title" data-tooltip="Volume général du bus TOP avant envoi aux speakers. Permet de doser le niveau des aigus par rapport aux MID et SUB.">Volume Bus</div>
                     <div class="dsp-param">
                         <label for="top-bus-volume" data-tooltip="Volume du bus TOP en pourcentage. 100% = gain unitaire. Baisser pour réduire les aigus dans le mix global. Monter pour plus de brillance et de présence.">Volume</label>
-                        <input type="range" id="top-bus-volume" min="0" max="150" value="100" step="1" data-default="100">
+                        <input type="range" id="top-bus-volume" min="0" max="200" value="100" step="1" data-default="100">
                         <span id="top-bus-volume-val">100%</span>
                         <button class="reset-btn" data-target="top-bus-volume" title="Reset">↺</button>
                     </div>
@@ -347,7 +347,7 @@
                     <div class="dsp-section-title" data-tooltip="Volume général du bus FILL. Les front-fills couvrent les premières rangées du public, proches de la scène. Typiquement plus bas que les autres bus.">Volume Bus</div>
                     <div class="dsp-param">
                         <label for="fill-bus-volume" data-tooltip="Volume du bus FILL en pourcentage. Défaut 20% — les fills sont des renforts de proximité, pas le son principal. Monter pour plus de présence en avant-scène.">Volume</label>
-                        <input type="range" id="fill-bus-volume" min="0" max="150" value="20" step="1" data-default="20">
+                        <input type="range" id="fill-bus-volume" min="0" max="200" value="20" step="1" data-default="20">
                         <span id="fill-bus-volume-val">20%</span>
                         <button class="reset-btn" data-target="fill-bus-volume" title="Reset">↺</button>
                     </div>
@@ -457,12 +457,34 @@
                         <button class="reset-btn" data-target="sub-sat-mix" title="Reset">↺</button>
                     </div>
                 </div>
+                <!-- Proximity Saturation -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Saturation de proximité automatique. Quand vous approchez un subwoofer, une distorsion harmonique s'ajoute progressivement au signal, simulant la vibration physique ressentie à très courte distance d'un mur de basses.">Prox. Saturation</div>
+                    <div class="dsp-param">
+                        <label for="sub-prox-far" data-tooltip="Distance à laquelle l'effet de proximité commence à apparaître. Au-delà de cette distance, aucun effet. En deçà, la saturation monte progressivement en courbe S.">Dist. max</label>
+                        <input type="range" id="sub-prox-far" min="1" max="10" value="4" step="0.5" data-default="4">
+                        <span id="sub-prox-far-val">4.0 m</span>
+                        <button class="reset-btn" data-target="sub-prox-far" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-prox-near" data-tooltip="Distance à laquelle l'effet atteint son maximum (100%). Plus proche que cette distance, la saturation reste au max. La transition entre dist. max et dist. min suit une courbe en S (smoothstep).">Dist. min</label>
+                        <input type="range" id="sub-prox-near" min="0.5" max="5" value="2" step="0.5" data-default="2">
+                        <span id="sub-prox-near-val">2.0 m</span>
+                        <button class="reset-btn" data-target="sub-prox-near" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="sub-prox-drive" data-tooltip="Intensité maximale de la distorsion de proximité quand vous êtes à dist. min ou plus près. 0% = effet désactivé. 100% = saturation lourde. Le drive réel est modulé automatiquement par la distance.">Drive max</label>
+                        <input type="range" id="sub-prox-drive" min="0" max="100" value="75" step="1" data-default="75">
+                        <span id="sub-prox-drive-val">75%</span>
+                        <button class="reset-btn" data-target="sub-prox-drive" title="Reset">↺</button>
+                    </div>
+                </div>
                 <!-- Bus Volume -->
                 <div class="dsp-section">
                     <div class="dsp-section-title" data-tooltip="Volume du bus SUB après le compresseur et la saturation. Contrôle le niveau global envoyé à tous les subwoofers. 100% = gain unitaire. Au-dessus de 100% = boost (attention au clipping). Ce slider agit avant la spatialisation et le limiter.">Volume Bus</div>
                     <div class="dsp-param">
                         <label for="sub-bus-volume" data-tooltip="Niveau de volume du bus SUB. 0% = muet. 100% = gain unitaire (défaut). 150% = boost de +3.5 dB. Le signal passe ensuite dans chaque speaker individuel avec son atténuation de distance et sa spatialisation.">Volume</label>
-                        <input type="range" id="sub-bus-volume" min="0" max="150" value="100" step="1" data-default="100">
+                        <input type="range" id="sub-bus-volume" min="0" max="200" value="100" step="1" data-default="100">
                         <span id="sub-bus-volume-val">100%</span>
                         <button class="reset-btn" data-target="sub-bus-volume" title="Reset">↺</button>
                     </div>
@@ -564,6 +586,7 @@
     </div>
 
     <div id="now-playing"></div>
+    <div id="fps-counter"></div>
 
     <canvas id="canvas"></canvas>
 

@@ -460,6 +460,18 @@ body {
     opacity: 0.85;
 }
 
+#fps-counter {
+    position: fixed;
+    bottom: 2px;
+    left: 4px;
+    color: #4f4;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.68rem;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0.85;
+}
+
 /* ─── Debug Performance Panel ─── */
 #debug-panel {
     position: fixed;

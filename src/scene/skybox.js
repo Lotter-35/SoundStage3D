@@ -78,7 +78,7 @@ export async function createSkybox(scene) {
 
                 scene.add(skyMesh);
                 scene.background = null;
-                console.log('[Skybox] GLB texture extraite et skybox créée ✓');
+                // Skybox GLB loaded
                 resolve(skyMesh);
             },
             undefined,

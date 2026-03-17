@@ -17,9 +17,14 @@
 import { createGroundReflection } from './effects.js';
 
 const SPEED_OF_SOUND = 343; // m/s
-const DEFAULT_DISTANCE_K = 0.06; // attenuation coefficient: gain = 1/(1 + k*d)
-const DEFAULT_AIR_ABS = 40;  // Hz/m — air absorption rate for high-freq rolloff
-const MAX_DELAY = 1.0;      // seconds (covers ~343 m)
+const DEFAULT_DISTANCE_K = 0.06;
+const DEFAULT_AIR_ABS = 40;
+const MAX_DELAY = 1.0;
+
+// Proximity saturation thresholds (sub only) — mutable via UI
+let PROX_FAR  = 4.0;  // metres — effect starts fading in
+let PROX_NEAR = 2.0;  // metres — effect at 100%
+let PROX_DRIVE_MAX = 75; // max drive (0-100) at closest distance
 
 // Generate 7 sub definitions matching the visual sub boxes in stage.js
 const SUB_DEFS = [];
@@ -172,7 +177,28 @@ class Speaker {
         this.propagationDelay.connect(this.airAbsorption1);
         this.airAbsorption1.connect(this.airAbsorption2);
         this.airAbsorption2.connect(this.highShelf);
-        this.highShelf.connect(this.panner);
+
+        // Sub speakers: proximity saturation between high-shelf and panner
+        if (this._isSub) {
+            this._proxShaper = ctx.createWaveShaper();
+            this._proxShaper.oversample = '2x';
+            this._proxWet = ctx.createGain();
+            this._proxDry = ctx.createGain();
+            this._proxOut = ctx.createGain();
+            this._proxWet.gain.value = 0;
+            this._proxDry.gain.value = 1;
+            this._proxOut.gain.value = 1;
+            this._applyProxCurve(0); // linear (no distortion)
+
+            this.highShelf.connect(this._proxShaper);
+            this._proxShaper.connect(this._proxWet);
+            this._proxWet.connect(this._proxOut);
+            this.highShelf.connect(this._proxDry);
+            this._proxDry.connect(this._proxOut);
+            this._proxOut.connect(this.panner);
+        } else {
+            this.highShelf.connect(this.panner);
+        }
 
         this.panner.connect(output);
 
@@ -191,6 +217,7 @@ class Speaker {
         const dy = listenerPos.y - this.position.y;
         const dz = listenerPos.z - this.position.z;
         const distance = Math.sqrt(dx * dx + dy * dy + dz * dz);
+        this._lastDistance = distance;
         const t = this.ctx.currentTime;
         // Subs use longer smoothing to avoid zipper noise on 7 simultaneous sources
         const smooth = this._isSub ? 0.08 : 0.04;
@@ -213,6 +240,27 @@ class Speaker {
         const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
         this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
         this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
+
+        // Sub proximity saturation: ramp drive + mix from 3m to 1m (S-curve)
+        if (this._isSub) {
+            const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
+            const prox = t0 * t0 * (3 - 2 * t0); // smoothstep S-curve
+            this._applyProxCurve(prox * PROX_DRIVE_MAX);
+            this._proxWet.gain.setTargetAtTime(prox, t, smooth);
+            this._proxDry.gain.setTargetAtTime(1 - prox, t, smooth);
+        }
+    }
+
+    /** Re-apply proximity saturation with current stored distance (for live slider updates). */
+    _updateProxSat() {
+        if (!this._isSub || this._lastDistance == null) return;
+        const distance = this._lastDistance;
+        const t = this.ctx.currentTime;
+        const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
+        const prox = t0 * t0 * (3 - 2 * t0);
+        this._applyProxCurve(prox * PROX_DRIVE_MAX);
+        this._proxWet.gain.setTargetAtTime(prox, t, 0.04);
+        this._proxDry.gain.setTargetAtTime(1 - prox, t, 0.04);
     }
 
     setDoppler(enabled) {
@@ -244,6 +292,18 @@ class Speaker {
      */
     setHighShelfGain(db) {
         this.highShelf.gain.setTargetAtTime(db, this.ctx.currentTime, 0.04);
+    }
+
+    /** Build proximity saturation wave-shaper curve (same algo as bus saturation). */
+    _applyProxCurve(drive) {
+        const samples = 4096;
+        const curve = new Float32Array(samples);
+        const amount = Math.max(0.01, drive / 50);
+        for (let i = 0; i < samples; i++) {
+            const x = (i * 2) / samples - 1;
+            curve[i] = (1 + amount) * x / (1 + amount * Math.abs(x));
+        }
+        this._proxShaper.curve = curve;
     }
 
     /** Set ground reflection gain (0..1) */
@@ -613,6 +673,18 @@ export class SpeakerSystem {
                 break;
             case 'refl-lpf':
                 for (const s of subSpeakers) s.setReflectionLpf(value);
+                break;
+            case 'prox-far':
+                PROX_FAR = parseFloat(value);
+                for (const s of subSpeakers) s._updateProxSat();
+                break;
+            case 'prox-near':
+                PROX_NEAR = parseFloat(value);
+                for (const s of subSpeakers) s._updateProxSat();
+                break;
+            case 'prox-drive':
+                PROX_DRIVE_MAX = parseFloat(value);
+                for (const s of subSpeakers) s._updateProxSat();
                 break;
             case 'lim-threshold':
                 this.masterLimiter.threshold.setTargetAtTime(value, t, 0.04);
