@@ -15,16 +15,17 @@
  */
 
 import { createGroundReflection } from './effects.js';
+import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 
 const SPEED_OF_SOUND = 343; // m/s
-const DEFAULT_DISTANCE_K = 0.06;
-const DEFAULT_AIR_ABS = 40;
+const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.sub['dist-k'] ?? 60) / 1000;
+const DEFAULT_AIR_ABS = DSP_DEFAULTS.master['air-abs'] ?? 40;
 const MAX_DELAY = 1.0;
 
 // Proximity saturation thresholds (sub only) — mutable via UI
-let PROX_FAR  = 4.0;  // metres — effect starts fading in
-let PROX_NEAR = 2.0;  // metres — effect at 100%
-let PROX_DRIVE_MAX = 75; // max drive (0-100) at closest distance
+let PROX_FAR  = DSP_DEFAULTS.sub['prox-far'] ?? 4.0;
+let PROX_NEAR = DSP_DEFAULTS.sub['prox-near'] ?? 2.0;
+let PROX_DRIVE_MAX = DSP_DEFAULTS.sub['prox-drive'] ?? 75;
 
 // Generate 7 sub definitions matching the visual sub boxes in stage.js
 const SUB_DEFS = [];

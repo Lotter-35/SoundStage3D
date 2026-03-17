@@ -14,6 +14,7 @@ import { SpeakerSystem } from './audio/speakers.js';
 import { createSaturation, createCompressor } from './audio/effects.js';
 
 import { Controls } from './ui/controls.js';
+import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
@@ -61,14 +62,44 @@ controls.onEnter(async (file) => {
     }
 
     // Build DSP graph
-    crossover = new Crossover(ctx);
+    crossover = new Crossover(ctx, {
+        lowFreq: DSP_DEFAULTS.sub['xover-freq'],
+        highFreq: DSP_DEFAULTS.mid['xover-high'] ?? DSP_DEFAULTS.top['xover-freq'],
+    });
 
-    const subComp = createCompressor(ctx);
-    const subSat = createSaturation(ctx);
-    const midComp = createCompressor(ctx);
-    const midSat = createSaturation(ctx);
-    const topComp = createCompressor(ctx);
-    const topSat = createSaturation(ctx);
+    const subComp = createCompressor(ctx, {
+        threshold: DSP_DEFAULTS.sub['comp-threshold'],
+        knee:      DSP_DEFAULTS.sub['comp-knee'],
+        ratio:     DSP_DEFAULTS.sub['comp-ratio'],
+        attack:    DSP_DEFAULTS.sub['comp-attack'],
+        release:   DSP_DEFAULTS.sub['comp-release'],
+    });
+    const subSat = createSaturation(ctx, {
+        drive: DSP_DEFAULTS.sub['sat-drive'],
+        mix:   DSP_DEFAULTS.sub['sat-mix'],
+    });
+    const midComp = createCompressor(ctx, {
+        threshold: DSP_DEFAULTS.mid['comp-threshold'],
+        knee:      DSP_DEFAULTS.mid['comp-knee'],
+        ratio:     DSP_DEFAULTS.mid['comp-ratio'],
+        attack:    DSP_DEFAULTS.mid['comp-attack'],
+        release:   DSP_DEFAULTS.mid['comp-release'],
+    });
+    const midSat = createSaturation(ctx, {
+        drive: DSP_DEFAULTS.mid['sat-drive'],
+        mix:   DSP_DEFAULTS.mid['sat-mix'],
+    });
+    const topComp = createCompressor(ctx, {
+        threshold: DSP_DEFAULTS.top['comp-threshold'],
+        knee:      DSP_DEFAULTS.top['comp-knee'],
+        ratio:     DSP_DEFAULTS.top['comp-ratio'],
+        attack:    DSP_DEFAULTS.top['comp-attack'],
+        release:   DSP_DEFAULTS.top['comp-release'],
+    });
+    const topSat = createSaturation(ctx, {
+        drive: DSP_DEFAULTS.top['sat-drive'],
+        mix:   DSP_DEFAULTS.top['sat-mix'],
+    });
     effects = { subComp, subSat, midComp, midSat, topComp, topSat };
 
     speakerSystem = new SpeakerSystem(
@@ -81,8 +112,11 @@ controls.onEnter(async (file) => {
 
     audioReady = true;
 
-    // Apply initial slider values to audio engine
-    speakerSystem.setBusVolume('fill', Number(document.getElementById('fill-bus-volume').value) / 100);
+    // Apply initial bus volumes from config
+    speakerSystem.setBusVolume('sub', DSP_DEFAULTS.sub['bus-volume'] / 100);
+    speakerSystem.setBusVolume('mid', DSP_DEFAULTS.mid['bus-volume'] / 100);
+    speakerSystem.setBusVolume('top', DSP_DEFAULTS.top['bus-volume'] / 100);
+    speakerSystem.setBusVolume('fill', DSP_DEFAULTS.fill['bus-volume'] / 100);
 
     if (file) {
         // Start playback — source connects to crossover input

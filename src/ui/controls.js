@@ -1,6 +1,7 @@
 /**
  * Controls — UI overlay: file input, playback buttons, position display.
  */
+import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 
 export class Controls {
     constructor() {
@@ -343,11 +344,18 @@ export class Controls {
      */
     _initDspSliders(bus, params) {
         const cbKey = `_on${bus.charAt(0).toUpperCase() + bus.slice(1)}Dsp`;
+        const defaults = DSP_DEFAULTS[bus] || {};
         for (const [param, opts] of Object.entries(params)) {
             const id = `${bus}-${param}`;
             const slider = document.getElementById(id);
             const valEl = document.getElementById(`${id}-val`);
             if (!slider || !valEl) continue;
+
+            // Apply default from config (single source of truth)
+            if (defaults[param] !== undefined) {
+                slider.value = defaults[param];
+                slider.dataset.default = defaults[param];
+            }
 
             const formatVal = (v) => {
                 if (opts.format) return opts.format(Number(v));

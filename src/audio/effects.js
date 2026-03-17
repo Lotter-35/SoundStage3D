@@ -9,7 +9,7 @@
  * Build a soft-clip WaveShaperNode.
  * Curve: f(x) = 1.5x - 0.5x^3  (smooth Chebyshev polynomial)
  */
-export function createSaturation(ctx) {
+export function createSaturation(ctx, defaults = {}) {
     // Wet/dry structure: input → shaper (wet) + dry bypass → output
     const input = ctx.createGain();
     input.gain.value = 1;
@@ -17,17 +17,20 @@ export function createSaturation(ctx) {
     const shaper = ctx.createWaveShaper();
     shaper.oversample = '2x';
 
+    const drive = defaults.drive ?? 50;
+    const mix = defaults.mix ?? 100;
+
     const dry = ctx.createGain();
-    dry.gain.value = 0; // 100% wet by default
+    dry.gain.value = 1 - mix / 100;
 
     const wet = ctx.createGain();
-    wet.gain.value = 1;
+    wet.gain.value = mix / 100;
 
     const output = ctx.createGain();
     output.gain.value = 1;
 
-    // Generate default curve (drive=50%)
-    _applySatCurve(shaper, 50);
+    // Generate default curve
+    _applySatCurve(shaper, drive);
 
     input.connect(shaper);
     shaper.connect(wet);
@@ -82,14 +85,16 @@ function _applySatCurve(shaper, drive) {
 
 /**
  * Build a DynamicsCompressorNode for PA limiting.
+ * @param {AudioContext} ctx
+ * @param {object} [defaults] — optional { threshold, knee, ratio, attack, release }
  */
-export function createCompressor(ctx) {
+export function createCompressor(ctx, defaults = {}) {
     const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -24;
-    comp.knee.value = 30;
-    comp.ratio.value = 4;
-    comp.attack.value = 0.003;
-    comp.release.value = 0.25;
+    comp.threshold.value = defaults.threshold ?? -24;
+    comp.knee.value      = defaults.knee ?? 30;
+    comp.ratio.value     = defaults.ratio ?? 4;
+    comp.attack.value    = (defaults.attack ?? 3) / 1000;
+    comp.release.value   = (defaults.release ?? 250) / 1000;
     return comp;
 }
 

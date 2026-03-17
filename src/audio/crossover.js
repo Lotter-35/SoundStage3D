@@ -7,15 +7,18 @@
  * LR4 = two cascaded 2nd-order Butterworth filters (12dB each → 24dB total).
  */
 
-const LOW_FREQ = 90;
-const HIGH_FREQ = 2000;
+const DEFAULT_LOW_FREQ = 90;
+const DEFAULT_HIGH_FREQ = 2000;
 
 export class Crossover {
     /**
      * @param {AudioContext} ctx
+     * @param {object} [defaults] — { lowFreq, highFreq }
      */
-    constructor(ctx) {
+    constructor(ctx, defaults = {}) {
         this.ctx = ctx;
+        const LOW_FREQ = defaults.lowFreq ?? DEFAULT_LOW_FREQ;
+        const HIGH_FREQ = defaults.highFreq ?? DEFAULT_HIGH_FREQ;
 
         // --- Input gain (connection point) ---
         this.input = ctx.createGain();
