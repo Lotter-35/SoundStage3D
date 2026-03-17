@@ -6,6 +6,7 @@ import * as THREE from 'three';
 import { createStage } from './scene/stage.js';
 import { Listener } from './scene/listener.js';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
+import { createVegetation, updateVegetation } from './scene/vegetation.js';
 
 import { AudioEngine } from './audio/audioEngine.js';
 import { Crossover } from './audio/crossover.js';
@@ -34,6 +35,9 @@ scene.background = new THREE.Color(0x87ceeb);
 let skybox = null;
 skybox = await createSkybox(scene);
 
+// ─── Vegetation (instanced grass) ────────────────────────────────
+await createVegetation(scene);
+
 // ─── Listener (FPS controls) ────────────────────────────────────
 const listener = new Listener(camera, document.body);
 
@@ -51,8 +55,10 @@ controls.onEnter(async (file) => {
     // Init audio context (needs user gesture)
     const ctx = audioEngine.init();
 
-    // Load file
-    await audioEngine.loadFile(file);
+    if (file) {
+        // Load file
+        await audioEngine.loadFile(file);
+    }
 
     // Build DSP graph
     crossover = new Crossover(ctx);
@@ -78,12 +84,12 @@ controls.onEnter(async (file) => {
     // Apply initial slider values to audio engine
     speakerSystem.setBusVolume('fill', Number(document.getElementById('fill-bus-volume').value) / 100);
 
-    // Start playback — source connects to crossover input
-    audioEngine.play(crossover.input);
-    controls.setPlayState(true);
-
-    // Show track name
-    document.getElementById('now-playing').textContent = file.name;
+    if (file) {
+        // Start playback — source connects to crossover input
+        audioEngine.play(crossover.input);
+        controls.setPlayState(true);
+        document.getElementById('now-playing').textContent = file.name;
+    }
 
     // Switch to HUD and lock pointer
     controls.showHUD();
@@ -465,6 +471,9 @@ function animate() {
 
     // Sync skybox with camera position
     updateSkybox(skybox, camera);
+
+    // Show/hide grass chunks near camera
+    updateVegetation(camera);
 
     // Render
     renderer.render(scene, camera);

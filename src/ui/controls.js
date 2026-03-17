@@ -311,8 +311,8 @@ export class Controls {
         });
 
         this.enterBtn.addEventListener('click', () => {
-            if (this._onEnter && this._file) {
-                this._onEnter(this._file);
+            if (this._onEnter) {
+                this._onEnter(this._file || null);
             }
         });
 
