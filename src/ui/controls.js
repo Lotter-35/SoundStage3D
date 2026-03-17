@@ -208,8 +208,11 @@ export class Controls {
         // ─── DSP Master panel callbacks ────────────────────────────────
         this._onMasterDsp = null;
         this._initDspSliders('master', {
-            'air-abs':       { suffix: ' Hz/m' },
-            'treble':        { suffix: ' dB' },
+            'air-abs':          { suffix: ' Hz/m' },
+            'treble':           { suffix: ' dB' },
+            'reverb':           { suffix: '%' },
+            'local-volume':     { suffix: '%' },
+            'mouse-sensitivity':{ format: v => (v / 100).toFixed(1) + '×' },
         });
 
         // ─── DSP Tooltip (position: fixed, to escape overflow clips) ───
@@ -283,6 +286,21 @@ export class Controls {
                 this._resetSlider(slider);
             });
         });
+
+        // ─── Persistence localStorage pour les réglages locaux ─────────
+        const PERSIST_KEYS = ['master-mouse-sensitivity'];
+        for (const id of PERSIST_KEYS) {
+            const slider = document.getElementById(id);
+            if (!slider) continue;
+            const saved = localStorage.getItem('soundstage3d:' + id);
+            if (saved !== null) {
+                slider.value = saved;
+                slider.dispatchEvent(new Event('input'));
+            }
+            slider.addEventListener('input', () => {
+                localStorage.setItem('soundstage3d:' + id, slider.value);
+            });
+        }
 
         this.fileInput.addEventListener('change', (e) => {
             const file = e.target.files[0];

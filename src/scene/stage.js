@@ -15,10 +15,16 @@ const BUS_VISUAL = {
 };
 
 export function createStage(scene) {
-    // --- Ground plane ---
+    // --- Ground plane with grass texture ---
     const groundGeo = new THREE.PlaneGeometry(400, 400);
+    const loader = new THREE.TextureLoader();
+    const grassTex = loader.load('src/assets/textures/grass.jpg');
+    grassTex.wrapS = THREE.RepeatWrapping;
+    grassTex.wrapT = THREE.RepeatWrapping;
+    grassTex.repeat.set(80, 80);
+    grassTex.colorSpace = THREE.SRGBColorSpace;
     const groundMat = new THREE.MeshStandardMaterial({
-        color: 0x4a7a2a,
+        map: grassTex,
         roughness: 0.95,
         metalness: 0,
     });

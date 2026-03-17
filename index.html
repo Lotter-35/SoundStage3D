@@ -531,6 +531,28 @@
                         <span id="master-treble-val">0 dB</span>
                         <button class="reset-btn" data-target="master-treble" title="Reset">↺</button>
                     </div>
+                    <div class="dsp-param">
+                        <label for="master-reverb" data-tooltip="Réverbération globale. Simule l'écho et la résonance d'un espace. 0% = son sec (aucune réverb). 100% = réverbération maximale. Ajuste le niveau du signal réverbéré mélangé au son direct.">Réverb</label>
+                        <input type="range" id="master-reverb" min="0" max="100" value="0" step="1" data-default="0">
+                        <span id="master-reverb-val">0%</span>
+                        <button class="reset-btn" data-target="master-reverb" title="Reset">↺</button>
+                    </div>
+                </div>
+                <!-- Volume local — en bout de chaîne, non synchronisé en multi -->
+                <div class="dsp-section">
+                    <div class="dsp-section-title" data-tooltip="Volume local uniquement. Ce curseur agit en toute fin de chaîne audio et n'est PAS synchronisé en mode multi-utilisateur. Chaque utilisateur régle son propre niveau d'écoute sans affecter les autres.">Volume local 🔒</div>
+                    <div class="dsp-param">
+                        <label for="master-local-volume" data-tooltip="Niveau d'écoute personnel. N'affecte que votre sortie audio locale, indépendamment des autres participants en mode multi.">Volume</label>
+                        <input type="range" id="master-local-volume" min="0" max="1000" value="100" step="1" data-default="100">
+                        <span id="master-local-volume-val">100%</span>
+                        <button class="reset-btn" data-target="master-local-volume" title="Reset">↺</button>
+                    </div>
+                    <div class="dsp-param">
+                        <label for="master-mouse-sensitivity" data-tooltip="Sensibilité de la souris pour la caméra. 1.0× = normal. Non synchronisé en multi.">Souris</label>
+                        <input type="range" id="master-mouse-sensitivity" min="10" max="300" value="100" step="5" data-default="100">
+                        <span id="master-mouse-sensitivity-val">1.0×</span>
+                        <button class="reset-btn" data-target="master-mouse-sensitivity" title="Reset">↺</button>
+                    </div>
                 </div>
             </div>
         </div>

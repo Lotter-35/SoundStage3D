@@ -7,12 +7,11 @@
  */
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
+import { Character } from './character.js';
 
-const MOVE_SPEED = 12; // m/s
-const VERTICAL_SPEED = 8; // m/s
-const GRAVITY = 20; // m/s²
-const JUMP_VELOCITY = 8; // m/s
-const PLAYER_HEIGHT = 1.7; // eye height in m
+const MOVE_SPEED    = 7;   // m/s
+const VERTICAL_SPEED = 8;  // m/s
+const PLAYER_HEIGHT  = 1.7; // eye height in m
 
 const BOUNDS = {
     minX: -100, maxX: 100,
@@ -31,6 +30,7 @@ export class Listener {
     constructor(camera, domElement) {
         this.camera = camera;
         this.controls = new PointerLockControls(camera, domElement);
+        this.controls.pointerSpeed = 1.0; // default sensitivity
 
         // Start at FOH position
         camera.position.set(FOH.x, FOH.y, FOH.z);
@@ -41,9 +41,8 @@ export class Listener {
 
         // Character mode (F to toggle)
         this.characterMode = false;
-        this._verticalVelocity = 0;
-        this._onGround = true;
         this._onModeChange = null;
+        this._character = new Character(camera);
 
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
@@ -55,6 +54,11 @@ export class Listener {
 
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
+    }
+
+    /** Set mouse look sensitivity. @param {number} value — 0.1 to 3.0 */
+    setSensitivity(value) {
+        this.controls.pointerSpeed = value;
     }
 
     lock() {
@@ -81,12 +85,7 @@ export class Listener {
             case 'ShiftLeft': case 'ShiftRight':          this.move.down = true; break;
             case 'KeyF':
                 this.characterMode = !this.characterMode;
-                if (this.characterMode) {
-                    // Snap to ground level
-                    this.camera.position.y = PLAYER_HEIGHT;
-                    this._verticalVelocity = 0;
-                    this._onGround = true;
-                }
+                if (this.characterMode) this._character.snapToGround();
                 if (this._onModeChange) this._onModeChange(this.characterMode);
                 break;
         }
@@ -128,22 +127,8 @@ export class Listener {
         this.controls.moveForward(-direction.z * MOVE_SPEED * dt);
 
         if (this.characterMode) {
-            // Jump: apply upward velocity if on ground
-            if (this.move.up && this._onGround) {
-                this._verticalVelocity = JUMP_VELOCITY;
-                this._onGround = false;
-            }
-
-            // Apply gravity
-            this._verticalVelocity -= GRAVITY * dt;
-            this.camera.position.y += this._verticalVelocity * dt;
-
-            // Ground collision
-            if (this.camera.position.y <= PLAYER_HEIGHT) {
-                this.camera.position.y = PLAYER_HEIGHT;
-                this._verticalVelocity = 0;
-                this._onGround = true;
-            }
+            const isMoving = this.move.forward || this.move.backward || this.move.left || this.move.right;
+            this._character.update(dt, this.move.up, isMoving);
         } else {
             // Free-fly vertical movement (world Y)
             if (this.move.up)   this.camera.position.y += VERTICAL_SPEED * dt;

@@ -1,4 +1,5 @@
 .DS_Store
 node_modules/
 musics/
+*.zip
 .plan-festivalSoundSystemSimulator.prompt.md

@@ -5,6 +5,7 @@ import * as THREE from 'three';
 
 import { createStage } from './scene/stage.js';
 import { Listener } from './scene/listener.js';
+import { createSkybox, updateSkybox } from './scene/skybox.js';
 
 import { AudioEngine } from './audio/audioEngine.js';
 import { Crossover } from './audio/crossover.js';
@@ -26,6 +27,12 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 
 // Build 3D stage
 const { coneContainer, coneGroups } = createStage(scene);
+
+// ─── Skybox ───────────────────────────────────────────────────────
+// Fond couleur fallback (avant que le GLB soit prêt)
+scene.background = new THREE.Color(0x87ceeb);
+let skybox = null;
+skybox = await createSkybox(scene);
 
 // ─── Listener (FPS controls) ────────────────────────────────────
 const listener = new Listener(camera, document.body);
@@ -259,6 +266,10 @@ controls.onConesToggle((bus, visible) => {
 });
 
 controls.onMasterDsp((param, value) => {
+    if (param === 'mouse-sensitivity') {
+        listener.setSensitivity(value / 100);
+        return;
+    }
     if (!audioReady) return;
     speakerSystem.setMasterDspParam(param, value);
 });
@@ -451,6 +462,9 @@ function animate() {
             controls.updateMeters(speakerSystem.getLevels());
         }
     }
+
+    // Sync skybox with camera position
+    updateSkybox(skybox, camera);
 
     // Render
     renderer.render(scene, camera);

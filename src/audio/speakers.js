@@ -378,9 +378,23 @@ export class SpeakerSystem {
         this.hrtfShelf.frequency.value = 2500;
         this.hrtfShelf.gain.value = 0; // off by default (equalpower mode)
 
+        // Reverb: parallel wet/dry send off hrtfShelf → masterLimiter
+        this.reverbConvolver = ctx.createConvolver();
+        this.reverbConvolver.buffer = this._createReverbIR(2.5, 2.0);
+        this.reverbWet = ctx.createGain();
+        this.reverbWet.gain.value = 0; // fully dry by default
+
         this.masterOutput.connect(this.hrtfShelf);
-        this.hrtfShelf.connect(this.masterLimiter);
-        this.masterLimiter.connect(ctx.destination);
+        this.hrtfShelf.connect(this.masterLimiter);           // dry path (always full)
+        this.hrtfShelf.connect(this.reverbConvolver);          // wet send
+        this.reverbConvolver.connect(this.reverbWet);
+        this.reverbWet.connect(this.masterLimiter);
+
+        // Local volume gain — end-of-chain, not synchronized in multi: for the local user only
+        this.localVolumeGain = ctx.createGain();
+        this.localVolumeGain.gain.value = 1;
+        this.masterLimiter.connect(this.localVolumeGain);
+        this.localVolumeGain.connect(ctx.destination);
 
         // Master analyser taps after limiter (what the listener actually hears)
         this.masterAnalyser = ctx.createAnalyser();
@@ -524,7 +538,33 @@ export class SpeakerSystem {
             case 'treble':
                 for (const s of this.speakers) s.setHighShelfGain(value);
                 break;
+            case 'local-volume':
+                this.localVolumeGain.gain.cancelScheduledValues(0);
+                this.localVolumeGain.gain.value = value / 100;
+                break;
+            case 'reverb':
+                this.reverbWet.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.05);
+                break;
         }
+    }
+
+    /**
+     * Generate a synthetic impulse response buffer for the reverb.
+     * @param {number} duration — tail length in seconds
+     * @param {number} decay — exponential decay factor (higher = faster fade)
+     * @returns {AudioBuffer}
+     */
+    _createReverbIR(duration, decay) {
+        const rate = this.ctx.sampleRate;
+        const length = rate * duration;
+        const buffer = this.ctx.createBuffer(2, length, rate);
+        for (let ch = 0; ch < 2; ch++) {
+            const data = buffer.getChannelData(ch);
+            for (let i = 0; i < length; i++) {
+                data[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / length, decay);
+            }
+        }
+        return buffer;
     }
 
     /**
