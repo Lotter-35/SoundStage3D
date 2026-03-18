@@ -9,8 +9,9 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { Character } from './character.js';
 
-const MOVE_SPEED    = 7;   // m/s
-const VERTICAL_SPEED = 8;  // m/s
+const WALK_SPEED    = 7;   // m/s — speed when in character mode (walking)
+const FLY_SPEED     = 18;  // m/s — speed when in free-fly mode
+const VERTICAL_SPEED = 15; // m/s — vertical speed in free-fly mode
 const PLAYER_HEIGHT  = 1.7; // eye height in m
 
 const BOUNDS = {
@@ -122,9 +123,12 @@ export class Listener {
 
         direction.normalize();
 
+        // Choose speed based on mode: fly faster, walk slower
+        const moveSpeed = this.characterMode ? WALK_SPEED : FLY_SPEED;
+
         // Move in the direction the camera is facing (horizontal only)
-        this.controls.moveRight(direction.x * MOVE_SPEED * dt);
-        this.controls.moveForward(-direction.z * MOVE_SPEED * dt);
+        this.controls.moveRight(direction.x * moveSpeed * dt);
+        this.controls.moveForward(-direction.z * moveSpeed * dt);
 
         if (this.characterMode) {
             const isMoving = this.move.forward || this.move.backward || this.move.left || this.move.right;
