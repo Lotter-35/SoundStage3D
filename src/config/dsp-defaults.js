@@ -81,7 +81,6 @@ export const DSP_DEFAULTS = {
         'treble':            0,     // dB — high-shelf boost
         'reverb':            0,     // % — reverb wet level
         'lim-threshold':    -3,     // dB — master limiter threshold
-        'ceiling-active':  false,   // boolean — soft-knee brickwall ceiling (-0.17 dBFS)
         'local-volume':    100,     // % — local output volume
         'mouse-sensitivity':100,    // % — mouse sensitivity multiplier
     },
