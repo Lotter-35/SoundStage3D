@@ -61,14 +61,13 @@ export class Listener {
         };
 
         this._onCapturedMouseMove = (e) => {
-            // Block mouse movements during unlock/lock transitions
-            if (performance.now() < this._suppressMouseUntil) {
-                e.stopImmediatePropagation();
+            // If controls are not locked, let mousemove events pass through freely to UI (sliders, drag controls)
+            if (!this.controls.isLocked) {
                 return;
             }
 
-            // If not locked, stop event from reaching PointerLockControls
-            if (!this.controls.isLocked) {
+            // Block mouse movements during unlock/lock transitions
+            if (performance.now() < this._suppressMouseUntil) {
                 e.stopImmediatePropagation();
                 return;
             }
