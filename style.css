@@ -408,90 +408,88 @@ body {
     z-index: 90;
 }
 
-/* ─── DSP Panels removed — replaced by lil-gui ─── */
-
-/* Now playing track name */
-#now-playing {
+/* ─── DSP Panels Layout (Bottom Bar) ─── */
+#dsp-panels {
     position: fixed;
-    bottom: 2px;
+    bottom: 64px;
+    left: 16px;
     right: 16px;
-    color: #4f4;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.68rem;
-    z-index: 50;
+    z-index: 60;
+    display: flex;
+    flex-direction: row;
+    align-items: flex-end;
+    gap: 12px;
     pointer-events: none;
-    opacity: 0.85;
+}
+#dsp-panels > * {
+    pointer-events: auto;
 }
 
-#fps-counter {
-    position: fixed;
-    bottom: 2px;
-    left: 4px;
-    color: #4f4;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.68rem;
-    z-index: 50;
-    pointer-events: none;
-    opacity: 0.85;
+#dsp-panels.hidden {
+    display: none !important;
 }
 
-/* ─── Debug Performance Panel ─── */
-#debug-panel {
+/* Panel ordering: TOP MID [spacer] FILL SUB */
+#dsp-panel-top  { order: 1; }
+#dsp-panel-mid  { order: 2; }
+.dsp-spacer     { order: 3; flex: 1; pointer-events: none; }
+#dsp-panel-fill { order: 4; }
+#dsp-panel-sub  { order: 5; }
+
+/* Master panel — top-right corner */
+#dsp-master-wrap {
     position: fixed;
     top: 16px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 200;
-    background: rgba(0, 0, 0, 0.88);
-    border: 1px solid #555;
-    border-radius: 8px;
-    padding: 10px 16px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.65rem;
-    color: #ccc;
-    line-height: 1.6;
-    backdrop-filter: blur(6px);
-    pointer-events: none;
-    min-width: 340px;
+    right: 16px;
+    z-index: 60;
+    pointer-events: auto;
 }
-#debug-panel.hidden { display: none; }
-#debug-content { white-space: pre; }
-.dbg-title { color: #4af; font-weight: bold; }
-.dbg-val { color: #4f4; }
-.dbg-warn { color: #fa3; }
-.dbg-bad { color: #f44; }
+#dsp-master-wrap.hidden {
+    display: none !important;
+}
 
-/* ─── lil-gui Options Styling ─── */
+/* Slot sizing */
+.dsp-panel-slot,
+#dsp-panel-master {
+    min-width: 270px;
+    max-width: 320px;
+    width: 290px;
+}
+
+/* ─── lil-gui theme styling for slotted DSP panels ─── */
 .lil-gui {
-    --background-color: rgba(15, 17, 23, 0.92);
+    --background-color: rgba(14, 16, 22, 0.90);
     --text-color: #f1f5f9;
-    --title-background-color: rgba(26, 31, 44, 0.98);
-    --widget-color: #242938;
-    --hover-color: #333a4d;
+    --title-background-color: rgba(24, 28, 40, 0.98);
+    --widget-color: #222736;
+    --hover-color: #31384d;
     --focus-color: #10b981;
     --number-color: #34d399;
     --string-color: #60a5fa;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
     font-size: 11px !important;
     border-radius: 8px !important;
-    border: 1px solid rgba(255, 255, 255, 0.12) !important;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65) !important;
-    backdrop-filter: blur(14px) !important;
-    z-index: 1000 !important;
-    max-height: calc(100vh - 40px);
-    overflow-y: auto;
+    border: 1px solid rgba(255, 255, 255, 0.14) !important;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65) !important;
+    backdrop-filter: blur(12px) !important;
 }
 
-.lil-gui.root {
-    top: 16px !important;
-    right: 16px !important;
+/* Override default fixed positioning so GUIs sit in their slots */
+.dsp-panel-slot .lil-gui,
+#dsp-master-wrap .lil-gui {
+    position: static !important;
+    width: 100% !important;
+    max-height: calc(100vh - 160px);
+    overflow-y: auto;
+    margin: 0 !important;
 }
 
 .lil-gui .title {
     font-weight: 600 !important;
     font-size: 12px !important;
     letter-spacing: 0.5px;
-    padding: 6px 10px !important;
+    padding: 7px 12px !important;
+    border-radius: 7px 7px 0 0;
 }
 
 .lil-gui .controller {

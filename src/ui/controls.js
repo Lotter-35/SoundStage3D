@@ -1,10 +1,9 @@
 /**
- * Controls — Modern UI overlay powered by lil-gui:
- * - Master & Environment audio controls
- * - Per-bus DSP pipeline parameters (SUB, MID, TOP, FILL)
- * - 3D Graphics & Visual aids (Grass quality, Cones, Oscilloscope)
- * - Spatialisation & 3D Audio (HRTF binaural, Doppler)
- * - Audio playback actions & level meters
+ * Controls — UI overlay with separated lil-gui panels:
+ * - Master & Environment (top-right)
+ * - TOP & MID Pipelines (bottom-left)
+ * - FILL & SUB Pipelines (bottom-right)
+ * - Quick HUD action bar (Cônes, HRTF, Doppler, Oscillo, Herbe, Play/Pause, Changer MP3, Debug)
  */
 import GUI from 'lil-gui';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
@@ -19,6 +18,8 @@ export class Controls {
         this.playBtn = document.getElementById('play-btn');
         this.changeMp3Btn = document.getElementById('change-mp3-btn');
         this.dspBtn = document.getElementById('dsp-btn');
+        this.dspPanels = document.getElementById('dsp-panels');
+        this.dspMasterWrap = document.getElementById('dsp-master-wrap');
         this.positionDisplay = document.getElementById('position-display');
 
         // Level meters (top-left inside HUD)
@@ -51,253 +52,315 @@ export class Controls {
         this._onTopDsp = null;
         this._onFillDsp = null;
 
-        // UI state
-        this._guiVisible = true;
-        this._isPlaying = false;
+        // UI visibility state (hidden by default, toggled via dsp-btn)
+        this._dspVisible = false;
 
+        // State models for each bus
         const savedSens = localStorage.getItem('soundstage3d:master-mouse-sensitivity');
         this.state = {
             master: {
                 ...DSP_DEFAULTS.master,
                 'mouse-sensitivity': savedSens !== null ? Number(savedSens) : DSP_DEFAULTS.master['mouse-sensitivity'],
             },
-            sub: { ...DSP_DEFAULTS.sub },
-            mid: { ...DSP_DEFAULTS.mid },
-            top: { ...DSP_DEFAULTS.top },
+            sub:  { ...DSP_DEFAULTS.sub },
+            mid:  { ...DSP_DEFAULTS.mid },
+            top:  { ...DSP_DEFAULTS.top },
             fill: { ...DSP_DEFAULTS.fill },
-            graphics: {
-                grass: 'off',
-                oscilloscope: false,
-                conesAll: false,
-                conesSub: false,
-                conesMid: false,
-                conesTop: false,
-                conesFill: false,
-            },
-            spatial: {
-                hrtf: false,
-                hrtfBrightness: 4,
-                doppler: false,
-            },
-            actions: {
-                playPause: () => { if (this._onPlayPause) this._onPlayPause(); },
-                loadMp3: () => { this._triggerFilePicker(); },
-                resetAll: () => { this.resetAllDefaults(); },
-            }
         };
 
-        this.controllers = {};
+        this.guis = {};
 
-        // Initialize GUI and HUD
-        this._initGui();
+        // Initialize lil-gui separate panels
+        this._initGuis();
+
+        // Initialize HUD buttons
         this._initHud();
     }
 
-    _initGui() {
-        this.gui = new GUI({ title: '⚙️ Options & DSP', width: 330, closeFolders: true });
+    _initGuis() {
+        const cMaster = document.getElementById('dsp-panel-master');
+        const cTop    = document.getElementById('dsp-panel-top');
+        const cMid    = document.getElementById('dsp-panel-mid');
+        const cFill   = document.getElementById('dsp-panel-fill');
+        const cSub    = document.getElementById('dsp-panel-sub');
 
-        // Protect canvas pointer lock from lil-gui interactions
+        // Helper to stop pointer lock / canvas click propagation
         const stopProp = (e) => e.stopPropagation();
-        ['mousedown', 'pointerdown', 'mouseup', 'pointerup', 'click', 'dblclick', 'contextmenu', 'wheel'].forEach(evt => {
-            this.gui.domElement.addEventListener(evt, stopProp);
-        });
+        const protectGui = (gui) => {
+            ['mousedown', 'pointerdown', 'mouseup', 'pointerup', 'click', 'dblclick', 'contextmenu', 'wheel'].forEach(evt => {
+                gui.domElement.addEventListener(evt, stopProp);
+            });
+        };
 
-        // ── 🔊 Master & Environnement ──
-        const fMaster = this.gui.addFolder('🔊 Master & Environnement');
-        this.controllers['master:local-volume'] = fMaster.add(this.state.master, 'local-volume', 0, 200, 1)
-            .name('Volume Local (%)')
-            .onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
-        this.controllers['master:reverb'] = fMaster.add(this.state.master, 'reverb', 0, 100, 1)
-            .name('Réverbération (%)')
-            .onChange(v => this._onMasterDsp && this._onMasterDsp('reverb', v));
-        this.controllers['master:air-abs'] = fMaster.add(this.state.master, 'air-abs', 0, 50, 1)
-            .name('Absorption Air (Hz/m)')
-            .onChange(v => this._onMasterDsp && this._onMasterDsp('air-abs', v));
-        this.controllers['master:treble'] = fMaster.add(this.state.master, 'treble', 0, 15, 0.5)
-            .name('Brillance Aigus (dB)')
-            .onChange(v => this._onMasterDsp && this._onMasterDsp('treble', v));
-        this.controllers['master:mouse-sensitivity'] = fMaster.add(this.state.master, 'mouse-sensitivity', 10, 300, 5)
-            .name('Sensibilité Souris (%)')
-            .onChange(v => {
+        // ─── 1. Master GUI (Top-Right) ───
+        if (cMaster) {
+            const gui = new GUI({ container: cMaster, title: '🎚 Master & Environnement', closeFolders: false });
+            protectGui(gui);
+            this.guis.master = gui;
+
+            const fEnv = gui.addFolder('Environnement');
+            fEnv.add(this.state.master, 'air-abs', 0, 50, 1).name('Abs. air (Hz/m)').onChange(v => this._onMasterDsp && this._onMasterDsp('air-abs', v));
+            fEnv.add(this.state.master, 'treble', 0, 15, 0.5).name('Aigus (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('treble', v));
+            fEnv.add(this.state.master, 'reverb', 0, 100, 1).name('Réverb (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('reverb', v));
+
+            const fLocal = gui.addFolder('Volume local 🔒');
+            fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
+            fLocal.add(this.state.master, 'mouse-sensitivity', 10, 300, 5).name('Souris (%)').onChange(v => {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);
                 if (this._onMasterDsp) this._onMasterDsp('mouse-sensitivity', v);
             });
 
-        // ── 🔉 Bus SUB ──
-        const fSub = this.gui.addFolder('🔉 Bus SUB');
-        this.controllers['sub:bus-volume'] = fSub.add(this.state.sub, 'bus-volume', 0, 200, 1)
-            .name('Volume SUB (%)')
-            .onChange(v => this._onSubDsp && this._onSubDsp('bus-volume', v));
-        this.controllers['sub:xover-freq'] = fSub.add(this.state.sub, 'xover-freq', 40, 150, 1)
-            .name('Crossover LP (Hz)')
-            .onChange(v => this._onSubDsp && this._onSubDsp('xover-freq', v));
+            gui.add({ reset: () => this.resetBus('master') }, 'reset').name('↺ Reset Master');
+        }
 
-        const fSubComp = fSub.addFolder('Compresseur');
-        this.controllers['sub:comp-threshold'] = fSubComp.add(this.state.sub, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-threshold', v));
-        this.controllers['sub:comp-ratio'] = fSubComp.add(this.state.sub, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onSubDsp && this._onSubDsp('comp-ratio', v));
-        this.controllers['sub:comp-attack'] = fSubComp.add(this.state.sub, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-attack', v));
-        this.controllers['sub:comp-release'] = fSubComp.add(this.state.sub, 'comp-release', 10, 1000, 10).name('Relâchement (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-release', v));
-        this.controllers['sub:comp-knee'] = fSubComp.add(this.state.sub, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-knee', v));
+        // ─── 2. TOP GUI (Bottom-Left, order 1) ───
+        if (cTop) {
+            const gui = new GUI({ container: cTop, title: '🔉 TOP Pipeline', closeFolders: false });
+            protectGui(gui);
+            this.guis.top = gui;
 
-        const fSubSat = fSub.addFolder('Saturation & Proximité');
-        this.controllers['sub:sat-drive'] = fSubSat.add(this.state.sub, 'sat-drive', 0, 100, 1).name('Drive Sat (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-drive', v));
-        this.controllers['sub:sat-mix'] = fSubSat.add(this.state.sub, 'sat-mix', 0, 100, 1).name('Mix Sat (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-mix', v));
-        this.controllers['sub:prox-far'] = fSubSat.add(this.state.sub, 'prox-far', 1, 15, 0.5).name('Prox Début (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-far', v));
-        this.controllers['sub:prox-near'] = fSubSat.add(this.state.sub, 'prox-near', 0.5, 5, 0.5).name('Prox Max (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-near', v));
-        this.controllers['sub:prox-drive'] = fSubSat.add(this.state.sub, 'prox-drive', 0, 100, 1).name('Prox Drive (%)').onChange(v => this._onSubDsp && this._onSubDsp('prox-drive', v));
+            const fXover = gui.addFolder('Crossover LR4');
+            fXover.add(this.state.top, 'xover-freq', 800, 6000, 50).name('High Freq (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('xover-freq', v));
 
-        const fSubAcoustics = fSub.addFolder('Limiteur & Acoustique');
-        this.controllers['sub:lim-threshold'] = fSubAcoustics.add(this.state.sub, 'lim-threshold', -12, 0, 0.5).name('Seuil Limiteur (dB)').onChange(v => this._onSubDsp && this._onSubDsp('lim-threshold', v));
-        this.controllers['sub:dist-k'] = fSubAcoustics.add(this.state.sub, 'dist-k', 0, 200, 5).name('Atténuation (k)').onChange(v => this._onSubDsp && this._onSubDsp('dist-k', v));
-        this.controllers['sub:refl-gain'] = fSubAcoustics.add(this.state.sub, 'refl-gain', 0, 100, 1).name('Gain Réflexion (%)').onChange(v => this._onSubDsp && this._onSubDsp('refl-gain', v));
-        this.controllers['sub:refl-lpf'] = fSubAcoustics.add(this.state.sub, 'refl-lpf', 200, 8000, 100).name('Filtre Réflexion (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('refl-lpf', v));
+            const fComp = gui.addFolder('Compresseur');
+            fComp.add(this.state.top, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-threshold', v));
+            fComp.add(this.state.top, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-knee', v));
+            fComp.add(this.state.top, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onTopDsp && this._onTopDsp('comp-ratio', v));
+            fComp.add(this.state.top, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-attack', v));
+            fComp.add(this.state.top, 'comp-release', 10, 1000, 10).name('Release (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-release', v));
 
-        // ── 🔉 Bus MID ──
-        const fMid = this.gui.addFolder('🔉 Bus MID');
-        this.controllers['mid:bus-volume'] = fMid.add(this.state.mid, 'bus-volume', 0, 200, 1).name('Volume MID (%)').onChange(v => this._onMidDsp && this._onMidDsp('bus-volume', v));
-        this.controllers['mid:xover-low'] = fMid.add(this.state.mid, 'xover-low', 40, 200, 1).name('Xover Bas / SUB (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-low', v));
-        this.controllers['mid:xover-high'] = fMid.add(this.state.mid, 'xover-high', 800, 6000, 50).name('Xover Haut / TOP (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-high', v));
+            const fSat = gui.addFolder('Saturation');
+            fSat.add(this.state.top, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-drive', v));
+            fSat.add(this.state.top, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-mix', v));
 
-        const fMidComp = fMid.addFolder('Compresseur & Saturation');
-        this.controllers['mid:comp-threshold'] = fMidComp.add(this.state.mid, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-threshold', v));
-        this.controllers['mid:comp-ratio'] = fMidComp.add(this.state.mid, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onMidDsp && this._onMidDsp('comp-ratio', v));
-        this.controllers['mid:comp-attack'] = fMidComp.add(this.state.mid, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-attack', v));
-        this.controllers['mid:comp-release'] = fMidComp.add(this.state.mid, 'comp-release', 10, 1000, 10).name('Relâchement (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-release', v));
-        this.controllers['mid:comp-knee'] = fMidComp.add(this.state.mid, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-knee', v));
-        this.controllers['mid:sat-drive'] = fMidComp.add(this.state.mid, 'sat-drive', 0, 100, 1).name('Drive Sat (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-drive', v));
-        this.controllers['mid:sat-mix'] = fMidComp.add(this.state.mid, 'sat-mix', 0, 100, 1).name('Mix Sat (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-mix', v));
+            const fVol = gui.addFolder('Volume Bus');
+            fVol.add(this.state.top, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onTopDsp && this._onTopDsp('bus-volume', v));
 
-        const fMidAcoustics = fMid.addFolder('Limiteur & Acoustique');
-        this.controllers['mid:lim-threshold'] = fMidAcoustics.add(this.state.mid, 'lim-threshold', -12, 0, 0.5).name('Seuil Limiteur (dB)').onChange(v => this._onMidDsp && this._onMidDsp('lim-threshold', v));
-        this.controllers['mid:dist-k'] = fMidAcoustics.add(this.state.mid, 'dist-k', 0, 200, 5).name('Atténuation (k)').onChange(v => this._onMidDsp && this._onMidDsp('dist-k', v));
-        this.controllers['mid:refl-gain'] = fMidAcoustics.add(this.state.mid, 'refl-gain', 0, 100, 1).name('Gain Réflexion (%)').onChange(v => this._onMidDsp && this._onMidDsp('refl-gain', v));
-        this.controllers['mid:refl-lpf'] = fMidAcoustics.add(this.state.mid, 'refl-lpf', 200, 8000, 100).name('Filtre Réflexion (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('refl-lpf', v));
+            const fAcoustics = gui.addFolder('Acoustique & Limiteur');
+            fAcoustics.add(this.state.top, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onTopDsp && this._onTopDsp('lim-threshold', v));
+            fAcoustics.add(this.state.top, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onTopDsp && this._onTopDsp('dist-k', v));
+            fAcoustics.add(this.state.top, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onTopDsp && this._onTopDsp('refl-gain', v));
+            fAcoustics.add(this.state.top, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('refl-lpf', v));
 
-        // ── 🔉 Bus TOP ──
-        const fTop = this.gui.addFolder('🔉 Bus TOP');
-        this.controllers['top:bus-volume'] = fTop.add(this.state.top, 'bus-volume', 0, 200, 1).name('Volume TOP (%)').onChange(v => this._onTopDsp && this._onTopDsp('bus-volume', v));
-        this.controllers['top:xover-freq'] = fTop.add(this.state.top, 'xover-freq', 800, 6000, 50).name('Xover Haut (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('xover-freq', v));
+            gui.add({ reset: () => this.resetBus('top') }, 'reset').name('↺ Reset TOP');
+        }
 
-        const fTopComp = fTop.addFolder('Compresseur & Saturation');
-        this.controllers['top:comp-threshold'] = fTopComp.add(this.state.top, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-threshold', v));
-        this.controllers['top:comp-ratio'] = fTopComp.add(this.state.top, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onTopDsp && this._onTopDsp('comp-ratio', v));
-        this.controllers['top:comp-attack'] = fTopComp.add(this.state.top, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-attack', v));
-        this.controllers['top:comp-release'] = fTopComp.add(this.state.top, 'comp-release', 10, 1000, 10).name('Relâchement (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-release', v));
-        this.controllers['top:comp-knee'] = fTopComp.add(this.state.top, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-knee', v));
-        this.controllers['top:sat-drive'] = fTopComp.add(this.state.top, 'sat-drive', 0, 100, 1).name('Drive Sat (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-drive', v));
-        this.controllers['top:sat-mix'] = fTopComp.add(this.state.top, 'sat-mix', 0, 100, 1).name('Mix Sat (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-mix', v));
+        // ─── 3. MID GUI (Bottom-Left, order 2) ───
+        if (cMid) {
+            const gui = new GUI({ container: cMid, title: '🔉 MID Pipeline', closeFolders: false });
+            protectGui(gui);
+            this.guis.mid = gui;
 
-        const fTopAcoustics = fTop.addFolder('Limiteur & Acoustique');
-        this.controllers['top:lim-threshold'] = fTopAcoustics.add(this.state.top, 'lim-threshold', -12, 0, 0.5).name('Seuil Limiteur (dB)').onChange(v => this._onTopDsp && this._onTopDsp('lim-threshold', v));
-        this.controllers['top:dist-k'] = fTopAcoustics.add(this.state.top, 'dist-k', 0, 200, 5).name('Atténuation (k)').onChange(v => this._onTopDsp && this._onTopDsp('dist-k', v));
-        this.controllers['top:refl-gain'] = fTopAcoustics.add(this.state.top, 'refl-gain', 0, 100, 1).name('Gain Réflexion (%)').onChange(v => this._onTopDsp && this._onTopDsp('refl-gain', v));
-        this.controllers['top:refl-lpf'] = fTopAcoustics.add(this.state.top, 'refl-lpf', 200, 8000, 100).name('Filtre Réflexion (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('refl-lpf', v));
+            const fXover = gui.addFolder('Crossover LR4');
+            fXover.add(this.state.mid, 'xover-low', 40, 200, 1).name('Low Freq (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-low', v));
+            fXover.add(this.state.mid, 'xover-high', 800, 6000, 50).name('High Freq (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-high', v));
 
-        // ── 🔉 Bus FILL ──
-        const fFill = this.gui.addFolder('🔉 Bus FILL');
-        this.controllers['fill:bus-volume'] = fFill.add(this.state.fill, 'bus-volume', 0, 200, 1).name('Volume FILL (%)').onChange(v => this._onFillDsp && this._onFillDsp('bus-volume', v));
-        this.controllers['fill:merge-gain'] = fFill.add(this.state.fill, 'merge-gain', 0, 100, 1).name('Merge Gain (%)').onChange(v => this._onFillDsp && this._onFillDsp('merge-gain', v));
+            const fComp = gui.addFolder('Compresseur');
+            fComp.add(this.state.mid, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-threshold', v));
+            fComp.add(this.state.mid, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-knee', v));
+            fComp.add(this.state.mid, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onMidDsp && this._onMidDsp('comp-ratio', v));
+            fComp.add(this.state.mid, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-attack', v));
+            fComp.add(this.state.mid, 'comp-release', 10, 1000, 10).name('Release (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-release', v));
 
-        const fFillAcoustics = fFill.addFolder('Limiteur & Acoustique');
-        this.controllers['fill:lim-threshold'] = fFillAcoustics.add(this.state.fill, 'lim-threshold', -12, 0, 0.5).name('Seuil Limiteur (dB)').onChange(v => this._onFillDsp && this._onFillDsp('lim-threshold', v));
-        this.controllers['fill:dist-k'] = fFillAcoustics.add(this.state.fill, 'dist-k', 0, 200, 5).name('Atténuation (k)').onChange(v => this._onFillDsp && this._onFillDsp('dist-k', v));
-        this.controllers['fill:refl-gain'] = fFillAcoustics.add(this.state.fill, 'refl-gain', 0, 100, 1).name('Gain Réflexion (%)').onChange(v => this._onFillDsp && this._onFillDsp('refl-gain', v));
-        this.controllers['fill:refl-lpf'] = fFillAcoustics.add(this.state.fill, 'refl-lpf', 200, 8000, 100).name('Filtre Réflexion (Hz)').onChange(v => this._onFillDsp && this._onFillDsp('refl-lpf', v));
+            const fSat = gui.addFolder('Saturation');
+            fSat.add(this.state.mid, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-drive', v));
+            fSat.add(this.state.mid, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-mix', v));
 
-        // ── 🌿 Graphismes & Affichage ──
-        const fGraphics = this.gui.addFolder('🌿 Graphismes & Affichage');
-        this.controllers['graphics:grass'] = fGraphics.add(this.state.graphics, 'grass', {
-            'Désactivée (Max FPS)': 'off',
-            'Éco': 'low',
-            'Normale': 'medium',
-            'Haute': 'high'
-        }).name('Herbe 3D').onChange(v => this._onGrassChange && this._onGrassChange(v));
+            const fVol = gui.addFolder('Volume Bus');
+            fVol.add(this.state.mid, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onMidDsp && this._onMidDsp('bus-volume', v));
 
-        this.controllers['graphics:oscilloscope'] = fGraphics.add(this.state.graphics, 'oscilloscope').name('📈 Oscilloscope').onChange(v => {
-            if (this._onOscilloscopeToggle) this._onOscilloscopeToggle(v);
-        });
+            const fAcoustics = gui.addFolder('Acoustique & Limiteur');
+            fAcoustics.add(this.state.mid, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onMidDsp && this._onMidDsp('lim-threshold', v));
+            fAcoustics.add(this.state.mid, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onMidDsp && this._onMidDsp('dist-k', v));
+            fAcoustics.add(this.state.mid, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onMidDsp && this._onMidDsp('refl-gain', v));
+            fAcoustics.add(this.state.mid, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('refl-lpf', v));
 
-        const fCones = fGraphics.addFolder('Cônes de diffusion');
-        this.controllers['graphics:conesAll'] = fCones.add(this.state.graphics, 'conesAll').name('💠 Tous les cônes').onChange(v => {
-            this.state.graphics.conesSub = v;
-            this.state.graphics.conesMid = v;
-            this.state.graphics.conesTop = v;
-            this.state.graphics.conesFill = v;
-            this.controllers['graphics:conesSub'].updateDisplay();
-            this.controllers['graphics:conesMid'].updateDisplay();
-            this.controllers['graphics:conesTop'].updateDisplay();
-            this.controllers['graphics:conesFill'].updateDisplay();
-            if (this._onConesToggle) this._onConesToggle('all', v);
-        });
-        this.controllers['graphics:conesSub'] = fCones.add(this.state.graphics, 'conesSub').name('SUB').onChange(v => {
-            if (this._onConesToggle) this._onConesToggle('sub', v);
-            this._checkConesAll();
-        });
-        this.controllers['graphics:conesMid'] = fCones.add(this.state.graphics, 'conesMid').name('MID').onChange(v => {
-            if (this._onConesToggle) this._onConesToggle('mid', v);
-            this._checkConesAll();
-        });
-        this.controllers['graphics:conesTop'] = fCones.add(this.state.graphics, 'conesTop').name('TOP').onChange(v => {
-            if (this._onConesToggle) this._onConesToggle('top', v);
-            this._checkConesAll();
-        });
-        this.controllers['graphics:conesFill'] = fCones.add(this.state.graphics, 'conesFill').name('FILL').onChange(v => {
-            if (this._onConesToggle) this._onConesToggle('fill', v);
-            this._checkConesAll();
-        });
+            gui.add({ reset: () => this.resetBus('mid') }, 'reset').name('↺ Reset MID');
+        }
 
-        // ── 🎧 Spatialisation & 3D ──
-        const fSpatial = this.gui.addFolder('🎧 Spatialisation & Audio 3D');
-        this.controllers['spatial:hrtf'] = fSpatial.add(this.state.spatial, 'hrtf').name('🎧 Binaural HRTF').onChange(v => {
-            if (this._onHrtfToggle) this._onHrtfToggle(v);
-            const db = v ? this.state.spatial.hrtfBrightness : 0;
-            if (this._onHrtfBrightness) this._onHrtfBrightness(db);
-        });
-        this.controllers['spatial:hrtfBrightness'] = fSpatial.add(this.state.spatial, 'hrtfBrightness', 0, 12, 0.5).name('✨ Brillance (dB)').onChange(v => {
-            if (this.state.spatial.hrtf && this._onHrtfBrightness) this._onHrtfBrightness(v);
-        });
-        this.controllers['spatial:doppler'] = fSpatial.add(this.state.spatial, 'doppler').name('🔊 Effet Doppler').onChange(v => {
-            if (this._onDopplerToggle) this._onDopplerToggle(v);
-        });
+        // ─── 4. FILL GUI (Bottom-Right, order 4) ───
+        if (cFill) {
+            const gui = new GUI({ container: cFill, title: '🔉 FILL Pipeline', closeFolders: false });
+            protectGui(gui);
+            this.guis.fill = gui;
 
-        // ── ⚡ Actions ──
-        const fActions = this.gui.addFolder('⚡ Actions');
-        this.playBtnController = fActions.add(this.state.actions, 'playPause').name('⏸ Pause');
-        fActions.add(this.state.actions, 'loadMp3').name('📂 Charger un MP3');
-        fActions.add(this.state.actions, 'resetAll').name('↺ Réinitialiser par défaut');
-    }
+            const fMix = gui.addFolder('Mixage Source');
+            fMix.add(this.state.fill, 'merge-gain', 0, 100, 1).name('Gain Mix (%)').onChange(v => this._onFillDsp && this._onFillDsp('merge-gain', v));
 
-    _checkConesAll() {
-        const { conesSub, conesMid, conesTop, conesFill } = this.state.graphics;
-        this.state.graphics.conesAll = conesSub && conesMid && conesTop && conesFill;
-        if (this.controllers['graphics:conesAll']) {
-            this.controllers['graphics:conesAll'].updateDisplay();
+            const fVol = gui.addFolder('Volume Bus');
+            fVol.add(this.state.fill, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onFillDsp && this._onFillDsp('bus-volume', v));
+
+            const fAcoustics = gui.addFolder('Acoustique & Limiteur');
+            fAcoustics.add(this.state.fill, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onFillDsp && this._onFillDsp('lim-threshold', v));
+            fAcoustics.add(this.state.fill, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onFillDsp && this._onFillDsp('dist-k', v));
+            fAcoustics.add(this.state.fill, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onFillDsp && this._onFillDsp('refl-gain', v));
+            fAcoustics.add(this.state.fill, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onFillDsp && this._onFillDsp('refl-lpf', v));
+
+            gui.add({ reset: () => this.resetBus('fill') }, 'reset').name('↺ Reset FILL');
+        }
+
+        // ─── 5. SUB GUI (Bottom-Right, order 5) ───
+        if (cSub) {
+            const gui = new GUI({ container: cSub, title: '🔉 SUB Pipeline', closeFolders: false });
+            protectGui(gui);
+            this.guis.sub = gui;
+
+            const fXover = gui.addFolder('Crossover LR4');
+            fXover.add(this.state.sub, 'xover-freq', 40, 150, 1).name('Low Freq (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('xover-freq', v));
+
+            const fComp = gui.addFolder('Compresseur');
+            fComp.add(this.state.sub, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-threshold', v));
+            fComp.add(this.state.sub, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-knee', v));
+            fComp.add(this.state.sub, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onSubDsp && this._onSubDsp('comp-ratio', v));
+            fComp.add(this.state.sub, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-attack', v));
+            fComp.add(this.state.sub, 'comp-release', 10, 1000, 10).name('Release (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-release', v));
+
+            const fSat = gui.addFolder('Saturation');
+            fSat.add(this.state.sub, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-drive', v));
+            fSat.add(this.state.sub, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-mix', v));
+
+            const fProx = gui.addFolder('Saturation Proximité');
+            fProx.add(this.state.sub, 'prox-far', 1, 15, 0.5).name('Dist. Début (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-far', v));
+            fProx.add(this.state.sub, 'prox-near', 0.5, 5, 0.5).name('Dist. Max (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-near', v));
+            fProx.add(this.state.sub, 'prox-drive', 0, 100, 1).name('Drive Max (%)').onChange(v => this._onSubDsp && this._onSubDsp('prox-drive', v));
+
+            const fVol = gui.addFolder('Volume Bus');
+            fVol.add(this.state.sub, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onSubDsp && this._onSubDsp('bus-volume', v));
+
+            const fAcoustics = gui.addFolder('Acoustique & Limiteur');
+            fAcoustics.add(this.state.sub, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onSubDsp && this._onSubDsp('lim-threshold', v));
+            fAcoustics.add(this.state.sub, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onSubDsp && this._onSubDsp('dist-k', v));
+            fAcoustics.add(this.state.sub, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onSubDsp && this._onSubDsp('refl-gain', v));
+            fAcoustics.add(this.state.sub, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('refl-lpf', v));
+
+            gui.add({ reset: () => this.resetBus('sub') }, 'reset').name('↺ Reset SUB');
         }
     }
 
     _initHud() {
+        // Toggle DSP panels visibility
         if (this.dspBtn) {
-            this.dspBtn.textContent = '⚙️ Options';
-            this.dspBtn.classList.toggle('active', this._guiVisible);
+            this.dspBtn.textContent = '🎛 DSP';
             this.dspBtn.addEventListener('click', () => {
-                this._guiVisible = !this._guiVisible;
-                this.gui.show(this._guiVisible);
-                this.dspBtn.classList.toggle('active', this._guiVisible);
+                this._dspVisible = !this._dspVisible;
+                if (this.dspPanels) this.dspPanels.classList.toggle('hidden', !this._dspVisible);
+                if (this.dspMasterWrap) this.dspMasterWrap.classList.toggle('hidden', !this._dspVisible);
+                this.dspBtn.classList.toggle('active', this._dspVisible);
             });
         }
 
+        // HRTF button & brightness slider
+        this._hrtfOn = false;
+        this.hrtfBtn = document.getElementById('hrtf-btn');
+        this.hrtfComp = document.getElementById('hrtf-comp');
+        this.hrtfBrightnessSlider = document.getElementById('hrtf-brightness');
+        this.hrtfBrightnessVal = document.getElementById('hrtf-brightness-val');
+
+        if (this.hrtfBtn) {
+            this.hrtfBtn.addEventListener('click', () => {
+                this._hrtfOn = !this._hrtfOn;
+                this.hrtfBtn.textContent = this._hrtfOn ? '🎧 HRTF: ON' : '🎧 HRTF: OFF';
+                if (this.hrtfComp) this.hrtfComp.classList.toggle('hidden', !this._hrtfOn);
+                if (this._onHrtfToggle) this._onHrtfToggle(this._hrtfOn);
+                const db = this._hrtfOn && this.hrtfBrightnessSlider ? Number(this.hrtfBrightnessSlider.value) : 0;
+                if (this._onHrtfBrightness) this._onHrtfBrightness(db);
+            });
+        }
+
+        if (this.hrtfBrightnessSlider) {
+            this.hrtfBrightnessSlider.addEventListener('input', () => {
+                const db = Number(this.hrtfBrightnessSlider.value);
+                if (this.hrtfBrightnessVal) this.hrtfBrightnessVal.textContent = '+' + db + ' dB';
+                if (this._hrtfOn && this._onHrtfBrightness) this._onHrtfBrightness(db);
+            });
+        }
+
+        // Doppler button
+        this._dopplerOn = false;
+        this.dopplerBtn = document.getElementById('doppler-btn');
+        if (this.dopplerBtn) {
+            this.dopplerBtn.addEventListener('click', () => {
+                this._dopplerOn = !this._dopplerOn;
+                this.dopplerBtn.textContent = this._dopplerOn ? '🔊 Doppler: ON' : '🔇 Doppler: OFF';
+                if (this._onDopplerToggle) this._onDopplerToggle(this._dopplerOn);
+            });
+        }
+
+        // Oscilloscope button
+        this._oscilloscopeOn = false;
+        this.oscilloscopeBtn = document.getElementById('oscilloscope-btn');
+        if (this.oscilloscopeBtn) {
+            this.oscilloscopeBtn.addEventListener('click', () => {
+                this._oscilloscopeOn = !this._oscilloscopeOn;
+                this.oscilloscopeBtn.textContent = this._oscilloscopeOn ? '📈 Oscillo: ON' : '📈 Oscillo: OFF';
+                if (this._onOscilloscopeToggle) this._onOscilloscopeToggle(this._oscilloscopeOn);
+            });
+        }
+
+        // Cones dropdown
+        this.conesBtn = document.getElementById('cones-btn');
+        this.conesMenu = document.getElementById('cones-menu');
+        if (this.conesBtn && this.conesMenu) {
+            const coneCheckboxes = this.conesMenu.querySelectorAll('input[data-cone-bus]');
+            const coneAllBox = this.conesMenu.querySelector('input[data-cone-bus="all"]');
+
+            this.conesBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.conesMenu.classList.toggle('open');
+            });
+
+            document.addEventListener('click', (e) => {
+                if (!this.conesMenu.contains(e.target) && e.target !== this.conesBtn) {
+                    this.conesMenu.classList.remove('open');
+                }
+            });
+
+            if (coneAllBox) {
+                coneAllBox.addEventListener('change', () => {
+                    const on = coneAllBox.checked;
+                    coneCheckboxes.forEach(cb => { cb.checked = on; });
+                    if (this._onConesToggle) this._onConesToggle('all', on);
+                });
+            }
+
+            coneCheckboxes.forEach(cb => {
+                if (cb === coneAllBox) return;
+                cb.addEventListener('change', () => {
+                    const bus = cb.dataset.coneBus;
+                    if (this._onConesToggle) this._onConesToggle(bus, cb.checked);
+                    if (coneAllBox) {
+                        const busBoxes = [...coneCheckboxes].filter(c => c !== coneAllBox);
+                        const allOn = busBoxes.every(c => c.checked);
+                        const anyOn = busBoxes.some(c => c.checked);
+                        coneAllBox.checked = allOn;
+                        coneAllBox.indeterminate = !allOn && anyOn;
+                    }
+                });
+            });
+        }
+
+        // Play/Pause button
         if (this.playBtn) {
             this.playBtn.addEventListener('click', () => {
                 if (this._onPlayPause) this._onPlayPause();
             });
         }
 
+        // Change MP3 button
         if (this.changeMp3Btn) {
             this.changeMp3Btn.addEventListener('click', () => {
-                this._triggerFilePicker();
+                const input = document.createElement('input');
+                input.type = 'file';
+                input.accept = '.mp3,.wav,audio/mpeg,audio/wav';
+                input.addEventListener('change', (e) => {
+                    const file = e.target.files[0];
+                    if (file && this._onChangeMp3) this._onChangeMp3(file);
+                });
+                input.click();
             });
         }
 
+        // File input in overlay (if used)
         if (this.fileInput) {
             this.fileInput.addEventListener('change', (e) => {
                 const file = e.target.files[0];
@@ -315,82 +378,26 @@ export class Controls {
         }
     }
 
-    _triggerFilePicker() {
-        const input = document.createElement('input');
-        input.type = 'file';
-        input.accept = '.mp3,.wav,audio/mpeg,audio/wav';
-        input.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (file && this._onChangeMp3) this._onChangeMp3(file);
-        });
-        input.click();
-    }
-
-    resetAllDefaults() {
-        Object.assign(this.state.master, DSP_DEFAULTS.master);
-        Object.assign(this.state.sub, DSP_DEFAULTS.sub);
-        Object.assign(this.state.mid, DSP_DEFAULTS.mid);
-        Object.assign(this.state.top, DSP_DEFAULTS.top);
-        Object.assign(this.state.fill, DSP_DEFAULTS.fill);
-
-        for (const [k, v] of Object.entries(this.state.master)) {
-            if (this._onMasterDsp) this._onMasterDsp(k, v);
+    resetBus(bus) {
+        if (!DSP_DEFAULTS[bus]) return;
+        Object.assign(this.state[bus], DSP_DEFAULTS[bus]);
+        const cbKey = `_on${bus.charAt(0).toUpperCase() + bus.slice(1)}Dsp`;
+        for (const [k, v] of Object.entries(this.state[bus])) {
+            if (this[cbKey]) this[cbKey](k, v);
         }
-        for (const [k, v] of Object.entries(this.state.sub)) {
-            if (this._onSubDsp) this._onSubDsp(k, v);
+        const gui = this.guis[bus];
+        if (gui) {
+            gui.controllersRecursive().forEach(c => c.updateDisplay());
         }
-        for (const [k, v] of Object.entries(this.state.mid)) {
-            if (this._onMidDsp) this._onMidDsp(k, v);
-        }
-        for (const [k, v] of Object.entries(this.state.top)) {
-            if (this._onTopDsp) this._onTopDsp(k, v);
-        }
-        for (const [k, v] of Object.entries(this.state.fill)) {
-            if (this._onFillDsp) this._onFillDsp(k, v);
-        }
-
-        this.gui.controllersRecursive().forEach(c => c.updateDisplay());
     }
 
     setPlayState(isPlaying) {
-        this._isPlaying = isPlaying;
         if (this.playBtn) {
             this.playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
         }
-        if (this.playBtnController) {
-            this.playBtnController.name(isPlaying ? '⏸ Pause' : '▶ Lecture');
-        }
     }
 
-    setGrassQuality(key) {
-        this.state.graphics.grass = key;
-        if (this.controllers['graphics:grass']) {
-            this.controllers['graphics:grass'].updateDisplay();
-        }
-    }
-
-    setOscilloscope(enabled) {
-        this.state.graphics.oscilloscope = enabled;
-        if (this.controllers['graphics:oscilloscope']) {
-            this.controllers['graphics:oscilloscope'].updateDisplay();
-        }
-    }
-
-    setHrtf(enabled) {
-        this.state.spatial.hrtf = enabled;
-        if (this.controllers['spatial:hrtf']) {
-            this.controllers['spatial:hrtf'].updateDisplay();
-        }
-    }
-
-    setDoppler(enabled) {
-        this.state.spatial.doppler = enabled;
-        if (this.controllers['spatial:doppler']) {
-            this.controllers['spatial:doppler'].updateDisplay();
-        }
-    }
-
-    // Callbacks registrations
+    // Callbacks
     onEnter(cb) { this._onEnter = cb; }
     onPlayPause(cb) { this._onPlayPause = cb; }
     onChangeMp3(cb) { this._onChangeMp3 = cb; }

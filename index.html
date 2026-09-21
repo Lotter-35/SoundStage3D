@@ -20,7 +20,26 @@
         <div id="hud-center">
         </div>
         <div id="hud-right">
-            <button id="dsp-btn" class="hud-btn active">⚙️ Options</button>
+            <div id="cones-dropdown" class="dropdown">
+                <button id="cones-btn" class="hud-btn">💠 Cônes ▾</button>
+                <div id="cones-menu" class="dropdown-menu">
+                    <label><input type="checkbox" data-cone-bus="all"> Tous</label>
+                    <label><input type="checkbox" data-cone-bus="sub"> SUB</label>
+                    <label><input type="checkbox" data-cone-bus="mid"> MID</label>
+                    <label><input type="checkbox" data-cone-bus="top"> TOP</label>
+                    <label><input type="checkbox" data-cone-bus="fill"> FILL</label>
+                </div>
+            </div>
+            <button id="dsp-btn" class="hud-btn">🎛 DSP</button>
+            <div id="hrtf-wrapper">
+                <button id="hrtf-btn" class="hud-btn">🎧 HRTF: OFF</button>
+                <div id="hrtf-comp" class="hud-slider-drop hidden">
+                    <label>✨ Brillance <input type="range" id="hrtf-brightness" min="0" max="12" step="0.5" value="4" data-default="4"><span id="hrtf-brightness-val">+4 dB</span></label>
+                </div>
+            </div>
+            <button id="doppler-btn" class="hud-btn">🔇 Doppler: OFF</button>
+            <button id="oscilloscope-btn" class="hud-btn">📈 Oscillo: OFF</button>
+            <button id="grass-btn" class="hud-btn">🌿 Herbe: OFF</button>
             <button id="play-btn" class="hud-btn">⏸ Pause</button>
             <button id="change-mp3-btn" class="hud-btn">📂 Changer MP3</button>
             <button id="debug-btn" class="hud-btn">🐛 Debug</button>
@@ -61,6 +80,20 @@
             </div>
             </div>
         </div>
+    </div>
+
+    <!-- ─── Master & Environnement Panel (en haut à droite, indépendant) ─── -->
+    <div id="dsp-master-wrap" class="hidden">
+        <div id="dsp-panel-master"></div>
+    </div>
+
+    <!-- ─── DSP Panels (per-bus pipeline controls in bottom bar) ─── -->
+    <div id="dsp-panels" class="hidden">
+        <div id="dsp-panel-top" class="dsp-panel-slot"></div>
+        <div id="dsp-panel-mid" class="dsp-panel-slot"></div>
+        <div class="dsp-spacer"></div>
+        <div id="dsp-panel-fill" class="dsp-panel-slot"></div>
+        <div id="dsp-panel-sub" class="dsp-panel-slot"></div>
     </div>
 
     <!-- Debug performance overlay -->
