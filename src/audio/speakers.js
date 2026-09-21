@@ -378,20 +378,60 @@ export class SpeakerSystem {
         this.fillVolume = ctx.createGain();
         this.fillVolume.gain.value = 1;
 
-        // Wire bus effects: subBus → subCompressor → subSaturation → subVolume
+        // SUB bus limiter (pre-fader dynamics control)
+        this.subLimiter = ctx.createDynamicsCompressor();
+        this.subLimiter.threshold.value = DSP_DEFAULTS.sub?.['lim-threshold'] ?? -3;
+        this.subLimiter.knee.value = 2;
+        this.subLimiter.ratio.value = 20;
+        this.subLimiter.attack.value = 0.001;
+        this.subLimiter.release.value = 0.05;
+
+        // Wire bus effects: subBus → subCompressor → subSaturation → subLimiter → subVolume
         subBus.connect(effects.subComp);
         effects.subComp.connect(effects.subSat);
-        effects.subSat.connect(this.subVolume);
+        effects.subSat.connect(this.subLimiter);
+        this.subLimiter.connect(this.subVolume);
 
-        // Wire bus effects: midBus → midCompressor → midSaturation → midVolume
+        // ── Analysers for level metering (tap after bus volume to reflect mix fader) ──
+        this.subAnalyser = ctx.createAnalyser();
+        this.subAnalyser.fftSize = 256;
+        this.subVolume.connect(this.subAnalyser);
+
+        // MID bus limiter (pre-fader dynamics control)
+        this.midLimiter = ctx.createDynamicsCompressor();
+        this.midLimiter.threshold.value = -3;
+        this.midLimiter.knee.value = 2;
+        this.midLimiter.ratio.value = 20;
+        this.midLimiter.attack.value = 0.001;
+        this.midLimiter.release.value = 0.05;
+
+        // Wire bus effects: midBus → midCompressor → midSaturation → midLimiter → midVolume
         midBus.connect(effects.midComp);
         effects.midComp.connect(effects.midSat);
-        effects.midSat.connect(this.midVolume);
+        effects.midSat.connect(this.midLimiter);
+        this.midLimiter.connect(this.midVolume);
 
-        // Wire bus effects: topBus → topCompressor → topSaturation → topVolume
+        this.midAnalyser = ctx.createAnalyser();
+        this.midAnalyser.fftSize = 256;
+        this.midVolume.connect(this.midAnalyser);
+
+        // TOP bus limiter (pre-fader dynamics control)
+        this.topLimiter = ctx.createDynamicsCompressor();
+        this.topLimiter.threshold.value = -3;
+        this.topLimiter.knee.value = 2;
+        this.topLimiter.ratio.value = 20;
+        this.topLimiter.attack.value = 0.001;
+        this.topLimiter.release.value = 0.05;
+
+        // Wire bus effects: topBus → topCompressor → topSaturation → topLimiter → topVolume
         topBus.connect(effects.topComp);
         effects.topComp.connect(effects.topSat);
-        effects.topSat.connect(this.topVolume);
+        effects.topSat.connect(this.topLimiter);
+        this.topLimiter.connect(this.topVolume);
+
+        this.topAnalyser = ctx.createAnalyser();
+        this.topAnalyser.fftSize = 256;
+        this.topVolume.connect(this.topAnalyser);
 
         // Front-fill bus: taps from mid+top processed signals (after effects, before bus volume)
         // This way fill volume is independent from mid/top volume
@@ -399,60 +439,20 @@ export class SpeakerSystem {
         this.fillMerge.gain.value = 0.5; // -6dB each to avoid summing boost
         effects.midSat.connect(this.fillMerge);
         effects.topSat.connect(this.fillMerge);
-        this.fillMerge.connect(this.fillVolume);
 
-        // SUB bus limiter (brick-wall)
-        this.subLimiter = ctx.createDynamicsCompressor();
-        this.subLimiter.threshold.value = DSP_DEFAULTS.sub?.['lim-threshold'] ?? -3;
-        this.subLimiter.knee.value = 2;
-        this.subLimiter.ratio.value = 20;
-        this.subLimiter.attack.value = 0.001;
-        this.subLimiter.release.value = 0.05;
-        this.subVolume.connect(this.subLimiter);
-
-        // ── Analysers for level metering ──
-        this.subAnalyser = ctx.createAnalyser();
-        this.subAnalyser.fftSize = 256;
-        this.subLimiter.connect(this.subAnalyser);
-
-        // MID bus limiter (brick-wall)
-        this.midLimiter = ctx.createDynamicsCompressor();
-        this.midLimiter.threshold.value = -3;
-        this.midLimiter.knee.value = 2;
-        this.midLimiter.ratio.value = 20;
-        this.midLimiter.attack.value = 0.001;
-        this.midLimiter.release.value = 0.05;
-        this.midVolume.connect(this.midLimiter);
-
-        this.midAnalyser = ctx.createAnalyser();
-        this.midAnalyser.fftSize = 256;
-        this.midLimiter.connect(this.midAnalyser);
-
-        // TOP bus limiter (brick-wall)
-        this.topLimiter = ctx.createDynamicsCompressor();
-        this.topLimiter.threshold.value = -3;
-        this.topLimiter.knee.value = 2;
-        this.topLimiter.ratio.value = 20;
-        this.topLimiter.attack.value = 0.001;
-        this.topLimiter.release.value = 0.05;
-        this.topVolume.connect(this.topLimiter);
-
-        this.topAnalyser = ctx.createAnalyser();
-        this.topAnalyser.fftSize = 256;
-        this.topLimiter.connect(this.topAnalyser);
-
-        // FILL bus limiter (brick-wall)
+        // FILL bus limiter (pre-fader dynamics control)
         this.fillLimiter = ctx.createDynamicsCompressor();
         this.fillLimiter.threshold.value = -3;
         this.fillLimiter.knee.value = 2;
         this.fillLimiter.ratio.value = 20;
         this.fillLimiter.attack.value = 0.001;
         this.fillLimiter.release.value = 0.05;
-        this.fillVolume.connect(this.fillLimiter);
+        this.fillMerge.connect(this.fillLimiter);
+        this.fillLimiter.connect(this.fillVolume);
 
         this.fillAnalyser = ctx.createAnalyser();
         this.fillAnalyser.fftSize = 256;
-        this.fillLimiter.connect(this.fillAnalyser);
+        this.fillVolume.connect(this.fillAnalyser);
 
         // Master output chain: masterOutput → limiter → localVolumeGain → ctx.destination
         // Calibrated with -6 dB (0.50) acoustic summation headroom for 14-speaker array
@@ -511,13 +511,13 @@ export class SpeakerSystem {
             this.speakers.push(speaker);
 
             if (def.bus === 'sub') {
-                this.subLimiter.connect(speaker.input);
+                this.subVolume.connect(speaker.input);
             } else if (def.bus === 'mid') {
-                this.midLimiter.connect(speaker.input);
+                this.midVolume.connect(speaker.input);
             } else if (def.bus === 'fill') {
-                this.fillLimiter.connect(speaker.input);
+                this.fillVolume.connect(speaker.input);
             } else {
-                this.topLimiter.connect(speaker.input);
+                this.topVolume.connect(speaker.input);
             }
         }
 
