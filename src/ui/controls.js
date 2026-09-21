@@ -4,9 +4,13 @@
  * - TOP & MID Pipelines (bottom-left)
  * - FILL & SUB Pipelines (bottom-right)
  * - Quick HUD action bar (Cônes, HRTF, Doppler, Oscillo, Herbe, Play/Pause, Changer MP3, Debug)
+ * - Interactive tooltips on hover
+ * - Individual reset buttons (↺) on each option
+ * - Smooth continuous slider dragging with high precision
  */
 import GUI from 'lil-gui';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
+import { DSP_TOOLTIPS } from '../config/dsp-tooltips.js';
 
 export class Controls {
     constructor() {
@@ -21,6 +25,8 @@ export class Controls {
         this.dspPanels = document.getElementById('dsp-panels');
         this.dspMasterWrap = document.getElementById('dsp-master-wrap');
         this.positionDisplay = document.getElementById('position-display');
+        this.tooltipEl = document.getElementById('dsp-tooltip');
+        this._tooltipTimer = null;
 
         // Level meters (top-left inside HUD)
         this._meters = ['sub', 'mid', 'top', 'fill', 'master'].map(id => {
@@ -52,7 +58,7 @@ export class Controls {
         this._onTopDsp = null;
         this._onFillDsp = null;
 
-        // UI visibility state (hidden by default, toggled via dsp-btn)
+        // UI visibility state
         this._dspVisible = false;
 
         // State models for each bus
@@ -77,6 +83,66 @@ export class Controls {
         this._initHud();
     }
 
+    /** Helper to attach floating tooltip and per-option reset button */
+    _setupController(ctrl, tooltipKey, defaultValue, isLeftGroup) {
+        // 1. Tooltip
+        const tipText = DSP_TOOLTIPS[tooltipKey];
+        if (tipText && this.tooltipEl) {
+            ctrl.domElement.setAttribute('data-tooltip', tipText);
+            ctrl.domElement.addEventListener('mouseenter', () => {
+                clearTimeout(this._tooltipTimer);
+                this.tooltipEl.textContent = tipText;
+                const rect = ctrl.domElement.getBoundingClientRect();
+                const ttWidth = 280;
+                let top = rect.top + rect.height / 2;
+                let left;
+
+                if (isLeftGroup) {
+                    left = rect.right + 14;
+                    this.tooltipEl.classList.add('arrow-right');
+                } else {
+                    left = rect.left - ttWidth - 14;
+                    this.tooltipEl.classList.remove('arrow-right');
+                }
+
+                this.tooltipEl.classList.add('visible');
+                this.tooltipEl.style.left = Math.max(8, left) + 'px';
+                const ttHeight = this.tooltipEl.offsetHeight || 60;
+                top = Math.max(8, Math.min(window.innerHeight - ttHeight - 8, top - ttHeight / 2));
+                this.tooltipEl.style.top = top + 'px';
+            });
+
+            ctrl.domElement.addEventListener('mouseleave', () => {
+                this._tooltipTimer = setTimeout(() => {
+                    this.tooltipEl.classList.remove('visible');
+                }, 80);
+            });
+        }
+
+        // 2. Individual Reset Button
+        if (defaultValue !== undefined) {
+            const resetBtn = document.createElement('button');
+            resetBtn.type = 'button';
+            resetBtn.className = 'lil-reset-btn';
+            resetBtn.textContent = '↺';
+            resetBtn.title = 'Réinitialiser cette option';
+            resetBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                e.preventDefault();
+                ctrl.setValue(defaultValue);
+            });
+            ctrl.domElement.appendChild(resetBtn);
+
+            // Double click on option row also resets
+            ctrl.domElement.addEventListener('dblclick', (e) => {
+                // If user double clicks on input, let them select text
+                if (e.target.tagName === 'INPUT') return;
+                e.stopPropagation();
+                ctrl.setValue(defaultValue);
+            });
+        }
+    }
+
     _initGuis() {
         const cMaster = document.getElementById('dsp-panel-master');
         const cTop    = document.getElementById('dsp-panel-top');
@@ -84,156 +150,226 @@ export class Controls {
         const cFill   = document.getElementById('dsp-panel-fill');
         const cSub    = document.getElementById('dsp-panel-sub');
 
-        // Helper to stop pointer lock / canvas click propagation
-        const stopProp = (e) => e.stopPropagation();
-        const protectGui = (gui) => {
-            ['mousedown', 'pointerdown', 'mouseup', 'pointerup', 'click', 'dblclick', 'contextmenu', 'wheel'].forEach(evt => {
-                gui.domElement.addEventListener(evt, stopProp);
-            });
-        };
+        // Stop click from propagating to canvas when clicking panels
+        const stopClick = (e) => e.stopPropagation();
+        [cMaster, cTop, cMid, cFill, cSub].forEach(container => {
+            if (container) container.addEventListener('click', stopClick);
+        });
 
-        // ─── 1. Master GUI (Top-Right) ───
+        // ─── 1. Master GUI (Top-Right, right group) ───
         if (cMaster) {
             const gui = new GUI({ container: cMaster, title: '🎚 Master & Environnement', closeFolders: false });
-            protectGui(gui);
             this.guis.master = gui;
 
             const fEnv = gui.addFolder('Environnement');
-            fEnv.add(this.state.master, 'air-abs', 0, 50, 1).name('Abs. air (Hz/m)').onChange(v => this._onMasterDsp && this._onMasterDsp('air-abs', v));
-            fEnv.add(this.state.master, 'treble', 0, 15, 0.5).name('Aigus (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('treble', v));
-            fEnv.add(this.state.master, 'reverb', 0, 100, 1).name('Réverb (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('reverb', v));
+            const cAir = fEnv.add(this.state.master, 'air-abs', 0, 50, 1).name('Abs. air (Hz/m)').onChange(v => this._onMasterDsp && this._onMasterDsp('air-abs', v));
+            this._setupController(cAir, 'master-air-abs', DSP_DEFAULTS.master['air-abs'], false);
+
+            const cTreble = fEnv.add(this.state.master, 'treble', 0, 15, 0.1).name('Aigus (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('treble', v));
+            this._setupController(cTreble, 'master-treble', DSP_DEFAULTS.master['treble'], false);
+
+            const cReverb = fEnv.add(this.state.master, 'reverb', 0, 100, 1).name('Réverb (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('reverb', v));
+            this._setupController(cReverb, 'master-reverb', DSP_DEFAULTS.master['reverb'], false);
 
             const fLocal = gui.addFolder('Volume local 🔒');
-            fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
-            fLocal.add(this.state.master, 'mouse-sensitivity', 10, 300, 5).name('Souris (%)').onChange(v => {
+            const cVol = fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
+            this._setupController(cVol, 'master-local-volume', DSP_DEFAULTS.master['local-volume'], false);
+
+            const cSens = fLocal.add(this.state.master, 'mouse-sensitivity', 10, 300, 1).name('Souris (%)').onChange(v => {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);
                 if (this._onMasterDsp) this._onMasterDsp('mouse-sensitivity', v);
             });
-
-            gui.add({ reset: () => this.resetBus('master') }, 'reset').name('↺ Reset Master');
+            this._setupController(cSens, 'master-mouse-sensitivity', DSP_DEFAULTS.master['mouse-sensitivity'], false);
         }
 
-        // ─── 2. TOP GUI (Bottom-Left, order 1) ───
+        // ─── 2. TOP GUI (Bottom-Left, left group) ───
         if (cTop) {
             const gui = new GUI({ container: cTop, title: '🔉 TOP Pipeline', closeFolders: false });
-            protectGui(gui);
             this.guis.top = gui;
 
             const fXover = gui.addFolder('Crossover LR4');
-            fXover.add(this.state.top, 'xover-freq', 800, 6000, 50).name('High Freq (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('xover-freq', v));
+            const cXover = fXover.add(this.state.top, 'xover-freq', 800, 6000, 1).name('High Freq (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('xover-freq', v));
+            this._setupController(cXover, 'top-xover-freq', DSP_DEFAULTS.top['xover-freq'], true);
 
             const fComp = gui.addFolder('Compresseur');
-            fComp.add(this.state.top, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-threshold', v));
-            fComp.add(this.state.top, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-knee', v));
-            fComp.add(this.state.top, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onTopDsp && this._onTopDsp('comp-ratio', v));
-            fComp.add(this.state.top, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-attack', v));
-            fComp.add(this.state.top, 'comp-release', 10, 1000, 10).name('Release (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-release', v));
+            const cThresh = fComp.add(this.state.top, 'comp-threshold', -60, 0, 0.1).name('Seuil (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-threshold', v));
+            this._setupController(cThresh, 'top-comp-threshold', DSP_DEFAULTS.top['comp-threshold'], true);
+
+            const cKnee = fComp.add(this.state.top, 'comp-knee', 0, 40, 0.1).name('Knee (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-knee', v));
+            this._setupController(cKnee, 'top-comp-knee', DSP_DEFAULTS.top['comp-knee'], true);
+
+            const cRatio = fComp.add(this.state.top, 'comp-ratio', 1, 20, 0.1).name('Ratio (:1)').onChange(v => this._onTopDsp && this._onTopDsp('comp-ratio', v));
+            this._setupController(cRatio, 'top-comp-ratio', DSP_DEFAULTS.top['comp-ratio'], true);
+
+            const cAttack = fComp.add(this.state.top, 'comp-attack', 0, 100, 0.5).name('Attaque (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-attack', v));
+            this._setupController(cAttack, 'top-comp-attack', DSP_DEFAULTS.top['comp-attack'], true);
+
+            const cRel = fComp.add(this.state.top, 'comp-release', 10, 1000, 1).name('Release (ms)').onChange(v => this._onTopDsp && this._onTopDsp('comp-release', v));
+            this._setupController(cRel, 'top-comp-release', DSP_DEFAULTS.top['comp-release'], true);
 
             const fSat = gui.addFolder('Saturation');
-            fSat.add(this.state.top, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-drive', v));
-            fSat.add(this.state.top, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-mix', v));
+            const cSatDr = fSat.add(this.state.top, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-drive', v));
+            this._setupController(cSatDr, 'top-sat-drive', DSP_DEFAULTS.top['sat-drive'], true);
+
+            const cSatMx = fSat.add(this.state.top, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onTopDsp && this._onTopDsp('sat-mix', v));
+            this._setupController(cSatMx, 'top-sat-mix', DSP_DEFAULTS.top['sat-mix'], true);
 
             const fVol = gui.addFolder('Volume Bus');
-            fVol.add(this.state.top, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onTopDsp && this._onTopDsp('bus-volume', v));
+            const cVol = fVol.add(this.state.top, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onTopDsp && this._onTopDsp('bus-volume', v));
+            this._setupController(cVol, 'top-bus-volume', DSP_DEFAULTS.top['bus-volume'], true);
 
             const fAcoustics = gui.addFolder('Acoustique & Limiteur');
-            fAcoustics.add(this.state.top, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onTopDsp && this._onTopDsp('lim-threshold', v));
-            fAcoustics.add(this.state.top, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onTopDsp && this._onTopDsp('dist-k', v));
-            fAcoustics.add(this.state.top, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onTopDsp && this._onTopDsp('refl-gain', v));
-            fAcoustics.add(this.state.top, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('refl-lpf', v));
+            const cLim = fAcoustics.add(this.state.top, 'lim-threshold', -12, 0, 0.1).name('Limiteur (dB)').onChange(v => this._onTopDsp && this._onTopDsp('lim-threshold', v));
+            this._setupController(cLim, 'top-lim-threshold', DSP_DEFAULTS.top['lim-threshold'], true);
 
-            gui.add({ reset: () => this.resetBus('top') }, 'reset').name('↺ Reset TOP');
+            const cDist = fAcoustics.add(this.state.top, 'dist-k', 0, 200, 1).name('Attén. dist (k)').onChange(v => this._onTopDsp && this._onTopDsp('dist-k', v));
+            this._setupController(cDist, 'top-dist-k', DSP_DEFAULTS.top['dist-k'], true);
+
+            const cReflG = fAcoustics.add(this.state.top, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onTopDsp && this._onTopDsp('refl-gain', v));
+            this._setupController(cReflG, 'top-refl-gain', DSP_DEFAULTS.top['refl-gain'], true);
+
+            const cReflF = fAcoustics.add(this.state.top, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('refl-lpf', v));
+            this._setupController(cReflF, 'top-refl-lpf', DSP_DEFAULTS.top['refl-lpf'], true);
         }
 
-        // ─── 3. MID GUI (Bottom-Left, order 2) ───
+        // ─── 3. MID GUI (Bottom-Left, left group) ───
         if (cMid) {
             const gui = new GUI({ container: cMid, title: '🔉 MID Pipeline', closeFolders: false });
-            protectGui(gui);
             this.guis.mid = gui;
 
             const fXover = gui.addFolder('Crossover LR4');
-            fXover.add(this.state.mid, 'xover-low', 40, 200, 1).name('Low Freq (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-low', v));
-            fXover.add(this.state.mid, 'xover-high', 800, 6000, 50).name('High Freq (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-high', v));
+            const cLow = fXover.add(this.state.mid, 'xover-low', 40, 200, 1).name('Low Freq (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-low', v));
+            this._setupController(cLow, 'mid-xover-low', DSP_DEFAULTS.mid['xover-low'], true);
+
+            const cHigh = fXover.add(this.state.mid, 'xover-high', 800, 6000, 1).name('High Freq (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('xover-high', v));
+            this._setupController(cHigh, 'mid-xover-high', DSP_DEFAULTS.mid['xover-high'], true);
 
             const fComp = gui.addFolder('Compresseur');
-            fComp.add(this.state.mid, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-threshold', v));
-            fComp.add(this.state.mid, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-knee', v));
-            fComp.add(this.state.mid, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onMidDsp && this._onMidDsp('comp-ratio', v));
-            fComp.add(this.state.mid, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-attack', v));
-            fComp.add(this.state.mid, 'comp-release', 10, 1000, 10).name('Release (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-release', v));
+            const cThresh = fComp.add(this.state.mid, 'comp-threshold', -60, 0, 0.1).name('Seuil (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-threshold', v));
+            this._setupController(cThresh, 'mid-comp-threshold', DSP_DEFAULTS.mid['comp-threshold'], true);
+
+            const cKnee = fComp.add(this.state.mid, 'comp-knee', 0, 40, 0.1).name('Knee (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-knee', v));
+            this._setupController(cKnee, 'mid-comp-knee', DSP_DEFAULTS.mid['comp-knee'], true);
+
+            const cRatio = fComp.add(this.state.mid, 'comp-ratio', 1, 20, 0.1).name('Ratio (:1)').onChange(v => this._onMidDsp && this._onMidDsp('comp-ratio', v));
+            this._setupController(cRatio, 'mid-comp-ratio', DSP_DEFAULTS.mid['comp-ratio'], true);
+
+            const cAttack = fComp.add(this.state.mid, 'comp-attack', 0, 100, 0.5).name('Attaque (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-attack', v));
+            this._setupController(cAttack, 'mid-comp-attack', DSP_DEFAULTS.mid['comp-attack'], true);
+
+            const cRel = fComp.add(this.state.mid, 'comp-release', 10, 1000, 1).name('Release (ms)').onChange(v => this._onMidDsp && this._onMidDsp('comp-release', v));
+            this._setupController(cRel, 'mid-comp-release', DSP_DEFAULTS.mid['comp-release'], true);
 
             const fSat = gui.addFolder('Saturation');
-            fSat.add(this.state.mid, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-drive', v));
-            fSat.add(this.state.mid, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-mix', v));
+            const cSatDr = fSat.add(this.state.mid, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-drive', v));
+            this._setupController(cSatDr, 'mid-sat-drive', DSP_DEFAULTS.mid['sat-drive'], true);
+
+            const cSatMx = fSat.add(this.state.mid, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onMidDsp && this._onMidDsp('sat-mix', v));
+            this._setupController(cSatMx, 'mid-sat-mix', DSP_DEFAULTS.mid['sat-mix'], true);
 
             const fVol = gui.addFolder('Volume Bus');
-            fVol.add(this.state.mid, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onMidDsp && this._onMidDsp('bus-volume', v));
+            const cVol = fVol.add(this.state.mid, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onMidDsp && this._onMidDsp('bus-volume', v));
+            this._setupController(cVol, 'mid-bus-volume', DSP_DEFAULTS.mid['bus-volume'], true);
 
             const fAcoustics = gui.addFolder('Acoustique & Limiteur');
-            fAcoustics.add(this.state.mid, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onMidDsp && this._onMidDsp('lim-threshold', v));
-            fAcoustics.add(this.state.mid, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onMidDsp && this._onMidDsp('dist-k', v));
-            fAcoustics.add(this.state.mid, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onMidDsp && this._onMidDsp('refl-gain', v));
-            fAcoustics.add(this.state.mid, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('refl-lpf', v));
+            const cLim = fAcoustics.add(this.state.mid, 'lim-threshold', -12, 0, 0.1).name('Limiteur (dB)').onChange(v => this._onMidDsp && this._onMidDsp('lim-threshold', v));
+            this._setupController(cLim, 'mid-lim-threshold', DSP_DEFAULTS.mid['lim-threshold'], true);
 
-            gui.add({ reset: () => this.resetBus('mid') }, 'reset').name('↺ Reset MID');
+            const cDist = fAcoustics.add(this.state.mid, 'dist-k', 0, 200, 1).name('Attén. dist (k)').onChange(v => this._onMidDsp && this._onMidDsp('dist-k', v));
+            this._setupController(cDist, 'mid-dist-k', DSP_DEFAULTS.mid['dist-k'], true);
+
+            const cReflG = fAcoustics.add(this.state.mid, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onMidDsp && this._onMidDsp('refl-gain', v));
+            this._setupController(cReflG, 'mid-refl-gain', DSP_DEFAULTS.mid['refl-gain'], true);
+
+            const cReflF = fAcoustics.add(this.state.mid, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('refl-lpf', v));
+            this._setupController(cReflF, 'mid-refl-lpf', DSP_DEFAULTS.mid['refl-lpf'], true);
         }
 
-        // ─── 4. FILL GUI (Bottom-Right, order 4) ───
+        // ─── 4. FILL GUI (Bottom-Right, right group) ───
         if (cFill) {
             const gui = new GUI({ container: cFill, title: '🔉 FILL Pipeline', closeFolders: false });
-            protectGui(gui);
             this.guis.fill = gui;
 
             const fMix = gui.addFolder('Mixage Source');
-            fMix.add(this.state.fill, 'merge-gain', 0, 100, 1).name('Gain Mix (%)').onChange(v => this._onFillDsp && this._onFillDsp('merge-gain', v));
+            const cMerge = fMix.add(this.state.fill, 'merge-gain', 0, 100, 1).name('Gain Mix (%)').onChange(v => this._onFillDsp && this._onFillDsp('merge-gain', v));
+            this._setupController(cMerge, 'fill-merge-gain', DSP_DEFAULTS.fill['merge-gain'], false);
 
             const fVol = gui.addFolder('Volume Bus');
-            fVol.add(this.state.fill, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onFillDsp && this._onFillDsp('bus-volume', v));
+            const cVol = fVol.add(this.state.fill, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onFillDsp && this._onFillDsp('bus-volume', v));
+            this._setupController(cVol, 'fill-bus-volume', DSP_DEFAULTS.fill['bus-volume'], false);
 
             const fAcoustics = gui.addFolder('Acoustique & Limiteur');
-            fAcoustics.add(this.state.fill, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onFillDsp && this._onFillDsp('lim-threshold', v));
-            fAcoustics.add(this.state.fill, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onFillDsp && this._onFillDsp('dist-k', v));
-            fAcoustics.add(this.state.fill, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onFillDsp && this._onFillDsp('refl-gain', v));
-            fAcoustics.add(this.state.fill, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onFillDsp && this._onFillDsp('refl-lpf', v));
+            const cLim = fAcoustics.add(this.state.fill, 'lim-threshold', -12, 0, 0.1).name('Limiteur (dB)').onChange(v => this._onFillDsp && this._onFillDsp('lim-threshold', v));
+            this._setupController(cLim, 'fill-lim-threshold', DSP_DEFAULTS.fill['lim-threshold'], false);
 
-            gui.add({ reset: () => this.resetBus('fill') }, 'reset').name('↺ Reset FILL');
+            const cDist = fAcoustics.add(this.state.fill, 'dist-k', 0, 200, 1).name('Attén. dist (k)').onChange(v => this._onFillDsp && this._onFillDsp('dist-k', v));
+            this._setupController(cDist, 'fill-dist-k', DSP_DEFAULTS.fill['dist-k'], false);
+
+            const cReflG = fAcoustics.add(this.state.fill, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onFillDsp && this._onFillDsp('refl-gain', v));
+            this._setupController(cReflG, 'fill-refl-gain', DSP_DEFAULTS.fill['refl-gain'], false);
+
+            const cReflF = fAcoustics.add(this.state.fill, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onFillDsp && this._onFillDsp('refl-lpf', v));
+            this._setupController(cReflF, 'fill-refl-lpf', DSP_DEFAULTS.fill['refl-lpf'], false);
         }
 
-        // ─── 5. SUB GUI (Bottom-Right, order 5) ───
+        // ─── 5. SUB GUI (Bottom-Right, right group) ───
         if (cSub) {
             const gui = new GUI({ container: cSub, title: '🔉 SUB Pipeline', closeFolders: false });
-            protectGui(gui);
             this.guis.sub = gui;
 
             const fXover = gui.addFolder('Crossover LR4');
-            fXover.add(this.state.sub, 'xover-freq', 40, 150, 1).name('Low Freq (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('xover-freq', v));
+            const cLow = fXover.add(this.state.sub, 'xover-freq', 40, 150, 1).name('Low Freq (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('xover-freq', v));
+            this._setupController(cLow, 'sub-xover-freq', DSP_DEFAULTS.sub['xover-freq'], false);
 
             const fComp = gui.addFolder('Compresseur');
-            fComp.add(this.state.sub, 'comp-threshold', -60, 0, 1).name('Seuil (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-threshold', v));
-            fComp.add(this.state.sub, 'comp-knee', 0, 40, 1).name('Knee (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-knee', v));
-            fComp.add(this.state.sub, 'comp-ratio', 1, 20, 0.5).name('Ratio (:1)').onChange(v => this._onSubDsp && this._onSubDsp('comp-ratio', v));
-            fComp.add(this.state.sub, 'comp-attack', 0, 100, 1).name('Attaque (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-attack', v));
-            fComp.add(this.state.sub, 'comp-release', 10, 1000, 10).name('Release (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-release', v));
+            const cThresh = fComp.add(this.state.sub, 'comp-threshold', -60, 0, 0.1).name('Seuil (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-threshold', v));
+            this._setupController(cThresh, 'sub-comp-threshold', DSP_DEFAULTS.sub['comp-threshold'], false);
+
+            const cKnee = fComp.add(this.state.sub, 'comp-knee', 0, 40, 0.1).name('Knee (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-knee', v));
+            this._setupController(cKnee, 'sub-comp-knee', DSP_DEFAULTS.sub['comp-knee'], false);
+
+            const cRatio = fComp.add(this.state.sub, 'comp-ratio', 1, 20, 0.1).name('Ratio (:1)').onChange(v => this._onSubDsp && this._onSubDsp('comp-ratio', v));
+            this._setupController(cRatio, 'sub-comp-ratio', DSP_DEFAULTS.sub['comp-ratio'], false);
+
+            const cAttack = fComp.add(this.state.sub, 'comp-attack', 0, 100, 0.5).name('Attaque (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-attack', v));
+            this._setupController(cAttack, 'sub-comp-attack', DSP_DEFAULTS.sub['comp-attack'], false);
+
+            const cRel = fComp.add(this.state.sub, 'comp-release', 10, 1000, 1).name('Release (ms)').onChange(v => this._onSubDsp && this._onSubDsp('comp-release', v));
+            this._setupController(cRel, 'sub-comp-release', DSP_DEFAULTS.sub['comp-release'], false);
 
             const fSat = gui.addFolder('Saturation');
-            fSat.add(this.state.sub, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-drive', v));
-            fSat.add(this.state.sub, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-mix', v));
+            const cSatDr = fSat.add(this.state.sub, 'sat-drive', 0, 100, 1).name('Drive (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-drive', v));
+            this._setupController(cSatDr, 'sub-sat-drive', DSP_DEFAULTS.sub['sat-drive'], false);
+
+            const cSatMx = fSat.add(this.state.sub, 'sat-mix', 0, 100, 1).name('Mix (%)').onChange(v => this._onSubDsp && this._onSubDsp('sat-mix', v));
+            this._setupController(cSatMx, 'sub-sat-mix', DSP_DEFAULTS.sub['sat-mix'], false);
 
             const fProx = gui.addFolder('Saturation Proximité');
-            fProx.add(this.state.sub, 'prox-far', 1, 15, 0.5).name('Dist. Début (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-far', v));
-            fProx.add(this.state.sub, 'prox-near', 0.5, 5, 0.5).name('Dist. Max (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-near', v));
-            fProx.add(this.state.sub, 'prox-drive', 0, 100, 1).name('Drive Max (%)').onChange(v => this._onSubDsp && this._onSubDsp('prox-drive', v));
+            const cProxFar = fProx.add(this.state.sub, 'prox-far', 1, 15, 0.1).name('Dist. Début (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-far', v));
+            this._setupController(cProxFar, 'sub-prox-far', DSP_DEFAULTS.sub['prox-far'], false);
+
+            const cProxNear = fProx.add(this.state.sub, 'prox-near', 0.5, 5, 0.1).name('Dist. Max (m)').onChange(v => this._onSubDsp && this._onSubDsp('prox-near', v));
+            this._setupController(cProxNear, 'sub-prox-near', DSP_DEFAULTS.sub['prox-near'], false);
+
+            const cProxDr = fProx.add(this.state.sub, 'prox-drive', 0, 100, 1).name('Drive Max (%)').onChange(v => this._onSubDsp && this._onSubDsp('prox-drive', v));
+            this._setupController(cProxDr, 'sub-prox-drive', DSP_DEFAULTS.sub['prox-drive'], false);
 
             const fVol = gui.addFolder('Volume Bus');
-            fVol.add(this.state.sub, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onSubDsp && this._onSubDsp('bus-volume', v));
+            const cVol = fVol.add(this.state.sub, 'bus-volume', 0, 200, 1).name('Volume (%)').onChange(v => this._onSubDsp && this._onSubDsp('bus-volume', v));
+            this._setupController(cVol, 'sub-bus-volume', DSP_DEFAULTS.sub['bus-volume'], false);
 
             const fAcoustics = gui.addFolder('Acoustique & Limiteur');
-            fAcoustics.add(this.state.sub, 'lim-threshold', -12, 0, 0.5).name('Limiteur (dB)').onChange(v => this._onSubDsp && this._onSubDsp('lim-threshold', v));
-            fAcoustics.add(this.state.sub, 'dist-k', 0, 200, 5).name('Attén. dist (k)').onChange(v => this._onSubDsp && this._onSubDsp('dist-k', v));
-            fAcoustics.add(this.state.sub, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onSubDsp && this._onSubDsp('refl-gain', v));
-            fAcoustics.add(this.state.sub, 'refl-lpf', 200, 8000, 100).name('LPF Réflec. (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('refl-lpf', v));
+            const cLim = fAcoustics.add(this.state.sub, 'lim-threshold', -12, 0, 0.1).name('Limiteur (dB)').onChange(v => this._onSubDsp && this._onSubDsp('lim-threshold', v));
+            this._setupController(cLim, 'sub-lim-threshold', DSP_DEFAULTS.sub['lim-threshold'], false);
 
-            gui.add({ reset: () => this.resetBus('sub') }, 'reset').name('↺ Reset SUB');
+            const cDist = fAcoustics.add(this.state.sub, 'dist-k', 0, 200, 1).name('Attén. dist (k)').onChange(v => this._onSubDsp && this._onSubDsp('dist-k', v));
+            this._setupController(cDist, 'sub-dist-k', DSP_DEFAULTS.sub['dist-k'], false);
+
+            const cReflG = fAcoustics.add(this.state.sub, 'refl-gain', 0, 100, 1).name('Réflec. sol (%)').onChange(v => this._onSubDsp && this._onSubDsp('refl-gain', v));
+            this._setupController(cReflG, 'sub-refl-gain', DSP_DEFAULTS.sub['refl-gain'], false);
+
+            const cReflF = fAcoustics.add(this.state.sub, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('refl-lpf', v));
+            this._setupController(cReflF, 'sub-refl-lpf', DSP_DEFAULTS.sub['refl-lpf'], false);
         }
     }
 
