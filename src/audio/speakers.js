@@ -179,6 +179,7 @@ class Speaker {
         // --- Ground reflection ---
         this.reflection = createGroundReflection(ctx, def.position, {
             panningModel: 'equalpower',
+            spatialized: !this._isSub,
         });
 
         // --- Wiring ---
@@ -206,16 +207,22 @@ class Speaker {
             this._proxWet.connect(this._proxOut);
             this.highShelf.connect(this._proxDry);
             this._proxDry.connect(this._proxOut);
-            this._proxOut.connect(this.panner);
+
+            // Subwoofers are omnidirectional non-spatialized low-frequency radiators:
+            // Route direct to output without PannerNode (eliminates head-rotation zipper noise and phase tearing)
+            this._proxOut.connect(output);
+
+            // Sub ground reflection: direct to output (preserves distance & reflection delay without panner distortion)
+            this.distanceGain.connect(this.reflection.input);
+            this.reflection.gainNode.connect(output);
         } else {
             this.highShelf.connect(this.panner);
+            this.panner.connect(output);
+
+            // Reflection branch for directional speakers
+            this.distanceGain.connect(this.reflection.input);
+            this.reflection.panner.connect(output);
         }
-
-        this.panner.connect(output);
-
-        // Reflection branch: distanceGain → reflection.input → ... → reflection.panner → output
-        this.distanceGain.connect(this.reflection.input);
-        this.reflection.panner.connect(output);
     }
 
     /**
@@ -605,7 +612,9 @@ export class SpeakerSystem {
     setPanningModel(model) {
         for (const speaker of this.speakers) {
             speaker.panner.panningModel = model;
-            speaker.reflection.panner.panningModel = model;
+            if (speaker.reflection.panner) {
+                speaker.reflection.panner.panningModel = model;
+            }
         }
     }
 

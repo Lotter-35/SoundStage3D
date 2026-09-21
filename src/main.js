@@ -142,6 +142,7 @@ async function initAudio(file = null) {
     sineGenerator.setVolume(controls.state.sine.volume);
 
     audioReady = true;
+    window.__DEBUG = { audioEngine, speakerSystem, listener, sineGenerator, camera };
 
     // Apply initial bus volumes from config
     speakerSystem.setBusVolume('sub', DSP_DEFAULTS.sub['bus-volume'] / 100);
@@ -678,7 +679,7 @@ function renderFrame() {
         if (ctx.state === 'suspended') ctx.resume();
 
         listener._audioCtxTime = ctx.currentTime;
-        listener.syncAudioListener(ctx.listener);
+        listener.syncAudioListener(ctx.listener, ctx);
         speakerSystem.update(listener.position);
     }
 

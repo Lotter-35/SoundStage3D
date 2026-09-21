@@ -228,12 +228,12 @@ export class Listener {
      * Uses setTargetAtTime de-zippering to prevent audio crackles / clicks during rapid head turns.
      * @param {AudioListener} audioListener — ctx.listener
      */
-    syncAudioListener(audioListener) {
+    syncAudioListener(audioListener, audioCtx) {
         const p = this.camera.position;
         const forward = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
         const up = this._up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
 
-        const ctx = audioListener.context;
+        const ctx = audioCtx || audioListener.context;
         const t = ctx ? ctx.currentTime : (this._audioCtxTime || 0);
 
         if (!this._audioListenerInitialized) {
