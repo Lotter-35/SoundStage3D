@@ -452,29 +452,7 @@ export class SpeakerSystem {
         this.localVolumeGain = ctx.createGain();
         this.localVolumeGain.gain.value = 1;
         this.masterLimiter.connect(this.localVolumeGain);
-
-        // Headphone Safety Limiter & Soft-Clipper: guarantees zero DAC clipping/crackling even at 1000% volume
-        // 1. Ultra-fast brickwall limiter (0.1ms attack, 20:1 ratio, -0.5 dBFS threshold)
-        this.headphoneLimiter = ctx.createDynamicsCompressor();
-        this.headphoneLimiter.threshold.value = -0.5;
-        this.headphoneLimiter.knee.value = 1.0;
-        this.headphoneLimiter.ratio.value = 20;
-        this.headphoneLimiter.attack.value = 0.0001; // 0.1 ms
-        this.headphoneLimiter.release.value = 0.04;  // 40 ms
-
-        // 2. Analog-style tanh soft-clipper (ceiling at ±0.99) to completely round any instantaneous sub-sample transients
-        this.headphoneClipper = ctx.createWaveShaper();
-        this.headphoneClipper.oversample = '2x';
-        const clipCurve = new Float32Array(1024);
-        for (let i = 0; i < 1024; i++) {
-            const x = (i / 1023) * 4 - 2; // -2 to +2
-            clipCurve[i] = Math.tanh(x) * 0.98; // absolute ceiling at 0.98 (-0.17 dBFS)
-        }
-        this.headphoneClipper.curve = clipCurve;
-
-        this.localVolumeGain.connect(this.headphoneLimiter);
-        this.headphoneLimiter.connect(this.headphoneClipper);
-        this.headphoneClipper.connect(ctx.destination);
+        this.localVolumeGain.connect(ctx.destination);
 
         // Master analyser taps after master limiter
         this.masterAnalyser = ctx.createAnalyser();
@@ -942,7 +920,7 @@ export class SpeakerSystem {
             a.smoothingTimeConstant = 0.8;
             a.minDecibels = -90;
             a.maxDecibels = 0;
-            (this.headphoneClipper || this.localVolumeGain).connect(a);
+            this.localVolumeGain.connect(a);
             this._headphoneAnalyser = a;
         }
         return this._headphoneAnalyser;
