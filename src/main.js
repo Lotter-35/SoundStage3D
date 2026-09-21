@@ -300,10 +300,6 @@ window.addEventListener('drop', async (e) => {
     }
 });
 
-controls.onDopplerToggle((enabled) => {
-    if (!audioReady) return;
-    speakerSystem.setDoppler(enabled);
-});
 
 controls.onGrassChange((qualityKey) => {
     setGrassQuality(qualityKey);
@@ -327,133 +323,218 @@ if (grassBtn) {
     });
 }
 
-// ─── Oscilloscope ───
-const oscCanvas = document.getElementById('oscilloscope');
-const oscCtx = oscCanvas.getContext('2d');
-let oscRunning = false;
-let oscBuffer = null; // circular buffer for ~5s of waveform
-let oscWritePos = 0;
-let oscAnimId = null;
+// ─── FFT Frequency Spectrum Visualizer (Headphone Output) ───
+const spectrumCanvas = document.getElementById('spectrum-visualizer');
+const spectrumCtx = spectrumCanvas ? spectrumCanvas.getContext('2d') : null;
+let spectrumRunning = false;
+let spectrumAnimId = null;
 
-function oscStart() {
-    if (!audioReady) return;
-    oscCanvas.classList.remove('hidden');
-    // Use a dedicated analyser with large fftSize for time-domain
-    if (!speakerSystem._oscAnalyser) {
-        const a = speakerSystem.ctx.createAnalyser();
-        a.fftSize = 2048;
-        a.smoothingTimeConstant = 0;
-        speakerSystem.masterLimiter.connect(a);
-        speakerSystem._oscAnalyser = a;
-    }
-    const analyser = speakerSystem._oscAnalyser;
+function spectrumStart() {
+    if (!audioReady || !spectrumCanvas || !spectrumCtx) return;
+    spectrumCanvas.classList.remove('hidden');
+    const analyser = speakerSystem.getHeadphoneAnalyser();
+    const binCount = analyser.frequencyBinCount;
+    const freqData = new Float32Array(binCount);
     const sampleRate = speakerSystem.ctx.sampleRate;
-    const W = oscCanvas.width;
-    // ~5 seconds of samples
-    const totalSamples = Math.ceil(sampleRate * 5);
-    oscBuffer = new Float32Array(totalSamples);
-    oscWritePos = 0;
-    oscRunning = true;
-    const timeBuf = new Float32Array(analyser.fftSize);
+    const W = spectrumCanvas.width;
+    const H = spectrumCanvas.height;
 
-    // Pre-computed per-pixel min/max columns for O(W) drawing instead of O(totalSamples)
-    const colMin = new Float32Array(W);
-    const colMax = new Float32Array(W);
-    const samplesPerPx = totalSamples / W;
+    // Peak hold memory for each horizontal pixel column
+    const peakY = new Float32Array(W).fill(H);
+    const peakDecaySpeed = 0.6; // pixels dropped per frame
+
+    spectrumRunning = true;
+
+    // Precalculate frequency for each pixel column (logarithmic: 20 Hz to 20 kHz)
+    const minFreq = 20;
+    const maxFreq = 20000;
+    const logMin = Math.log10(minFreq);
+    const logMax = Math.log10(maxFreq);
+    const logRange = logMax - logMin;
+
+    const colFreqs = new Float32Array(W);
+    const colBins = new Float32Array(W);
+    for (let x = 0; x < W; x++) {
+        const f = minFreq * Math.pow(maxFreq / minFreq, x / (W - 1));
+        colFreqs[x] = f;
+        colBins[x] = (f * analyser.fftSize) / sampleRate;
+    }
+
+    // Grid frequencies to label
+    const gridFreqs = [
+        { f: 20, label: '20' },
+        { f: 50, label: '50' },
+        { f: 100, label: '100' },
+        { f: 250, label: '250' },
+        { f: 500, label: '500' },
+        { f: 1000, label: '1k' },
+        { f: 2000, label: '2k' },
+        { f: 5000, label: '5k' },
+        { f: 10000, label: '10k' },
+        { f: 20000, label: '20k' },
+    ];
+
+    // Additional intermediate ticks without labels
+    const tickFreqs = [
+        30, 40, 60, 70, 80, 90,
+        150, 200, 300, 400, 600, 700, 800, 900,
+        1500, 3000, 4000, 6000, 7000, 8000, 9000,
+        12000, 15000, 18000
+    ];
+
+    // dB grid lines (-84 dB to 0 dB)
+    const minDb = -84;
+    const maxDb = 0;
+    const dbRange = maxDb - minDb;
+    const gridDbs = [0, -12, -24, -36, -48, -60, -72];
+
+    const paddingTop = 24;
+    const paddingBottom = 20;
+    const usableH = H - paddingTop - paddingBottom;
 
     function draw() {
-        if (!oscRunning) return;
-        oscAnimId = requestAnimationFrame(draw);
+        if (!spectrumRunning) return;
+        spectrumAnimId = requestAnimationFrame(draw);
 
-        // Grab current time-domain data and append to ring buffer
-        analyser.getFloatTimeDomainData(timeBuf);
-        for (let i = 0; i < timeBuf.length; i++) {
-            oscBuffer[oscWritePos % totalSamples] = timeBuf[i];
-            oscWritePos++;
+        analyser.getFloatFrequencyData(freqData);
+
+        spectrumCtx.clearRect(0, 0, W, H);
+
+        // 1. Draw horizontal dB grid lines & labels
+        spectrumCtx.lineWidth = 1;
+        spectrumCtx.font = '9px monospace';
+        for (const db of gridDbs) {
+            const normY = (maxDb - db) / dbRange;
+            const y = paddingTop + normY * usableH;
+
+            spectrumCtx.strokeStyle = db === 0 ? 'rgba(255, 70, 70, 0.45)' : 'rgba(255, 255, 255, 0.08)';
+            spectrumCtx.beginPath();
+            spectrumCtx.moveTo(0, y);
+            spectrumCtx.lineTo(W, y);
+            spectrumCtx.stroke();
+
+            spectrumCtx.fillStyle = db === 0 ? 'rgba(255, 90, 90, 0.7)' : 'rgba(255, 255, 255, 0.30)';
+            spectrumCtx.textAlign = 'right';
+            spectrumCtx.fillText(`${db} dB`, W - 6, y - 3);
         }
 
-        const H = oscCanvas.height;
-        oscCtx.clearRect(0, 0, W, H);
-
-        // Grid lines
-        oscCtx.strokeStyle = 'rgba(255,255,255,0.08)';
-        oscCtx.lineWidth = 1;
-        for (let y = 0; y <= 4; y++) {
-            const yy = (y / 4) * H;
-            oscCtx.beginPath(); oscCtx.moveTo(0, yy); oscCtx.lineTo(W, yy); oscCtx.stroke();
-        }
-        // Time markers every 1s
-        oscCtx.fillStyle = 'rgba(255,255,255,0.3)';
-        oscCtx.font = '10px monospace';
-        for (let s = 1; s <= 4; s++) {
-            const x = (s / 5) * W;
-            oscCtx.beginPath(); oscCtx.moveTo(x, 0); oscCtx.lineTo(x, H); oscCtx.stroke();
-            oscCtx.fillText('-' + (5 - s) + 's', x + 2, H - 4);
-        }
-        oscCtx.fillText('now', W - 22, H - 4);
-
-        // Waveform — compute min/max per pixel column in a single pass
-        const filled = Math.min(oscWritePos, totalSamples);
-        if (filled < 2) return;
-
-        const readStart = oscWritePos >= totalSamples ? oscWritePos : 0;
-
-        // Single pass: compute min/max for each pixel column
-        for (let px = 0; px < W; px++) { colMin[px] = 1; colMax[px] = -1; }
-        for (let s = 0; s < totalSamples; s++) {
-            const idx = (readStart + s) % totalSamples;
-            if (idx >= filled && oscWritePos < totalSamples) continue;
-            const px = Math.min((s / samplesPerPx) | 0, W - 1);
-            const v = oscBuffer[idx];
-            if (v < colMin[px]) colMin[px] = v;
-            if (v > colMax[px]) colMax[px] = v;
+        // 2. Draw vertical frequency ticks & grid lines
+        for (const tf of tickFreqs) {
+            const x = ((Math.log10(tf) - logMin) / logRange) * W;
+            spectrumCtx.strokeStyle = 'rgba(255, 255, 255, 0.035)';
+            spectrumCtx.beginPath();
+            spectrumCtx.moveTo(x, paddingTop);
+            spectrumCtx.lineTo(x, H - paddingBottom);
+            spectrumCtx.stroke();
         }
 
-        // Draw center waveform line
-        oscCtx.beginPath();
-        oscCtx.strokeStyle = '#4af';
-        oscCtx.lineWidth = 1.2;
-        for (let px = 0; px < W; px++) {
-            let mn = colMin[px], mx = colMax[px];
-            if (mn > mx) { mn = 0; mx = 0; }
-            const yMid = ((1 - ((mn + mx) / 2)) / 2) * H;
-            if (px === 0) oscCtx.moveTo(px, yMid);
-            else oscCtx.lineTo(px, yMid);
-        }
-        oscCtx.stroke();
+        for (const gf of gridFreqs) {
+            const x = ((Math.log10(gf.f) - logMin) / logRange) * W;
+            spectrumCtx.strokeStyle = 'rgba(255, 255, 255, 0.12)';
+            spectrumCtx.beginPath();
+            spectrumCtx.moveTo(x, paddingTop);
+            spectrumCtx.lineTo(x, H - paddingBottom);
+            spectrumCtx.stroke();
 
-        // Draw envelope fill
-        oscCtx.beginPath();
-        oscCtx.fillStyle = 'rgba(68,170,255,0.15)';
-        // Top envelope
-        for (let px = 0; px < W; px++) {
-            let mx = colMax[px];
-            if (mx === -1) mx = 0;
-            const y = ((1 - mx) / 2) * H;
-            if (px === 0) oscCtx.moveTo(px, y);
-            else oscCtx.lineTo(px, y);
+            spectrumCtx.fillStyle = 'rgba(255, 255, 255, 0.50)';
+            spectrumCtx.textAlign = 'center';
+            spectrumCtx.fillText(gf.label, x, H - 6);
         }
-        // Bottom envelope (reverse)
-        for (let px = W - 1; px >= 0; px--) {
-            let mn = colMin[px];
-            if (mn === 1) mn = 0;
-            const y = ((1 - mn) / 2) * H;
-            oscCtx.lineTo(px, y);
+
+        // 3. Compute spectrum Y coordinates across pixel columns
+        let peakMaxDb = -120;
+        let peakMaxFreq = 0;
+        const colY = new Float32Array(W);
+
+        for (let x = 0; x < W; x++) {
+            const binFloat = colBins[x];
+            const bin0 = Math.max(0, Math.min(binCount - 1, Math.floor(binFloat)));
+            const bin1 = Math.min(binCount - 1, bin0 + 1);
+            const frac = binFloat - bin0;
+
+            const val = freqData[bin0] * (1 - frac) + freqData[bin1] * frac;
+            if (val > peakMaxDb) {
+                peakMaxDb = val;
+                peakMaxFreq = colFreqs[x];
+            }
+
+            const clampedVal = Math.max(minDb, Math.min(maxDb, val));
+            const normY = (maxDb - clampedVal) / dbRange;
+            colY[x] = paddingTop + normY * usableH;
+
+            // Update peak-hold line
+            if (colY[x] < peakY[x]) {
+                peakY[x] = colY[x];
+            } else {
+                peakY[x] = Math.min(H - paddingBottom, peakY[x] + peakDecaySpeed);
+            }
         }
-        oscCtx.closePath();
-        oscCtx.fill();
+
+        // 4. Draw filled spectrum area with luminous multi-stop vertical gradient
+        const grad = spectrumCtx.createLinearGradient(0, paddingTop, 0, H - paddingBottom);
+        grad.addColorStop(0.00, 'rgba(0, 245, 255, 0.50)');  // Neon cyan
+        grad.addColorStop(0.30, 'rgba(0, 160, 255, 0.35)');  // Electric blue
+        grad.addColorStop(0.70, 'rgba(140, 50, 255, 0.20)'); // Electric violet
+        grad.addColorStop(1.00, 'rgba(10, 15, 30, 0.02)');   // Transparent deep
+
+        spectrumCtx.beginPath();
+        spectrumCtx.moveTo(0, H - paddingBottom);
+        for (let x = 0; x < W; x++) {
+            spectrumCtx.lineTo(x, colY[x]);
+        }
+        spectrumCtx.lineTo(W, H - paddingBottom);
+        spectrumCtx.closePath();
+        spectrumCtx.fillStyle = grad;
+        spectrumCtx.fill();
+
+        // 5. Draw peak hold line
+        spectrumCtx.beginPath();
+        spectrumCtx.strokeStyle = 'rgba(255, 215, 60, 0.65)';
+        spectrumCtx.lineWidth = 1.2;
+        for (let x = 0; x < W; x++) {
+            if (x === 0) spectrumCtx.moveTo(x, peakY[x]);
+            else spectrumCtx.lineTo(x, peakY[x]);
+        }
+        spectrumCtx.stroke();
+
+        // 6. Draw bright spectrum top stroke line
+        spectrumCtx.beginPath();
+        spectrumCtx.strokeStyle = '#00f0ff';
+        spectrumCtx.lineWidth = 1.8;
+        spectrumCtx.shadowColor = '#00f0ff';
+        spectrumCtx.shadowBlur = 4;
+        for (let x = 0; x < W; x++) {
+            if (x === 0) spectrumCtx.moveTo(x, colY[x]);
+            else spectrumCtx.lineTo(x, colY[x]);
+        }
+        spectrumCtx.stroke();
+        spectrumCtx.shadowBlur = 0; // reset shadow
+
+        // 7. Title badge & Peak readout
+        spectrumCtx.fillStyle = '#00e5ff';
+        spectrumCtx.font = 'bold 10px "SF Mono", monospace';
+        spectrumCtx.textAlign = 'left';
+        spectrumCtx.fillText('📊 RTA FFT • SORTIE CASQUE', 8, 15);
+
+        if (peakMaxDb > -80) {
+            const freqFmt = peakMaxFreq >= 1000 ? `${(peakMaxFreq / 1000).toFixed(1)} kHz` : `${Math.round(peakMaxFreq)} Hz`;
+            spectrumCtx.fillStyle = '#ffdf60';
+            spectrumCtx.textAlign = 'right';
+            spectrumCtx.fillText(`Pic : ${freqFmt} (${peakMaxDb.toFixed(1)} dB)`, W - 60, 15);
+        }
     }
+
     draw();
 }
 
-function oscStop() {
-    oscRunning = false;
-    if (oscAnimId) cancelAnimationFrame(oscAnimId);
-    oscCanvas.classList.add('hidden');
+function spectrumStop() {
+    spectrumRunning = false;
+    if (spectrumAnimId) cancelAnimationFrame(spectrumAnimId);
+    if (spectrumCanvas) spectrumCanvas.classList.add('hidden');
 }
 
-controls.onOscilloscopeToggle((enabled) => {
-    if (enabled) oscStart(); else oscStop();
+controls.onSpectrumToggle((enabled) => {
+    if (enabled) spectrumStart(); else spectrumStop();
 });
 
 controls.onHrtfToggle((enabled) => {
@@ -617,9 +698,8 @@ function updateDebug(dt) {
   Total speakers   <span class="dbg-val">${speakerSystem.speakers.length}</span>
   Updated/frame    <span class="dbg-val">${ss.updatedSpeakers} / ${speakerSystem.speakers.length}</span>  (stagger)
   Skipped frames   <span class="${skipPct > 50 ? 'dbg-val' : 'dbg-warn'}">${skipPct}%</span>  (dirty check)
-  Doppler          <span class="dbg-val">${speakerSystem.speakers[0]?._dopplerEnabled ? 'ON' : 'OFF'}</span>
   Panning model    <span class="dbg-val">${speakerSystem.speakers[0]?.panner.panningModel}</span>
-  Oscillo          <span class="dbg-val">${oscRunning ? 'ON' : 'OFF'}</span>`;
+  Spectre FFT      <span class="dbg-val">${spectrumRunning ? 'ON' : 'OFF'}</span>`;
 
         // Reset frame counters
         ss.skippedFrames = 0;

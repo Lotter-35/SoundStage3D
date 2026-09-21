@@ -3,7 +3,7 @@
  * - Master & Environment (top-right)
  * - TOP & MID Pipelines (bottom-left)
  * - FILL & SUB Pipelines (bottom-right)
- * - Quick HUD action bar (Cônes, HRTF, Doppler, Oscillo, Herbe, Play/Pause, Changer MP3, Debug)
+ * - Quick HUD action bar (Cônes, HRTF, Spectre, Sinus, Herbe, Play/Pause, Changer MP3, Debug)
  * - Interactive tooltips on hover
  * - Individual reset buttons (↺) on each option
  * - Smooth continuous slider dragging with high precision
@@ -46,8 +46,7 @@ export class Controls {
         this._onEnter = null;
         this._onPlayPause = null;
         this._onChangeMp3 = null;
-        this._onDopplerToggle = null;
-        this._onOscilloscopeToggle = null;
+        this._onSpectrumToggle = null;
         this._onConesToggle = null;
         this._onHrtfToggle = null;
         this._onHrtfBrightness = null;
@@ -578,25 +577,15 @@ export class Controls {
             });
         }
 
-        // Doppler button
-        this._dopplerOn = false;
-        this.dopplerBtn = document.getElementById('doppler-btn');
-        if (this.dopplerBtn) {
-            this.dopplerBtn.addEventListener('click', () => {
-                this._dopplerOn = !this._dopplerOn;
-                this.dopplerBtn.textContent = this._dopplerOn ? '🔊 Doppler: ON' : '🔇 Doppler: OFF';
-                if (this._onDopplerToggle) this._onDopplerToggle(this._dopplerOn);
-            });
-        }
-
-        // Oscilloscope button
-        this._oscilloscopeOn = false;
-        this.oscilloscopeBtn = document.getElementById('oscilloscope-btn');
-        if (this.oscilloscopeBtn) {
-            this.oscilloscopeBtn.addEventListener('click', () => {
-                this._oscilloscopeOn = !this._oscilloscopeOn;
-                this.oscilloscopeBtn.textContent = this._oscilloscopeOn ? '📈 Oscillo: ON' : '📈 Oscillo: OFF';
-                if (this._onOscilloscopeToggle) this._onOscilloscopeToggle(this._oscilloscopeOn);
+        // Spectrum FFT button
+        this._spectrumOn = false;
+        this.spectrumBtn = document.getElementById('spectrum-btn');
+        if (this.spectrumBtn) {
+            this.spectrumBtn.addEventListener('click', () => {
+                this._spectrumOn = !this._spectrumOn;
+                this.spectrumBtn.textContent = this._spectrumOn ? '📊 Spectre: ON' : '📊 Spectre: OFF';
+                this.spectrumBtn.classList.toggle('active', this._spectrumOn);
+                if (this._onSpectrumToggle) this._onSpectrumToggle(this._spectrumOn);
             });
         }
 
@@ -729,8 +718,7 @@ export class Controls {
     onEnter(cb) { this._onEnter = cb; }
     onPlayPause(cb) { this._onPlayPause = cb; }
     onChangeMp3(cb) { this._onChangeMp3 = cb; }
-    onDopplerToggle(cb) { this._onDopplerToggle = cb; }
-    onOscilloscopeToggle(cb) { this._onOscilloscopeToggle = cb; }
+    onSpectrumToggle(cb) { this._onSpectrumToggle = cb; }
     onHrtfToggle(cb) { this._onHrtfToggle = cb; }
     onHrtfBrightness(cb) { this._onHrtfBrightness = cb; }
     onConesToggle(cb) { this._onConesToggle = cb; }

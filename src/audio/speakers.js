@@ -17,10 +17,8 @@
 import { createGroundReflection } from './effects.js';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 
-const SPEED_OF_SOUND = 343; // m/s
 const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.sub['dist-k'] ?? 60) / 1000;
 const DEFAULT_AIR_ABS = DSP_DEFAULTS.master['air-abs'] ?? 40;
-const MAX_DELAY = 1.0;
 
 // Proximity saturation thresholds (sub only) — mutable via UI
 let PROX_FAR  = DSP_DEFAULTS.sub['prox-far'] ?? 4.0;
@@ -108,7 +106,6 @@ class Speaker {
         this.ctx = ctx;
         this.id = def.id;
         this.position = def.position;
-        this._dopplerEnabled = false;
         this._isSub = def.omnidirectional === true;
         this._isMid = def.bus === 'mid';
         this._isFill = def.bus === 'fill';
@@ -120,10 +117,6 @@ class Speaker {
         // --- Distance attenuation gain ---
         this.distanceGain = ctx.createGain();
         this.distanceGain.gain.value = 1;
-
-        // --- Propagation delay ---
-        this.propagationDelay = ctx.createDelay(MAX_DELAY);
-        this.propagationDelay.delayTime.value = 0;
 
         // --- Air absorption (2× cascaded low-pass → 24 dB/oct) ---
         this.airAbsorption1 = ctx.createBiquadFilter();
@@ -175,10 +168,8 @@ class Speaker {
         });
 
         // --- Wiring ---
-        this.distanceGain.connect(this.propagationDelay);
-
-        // All speakers: full chain with air absorption & high-shelf
-        this.propagationDelay.connect(this.airAbsorption1);
+        // All speakers: full chain with distance attenuation, air absorption & high-shelf
+        this.distanceGain.connect(this.airAbsorption1);
         this.airAbsorption1.connect(this.airAbsorption2);
         this.airAbsorption2.connect(this.highShelf);
 
@@ -230,14 +221,6 @@ class Speaker {
         const gain = 1 / (1 + this._distanceK * distance);
         this.distanceGain.gain.setTargetAtTime(gain, t, smooth);
 
-        // Propagation delay
-        if (this._dopplerEnabled) {
-            const delay = Math.min(distance / SPEED_OF_SOUND, MAX_DELAY);
-            this.propagationDelay.delayTime.setTargetAtTime(delay, t, 0.05);
-        } else if (this.propagationDelay.delayTime.value !== 0) {
-            this.propagationDelay.delayTime.setTargetAtTime(0, t, smooth);
-        }
-
         // Air absorption: high-frequency rolloff with distance (24 dB/oct cascaded)
         // MID/FILL have a higher cutoff floor to preserve their useful band (90–2kHz)
         const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
@@ -265,13 +248,6 @@ class Speaker {
         this._applyProxCurve(PROX_DRIVE_MAX);
         this._proxWet.gain.setTargetAtTime(prox, t, 0.04);
         this._proxDry.gain.setTargetAtTime(1 - prox, t, 0.04);
-    }
-
-    setDoppler(enabled) {
-        this._dopplerEnabled = enabled;
-        if (!enabled) {
-            this.propagationDelay.delayTime.setTargetAtTime(0, this.ctx.currentTime, 0.04);
-        }
     }
 
     /**
@@ -567,16 +543,6 @@ export class SpeakerSystem {
             this.speakers[i].update(listenerPos);
         }
         this._debugStats.updatedSpeakers = this.speakers.length;
-    }
-
-    /**
-     * Enable or disable propagation delay (Doppler effect).
-     * @param {boolean} enabled
-     */
-    setDoppler(enabled) {
-        for (const speaker of this.speakers) {
-            speaker.setDoppler(enabled);
-        }
     }
 
     /**
@@ -898,6 +864,25 @@ export class SpeakerSystem {
             top: peakLevel(this.topAnalyser, this._meterBufs.top),
             master: peakLevel(this.masterAnalyser, this._meterBufs.master),
         };
+    }
+
+    /**
+     * High-resolution FFT AnalyserNode (2048 bins) connected directly at the end
+     * of the signal chain (localVolumeGain → ctx.destination / headphones).
+     * Accounts for all 14 speakers, distance attenuation, air absorption, panning,
+     * reverb, master limiter and local headphone volume.
+     */
+    getHeadphoneAnalyser() {
+        if (!this._headphoneAnalyser) {
+            const a = this.ctx.createAnalyser();
+            a.fftSize = 2048;
+            a.smoothingTimeConstant = 0.8;
+            a.minDecibels = -90;
+            a.maxDecibels = 0;
+            this.localVolumeGain.connect(a);
+            this._headphoneAnalyser = a;
+        }
+        return this._headphoneAnalyser;
     }
 }
 

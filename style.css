@@ -288,21 +288,23 @@ body {
     pointer-events: none;
 }
 
-/* ─── Oscilloscope ─── */
-#oscilloscope {
+/* ─── FFT Frequency Spectrum Visualizer ─── */
+#spectrum-visualizer {
     position: fixed;
-    bottom: 50px;
+    bottom: 46px;
     left: 50%;
     transform: translateX(-50%);
-    width: min(900px, 80vw);
-    height: 160px;
-    background: rgba(0, 0, 0, 0.75);
-    border: 1px solid #444;
-    border-radius: 8px;
+    width: min(920px, 86vw);
+    height: 200px;
+    background: rgba(8, 12, 22, 0.90);
+    border: 1px solid rgba(0, 210, 255, 0.35);
+    border-radius: 10px;
     z-index: 110;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 10px 36px rgba(0, 0, 0, 0.8), inset 0 0 24px rgba(0, 30, 60, 0.5);
     pointer-events: none;
 }
-#oscilloscope.hidden {
+#spectrum-visualizer.hidden {
     display: none;
 }
 
@@ -408,25 +410,17 @@ body {
     z-index: 90;
 }
 
-/* ─── Sine Generator button & panel ─── */
-#sine-btn-wrap {
-    position: fixed;
-    bottom: 22px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 100;
-    pointer-events: auto;
-}
-
+/* ─── Sine Generator panel ─── */
 #sine-panel-wrap {
     position: fixed;
-    bottom: 62px;
-    left: 50%;
-    transform: translateX(-50%);
-    z-index: 120;
+    top: 56px;
+    right: 16px;
+    z-index: 125;
     pointer-events: auto;
     width: 320px;
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.8), 0 0 1px rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    overflow: hidden;
 }
 
 #sine-panel-wrap.hidden {

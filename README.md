@@ -19,9 +19,9 @@
 *   **Sonorisation 4-voies Pro :** Le son est séparé en **SUB**, **MID**, **TOP** et **FILL** via un crossover Linkwitz-Riley.
 *   **Chaîne DSP par Bus :** Chaque bande de fréquence possède sa propre chaîne de traitement (Compresseur, Saturation, Limiteur).
 *   **Simulation Acoustique :** Atténuation avec la distance, absorption de l'air, et réflexions au sol pour plus de réalisme.
-*   **Spatialisation 3D :** Positionnement audio précis incluant un mode binaural (HRTF) et l'effet Doppler.
+*   **Spatialisation 3D :** Positionnement audio précis incluant un mode binaural (HRTF) réaliste.
 *   **Navigation FPS :** Exploration libre de la scène (modes "Vol" et "Personnage").
-*   **Visualiseurs Audio :** Oscilloscope, vu-mètres par bus, et affichage des cônes de directivité.
+*   **Visualiseurs Audio :** Analyseur de spectre FFT (RTA sortie casque), vu-mètres par bus, et affichage des cônes de directivité.
 *   **Contrôle Total en Temps Réel :** Ajustez des dizaines de paramètres audio via les panneaux DSP.
 *   **Panneau de Débogage :** Overlay technique avec métriques de performance (FPS, mémoire, charge audio).
 
