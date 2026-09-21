@@ -18,7 +18,7 @@ import { createGroundReflection } from './effects.js';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 
 const SPEED_OF_SOUND = 343; // m/s
-const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.mid?.['dist-k'] ?? 60) / 1000;
+const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.sub['dist-k'] ?? 60) / 1000;
 const DEFAULT_AIR_ABS = DSP_DEFAULTS.master['air-abs'] ?? 40;
 const MAX_DELAY = 1.0;
 
@@ -40,34 +40,13 @@ for (let i = -3; i <= 3; i++) {
 
 export const SPEAKER_DEFS = [
     ...SUB_DEFS,
-    // Mid/high arrays — directional, angled slightly down (-Y) and outward (X)
-    {
-        id: 'arrayLeft',
-        bus: 'top',
-        position: { x: -12, y: 8, z: 0 },
-        omnidirectional: false,
-        orientation: { x: 0.15, y: -0.1, z: 1 },
-        coneInner: 60,
-        coneOuter: 120,
-        coneOuterGain: 0.3,
-    },
-    {
-        id: 'arrayRight',
-        bus: 'top',
-        position: { x: 12, y: 8, z: 0 },
-        omnidirectional: false,
-        orientation: { x: -0.15, y: -0.1, z: 1 },
-        coneInner: 60,
-        coneOuter: 120,
-        coneOuterGain: 0.3,
-    },
     // Mid infill / side-fill — lower, wider dispersion
     {
         id: 'midLeft',
         bus: 'mid',
         position: { x: -12, y: 6, z: -2 },
         omnidirectional: false,
-        orientation: { x: 0.3, y: -0.05, z: 1 },
+        orientation: { x: 0, y: -0.2, z: 1 },
         coneInner: 80,
         coneOuter: 140,
         coneOuterGain: 0.35,
@@ -77,12 +56,26 @@ export const SPEAKER_DEFS = [
         bus: 'mid',
         position: { x: 12, y: 6, z: -2 },
         omnidirectional: false,
-        orientation: { x: -0.3, y: -0.05, z: 1 },
+        orientation: { x: 0, y: -0.2, z: 1 },
         coneInner: 80,
         coneOuter: 140,
         coneOuterGain: 0.35,
     },
-    // Front fills — on stage edge, angled down toward front row
+    {
+        id: 'arrayLeft',
+        bus: 'top',
+        position: { x: -12, y: 8, z: 0 },
+        omnidirectional: false,
+        orientation: { x: 0, y: -0.3, z: 1 },
+    },
+    {
+        id: 'arrayRight',
+        bus: 'top',
+        position: { x: 12, y: 8, z: 0 },
+        omnidirectional: false,
+        orientation: { x: 0, y: -0.3, z: 1 },
+    },
+    // 2 front-fills on stage — diagonal, covering center audience
     {
         id: 'fillLeft',
         bus: 'fill',
@@ -247,12 +240,10 @@ class Speaker {
 
         // Air absorption: high-frequency rolloff with distance (24 dB/oct cascaded)
         // MID/FILL have a higher cutoff floor to preserve their useful band (90–2kHz)
-        if (!this._isSub) {
-            const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
-            const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
-            this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
-            this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
-        }
+        const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
+        const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
+        this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
+        this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
 
         // Sub proximity saturation: smooth cross-fade via GainNodes only
         // NO per-frame curve reallocation (eliminates audio crackles on movement)
@@ -378,60 +369,20 @@ export class SpeakerSystem {
         this.fillVolume = ctx.createGain();
         this.fillVolume.gain.value = 1;
 
-        // SUB bus limiter (pre-fader dynamics control)
-        this.subLimiter = ctx.createDynamicsCompressor();
-        this.subLimiter.threshold.value = DSP_DEFAULTS.sub?.['lim-threshold'] ?? -3;
-        this.subLimiter.knee.value = 2;
-        this.subLimiter.ratio.value = 20;
-        this.subLimiter.attack.value = 0.001;
-        this.subLimiter.release.value = 0.05;
-
-        // Wire bus effects: subBus → subCompressor → subSaturation → subLimiter → subVolume
+        // Wire bus effects: subBus → subCompressor → subSaturation → subVolume
         subBus.connect(effects.subComp);
         effects.subComp.connect(effects.subSat);
-        effects.subSat.connect(this.subLimiter);
-        this.subLimiter.connect(this.subVolume);
+        effects.subSat.connect(this.subVolume);
 
-        // ── Analysers for level metering (tap after bus volume to reflect mix fader) ──
-        this.subAnalyser = ctx.createAnalyser();
-        this.subAnalyser.fftSize = 256;
-        this.subVolume.connect(this.subAnalyser);
-
-        // MID bus limiter (pre-fader dynamics control)
-        this.midLimiter = ctx.createDynamicsCompressor();
-        this.midLimiter.threshold.value = -3;
-        this.midLimiter.knee.value = 2;
-        this.midLimiter.ratio.value = 20;
-        this.midLimiter.attack.value = 0.001;
-        this.midLimiter.release.value = 0.05;
-
-        // Wire bus effects: midBus → midCompressor → midSaturation → midLimiter → midVolume
+        // Wire bus effects: midBus → midCompressor → midSaturation → midVolume
         midBus.connect(effects.midComp);
         effects.midComp.connect(effects.midSat);
-        effects.midSat.connect(this.midLimiter);
-        this.midLimiter.connect(this.midVolume);
+        effects.midSat.connect(this.midVolume);
 
-        this.midAnalyser = ctx.createAnalyser();
-        this.midAnalyser.fftSize = 256;
-        this.midVolume.connect(this.midAnalyser);
-
-        // TOP bus limiter (pre-fader dynamics control)
-        this.topLimiter = ctx.createDynamicsCompressor();
-        this.topLimiter.threshold.value = -3;
-        this.topLimiter.knee.value = 2;
-        this.topLimiter.ratio.value = 20;
-        this.topLimiter.attack.value = 0.001;
-        this.topLimiter.release.value = 0.05;
-
-        // Wire bus effects: topBus → topCompressor → topSaturation → topLimiter → topVolume
+        // Wire bus effects: topBus → topCompressor → topSaturation → topVolume
         topBus.connect(effects.topComp);
         effects.topComp.connect(effects.topSat);
-        effects.topSat.connect(this.topLimiter);
-        this.topLimiter.connect(this.topVolume);
-
-        this.topAnalyser = ctx.createAnalyser();
-        this.topAnalyser.fftSize = 256;
-        this.topVolume.connect(this.topAnalyser);
+        effects.topSat.connect(this.topVolume);
 
         // Front-fill bus: taps from mid+top processed signals (after effects, before bus volume)
         // This way fill volume is independent from mid/top volume
@@ -439,20 +390,51 @@ export class SpeakerSystem {
         this.fillMerge.gain.value = 0.5; // -6dB each to avoid summing boost
         effects.midSat.connect(this.fillMerge);
         effects.topSat.connect(this.fillMerge);
+        this.fillMerge.connect(this.fillVolume);
 
-        // FILL bus limiter (pre-fader dynamics control)
+        // ── Analysers for level metering ──
+        this.subAnalyser = ctx.createAnalyser();
+        this.subAnalyser.fftSize = 256;
+        this.subVolume.connect(this.subAnalyser);
+
+        // MID bus limiter (brick-wall)
+        this.midLimiter = ctx.createDynamicsCompressor();
+        this.midLimiter.threshold.value = -3;
+        this.midLimiter.knee.value = 2;
+        this.midLimiter.ratio.value = 20;
+        this.midLimiter.attack.value = 0.001;
+        this.midLimiter.release.value = 0.05;
+        this.midVolume.connect(this.midLimiter);
+
+        this.midAnalyser = ctx.createAnalyser();
+        this.midAnalyser.fftSize = 256;
+        this.midLimiter.connect(this.midAnalyser);
+
+        // TOP bus limiter (brick-wall)
+        this.topLimiter = ctx.createDynamicsCompressor();
+        this.topLimiter.threshold.value = -3;
+        this.topLimiter.knee.value = 2;
+        this.topLimiter.ratio.value = 20;
+        this.topLimiter.attack.value = 0.001;
+        this.topLimiter.release.value = 0.05;
+        this.topVolume.connect(this.topLimiter);
+
+        this.topAnalyser = ctx.createAnalyser();
+        this.topAnalyser.fftSize = 256;
+        this.topLimiter.connect(this.topAnalyser);
+
+        // FILL bus limiter (brick-wall)
         this.fillLimiter = ctx.createDynamicsCompressor();
         this.fillLimiter.threshold.value = -3;
         this.fillLimiter.knee.value = 2;
         this.fillLimiter.ratio.value = 20;
         this.fillLimiter.attack.value = 0.001;
         this.fillLimiter.release.value = 0.05;
-        this.fillMerge.connect(this.fillLimiter);
-        this.fillLimiter.connect(this.fillVolume);
+        this.fillVolume.connect(this.fillLimiter);
 
         this.fillAnalyser = ctx.createAnalyser();
         this.fillAnalyser.fftSize = 256;
-        this.fillVolume.connect(this.fillAnalyser);
+        this.fillLimiter.connect(this.fillAnalyser);
 
         // Master output chain: masterOutput → limiter → localVolumeGain → ctx.destination
         this.masterOutput = ctx.createGain();
@@ -512,11 +494,11 @@ export class SpeakerSystem {
             if (def.bus === 'sub') {
                 this.subVolume.connect(speaker.input);
             } else if (def.bus === 'mid') {
-                this.midVolume.connect(speaker.input);
+                this.midLimiter.connect(speaker.input);
             } else if (def.bus === 'fill') {
-                this.fillVolume.connect(speaker.input);
+                this.fillLimiter.connect(speaker.input);
             } else {
-                this.topVolume.connect(speaker.input);
+                this.topLimiter.connect(speaker.input);
             }
         }
 
@@ -755,7 +737,7 @@ export class SpeakerSystem {
                 for (const s of subSpeakers) s._updateProxSat();
                 break;
             case 'lim-threshold':
-                if (this.subLimiter) this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                this.masterLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
         this.forceUpdateAll();
