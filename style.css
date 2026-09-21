@@ -667,6 +667,44 @@ body {
     background: rgba(255, 255, 255, 0.15) !important;
 }
 
+/* Panel Header & "↺ Tout reset" button */
+.dsp-panel-slot .lil-gui.root > .title,
+#dsp-master-wrap .lil-gui.root > .title {
+    display: flex !important;
+    align-items: center !important;
+    padding-right: 6px !important;
+    height: 26px !important;
+}
+
+.lil-panel-reset-btn {
+    margin-left: auto !important;
+    margin-right: 2px !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    color: #ccc !important;
+    border-radius: 3px !important;
+    font-size: 10px !important;
+    font-weight: 500 !important;
+    padding: 2px 7px !important;
+    cursor: pointer !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+    transition: all 0.15s ease !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+.lil-panel-reset-btn:hover {
+    background: rgba(255, 255, 255, 0.25) !important;
+    border-color: rgba(255, 255, 255, 0.6) !important;
+    color: #fff !important;
+}
+
+.lil-panel-reset-btn:active {
+    background: rgba(255, 255, 255, 0.35) !important;
+    transform: scale(0.96);
+}
+
 /* ─── DSP Tooltip (position: fixed) ─── */
 #dsp-tooltip {
     position: fixed;

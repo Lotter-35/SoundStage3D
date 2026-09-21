@@ -156,6 +156,46 @@ export class Controls {
         }
     }
 
+    _addGuiResetButton(gui, busKey) {
+        if (!gui || !gui.$title) return;
+        const btn = document.createElement('span');
+        btn.setAttribute('role', 'button');
+        btn.setAttribute('tabindex', '0');
+        btn.className = 'lil-panel-reset-btn';
+        btn.textContent = '↺ Tout reset';
+        btn.title = 'Réinitialiser tous les réglages de ce menu';
+
+        const triggerReset = (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            const defaults = DSP_DEFAULTS[busKey];
+            if (defaults) {
+                gui.controllersRecursive().forEach(ctrl => {
+                    const defVal = defaults[ctrl.property];
+                    if (defVal !== undefined) {
+                        ctrl.setValue(defVal);
+                    }
+                });
+            } else {
+                gui.reset(true);
+            }
+            if (busKey === 'master' && DSP_DEFAULTS.master) {
+                localStorage.setItem('soundstage3d:master-mouse-sensitivity', DSP_DEFAULTS.master['mouse-sensitivity']);
+            }
+        };
+
+        btn.addEventListener('click', triggerReset);
+        btn.addEventListener('mousedown', (e) => e.stopPropagation());
+        btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                triggerReset(e);
+            }
+        });
+
+        gui.$title.appendChild(btn);
+    }
+
     _initGuis() {
         const cMaster = document.getElementById('dsp-panel-master');
         const cTop    = document.getElementById('dsp-panel-top');
@@ -196,6 +236,8 @@ export class Controls {
                 if (this._onMasterDsp) this._onMasterDsp('mouse-sensitivity', v);
             });
             this._setupController(cSens, 'master-mouse-sensitivity', DSP_DEFAULTS.master['mouse-sensitivity'], false);
+
+            this._addGuiResetButton(gui, 'master');
         }
 
         // ─── 2. TOP GUI (Bottom-Left, left group) ───
@@ -246,6 +288,8 @@ export class Controls {
 
             const cReflF = fAcoustics.add(this.state.top, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onTopDsp && this._onTopDsp('refl-lpf', v));
             this._setupController(cReflF, 'top-refl-lpf', DSP_DEFAULTS.top['refl-lpf'], true);
+
+            this._addGuiResetButton(gui, 'top');
         }
 
         // ─── 3. MID GUI (Bottom-Left, left group) ───
@@ -299,6 +343,8 @@ export class Controls {
 
             const cReflF = fAcoustics.add(this.state.mid, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onMidDsp && this._onMidDsp('refl-lpf', v));
             this._setupController(cReflF, 'mid-refl-lpf', DSP_DEFAULTS.mid['refl-lpf'], true);
+
+            this._addGuiResetButton(gui, 'mid');
         }
 
         // ─── 4. FILL GUI (Bottom-Right, right group) ───
@@ -326,6 +372,8 @@ export class Controls {
 
             const cReflF = fAcoustics.add(this.state.fill, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onFillDsp && this._onFillDsp('refl-lpf', v));
             this._setupController(cReflF, 'fill-refl-lpf', DSP_DEFAULTS.fill['refl-lpf'], false);
+
+            this._addGuiResetButton(gui, 'fill');
         }
 
         // ─── 5. SUB GUI (Bottom-Right, right group) ───
@@ -386,6 +434,8 @@ export class Controls {
 
             const cReflF = fAcoustics.add(this.state.sub, 'refl-lpf', 200, 8000, 1).name('LPF Réflec. (Hz)').onChange(v => this._onSubDsp && this._onSubDsp('refl-lpf', v));
             this._setupController(cReflF, 'sub-refl-lpf', DSP_DEFAULTS.sub['refl-lpf'], false);
+
+            this._addGuiResetButton(gui, 'sub');
         }
     }
 
