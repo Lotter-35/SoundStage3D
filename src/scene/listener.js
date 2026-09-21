@@ -53,6 +53,7 @@ export class Listener {
         this._direction = new THREE.Vector3();
         this._forward = new THREE.Vector3();
         this._up = new THREE.Vector3();
+        this._audioListenerInitialized = false;
 
         // Anti-teleport / mouse delta glitch protection (especially when unlocking or pressing Tab/Alt-Tab)
         this._suppressMouseUntil = 0;
@@ -224,32 +225,62 @@ export class Listener {
 
     /**
      * Sync the Web Audio API listener with the Three.js camera.
+     * Uses setTargetAtTime de-zippering to prevent audio crackles / clicks during rapid head turns.
      * @param {AudioListener} audioListener — ctx.listener
      */
     syncAudioListener(audioListener) {
         const p = this.camera.position;
+        const forward = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        const up = this._up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
+
+        const ctx = audioListener.context;
+        const t = ctx ? ctx.currentTime : (this._audioCtxTime || 0);
+
+        if (!this._audioListenerInitialized) {
+            this._audioListenerInitialized = true;
+            if (audioListener.positionX) {
+                audioListener.positionX.setValueAtTime(p.x, t);
+                audioListener.positionY.setValueAtTime(p.y, t);
+                audioListener.positionZ.setValueAtTime(p.z, t);
+            } else if (audioListener.setPosition) {
+                audioListener.setPosition(p.x, p.y, p.z);
+            }
+            if (audioListener.forwardX) {
+                audioListener.forwardX.setValueAtTime(forward.x, t);
+                audioListener.forwardY.setValueAtTime(forward.y, t);
+                audioListener.forwardZ.setValueAtTime(forward.z, t);
+                audioListener.upX.setValueAtTime(up.x, t);
+                audioListener.upY.setValueAtTime(up.y, t);
+                audioListener.upZ.setValueAtTime(up.z, t);
+            } else if (audioListener.setOrientation) {
+                audioListener.setOrientation(
+                    forward.x, forward.y, forward.z,
+                    up.x, up.y, up.z
+                );
+            }
+            return;
+        }
+
+        // Smooth de-zippering (0.025s time constant): perfectly eliminates rapid head-turn clicking on subwoofers
+        const smooth = 0.025;
 
         // Position: update WebAudio listener position
         if (audioListener.positionX) {
-            audioListener.positionX.value = p.x;
-            audioListener.positionY.value = p.y;
-            audioListener.positionZ.value = p.z;
+            audioListener.positionX.setTargetAtTime(p.x, t, smooth);
+            audioListener.positionY.setTargetAtTime(p.y, t, smooth);
+            audioListener.positionZ.setTargetAtTime(p.z, t, smooth);
         } else if (audioListener.setPosition) {
             audioListener.setPosition(p.x, p.y, p.z);
         }
 
-        // Orientation: forward (-Z) and up (+Y) vectors derived strictly from camera quaternion.
-        // Guaranteed to be normalized (|v| = 1) and orthogonal (forward · up = 0) with zero lag.
-        const forward = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
-        const up = this._up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
-
+        // Orientation: smooth continuous tracking with zero derivative steps
         if (audioListener.forwardX) {
-            audioListener.forwardX.value = forward.x;
-            audioListener.forwardY.value = forward.y;
-            audioListener.forwardZ.value = forward.z;
-            audioListener.upX.value = up.x;
-            audioListener.upY.value = up.y;
-            audioListener.upZ.value = up.z;
+            audioListener.forwardX.setTargetAtTime(forward.x, t, smooth);
+            audioListener.forwardY.setTargetAtTime(forward.y, t, smooth);
+            audioListener.forwardZ.setTargetAtTime(forward.z, t, smooth);
+            audioListener.upX.setTargetAtTime(up.x, t, smooth);
+            audioListener.upY.setTargetAtTime(up.y, t, smooth);
+            audioListener.upZ.setTargetAtTime(up.z, t, smooth);
         } else if (audioListener.setOrientation) {
             audioListener.setOrientation(
                 forward.x, forward.y, forward.z,
