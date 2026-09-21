@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { createStage } from './scene/stage.js';
 import { Listener } from './scene/listener.js';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
-import { createVegetation, updateVegetation } from './scene/vegetation.js';
+import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js';
 
 import { AudioEngine } from './audio/audioEngine.js';
 import { Crossover } from './audio/crossover.js';
@@ -180,6 +180,24 @@ controls.onDopplerToggle((enabled) => {
     if (!audioReady) return;
     speakerSystem.setDoppler(enabled);
 });
+
+// ─── Grass Quality Preset Toggle ───
+const grassBtn = document.getElementById('grass-btn');
+const GRASS_PRESETS = [
+    { label: '🌿 Herbe: Normale', key: 'medium' },
+    { label: '🌿 Herbe: Éco',     key: 'low' },
+    { label: '🌿 Herbe: OFF',     key: 'off' },
+    { label: '🌿 Herbe: Haute',   key: 'high' },
+];
+let currentGrassIdx = 0;
+if (grassBtn) {
+    grassBtn.addEventListener('click', () => {
+        currentGrassIdx = (currentGrassIdx + 1) % GRASS_PRESETS.length;
+        const preset = GRASS_PRESETS[currentGrassIdx];
+        grassBtn.textContent = preset.label;
+        setGrassQuality(preset.key);
+    });
+}
 
 // ─── Oscilloscope ───
 const oscCanvas = document.getElementById('oscilloscope');
