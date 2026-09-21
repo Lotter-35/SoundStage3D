@@ -123,18 +123,10 @@ class Speaker {
         this._distanceK = (DSP_DEFAULTS[busKey]?.['dist-k'] ?? 60) / 1000;
         this._airAbsCoeff = DEFAULT_AIR_ABS;
         this._lastDistance = null;
-        this._lastProx = 0;
-
-        // --- Sub array coupling factor ---
-        // An array of 7 subs sums coherently in the far field; normalize individual box power
-        this.subCouplingGain = ctx.createGain();
-        this.subCouplingGain.gain.value = this._isSub ? (1 / Math.sqrt(SUB_DEFS.length)) : 1.0;
 
         // --- Distance attenuation gain ---
         this.distanceGain = ctx.createGain();
         this.distanceGain.gain.value = 1;
-
-        this.subCouplingGain.connect(this.distanceGain);
 
         // --- Propagation delay ---
         this.propagationDelay = ctx.createDelay(MAX_DELAY);
@@ -160,7 +152,10 @@ class Speaker {
         // --- Panner ---
         this.panner = ctx.createPanner();
         this.panner.panningModel = 'equalpower';
-        this.panner.distanceModel = 'none'; // We handle attenuation physically via distanceGain (avoids 1m clamp kink)
+        this.panner.distanceModel = 'inverse';
+        this.panner.refDistance = 1;
+        this.panner.maxDistance = 500;
+        this.panner.rolloffFactor = 0.4; // mild, we handle attenuation manually
 
         this.panner.positionX.value = def.position.x;
         this.panner.positionY.value = def.position.y;
@@ -204,7 +199,7 @@ class Speaker {
             this._proxWet.gain.value = 0;
             this._proxDry.gain.value = 1;
             this._proxOut.gain.value = 1;
-            this._applyProxCurve(PROX_DRIVE_MAX); // Pre-computed once (never reallocated per-frame)
+            this._applyProxCurve(0); // linear (no distortion)
 
             this.highShelf.connect(this._proxShaper);
             this._proxShaper.connect(this._proxWet);
@@ -246,45 +241,37 @@ class Speaker {
         if (this._dopplerEnabled) {
             const delay = Math.min(distance / SPEED_OF_SOUND, MAX_DELAY);
             this.propagationDelay.delayTime.setTargetAtTime(delay, t, 0.05);
-        } else if (this.propagationDelay.delayTime.value !== 0) {
+        } else {
             this.propagationDelay.delayTime.setTargetAtTime(0, t, smooth);
         }
 
         // Air absorption: high-frequency rolloff with distance (24 dB/oct cascaded)
         // MID/FILL have a higher cutoff floor to preserve their useful band (90–2kHz)
-        // Subwoofers bypass this filter since their signal is already low-pass filtered at 90Hz
-        if (!this._isSub) {
-            const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
-            const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
-            this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
-            this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
-        }
+        const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
+        const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
+        this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
+        this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
 
-        // Sub proximity saturation: smooth cross-fade via GainNodes only
-        // NO reallocation or assignment to _proxShaper.curve on movement (eliminates audio crackles)!
+        // Sub proximity saturation: ramp drive + mix from 3m to 1m (S-curve)
         if (this._isSub) {
             const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
             const prox = t0 * t0 * (3 - 2 * t0); // smoothstep S-curve
-            if (prox > 0.0001 || this._lastProx > 0.0001) {
-                this._proxWet.gain.setTargetAtTime(prox, t, smooth);
-                this._proxDry.gain.setTargetAtTime(1 - prox, t, smooth);
-            }
-            this._lastProx = prox;
+            this._applyProxCurve(prox * PROX_DRIVE_MAX);
+            this._proxWet.gain.setTargetAtTime(prox, t, smooth);
+            this._proxDry.gain.setTargetAtTime(1 - prox, t, smooth);
         }
     }
 
     /** Re-apply proximity saturation with current stored distance (for live slider updates). */
     _updateProxSat() {
-        if (!this._isSub) return;
-        this._applyProxCurve(PROX_DRIVE_MAX);
-        if (this._lastDistance == null) return;
+        if (!this._isSub || this._lastDistance == null) return;
         const distance = this._lastDistance;
         const t = this.ctx.currentTime;
         const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
         const prox = t0 * t0 * (3 - 2 * t0);
+        this._applyProxCurve(prox * PROX_DRIVE_MAX);
         this._proxWet.gain.setTargetAtTime(prox, t, 0.04);
         this._proxDry.gain.setTargetAtTime(1 - prox, t, 0.04);
-        this._lastProx = prox;
     }
 
     setDoppler(enabled) {
@@ -358,7 +345,7 @@ class Speaker {
 
     /** The node to connect the bus output to. */
     get input() {
-        return this.subCouplingGain;
+        return this.distanceGain;
     }
 }
 
@@ -412,26 +399,17 @@ export class SpeakerSystem {
         effects.topSat.connect(this.fillMerge);
         this.fillMerge.connect(this.fillVolume);
 
-        // ── Analysers & Limiters for level metering & protection ──
-        // SUB bus limiter (brick-wall)
-        this.subLimiter = ctx.createDynamicsCompressor();
-        this.subLimiter.threshold.value = DSP_DEFAULTS.sub['lim-threshold'] ?? -3;
-        this.subLimiter.knee.value = 2;
-        this.subLimiter.ratio.value = 20;
-        this.subLimiter.attack.value = 0.005; // 5ms (avoids sub cycle start clicks)
-        this.subLimiter.release.value = 0.15; // 150ms (smooth bass envelope tracking, no 40Hz intra-cycle distortion)
-        this.subVolume.connect(this.subLimiter);
-
+        // ── Analysers for level metering ──
         this.subAnalyser = ctx.createAnalyser();
         this.subAnalyser.fftSize = 256;
-        this.subLimiter.connect(this.subAnalyser);
+        this.subVolume.connect(this.subAnalyser);
 
         // MID bus limiter (brick-wall)
         this.midLimiter = ctx.createDynamicsCompressor();
         this.midLimiter.threshold.value = -3;
         this.midLimiter.knee.value = 2;
         this.midLimiter.ratio.value = 20;
-        this.midLimiter.attack.value = 0.003;
+        this.midLimiter.attack.value = 0.001;
         this.midLimiter.release.value = 0.05;
         this.midVolume.connect(this.midLimiter);
 
@@ -444,7 +422,7 @@ export class SpeakerSystem {
         this.topLimiter.threshold.value = -3;
         this.topLimiter.knee.value = 2;
         this.topLimiter.ratio.value = 20;
-        this.topLimiter.attack.value = 0.003;
+        this.topLimiter.attack.value = 0.001;
         this.topLimiter.release.value = 0.05;
         this.topVolume.connect(this.topLimiter);
 
@@ -457,7 +435,7 @@ export class SpeakerSystem {
         this.fillLimiter.threshold.value = -3;
         this.fillLimiter.knee.value = 2;
         this.fillLimiter.ratio.value = 20;
-        this.fillLimiter.attack.value = 0.003;
+        this.fillLimiter.attack.value = 0.001;
         this.fillLimiter.release.value = 0.05;
         this.fillVolume.connect(this.fillLimiter);
 
@@ -465,22 +443,17 @@ export class SpeakerSystem {
         this.fillAnalyser.fftSize = 256;
         this.fillLimiter.connect(this.fillAnalyser);
 
-        // Master output chain: masterOutput → limiter → masterCeiling → ctx.destination
+        // Master output chain: masterOutput → limiter → ctx.destination
         this.masterOutput = ctx.createGain();
         this.masterOutput.gain.value = 1;
 
-        // Brick-wall compressor to tame master peaks
+        // Brick-wall limiter to prevent clipping
         this.masterLimiter = ctx.createDynamicsCompressor();
         this.masterLimiter.threshold.value = -3;
         this.masterLimiter.knee.value = 2;
         this.masterLimiter.ratio.value = 20;
-        this.masterLimiter.attack.value = 0.003; // 3 ms
-        this.masterLimiter.release.value = 0.20; // 200 ms (clean bass tracking, eliminates 40Hz intra-cycle pumping)
-
-        // True-peak brickwall soft-knee ceiling (guarantees output strictly <= 0.98, zero digital clipping)
-        this.masterCeiling = ctx.createWaveShaper();
-        this.masterCeiling.oversample = '2x';
-        this._buildMasterCeilingCurve();
+        this.masterLimiter.attack.value = 0.001;
+        this.masterLimiter.release.value = 0.05;
 
         // HRTF brightness compensation: high-shelf boost to counter HRTF dullness
         this.hrtfShelf = ctx.createBiquadFilter();
@@ -500,19 +473,16 @@ export class SpeakerSystem {
         this.reverbConvolver.connect(this.reverbWet);
         this.reverbWet.connect(this.masterLimiter);
 
-        // Limiter output passes through brickwall ceiling
-        this.masterLimiter.connect(this.masterCeiling);
-
         // Local volume gain — end-of-chain, not synchronized in multi: for the local user only
         this.localVolumeGain = ctx.createGain();
         this.localVolumeGain.gain.value = 1;
-        this.masterCeiling.connect(this.localVolumeGain);
+        this.masterLimiter.connect(this.localVolumeGain);
         this.localVolumeGain.connect(ctx.destination);
 
-        // Master analyser taps after ceiling (what the listener actually hears)
+        // Master analyser taps after limiter (what the listener actually hears)
         this.masterAnalyser = ctx.createAnalyser();
         this.masterAnalyser.fftSize = 256;
-        this.masterCeiling.connect(this.masterAnalyser);
+        this.masterLimiter.connect(this.masterAnalyser);
 
         // Pre-allocated buffers for level metering (avoid GC)
         this._meterBufs = {
@@ -529,7 +499,7 @@ export class SpeakerSystem {
             this.speakers.push(speaker);
 
             if (def.bus === 'sub') {
-                this.subLimiter.connect(speaker.input);
+                this.subVolume.connect(speaker.input);
             } else if (def.bus === 'mid') {
                 this.midLimiter.connect(speaker.input);
             } else if (def.bus === 'fill') {
@@ -539,6 +509,8 @@ export class SpeakerSystem {
             }
         }
 
+        // Staggered update state: alternate which half of speakers update each frame
+        this._updateFrame = 0;
         this._currentListenerPos = { x: 0, y: 1.7, z: 50 };
         this._lastPos = { x: NaN, y: NaN, z: NaN };
         this._forceUpdate = false;
@@ -547,33 +519,6 @@ export class SpeakerSystem {
 
         // Force initial update of all speakers immediately with default listener position
         this.forceUpdateAll(this._currentListenerPos);
-    }
-
-    /**
-     * Build transparent soft-knee brickwall ceiling curve.
-     * Linear up to 0.85 (-1.4 dBFS), smoothly saturation-knees to 0.98 (-0.17 dBFS).
-     * Prevents any digital DAC clipping or hardware crackle under extreme volume/bass.
-     */
-    _buildMasterCeilingCurve() {
-        const samples = 8192;
-        const curve = new Float32Array(samples);
-        const maxIn = 3.0;
-        const linearCeil = 0.85;
-        const hardCeil = 0.98;
-        const kneeWidth = hardCeil - linearCeil; // 0.13
-
-        for (let i = 0; i < samples; i++) {
-            const x = ((i * 2) / (samples - 1) - 1) * maxIn;
-            const absX = Math.abs(x);
-            if (absX <= linearCeil) {
-                curve[i] = x;
-            } else {
-                const over = absX - linearCeil;
-                const sat = linearCeil + kneeWidth * Math.tanh(over / kneeWidth);
-                curve[i] = Math.sign(x) * sat;
-            }
-        }
-        this.masterCeiling.curve = curve;
     }
 
     /**
@@ -595,7 +540,8 @@ export class SpeakerSystem {
 
     /**
      * Update all speakers with current listener position.
-     * Updates all 14 speakers in unison (zero phase wobble or inter-speaker ripple).
+     * Uses dirty checking (skip if listener barely moved) and staggered updates
+     * (half the speakers per frame) to reduce main-thread overhead.
      * @param {{x:number,y:number,z:number}} listenerPos
      */
     update(listenerPos) {
@@ -609,12 +555,12 @@ export class SpeakerSystem {
             return;
         }
 
-        // Dirty check: skip if listener barely moved (0.0004 = 2cm)
+        // Dirty check: skip entirely if listener hasn't moved enough
         const dx = listenerPos.x - this._lastPos.x;
         const dy = listenerPos.y - this._lastPos.y;
         const dz = listenerPos.z - this._lastPos.z;
         const moved2 = dx * dx + dy * dy + dz * dz;
-        if (moved2 < 0.0004) {
+        if (moved2 < 0.0025) {
             this._debugStats.skippedFrames++;
             return;
         }
@@ -623,11 +569,15 @@ export class SpeakerSystem {
         this._lastPos.y = listenerPos.y;
         this._lastPos.z = listenerPos.z;
 
-        // Update all 14 speakers in unison
-        for (let i = 0; i < this.speakers.length; i++) {
+        // Stagger: update even-indexed speakers on even frames, odd on odd
+        const parity = this._updateFrame & 1;
+        this._updateFrame++;
+        let count = 0;
+        for (let i = parity; i < this.speakers.length; i += 2) {
             this.speakers[i].update(listenerPos);
+            count++;
         }
-        this._debugStats.updatedSpeakers = this.speakers.length;
+        this._debugStats.updatedSpeakers = count;
     }
 
     /**
@@ -793,7 +743,7 @@ export class SpeakerSystem {
                 for (const s of subSpeakers) s._updateProxSat();
                 break;
             case 'lim-threshold':
-                if (this.subLimiter) this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                this.masterLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
         this.forceUpdateAll();

@@ -342,7 +342,7 @@ function oscStart() {
         const a = speakerSystem.ctx.createAnalyser();
         a.fftSize = 2048;
         a.smoothingTimeConstant = 0;
-        (speakerSystem.masterCeiling || speakerSystem.masterLimiter).connect(a);
+        speakerSystem.masterLimiter.connect(a);
         speakerSystem._oscAnalyser = a;
     }
     const analyser = speakerSystem._oscAnalyser;

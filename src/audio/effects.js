@@ -136,7 +136,10 @@ export function createGroundReflection(ctx, speakerPos, options = {}) {
     // Spatialize from reflected position
     const panner = ctx.createPanner();
     panner.panningModel = options.panningModel || 'HRTF';
-    panner.distanceModel = 'none'; // Attenuation already provided by speaker distanceGain
+    panner.distanceModel = 'inverse';
+    panner.refDistance = 1;
+    panner.maxDistance = 500;
+    panner.rolloffFactor = 1;
     panner.positionX.value = reflectPos.x;
     panner.positionY.value = reflectPos.y;
     panner.positionZ.value = reflectPos.z;
