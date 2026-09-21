@@ -631,6 +631,14 @@ export class Controls {
             });
         }
 
+        // Camera View Mode button
+        this.camBtn = document.getElementById('cam-btn');
+        if (this.camBtn) {
+            this.camBtn.addEventListener('click', () => {
+                if (this._onCameraToggle) this._onCameraToggle();
+            });
+        }
+
         // Play/Pause button
         if (this.playBtn) {
             this.playBtn.addEventListener('click', () => {
@@ -714,7 +722,22 @@ export class Controls {
         }
     }
 
+    setCameraModeLabel(mode) {
+        if (!this.camBtn) return;
+        if (mode === 'thirdPerson') {
+            this.camBtn.textContent = '🎥 Vue: 3ème pers.';
+            this.camBtn.classList.add('active');
+        } else if (mode === 'firstPerson') {
+            this.camBtn.textContent = '🎥 Vue: 1ère pers.';
+            this.camBtn.classList.remove('active');
+        } else {
+            this.camBtn.textContent = '🛸 Mode: Vol libre';
+            this.camBtn.classList.remove('active');
+        }
+    }
+
     // Callbacks
+    onCameraToggle(cb) { this._onCameraToggle = cb; }
     onEnter(cb) { this._onEnter = cb; }
     onPlayPause(cb) { this._onPlayPause = cb; }
     onChangeMp3(cb) { this._onChangeMp3 = cb; }

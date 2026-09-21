@@ -187,6 +187,15 @@ window.addEventListener('keydown', unlockAudioContext);
 window.addEventListener('pointerdown', unlockAudioContext);
 window.addEventListener('click', unlockAudioContext);
 
+// Synchronisation du mode caméra avec le HUD
+controls.onCameraToggle(() => {
+    listener.cycleCameraMode();
+});
+listener.onCameraModeChange((mode) => {
+    controls.setCameraModeLabel(mode);
+});
+controls.setCameraModeLabel(listener.cameraMode);
+
 controls.onEnter(async (file) => {
     await initAudio(file);
     listener.lock();

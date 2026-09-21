@@ -1,18 +1,25 @@
 /**
- * Listener — FPS-style movement controls + AudioContext listener sync.
+ * Listener — Contrôles FPS/TPS + synchronisation avec l'écouteur binaural Web Audio API.
  *
- * Uses PointerLockControls for mouse look.
- * WASD / Arrow keys for horizontal movement.
- * Space / Shift for vertical movement.
+ * Supporte :
+ * - Mode Personnage 3D (par défaut) : Vue 3ème personne (TPS) ou 1ère personne (FPS)
+ * - Mode Vol libre (F) : Déplacement 6-axes dans toute la scène
+ * - Déplacement ZQSD / WASD / Flèches
+ * - Course (Shift) et Saut physique avec gravité (Espace)
+ * - Orientation orbitale fluide à la souris et zoom molette (TPS)
+ * - Bascule de caméra instantanée (V ou bouton HUD)
+ * - Anti-décrochage / protection glitch pointeur
+ * - Synchronisation Web Audio API (position et orientation de la tête) sans claquements
  */
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { Character3D } from './character3D.js';
 
-const WALK_SPEED    = 5.0; // m/s — vitesse naturelle de marche en mode personnage
-const FLY_SPEED     = 18;  // m/s — speed when in free-fly mode
-const VERTICAL_SPEED = 15; // m/s — vertical speed in free-fly mode
-const PLAYER_HEIGHT  = 1.7; // eye height in m
+const WALK_SPEED     = 4.0; // m/s — vitesse naturelle de marche
+const SPRINT_SPEED   = 8.5; // m/s — course avec Shift
+const FLY_SPEED      = 18;  // m/s — vitesse en vol libre
+const VERTICAL_SPEED = 15;  // m/s — vitesse verticale en vol libre
+const PLAYER_HEIGHT  = 1.7; // hauteur d'écoute et des yeux en mètres
 
 const BOUNDS = {
     minX: -100, maxX: 100,
@@ -20,64 +27,67 @@ const BOUNDS = {
     minZ: -50,  maxZ: 200,
 };
 
-// FOH reference position
+// Position de référence de la régie FOH
 const FOH = new THREE.Vector3(0, 1.7, 50);
 
 export class Listener {
     /**
      * @param {THREE.PerspectiveCamera} camera
-     * @param {HTMLElement} domElement — the canvas or overlay element for pointer lock
-     * @param {THREE.Scene} [scene] — Three.js scene for 3D character mesh
+     * @param {HTMLElement} domElement — élément d'écoute pour le pointer lock
+     * @param {THREE.Scene} [scene] — scène Three.js pour le maillage du personnage 3D
      */
     constructor(camera, domElement, scene = null) {
         this.camera = camera;
         this.scene = scene;
         this.controls = new PointerLockControls(camera, domElement);
-        this.controls.pointerSpeed = 1.0; // default sensitivity
+        this.controls.pointerSpeed = 1.0;
 
-        // Start at FOH position
+        // Position de départ à la régie FOH
         camera.position.set(FOH.x, FOH.y, FOH.z);
 
-        // Movement state
+        // État des touches de déplacement
         this.move = { forward: false, backward: false, left: false, right: false, up: false, down: false };
         this.velocity = new THREE.Vector3();
-        this._currentSpeed = new THREE.Vector2(0, 0); // smooth velocity interpolation
+        this._currentSpeed = new THREE.Vector2(0, 0);
 
-        // Character mode (F to toggle)
-        this.characterMode = false;
+        // Mode Personnage activé par défaut (expérience 3D avec personnage visible)
+        this.characterMode = true;
         this._onModeChange = null;
+        this._onCameraModeChange = null;
 
-        // 3D Animated Character & Third-person camera system
+        // Personnage 3D animé et caméra 3ème personne
         this._character3D = new Character3D(scene, camera, domElement);
+        this._character3D.isThirdPerson = true;
+        this._character3D.snapToGround(FOH, 0);
 
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
 
-        // Pre-allocated vectors to avoid GC pressure in per-frame methods
+        // Vecteurs réutilisés pour éviter toute allocation par frame
         this._direction = new THREE.Vector3();
         this._forward = new THREE.Vector3();
         this._up = new THREE.Vector3();
         this._audioListenerInitialized = false;
 
-        // Anti-teleport / mouse delta glitch protection (especially when unlocking or pressing Tab/Alt-Tab)
+        // Protection anti-saccade lors du verrouillage/déverrouillage de la souris
         this._suppressMouseUntil = 0;
         this._suppressMouse = (durationMs = 150) => {
             this._suppressMouseUntil = performance.now() + durationMs;
         };
 
-        // Wrap PointerLockControls' internal onMouseMove directly so we never intercept or cancel global mousemove events
+        // Délégation directe des mouvements souris sans interférence
         this.controls.disconnect();
         const origOnMouseMove = this.controls._onMouseMove;
         this.controls._onMouseMove = (e) => {
             if (!this.controls.isLocked) return;
             if (performance.now() < this._suppressMouseUntil) return;
-            if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;
+            if (Math.abs(e.movementX) > 250 || Math.abs(e.movementY) > 250) return;
 
             if (this.characterMode && this._character3D.isThirdPerson) {
-                // In 3rd person character mode: mouse controls orbital camera around character
+                // En 3ème personne : orbite autour du personnage
                 this._character3D.handleMouseMove(e.movementX, e.movementY, this.controls.pointerSpeed || 1.0);
             } else {
-                // In 1st person or fly mode: standard pointer lock camera rotation
+                // En 1ère personne ou vol libre : orientation classique PointerLock
                 origOnMouseMove(e);
             }
         };
@@ -101,7 +111,7 @@ export class Listener {
         document.addEventListener('keyup', this._onKeyUp);
     }
 
-    /** Reset all directional movement inputs */
+    /** Réinitialise les entrées de mouvement */
     resetMovement() {
         this.move.forward = false;
         this.move.backward = false;
@@ -112,7 +122,7 @@ export class Listener {
         if (this._currentSpeed) this._currentSpeed.set(0, 0);
     }
 
-    /** Set mouse look sensitivity. @param {number} value — 0.1 to 3.0 */
+    /** Régler la sensibilité de la souris */
     setSensitivity(value) {
         this.controls.pointerSpeed = value;
     }
@@ -134,10 +144,75 @@ export class Listener {
         return this.controls.isLocked;
     }
 
-    /** Register a callback when pointer lock changes */
     onLockChange(cb) {
         this.controls.addEventListener('lock', () => cb(true));
         this.controls.addEventListener('unlock', () => cb(false));
+    }
+
+    /**
+     * Identifiant du mode de caméra actuel : 'thirdPerson' | 'firstPerson' | 'freeFly'
+     */
+    get cameraMode() {
+        if (!this.characterMode) return 'freeFly';
+        return this._character3D.isThirdPerson ? 'thirdPerson' : 'firstPerson';
+    }
+
+    /**
+     * Fait défiler les modes : 3ème personne -> 1ère personne -> Vol libre -> 3ème personne
+     */
+    cycleCameraMode() {
+        if (!this.characterMode) {
+            this.setCameraMode('thirdPerson');
+        } else if (this._character3D.isThirdPerson) {
+            this.setCameraMode('firstPerson');
+        } else {
+            this.setCameraMode('freeFly');
+        }
+    }
+
+    /**
+     * Définit explicitement le mode de caméra et synchronise le personnage.
+     * @param {'thirdPerson'|'firstPerson'|'freeFly'} mode
+     */
+    setCameraMode(mode) {
+        if (mode === 'thirdPerson') {
+            this.characterMode = true;
+            this._character3D.enabled = true;
+            this._character3D.toggleCameraView(true);
+            const camEuler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+            this._character3D.snapToGround(this._character3D.position, this._character3D.orbitYaw || camEuler.y);
+        } else if (mode === 'firstPerson') {
+            this.characterMode = true;
+            this._character3D.enabled = true;
+            this._character3D.toggleCameraView(false);
+            this.camera.position.set(
+                this._character3D.position.x,
+                this._character3D.position.y + PLAYER_HEIGHT,
+                this._character3D.position.z
+            );
+            this.camera.rotation.set(0, this._character3D.orbitYaw, 0, 'YXZ');
+        } else { // 'freeFly'
+            this.characterMode = false;
+            this._character3D.enabled = false;
+            if (this._character3D.model) {
+                this._character3D.model.visible = false;
+            }
+        }
+
+        if (this._onCameraModeChange) {
+            this._onCameraModeChange(this.cameraMode);
+        }
+        if (this._onModeChange) {
+            this._onModeChange(this.characterMode);
+        }
+    }
+
+    onCameraModeChange(cb) {
+        this._onCameraModeChange = cb;
+    }
+
+    onModeChange(cb) {
+        this._onModeChange = cb;
     }
 
     _onKeyDown(e) {
@@ -158,20 +233,24 @@ export class Listener {
             case 'KeyD':              case 'ArrowRight': this.move.right = true; break;
             case 'Space':                                 this.move.up = true; break;
             case 'ShiftLeft': case 'ShiftRight':          this.move.down = true; break;
+
             case 'KeyF':
-                this.characterMode = !this.characterMode;
+                // Basculer entre Mode Personnage et Vol libre
                 if (this.characterMode) {
-                    const camEuler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
-                    this._character3D.snapToGround(this.camera.position, camEuler.y);
+                    this.setCameraMode('freeFly');
                 } else {
-                    // Leaving character mode: ensure 3rd person model is hidden in free-fly
-                    if (this._character3D.model) this._character3D.model.visible = false;
+                    this.setCameraMode('thirdPerson');
                 }
-                if (this._onModeChange) this._onModeChange(this.characterMode);
                 break;
+
             case 'KeyV':
-                if (this.characterMode) {
-                    this._character3D.toggleCameraView();
+                // Basculer entre 3ème personne et 1ère personne
+                if (!this.characterMode) {
+                    this.setCameraMode('thirdPerson');
+                } else if (this._character3D.isThirdPerson) {
+                    this.setCameraMode('firstPerson');
+                } else {
+                    this.setCameraMode('thirdPerson');
                 }
                 break;
         }
@@ -194,78 +273,97 @@ export class Listener {
     }
 
     /**
-     * Update position based on input. Call once per frame.
-     * @param {number} dt — delta time in seconds
+     * Mise à jour globale appelée à chaque frame du rendu Three.js.
+     * @param {number} dt — delta time en secondes
      */
-    /** Register callback when mode changes */
-    onModeChange(cb) { this._onModeChange = cb; }
-
     update(dt) {
-        if (!this.controls.isLocked) return;
-
-        const direction = this._direction;
-        direction.set(0, 0, 0);
-
-        if (this.move.forward)  direction.z -= 1;
-        if (this.move.backward) direction.z += 1;
-        if (this.move.left)     direction.x -= 1;
-        if (this.move.right)    direction.x += 1;
-
-        direction.normalize();
-        const isMoving = this.move.forward || this.move.backward || this.move.left || this.move.right;
-
-        // Choose speed based on mode: fly faster, walk slower
-        const moveSpeed = this.characterMode ? WALK_SPEED : FLY_SPEED;
-
-        // Smooth horizontal acceleration and deceleration (removes abrupt start/stop jolts)
-        const targetX = direction.x * moveSpeed;
-        const targetZ = -direction.z * moveSpeed;
-        const accelRate = this.characterMode ? 12 : 16;
-        this._currentSpeed.x += (targetX - this._currentSpeed.x) * Math.min(1, dt * accelRate);
-        this._currentSpeed.y += (targetZ - this._currentSpeed.y) * Math.min(1, dt * accelRate);
-
-        if (Math.abs(this._currentSpeed.x) < 0.001) this._currentSpeed.x = 0;
-        if (Math.abs(this._currentSpeed.y) < 0.001) this._currentSpeed.y = 0;
-
         if (this.characterMode) {
-            // Character Mode: move logical character position according to camera look direction
-            // Calculate forward and right vectors projected onto horizontal XZ plane
-            let forwardX, forwardZ, rightX, rightZ;
+            let isMoving = false;
+            let jumpInput = false;
 
-            if (this._character3D.isThirdPerson) {
-                // In 3rd person: move relative to orbit yaw
-                const yaw = this._character3D.orbitYaw;
-                forwardX = -Math.sin(yaw);
-                forwardZ = -Math.cos(yaw);
-                rightX = Math.cos(yaw);
-                rightZ = -Math.sin(yaw);
+            if (this.controls.isLocked) {
+                const direction = this._direction;
+                direction.set(0, 0, 0);
+
+                if (this.move.forward)  direction.z -= 1;
+                if (this.move.backward) direction.z += 1;
+                if (this.move.left)     direction.x -= 1;
+                if (this.move.right)    direction.x += 1;
+
+                direction.normalize();
+                isMoving = this.move.forward || this.move.backward || this.move.left || this.move.right;
+                jumpInput = this.move.up;
+
+                // Shift permet de courir (sprint) au sol
+                const moveSpeed = this.move.down ? SPRINT_SPEED : WALK_SPEED;
+
+                // Accélération fluide
+                const targetX = direction.x * moveSpeed;
+                const targetZ = -direction.z * moveSpeed;
+                const accelRate = 14;
+                this._currentSpeed.x += (targetX - this._currentSpeed.x) * Math.min(1, dt * accelRate);
+                this._currentSpeed.y += (targetZ - this._currentSpeed.y) * Math.min(1, dt * accelRate);
+
+                // Déplacement selon l'orientation de la caméra
+                let forwardX, forwardZ, rightX, rightZ;
+
+                if (this._character3D.isThirdPerson) {
+                    const yaw = this._character3D.orbitYaw;
+                    forwardX = -Math.sin(yaw);
+                    forwardZ = -Math.cos(yaw);
+                    rightX = Math.cos(yaw);
+                    rightZ = -Math.sin(yaw);
+                } else {
+                    const camDir = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+                    camDir.y = 0;
+                    camDir.normalize();
+                    forwardX = camDir.x;
+                    forwardZ = camDir.z;
+                    rightX = -camDir.z;
+                    rightZ = camDir.x;
+                }
+
+                const dx = (rightX * this._currentSpeed.x + forwardX * this._currentSpeed.y) * dt;
+                const dz = (rightZ * this._currentSpeed.x + forwardZ * this._currentSpeed.y) * dt;
+
+                this._character3D.position.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, this._character3D.position.x + dx));
+                this._character3D.position.z = Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, this._character3D.position.z + dz));
             } else {
-                // In 1st person: move relative to camera facing direction
-                const camDir = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
-                camDir.y = 0;
-                camDir.normalize();
-                forwardX = camDir.x;
-                forwardZ = camDir.z;
-                rightX = -camDir.z;
-                rightZ = camDir.x;
+                // Ralentissement naturel si la souris est libérée
+                this._currentSpeed.x += (0 - this._currentSpeed.x) * Math.min(1, dt * 14);
+                this._currentSpeed.y += (0 - this._currentSpeed.y) * Math.min(1, dt * 14);
             }
 
-            const dx = (rightX * this._currentSpeed.x + forwardX * this._currentSpeed.y) * dt;
-            const dz = (rightZ * this._currentSpeed.x + forwardZ * this._currentSpeed.y) * dt;
+            if (Math.abs(this._currentSpeed.x) < 0.001) this._currentSpeed.x = 0;
+            if (Math.abs(this._currentSpeed.y) < 0.001) this._currentSpeed.y = 0;
 
-            this._character3D.position.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, this._character3D.position.x + dx));
-            this._character3D.position.z = Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, this._character3D.position.z + dz));
-
-            // Update character physics, animations, and camera placement
-            this._character3D.update(dt, this._currentSpeed, this.move.up, isMoving);
+            // Toujours mettre à jour le personnage (animation idle, gravité, caméra fluide) même si la souris est libérée
+            this._character3D.update(dt, this._currentSpeed, jumpInput, isMoving);
         } else {
-            // Free-fly vertical & horizontal movement (world Y)
+            // Mode vol libre (6 axes)
+            if (!this.controls.isLocked) return;
+
+            const direction = this._direction;
+            direction.set(0, 0, 0);
+
+            if (this.move.forward)  direction.z -= 1;
+            if (this.move.backward) direction.z += 1;
+            if (this.move.left)     direction.x -= 1;
+            if (this.move.right)    direction.x += 1;
+
+            direction.normalize();
+
+            const targetX = direction.x * FLY_SPEED;
+            const targetZ = -direction.z * FLY_SPEED;
+            this._currentSpeed.x += (targetX - this._currentSpeed.x) * Math.min(1, dt * 16);
+            this._currentSpeed.y += (targetZ - this._currentSpeed.y) * Math.min(1, dt * 16);
+
             this.controls.moveRight(this._currentSpeed.x * dt);
             this.controls.moveForward(this._currentSpeed.y * dt);
             if (this.move.up)   this.camera.position.y += VERTICAL_SPEED * dt;
             if (this.move.down) this.camera.position.y -= VERTICAL_SPEED * dt;
 
-            // Clamp camera position to world bounds
+            // Limites de scène
             const p = this.camera.position;
             p.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, p.x));
             p.y = Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, p.y));
@@ -274,9 +372,10 @@ export class Listener {
     }
 
     /**
-     * Sync the Web Audio API listener with the Three.js camera.
-     * Uses setTargetAtTime de-zippering to prevent audio crackles / clicks during rapid head turns.
+     * Synchronise l'écouteur Web Audio API avec le joueur.
+     * Utilise setTargetAtTime pour éliminer tout gresillement ou cliquetis lors des rotations rapides de la tête.
      * @param {AudioListener} audioListener — ctx.listener
+     * @param {AudioContext} [audioCtx]
      */
     syncAudioListener(audioListener, audioCtx) {
         // En mode personnage, l'écouteur binaural est aux oreilles du personnage
@@ -304,48 +403,39 @@ export class Listener {
                 audioListener.upY.setValueAtTime(up.y, t);
                 audioListener.upZ.setValueAtTime(up.z, t);
             } else if (audioListener.setOrientation) {
-                audioListener.setOrientation(
-                    forward.x, forward.y, forward.z,
-                    up.x, up.y, up.z
-                );
+                audioListener.setOrientation(forward.x, forward.y, forward.z, up.x, up.y, up.z);
             }
             return;
         }
 
-        // Smooth de-zippering (0.025s time constant): perfectly eliminates rapid head-turn clicking on subwoofers
-        const smooth = 0.025;
+        const tc = 0.025; // 25ms smoothing
 
-        // Position: update WebAudio listener position
         if (audioListener.positionX) {
-            audioListener.positionX.setTargetAtTime(p.x, t, smooth);
-            audioListener.positionY.setTargetAtTime(p.y, t, smooth);
-            audioListener.positionZ.setTargetAtTime(p.z, t, smooth);
+            audioListener.positionX.setTargetAtTime(p.x, t, tc);
+            audioListener.positionY.setTargetAtTime(p.y, t, tc);
+            audioListener.positionZ.setTargetAtTime(p.z, t, tc);
         } else if (audioListener.setPosition) {
             audioListener.setPosition(p.x, p.y, p.z);
         }
 
-        // Orientation: smooth continuous tracking with zero derivative steps
         if (audioListener.forwardX) {
-            audioListener.forwardX.setTargetAtTime(forward.x, t, smooth);
-            audioListener.forwardY.setTargetAtTime(forward.y, t, smooth);
-            audioListener.forwardZ.setTargetAtTime(forward.z, t, smooth);
-            audioListener.upX.setTargetAtTime(up.x, t, smooth);
-            audioListener.upY.setTargetAtTime(up.y, t, smooth);
-            audioListener.upZ.setTargetAtTime(up.z, t, smooth);
+            audioListener.forwardX.setTargetAtTime(forward.x, t, tc);
+            audioListener.forwardY.setTargetAtTime(forward.y, t, tc);
+            audioListener.forwardZ.setTargetAtTime(forward.z, t, tc);
+            audioListener.upX.setTargetAtTime(up.x, t, tc);
+            audioListener.upY.setTargetAtTime(up.y, t, tc);
+            audioListener.upZ.setTargetAtTime(up.z, t, tc);
         } else if (audioListener.setOrientation) {
-            audioListener.setOrientation(
-                forward.x, forward.y, forward.z,
-                up.x, up.y, up.z
-            );
+            audioListener.setOrientation(forward.x, forward.y, forward.z, up.x, up.y, up.z);
         }
     }
 
-    /** Get current listener audio position as plain object */
+    /** Position d'écoute audio courante (oreilles du personnage ou caméra) */
     get position() {
         if (this.characterMode && this._character3D) {
             return {
                 x: this._character3D.position.x,
-                y: this._character3D.position.y + 1.7, // hauteur d'écoute du personnage
+                y: this._character3D.position.y + PLAYER_HEIGHT,
                 z: this._character3D.position.z,
             };
         }
@@ -353,12 +443,12 @@ export class Listener {
         return { x: p.x, y: p.y, z: p.z };
     }
 
-    /** Distance to FOH reference point */
+    /** Distance au point de référence de la régie FOH */
     get distanceToFOH() {
         if (this.characterMode && this._character3D) {
             const p = this._character3D.position;
             const dx = p.x - FOH.x;
-            const dy = (p.y + 1.7) - FOH.y;
+            const dy = (p.y + PLAYER_HEIGHT) - FOH.y;
             const dz = p.z - FOH.z;
             return Math.sqrt(dx * dx + dy * dy + dz * dz);
         }

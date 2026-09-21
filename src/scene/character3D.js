@@ -2,12 +2,12 @@
  * Character3D — Gestion complète du personnage 3D animé et de la caméra 3ème personne.
  *
  * Conception modulaire, propre et performante :
- * - Chargement asynchrone du modèle GLB (Xbot.glb avec rig et animations).
+ * - Chargement asynchrone du modèle GLB (Xbot.glb avec squelette et animations).
  * - Machine à états d'animations avec cross-fade fluide (Idle, Walk, Run).
  * - Physique au sol (gravité, saut naturel avec vélocité verticale).
- * - Caméra 3ème personne avec bras virtuel (orbite fluide sans secousse, collision sol, zoom molette).
- * - Bascule transparente 1ère personne (FPS) ↔ 3ème personne (TPS) via la touche 'V' ou bouton HUD.
- * - Aucune allocation d'objets dans la boucle render pour préserver 60+ FPS et zéro GC pressure.
+ * - Caméra 3ème personne orbitale avec bras virtuel fluide, collision sol et zoom molette.
+ * - Bascule instantanée 1ère personne ↔ 3ème personne via la touche 'V' ou bouton HUD.
+ * - Zéro allocation d'objets dans la boucle de rendu pour préserver 60+ FPS constants.
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
@@ -18,7 +18,7 @@ const MODEL_PATH = 'src/assets/models/character.glb';
 const PLAYER_EYE_HEIGHT = 1.7; // hauteur des yeux en mètres (vue 1ère personne)
 const GRAVITY = 18;            // m/s²
 const JUMP_VELOCITY = 5.2;     // m/s — impulsion de saut
-const MODEL_SCALE = 1.0;       // échelle du modèle Xbot
+const MODEL_SCALE = 1.0;       // échelle du modèle Xbot (1.80m de haut)
 
 // Paramètres de la caméra 3ème personne
 const DEFAULT_DISTANCE = 3.5;  // distance caméra ↔ personnage en mètres
@@ -39,22 +39,23 @@ export class Character3D {
         this.camera = camera;
         this.domElement = domElement || document.body;
 
-        // État de vue : 1ère personne (false) ou 3ème personne (true)
-        this.isThirdPerson = false;
+        // État de vue : actif en 3ème personne par défaut
+        this.isThirdPerson = true;
         this.enabled = true; // Actif lorsque characterMode est ON
 
-        // Position logique du personnage dans le monde
+        // Position logique du personnage dans le monde (FOH = 0, 0, 50)
         this.position = new THREE.Vector3(0, 0, 50);
         this.verticalVelocity = 0;
         this.onGround = true;
 
         // Angle d'orientation du personnage (rotation Y en radians)
+        // 0 = face à la scène (vers -Z)
         this.heading = 0;
         this.targetHeading = 0;
 
-        // Angle orbital de la caméra (Spherical coordinates)
-        this.orbitYaw = 0;   // rotation horizontale (rad)
-        this.orbitPitch = 0.15; // légère inclinaison vers le bas
+        // Angle orbital de la caméra (coordonnées sphériques)
+        this.orbitYaw = 0;      // 0 = derrière le joueur à +Z, regardant vers -Z
+        this.orbitPitch = 0.15; // légère vue plongeante
         this.cameraDistance = DEFAULT_DISTANCE;
         this.targetDistance = DEFAULT_DISTANCE;
 
@@ -88,6 +89,7 @@ export class Character3D {
     async _loadModel() {
         const loader = new GLTFLoader();
         try {
+            console.log('[Character3D] Chargement du modèle 3D :', MODEL_PATH);
             const gltf = await loader.loadAsync(MODEL_PATH);
             this.model = gltf.scene;
             this.model.scale.set(MODEL_SCALE, MODEL_SCALE, MODEL_SCALE);
@@ -103,9 +105,10 @@ export class Character3D {
                 }
             });
 
-            // Position initiale
+            // Position et orientation initiale (Xbot regarde nativement vers +Z, donc +PI pour regarder la scène)
             this.model.position.copy(this.position);
-            this.model.visible = this.isThirdPerson;
+            this.model.rotation.y = this.heading + Math.PI;
+            this.model.visible = this.isThirdPerson && this.enabled;
             this.scene.add(this.model);
 
             // Initialiser l'AnimationMixer
@@ -127,8 +130,13 @@ export class Character3D {
             }
 
             this.isLoaded = true;
+            console.log('[Character3D] Modèle 3D chargé avec succès ! Animations disponibles :', Object.keys(this.actions));
+
+            if (this.isThirdPerson && this.enabled) {
+                this._snapCamera();
+            }
         } catch (err) {
-            console.warn('[Character3D] Erreur de chargement du modèle character.glb :', err);
+            console.error('[Character3D] Erreur de chargement du modèle character.glb :', err);
         }
     }
 
@@ -136,13 +144,34 @@ export class Character3D {
      * Zoom caméra à la molette (en mode 3ème personne).
      */
     _onWheel(e) {
-        if (!this.isThirdPerson) return;
+        if (!this.isThirdPerson || !this.enabled) return;
         const delta = Math.sign(e.deltaY) * 0.4;
         this.targetDistance = THREE.MathUtils.clamp(
             this.targetDistance + delta,
             MIN_DISTANCE,
             MAX_DISTANCE
         );
+    }
+
+    /**
+     * Aligne instantanément la caméra sur sa position orbite calculée (sans lerp).
+     */
+    _snapCamera() {
+        this._characterTarget.set(
+            this.position.x,
+            this.position.y + 1.45,
+            this.position.z
+        );
+        const cosPitch = Math.cos(this.orbitPitch);
+        const sinPitch = Math.sin(this.orbitPitch);
+        const sinYaw = Math.sin(this.orbitYaw);
+        const cosYaw = Math.cos(this.orbitYaw);
+        const camX = this._characterTarget.x + this.cameraDistance * cosPitch * sinYaw;
+        const camY = this._characterTarget.y + this.cameraDistance * sinPitch;
+        const camZ = this._characterTarget.z + this.cameraDistance * cosPitch * cosYaw;
+
+        this.camera.position.set(camX, Math.max(0.4, camY), camZ);
+        this.camera.lookAt(this._characterTarget);
     }
 
     /**
@@ -157,8 +186,12 @@ export class Character3D {
         }
 
         if (this.model) {
-            // Le modèle n'est visible que lorsqu'on est en vue 3ème personne
-            this.model.visible = this.isThirdPerson;
+            // Le modèle n'est visible que lorsqu'on est en vue 3ème personne ET mode personnage activé
+            this.model.visible = this.isThirdPerson && this.enabled;
+        }
+
+        if (this.isThirdPerson && this.enabled) {
+            this._snapCamera();
         }
 
         if (this._onCameraModeChange) {
@@ -190,8 +223,12 @@ export class Character3D {
 
         if (this.model) {
             this.model.position.copy(this.position);
-            this.model.rotation.y = this.heading;
-            this.model.visible = this.isThirdPerson;
+            this.model.rotation.y = this.heading + Math.PI;
+            this.model.visible = this.isThirdPerson && this.enabled;
+        }
+
+        if (this.isThirdPerson && this.enabled) {
+            this._snapCamera();
         }
     }
 
@@ -213,7 +250,7 @@ export class Character3D {
      * @param {string} newActionName
      * @param {number} duration — durée de transition en secondes
      */
-    _fadeToAction(newActionName, duration = 0.25) {
+    _fadeToAction(newActionName, duration = 0.2) {
         if (!this.mixer || this.currentActionName === newActionName) return;
 
         const previousAction = this.actions[this.currentActionName];
@@ -222,23 +259,25 @@ export class Character3D {
         if (!nextAction) return;
 
         nextAction.reset();
-        nextAction.setEffectiveTimeScale(1);
+        nextAction.setEffectiveTimeScale(newActionName === 'walk' ? 1.15 : 1.0);
         nextAction.setEffectiveWeight(1);
-        nextAction.crossFadeFrom(previousAction, duration, true);
+        if (previousAction) {
+            nextAction.crossFadeFrom(previousAction, duration, true);
+        }
         nextAction.play();
 
         this.currentActionName = newActionName;
     }
 
     /**
-     * Mise à jour globale appelée à chaque frame.
+     * Mise à jour globale appelée à chaque frame (y compris lorsque le pointeur est déverrouillé).
      *
      * @param {number} dt — delta time en secondes
-     * @param {THREE.Vector2} horizontalVelocity — vitesse actuelle (x, z relatif caméra)
-     * @param {boolean} jumpInput — commande de saut (Space)
-     * @param {boolean} isMoving — vrai si le joueur avance/recule/latéral
+     * @param {THREE.Vector2} [horizontalVelocity] — vitesse actuelle (x, z relatif caméra)
+     * @param {boolean} [jumpInput=false] — commande de saut (Space)
+     * @param {boolean} [isMoving=false] — vrai si le joueur avance/recule/latéral
      */
-    update(dt, horizontalVelocity, jumpInput, isMoving) {
+    update(dt, horizontalVelocity, jumpInput = false, isMoving = false) {
         // ── 1. Physique verticale (Saut & Gravité) ───────────────────
         if (jumpInput && this.onGround) {
             this.verticalVelocity = JUMP_VELOCITY;
@@ -260,13 +299,14 @@ export class Character3D {
         }
 
         // ── 2. Orientation du personnage ─────────────────────────────
-        const speedSq = horizontalVelocity.x * horizontalVelocity.x + horizontalVelocity.y * horizontalVelocity.y;
+        const vx = horizontalVelocity ? horizontalVelocity.x : 0;
+        const vz = horizontalVelocity ? horizontalVelocity.y : 0;
+        const speedSq = vx * vx + vz * vz;
         const currentSpeed = Math.sqrt(speedSq);
 
         if (isMoving && currentSpeed > 0.1) {
             // Calculer la direction de déplacement dans le plan XZ mondial
-            // horizontalVelocity.x = déplacement droite, horizontalVelocity.y = déplacement avant
-            const moveAngle = Math.atan2(horizontalVelocity.x, horizontalVelocity.y);
+            const moveAngle = Math.atan2(vx, vz);
             this.targetHeading = this.orbitYaw + moveAngle;
 
             // Interpolation angulaire lisse sans inversion à ±PI
@@ -279,32 +319,32 @@ export class Character3D {
         // ── 3. Synchronisation du modèle 3D ──────────────────────────
         if (this.model) {
             this.model.position.copy(this.position);
-            this.model.rotation.y = this.heading;
+            this.model.rotation.y = this.heading + Math.PI;
 
             // ── 4. Machine à états d'animations ──────────────────────
             if (this.mixer) {
                 if (!this.onGround) {
-                    // En l'air (saut) : on peut déclencher ou maintenir l'action de course/saut
+                    // En l'air (saut) : déclencher la pose de saut / course dynamique
                     if (this.actions['run']) {
-                        this._fadeToAction('run', 0.2);
+                        this._fadeToAction('run', 0.15);
                     } else if (this.actions['walk']) {
-                        this._fadeToAction('walk', 0.2);
+                        this._fadeToAction('walk', 0.15);
                     }
-                } else if (isMoving && currentSpeed > 0.3) {
-                    // Au sol et en déplacement
+                } else if (isMoving && currentSpeed > 0.2) {
+                    // Au sol et en déplacement : sprint si > 6.0 m/s sinon marche
                     if (currentSpeed > 6.0 && this.actions['run']) {
                         this._fadeToAction('run', 0.2);
                     } else if (this.actions['walk']) {
                         this._fadeToAction('walk', 0.2);
                     }
                 } else {
-                    // À l'arrêt
+                    // À l'arrêt : idle breathing
                     if (this.actions['idle']) {
-                        this._fadeToAction('idle', 0.3);
+                        this._fadeToAction('idle', 0.25);
                     }
                 }
 
-                // Avancement de l'animation
+                // Avancement temporel de l'animation
                 this.mixer.update(dt);
             }
         }
@@ -336,11 +376,11 @@ export class Character3D {
                 camZ
             );
 
-            // Suivi fluide de la caméra pour éviter toute saccade (smooth lerp)
+            // Suivi fluide de la caméra (smooth lerp pour amortir les à-coups)
             this.camera.position.lerp(this._targetCameraPos, Math.min(1.0, dt * CAMERA_SMOOTHING));
             this.camera.lookAt(this._characterTarget);
         } else {
-            // Mode 1ère personne classique : caméra positionnée exactement aux yeux du joueur
+            // Mode 1ère personne : caméra positionnée exactement aux yeux du joueur
             this.camera.position.set(
                 this.position.x,
                 this.position.y + PLAYER_EYE_HEIGHT,
