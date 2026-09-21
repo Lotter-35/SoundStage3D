@@ -53,8 +53,59 @@ export class Listener {
         this._forward = new THREE.Vector3();
         this._up = new THREE.Vector3();
 
+        // Anti-teleport / mouse delta glitch protection (especially when unlocking or pressing Tab/Alt-Tab)
+        this._suppressMouseUntil = 0;
+        this._suppressMouse = (durationMs = 150) => {
+            this._suppressMouseUntil = performance.now() + durationMs;
+        };
+
+        this._onCapturedMouseMove = (e) => {
+            // Block mouse movements during unlock/lock transitions
+            if (performance.now() < this._suppressMouseUntil) {
+                e.stopImmediatePropagation();
+                return;
+            }
+
+            // If not locked, stop event from reaching PointerLockControls
+            if (!this.controls.isLocked) {
+                e.stopImmediatePropagation();
+                return;
+            }
+
+            // Extreme delta filter: prevents instantaneous camera snaps caused by Chromium cursor warp on unlock
+            if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) {
+                e.stopImmediatePropagation();
+                return;
+            }
+        };
+        document.addEventListener('mousemove', this._onCapturedMouseMove, true);
+
+        this.controls.addEventListener('lock', () => {
+            this._suppressMouse(100);
+        });
+
+        this.controls.addEventListener('unlock', () => {
+            this._suppressMouse(200);
+            this.resetMovement();
+        });
+
+        window.addEventListener('blur', () => {
+            this._suppressMouse(200);
+            this.resetMovement();
+        });
+
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
+    }
+
+    /** Reset all directional movement inputs */
+    resetMovement() {
+        this.move.forward = false;
+        this.move.backward = false;
+        this.move.left = false;
+        this.move.right = false;
+        this.move.up = false;
+        this.move.down = false;
     }
 
     /** Set mouse look sensitivity. @param {number} value — 0.1 to 3.0 */
@@ -63,7 +114,16 @@ export class Listener {
     }
 
     lock() {
+        this._suppressMouse(100);
         this.controls.lock();
+    }
+
+    unlock() {
+        this._suppressMouse(200);
+        this.resetMovement();
+        if (this.controls.isLocked) {
+            this.controls.unlock();
+        }
     }
 
     get isLocked() {
@@ -77,6 +137,16 @@ export class Listener {
     }
 
     _onKeyDown(e) {
+        if (e.code === 'Tab') {
+            e.preventDefault();
+            if (this.controls.isLocked) {
+                this.unlock();
+            } else {
+                this.lock();
+            }
+            return;
+        }
+
         switch (e.code) {
             case 'KeyW': case 'KeyZ': case 'ArrowUp':    this.move.forward = true; break;
             case 'KeyS':              case 'ArrowDown':  this.move.backward = true; break;
@@ -93,6 +163,11 @@ export class Listener {
     }
 
     _onKeyUp(e) {
+        if (e.code === 'Tab') {
+            e.preventDefault();
+            return;
+        }
+
         switch (e.code) {
             case 'KeyW': case 'KeyZ': case 'ArrowUp':    this.move.forward = false; break;
             case 'KeyS':              case 'ArrowDown':  this.move.backward = false; break;
