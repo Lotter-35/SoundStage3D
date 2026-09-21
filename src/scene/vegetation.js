@@ -13,10 +13,10 @@ const JITTER = 0.4;
 const GRASS_SCALE = 0.17;      // slightly larger tufts for dense, natural coverage
 const CHUNK_SIZE = 8;
 
-// Distance settings
-let VIEW_RADIUS = 28;          // visible radius around camera (metres)
-let FADE_START = 20;           // distance at which grass smoothly shrinks into ground texture
-let MAX_VISIBLE = 500;         // max instances (sized for π*28²/2.4²)
+// Distance settings (default OFF for maximum performance on startup)
+let VIEW_RADIUS = 0;           // visible radius around camera (metres)
+let FADE_START = 0;            // distance at which grass smoothly shrinks into ground texture
+let MAX_VISIBLE = 0;           // max instances
 
 function isStageZone(x, z) {
     // Exclude grass from growing inside/under the main stage platform

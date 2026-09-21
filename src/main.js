@@ -184,9 +184,9 @@ controls.onDopplerToggle((enabled) => {
 // ─── Grass Quality Preset Toggle ───
 const grassBtn = document.getElementById('grass-btn');
 const GRASS_PRESETS = [
-    { label: '🌿 Herbe: Normale', key: 'medium' },
-    { label: '🌿 Herbe: Éco',     key: 'low' },
     { label: '🌿 Herbe: OFF',     key: 'off' },
+    { label: '🌿 Herbe: Éco',     key: 'low' },
+    { label: '🌿 Herbe: Normale', key: 'medium' },
     { label: '🌿 Herbe: Haute',   key: 'high' },
 ];
 let currentGrassIdx = 0;
