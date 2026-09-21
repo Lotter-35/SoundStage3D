@@ -131,7 +131,13 @@ export class Controls {
                 e.preventDefault();
                 ctrl.setValue(defaultValue);
             });
-            ctrl.domElement.appendChild(resetBtn);
+
+            // Append inside $widget so it stays inline with input and does not blow up controller width
+            if (ctrl.$widget) {
+                ctrl.$widget.appendChild(resetBtn);
+            } else {
+                ctrl.domElement.appendChild(resetBtn);
+            }
 
             // Double click on option row also resets
             ctrl.domElement.addEventListener('dblclick', (e) => {
@@ -150,15 +156,18 @@ export class Controls {
         const cFill   = document.getElementById('dsp-panel-fill');
         const cSub    = document.getElementById('dsp-panel-sub');
 
-        // Stop click from propagating to canvas when clicking panels
-        const stopClick = (e) => e.stopPropagation();
+        // Stop click and mousedown from propagating to canvas when clicking panels
+        const stopProp = (e) => e.stopPropagation();
         [cMaster, cTop, cMid, cFill, cSub].forEach(container => {
-            if (container) container.addEventListener('click', stopClick);
+            if (container) {
+                container.addEventListener('click', stopProp);
+                container.addEventListener('mousedown', stopProp);
+            }
         });
 
         // ─── 1. Master GUI (Top-Right, right group) ───
         if (cMaster) {
-            const gui = new GUI({ container: cMaster, title: '🎚 Master & Environnement', closeFolders: false });
+            const gui = new GUI({ container: cMaster, title: '🎚 Master & Environnement', closeFolders: false, width: 300 });
             this.guis.master = gui;
 
             const fEnv = gui.addFolder('Environnement');
@@ -184,7 +193,7 @@ export class Controls {
 
         // ─── 2. TOP GUI (Bottom-Left, left group) ───
         if (cTop) {
-            const gui = new GUI({ container: cTop, title: '🔉 TOP Pipeline', closeFolders: false });
+            const gui = new GUI({ container: cTop, title: '🔉 TOP Pipeline', closeFolders: false, width: 300 });
             this.guis.top = gui;
 
             const fXover = gui.addFolder('Crossover LR4');
@@ -234,7 +243,7 @@ export class Controls {
 
         // ─── 3. MID GUI (Bottom-Left, left group) ───
         if (cMid) {
-            const gui = new GUI({ container: cMid, title: '🔉 MID Pipeline', closeFolders: false });
+            const gui = new GUI({ container: cMid, title: '🔉 MID Pipeline', closeFolders: false, width: 300 });
             this.guis.mid = gui;
 
             const fXover = gui.addFolder('Crossover LR4');
@@ -287,7 +296,7 @@ export class Controls {
 
         // ─── 4. FILL GUI (Bottom-Right, right group) ───
         if (cFill) {
-            const gui = new GUI({ container: cFill, title: '🔉 FILL Pipeline', closeFolders: false });
+            const gui = new GUI({ container: cFill, title: '🔉 FILL Pipeline', closeFolders: false, width: 300 });
             this.guis.fill = gui;
 
             const fMix = gui.addFolder('Mixage Source');
@@ -314,7 +323,7 @@ export class Controls {
 
         // ─── 5. SUB GUI (Bottom-Right, right group) ───
         if (cSub) {
-            const gui = new GUI({ container: cSub, title: '🔉 SUB Pipeline', closeFolders: false });
+            const gui = new GUI({ container: cSub, title: '🔉 SUB Pipeline', closeFolders: false, width: 300 });
             this.guis.sub = gui;
 
             const fXover = gui.addFolder('Crossover LR4');

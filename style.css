@@ -506,44 +506,157 @@ body {
 /* Slot sizing */
 .dsp-panel-slot,
 #dsp-panel-master {
-    min-width: 270px;
-    max-width: 320px;
-    width: 290px;
+    width: 300px;
+    min-width: 300px;
+    max-width: 300px;
 }
 
-/* Keep default lil-gui appearance — only adjust positioning to sit within slots */
+/* Lil-gui Root & Positioning */
+.dsp-panel-slot .lil-gui.root,
+#dsp-master-wrap .lil-gui.root {
+    position: static !important;
+    width: 300px !important;
+    max-width: 300px !important;
+    max-height: calc(100vh - 120px);
+}
+
 .dsp-panel-slot .lil-gui,
 #dsp-master-wrap .lil-gui {
-    position: static !important;
-    max-height: calc(100vh - 160px);
-    overflow-y: auto;
+    --width: 300px;
+    --name-width: 82px;
+    --slider-input-min-width: 36px;
+    --slider-input-width: 38px;
+    --spacing: 3px;
+    --padding: 4px;
+    --widget-height: 20px;
 }
 
-/* ─── Per-option reset button ─── */
-.lil-reset-btn {
-    background: transparent;
-    border: 1px solid rgba(255, 255, 255, 0.2);
-    color: #888;
-    border-radius: 3px;
-    width: 17px;
-    height: 17px;
-    margin-left: 4px;
-    margin-right: 2px;
-    font-size: 11px;
-    line-height: 1;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: all 0.15s ease;
-    user-select: none;
-    padding: 0;
+/* Scroll handling: smooth wheel scroll if needed, NO visible scrollbars ("slider sur le côté") */
+.dsp-panel-slot .lil-gui.root > .children,
+#dsp-master-wrap .lil-gui.root > .children {
+    max-height: calc(100vh - 150px);
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
 }
-.lil-reset-btn:hover {
-    color: #fff;
-    border-color: rgba(255, 255, 255, 0.6);
-    background: rgba(255, 255, 255, 0.15);
+
+/* Prevent any horizontal or vertical scrollbars on any lil-gui elements and folders */
+.dsp-panel-slot .lil-gui,
+.dsp-panel-slot .lil-gui *,
+#dsp-master-wrap .lil-gui,
+#dsp-master-wrap .lil-gui * {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
+}
+
+.dsp-panel-slot .lil-gui::-webkit-scrollbar,
+.dsp-panel-slot .lil-gui *::-webkit-scrollbar,
+#dsp-master-wrap .lil-gui::-webkit-scrollbar,
+#dsp-master-wrap .lil-gui *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
+}
+
+/* Ensure folders and controllers never create horizontal scrollbars or overflow */
+.dsp-panel-slot .lil-gui .children,
+#dsp-master-wrap .lil-gui .children,
+.dsp-panel-slot .lil-gui .controller,
+#dsp-master-wrap .lil-gui .controller {
+    overflow-x: hidden !important;
+}
+
+/* Controller row layout */
+.dsp-panel-slot .lil-gui .controller,
+#dsp-master-wrap .lil-gui .controller {
+    display: flex !important;
+    align-items: center !important;
+    padding: 0 4px !important;
+    margin: 2px 0 !important;
+    overflow: hidden !important;
+}
+
+/* Option Name/Label: Compact fixed width */
+.dsp-panel-slot .lil-gui .controller > .name,
+#dsp-master-wrap .lil-gui .controller > .name {
+    flex: 0 0 82px !important;
+    width: 82px !important;
+    min-width: 82px !important;
+    max-width: 82px !important;
+    padding-right: 4px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 11px !important;
+    color: #ccc !important;
+}
+
+/* Widget: Fills the entire remaining row width */
+.dsp-panel-slot .lil-gui .controller .widget,
+#dsp-master-wrap .lil-gui .controller .widget {
+    display: flex !important;
+    align-items: center !important;
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+
+/* Slider Track: Wide, expansive, smooth dragging */
+.dsp-panel-slot .lil-gui .controller.number .slider,
+#dsp-master-wrap .lil-gui .controller.number .slider {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 50px !important;
+    height: 18px !important;
+    cursor: ew-resize !important;
+}
+
+/* Numeric Input: Compact, crisp, right-aligned */
+.dsp-panel-slot .lil-gui .controller.number input,
+#dsp-master-wrap .lil-gui .controller.number input {
+    flex: 0 0 38px !important;
+    width: 38px !important;
+    min-width: 36px !important;
+    max-width: 42px !important;
+    height: 18px !important;
+    padding: 0 2px !important;
+    margin-left: 4px !important;
+    text-align: right !important;
+    font-size: 10.5px !important;
+    border-radius: 2px !important;
+}
+
+/* Per-option Reset Button (↺): Tiny 15x15px, elegant, no row stretching */
+.dsp-panel-slot .lil-gui .lil-reset-btn,
+#dsp-master-wrap .lil-gui .lil-reset-btn {
+    flex: 0 0 15px !important;
+    width: 15px !important;
+    height: 15px !important;
+    min-width: 15px !important;
+    max-width: 15px !important;
+    margin: 0 0 0 3px !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: #888 !important;
+    border-radius: 2px !important;
+    font-size: 10px !important;
+    line-height: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    transition: color 0.15s, border-color 0.15s, background 0.15s !important;
+}
+
+.dsp-panel-slot .lil-gui .lil-reset-btn:hover,
+#dsp-master-wrap .lil-gui .lil-reset-btn:hover {
+    color: #fff !important;
+    border-color: rgba(255, 255, 255, 0.5) !important;
+    background: rgba(255, 255, 255, 0.15) !important;
 }
 
 /* ─── DSP Tooltip (position: fixed) ─── */
