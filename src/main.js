@@ -15,6 +15,7 @@ import { createSaturation, createCompressor } from './audio/effects.js';
 
 import { Controls } from './ui/controls.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
+import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
@@ -141,19 +142,36 @@ async function initAudio(file = null) {
 }
 
 // Initialise audio et HUD directement dès le chargement
-initAudio();
 controls.showHUD();
 
-// Déverrouillage automatique du contexte audio sur la première touche pressée
-window.addEventListener('keydown', () => {
+let savedAudioFile = null;
+try {
+    savedAudioFile = await loadLastAudio();
+} catch (err) {
+    console.warn('Failed to load saved audio from IndexedDB:', err);
+}
+
+try {
+    await initAudio(savedAudioFile);
+} catch (err) {
+    console.warn('Failed to initialize audio with saved file:', err);
+    if (!audioReady) await initAudio(null);
+}
+
+// Déverrouillage automatique du contexte audio sur la première interaction
+const unlockAudioContext = () => {
     if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
         audioEngine.ctx.resume();
     }
-}, { once: true });
+};
+window.addEventListener('keydown', unlockAudioContext);
+window.addEventListener('pointerdown', unlockAudioContext);
+window.addEventListener('click', unlockAudioContext);
 
 controls.onEnter(async (file) => {
     await initAudio(file);
     listener.lock();
+    if (file) saveLastAudio(file);
 });
 
 controls.onPlayPause(() => {
@@ -173,7 +191,29 @@ controls.onChangeMp3(async (file) => {
     await audioEngine.loadFile(file);
     audioEngine.play(crossover.input);
     controls.setPlayState(true);
-    document.getElementById('now-playing').textContent = file.name;
+    const np = document.getElementById('now-playing');
+    if (np) np.textContent = file.name;
+    saveLastAudio(file);
+});
+
+// Drag & drop support anywhere on the page
+window.addEventListener('dragover', (e) => e.preventDefault());
+window.addEventListener('drop', async (e) => {
+    e.preventDefault();
+    const file = e.dataTransfer?.files?.[0];
+    if (file && (file.type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a)$/i.test(file.name))) {
+        if (!audioReady) {
+            await initAudio(file);
+        } else {
+            audioEngine.stop();
+            await audioEngine.loadFile(file);
+            audioEngine.play(crossover.input);
+            controls.setPlayState(true);
+            const np = document.getElementById('now-playing');
+            if (np) np.textContent = file.name;
+        }
+        saveLastAudio(file);
+    }
 });
 
 controls.onDopplerToggle((enabled) => {
