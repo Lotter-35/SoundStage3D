@@ -50,14 +50,26 @@ let effects = null; // keep reference to prevent GC
 let audioReady = false;
 
 // ─── UI ──────────────────────────────────────────────────────────
+// ─── UI ──────────────────────────────────────────────────────────
 const controls = new Controls();
 
-controls.onEnter(async (file) => {
-    // Init audio context (needs user gesture)
+async function initAudio(file = null) {
+    if (audioReady) {
+        if (file) {
+            audioEngine.stop();
+            await audioEngine.loadFile(file);
+            audioEngine.play(crossover.input);
+            controls.setPlayState(true);
+            const np = document.getElementById('now-playing');
+            if (np) np.textContent = file.name;
+        }
+        return;
+    }
+
+    // Init audio context
     const ctx = audioEngine.init();
 
     if (file) {
-        // Load file
         await audioEngine.loadFile(file);
     }
 
@@ -119,14 +131,28 @@ controls.onEnter(async (file) => {
     speakerSystem.setBusVolume('fill', DSP_DEFAULTS.fill['bus-volume'] / 100);
 
     if (file) {
-        // Start playback — source connects to crossover input
         audioEngine.play(crossover.input);
         controls.setPlayState(true);
-        document.getElementById('now-playing').textContent = file.name;
+        const np = document.getElementById('now-playing');
+        if (np) np.textContent = file.name;
+    } else {
+        controls.setPlayState(false);
     }
+}
 
-    // Switch to HUD and lock pointer
-    controls.showHUD();
+// Initialise audio et HUD directement dès le chargement
+initAudio();
+controls.showHUD();
+
+// Déverrouillage automatique du contexte audio sur la première touche pressée
+window.addEventListener('keydown', () => {
+    if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+        audioEngine.ctx.resume();
+    }
+}, { once: true });
+
+controls.onEnter(async (file) => {
+    await initAudio(file);
     listener.lock();
 });
 
@@ -342,9 +368,15 @@ listener.onLockChange((locked) => {
     }
 });
 
-// Re-lock on canvas click when already running
+// Re-lock on canvas click and ensure audio context is active
 canvas.addEventListener('click', () => {
-    if (audioReady && !listener.isLocked) {
+    if (!audioReady) {
+        initAudio();
+    }
+    if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+        audioEngine.ctx.resume();
+    }
+    if (!listener.isLocked) {
         listener.lock();
     }
 });

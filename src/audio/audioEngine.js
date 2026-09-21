@@ -11,6 +11,10 @@ export class AudioEngine {
         this.startTime = 0;
     }
 
+    get context() {
+        return this.ctx;
+    }
+
     init() {
         if (this.ctx) {
             if (this.ctx.state === 'suspended') this.ctx.resume();

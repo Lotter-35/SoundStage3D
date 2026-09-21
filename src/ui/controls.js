@@ -306,19 +306,23 @@ export class Controls {
             });
         }
 
-        this.fileInput.addEventListener('change', (e) => {
-            const file = e.target.files[0];
-            if (!file) return;
-            this._file = file;
-            this.fileNameEl.textContent = file.name;
-            this.enterBtn.disabled = false;
-        });
+        if (this.fileInput) {
+            this.fileInput.addEventListener('change', (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                this._file = file;
+                if (this.fileNameEl) this.fileNameEl.textContent = file.name;
+                if (this.enterBtn) this.enterBtn.disabled = false;
+            });
+        }
 
-        this.enterBtn.addEventListener('click', () => {
-            if (this._onEnter) {
-                this._onEnter(this._file || null);
-            }
-        });
+        if (this.enterBtn) {
+            this.enterBtn.addEventListener('click', () => {
+                if (this._onEnter) {
+                    this._onEnter(this._file || null);
+                }
+            });
+        }
 
         this.playBtn.addEventListener('click', () => {
             if (this._onPlayPause) this._onPlayPause();
@@ -411,14 +415,14 @@ export class Controls {
 
     /** Switch from start screen to HUD */
     showHUD() {
-        this.overlay.classList.add('hidden');
-        this.hud.classList.remove('hidden');
+        if (this.overlay) this.overlay.classList.add('hidden');
+        if (this.hud) this.hud.classList.remove('hidden');
     }
 
     /** Switch back to start screen */
     showOverlay() {
-        this.overlay.classList.remove('hidden');
-        this.hud.classList.add('hidden');
+        if (this.overlay) this.overlay.classList.remove('hidden');
+        if (this.hud) this.hud.classList.add('hidden');
     }
 
     /**
