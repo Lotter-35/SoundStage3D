@@ -269,17 +269,19 @@ export class Controls {
             const cReverb = fEnv.add(this.state.master, 'reverb', 0, 100, 1).name('Réverb (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('reverb', v));
             this._setupController(cReverb, 'master-reverb', DSP_DEFAULTS.master['reverb'], false);
 
+            const fLim = gui.addFolder('Limiteur OUT');
+            const cLimTh = fLim.add(this.state.master, 'lim-threshold', -12, 0, 0.1).name('Seuil (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('lim-threshold', v));
+            this._setupController(cLimTh, 'master-lim-threshold', DSP_DEFAULTS.master['lim-threshold'], false);
+
+            const cCeil = fLim.add(this.state.master, 'ceiling-active').name('Plafond Soft-Knee').onChange(v => this._onMasterDsp && this._onMasterDsp('ceiling-active', v));
+            this._setupController(cCeil, 'master-ceiling-active', DSP_DEFAULTS.master['ceiling-active'], false);
+
             const fLocal = gui.addFolder('Volume local 🔒');
             const cVol = fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
             this._setupController(cVol, 'master-local-volume', DSP_DEFAULTS.master['local-volume'], false);
 
-            const cUncap = fLocal.add(this.state.master, 'uncapped-fps').name('FPS Illimités 🚀').onChange(v => {
-                localStorage.setItem('soundstage3d:master-uncapped-fps', v ? 'true' : 'false');
-                if (this._onMasterDsp) this._onMasterDsp('uncapped-fps', v);
-            });
-            this._setupController(cUncap, 'master-uncapped-fps', DSP_DEFAULTS.master['uncapped-fps'] ?? false, false);
-
-            const cSens = fLocal.add(this.state.master, 'mouse-sensitivity', 10, 300, 1).name('Souris (%)').onChange(v => {
+            const fControls = gui.addFolder('Contrôles');
+            const cSens = fControls.add(this.state.master, 'mouse-sensitivity', 10, 300, 1).name('Sensibilité (%)').onChange(v => {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);
                 if (this._onMasterDsp) this._onMasterDsp('mouse-sensitivity', v);
             });

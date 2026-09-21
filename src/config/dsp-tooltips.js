@@ -52,8 +52,9 @@ export const DSP_TOOLTIPS = {
     "master-treble": "Boost high-shelf global à 3 kHz. Augmente la brillance de toutes les enceintes. 0 dB = neutre. Monter pour un son plus brillant et aéré, ou compenser l'absorption atmosphérique.",
     "master-reverb": "Réverbération globale. Simule l'écho et la résonance d'un espace. 0% = son sec (aucune réverb). 100% = réverbération maximale. Ajuste le niveau du signal réverbéré mélangé au son direct.",
     "master-local-volume": "Niveau d'écoute personnel. N'affecte que votre sortie audio locale, indépendamment des autres participants en mode multi.",
-    "master-uncapped-fps": "Débride le framerate en désactivant la limite VSync de l'écran pour faire tourner le moteur graphique au maximum de FPS possible sur votre machine.",
-    "master-mouse-sensitivity": "Sensibilité de la souris pour la caméra. 1.0× = normal. Non synchronisé en multi.",
+    "master-lim-threshold": "Seuil du limiteur Master OUT en dBFS (-12 dB à 0 dB). Protège la sortie globale contre les crêtes excessives.",
+    "master-ceiling-active": "Plafond brickwall transparent soft-knee (-0.17 dBFS). Empêche tout écrêtage numérique matériel (DAC) et éteint le voyant CLIP du Master.",
+    "master-mouse-sensitivity": "Sensibilité de la souris pour la caméra vue subjective (FPS). 100% = normal.",
     "sine-active": "Active ou coupe le générateur de tonalité pure (remplace la musique dans les enceintes du festival).",
     "sine-frequency": "Fréquence de l'onde sinusoïdale pure (de 0 Hz à 20 000 Hz). Permet de tester les subs (<100Hz), médiums (1kHz) ou aigus (>4kHz).",
     "sine-volume": "Volume d'injection de la fréquence sinusoïdale dans le bus de diffusion (0% à 100%)."

@@ -342,7 +342,7 @@ function oscStart() {
         const a = speakerSystem.ctx.createAnalyser();
         a.fftSize = 2048;
         a.smoothingTimeConstant = 0;
-        speakerSystem.masterLimiter.connect(a);
+        (speakerSystem._ceilingOut || speakerSystem.masterLimiter).connect(a);
         speakerSystem._oscAnalyser = a;
     }
     const analyser = speakerSystem._oscAnalyser;
@@ -479,10 +479,6 @@ controls.onConesToggle((bus, visible) => {
 controls.onMasterDsp((param, value) => {
     if (param === 'mouse-sensitivity') {
         listener.setSensitivity(value / 100);
-        return;
-    }
-    if (param === 'uncapped-fps') {
-        setUncappedFps(value);
         return;
     }
     if (!audioReady) return;
@@ -669,44 +665,6 @@ ${memLines}`;
     if (!ri.autoReset) ri.reset();
 }
 
-let _uncappedFps = localStorage.getItem('soundstage3d:master-uncapped-fps') === 'true';
-const _uncapChannel = typeof MessageChannel !== 'undefined' ? new MessageChannel() : null;
-let _channelPending = false;
-
-function scheduleUncappedFrame() {
-    if (_uncappedFps && _uncapChannel && !document.hidden) {
-        if (!_channelPending) {
-            _channelPending = true;
-            _uncapChannel.port2.postMessage(null);
-        }
-    }
-}
-
-if (_uncapChannel) {
-    _uncapChannel.port1.onmessage = () => {
-        _channelPending = false;
-        if (_uncappedFps && !document.hidden) {
-            renderFrame();
-            scheduleUncappedFrame();
-        }
-    };
-}
-
-function setUncappedFps(enabled) {
-    _uncappedFps = Boolean(enabled);
-    if (_uncappedFps) {
-        clock.getDelta(); // reset delta so no initial time jump
-        scheduleUncappedFrame();
-    }
-}
-
-document.addEventListener('visibilitychange', () => {
-    if (!document.hidden && _uncappedFps) {
-        clock.getDelta();
-        scheduleUncappedFrame();
-    }
-});
-
 function renderFrame() {
     const dt = Math.min(clock.getDelta(), 0.1);
 
@@ -759,16 +717,7 @@ function renderFrame() {
 
 function animate() {
     requestAnimationFrame(animate);
-
-    if (!_uncappedFps) {
-        renderFrame();
-    } else {
-        // In uncapped mode, keep the high-speed loop active if it stalled
-        scheduleUncappedFrame();
-    }
+    renderFrame();
 }
 
 animate();
-if (_uncappedFps) {
-    scheduleUncappedFrame();
-}

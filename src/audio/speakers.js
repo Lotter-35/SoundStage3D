@@ -401,10 +401,19 @@ export class SpeakerSystem {
         effects.topSat.connect(this.fillMerge);
         this.fillMerge.connect(this.fillVolume);
 
+        // SUB bus limiter (brick-wall)
+        this.subLimiter = ctx.createDynamicsCompressor();
+        this.subLimiter.threshold.value = DSP_DEFAULTS.sub?.['lim-threshold'] ?? -3;
+        this.subLimiter.knee.value = 2;
+        this.subLimiter.ratio.value = 20;
+        this.subLimiter.attack.value = 0.001;
+        this.subLimiter.release.value = 0.05;
+        this.subVolume.connect(this.subLimiter);
+
         // ── Analysers for level metering ──
         this.subAnalyser = ctx.createAnalyser();
         this.subAnalyser.fftSize = 256;
-        this.subVolume.connect(this.subAnalyser);
+        this.subLimiter.connect(this.subAnalyser);
 
         // MID bus limiter (brick-wall)
         this.midLimiter = ctx.createDynamicsCompressor();
@@ -445,17 +454,32 @@ export class SpeakerSystem {
         this.fillAnalyser.fftSize = 256;
         this.fillLimiter.connect(this.fillAnalyser);
 
-        // Master output chain: masterOutput → limiter → ctx.destination
+        // Master output chain: masterOutput → limiter → ceiling branch → localVolumeGain → ctx.destination
         this.masterOutput = ctx.createGain();
         this.masterOutput.gain.value = 1;
 
         // Brick-wall limiter to prevent clipping
         this.masterLimiter = ctx.createDynamicsCompressor();
-        this.masterLimiter.threshold.value = -3;
+        this.masterLimiter.threshold.value = DSP_DEFAULTS.master?.['lim-threshold'] ?? -3;
         this.masterLimiter.knee.value = 2;
         this.masterLimiter.ratio.value = 20;
         this.masterLimiter.attack.value = 0.001;
         this.masterLimiter.release.value = 0.05;
+
+        // Master brickwall soft-knee ceiling WaveShaper
+        this.masterCeiling = ctx.createWaveShaper();
+        this.masterCeiling.oversample = '2x';
+        this._buildMasterCeilingCurve();
+
+        // Ceiling wet/dry cross-fader (for bypass / enable option)
+        this._ceilingDry = ctx.createGain();
+        this._ceilingWet = ctx.createGain();
+        this._ceilingOut = ctx.createGain();
+
+        const ceilingOn = Boolean(DSP_DEFAULTS.master?.['ceiling-active']);
+        this._ceilingDry.gain.value = ceilingOn ? 0 : 1;
+        this._ceilingWet.gain.value = ceilingOn ? 1 : 0;
+        this._ceilingOut.gain.value = 1;
 
         // HRTF brightness compensation: high-shelf boost to counter HRTF dullness
         this.hrtfShelf = ctx.createBiquadFilter();
@@ -475,16 +499,23 @@ export class SpeakerSystem {
         this.reverbConvolver.connect(this.reverbWet);
         this.reverbWet.connect(this.masterLimiter);
 
+        // Limiter feeds both dry and wet ceiling paths
+        this.masterLimiter.connect(this._ceilingDry);
+        this._ceilingDry.connect(this._ceilingOut);
+        this.masterLimiter.connect(this.masterCeiling);
+        this.masterCeiling.connect(this._ceilingWet);
+        this._ceilingWet.connect(this._ceilingOut);
+
         // Local volume gain — end-of-chain, not synchronized in multi: for the local user only
         this.localVolumeGain = ctx.createGain();
         this.localVolumeGain.gain.value = 1;
-        this.masterLimiter.connect(this.localVolumeGain);
+        this._ceilingOut.connect(this.localVolumeGain);
         this.localVolumeGain.connect(ctx.destination);
 
-        // Master analyser taps after limiter (what the listener actually hears)
+        // Master analyser taps after ceiling (what the listener actually hears)
         this.masterAnalyser = ctx.createAnalyser();
         this.masterAnalyser.fftSize = 256;
-        this.masterLimiter.connect(this.masterAnalyser);
+        this._ceilingOut.connect(this.masterAnalyser);
 
         // Pre-allocated buffers for level metering (avoid GC)
         this._meterBufs = {
@@ -501,7 +532,7 @@ export class SpeakerSystem {
             this.speakers.push(speaker);
 
             if (def.bus === 'sub') {
-                this.subVolume.connect(speaker.input);
+                this.subLimiter.connect(speaker.input);
             } else if (def.bus === 'mid') {
                 this.midLimiter.connect(speaker.input);
             } else if (def.bus === 'fill') {
@@ -521,6 +552,33 @@ export class SpeakerSystem {
 
         // Force initial update of all speakers immediately with default listener position
         this.forceUpdateAll(this._currentListenerPos);
+    }
+
+    /**
+     * Build transparent soft-knee brickwall ceiling curve.
+     * Linear up to 0.88 (-1.1 dBFS), smoothly soft-knees to 0.98 (-0.17 dBFS).
+     * Prevents digital DAC clipping when ceiling-active is toggled on.
+     */
+    _buildMasterCeilingCurve() {
+        const samples = 8192;
+        const curve = new Float32Array(samples);
+        const maxIn = 3.0;
+        const linearCeil = 0.88;
+        const hardCeil = 0.98;
+        const kneeWidth = hardCeil - linearCeil; // 0.10
+
+        for (let i = 0; i < samples; i++) {
+            const x = ((i * 2) / (samples - 1) - 1) * maxIn;
+            const absX = Math.abs(x);
+            if (absX <= linearCeil) {
+                curve[i] = x;
+            } else {
+                const over = absX - linearCeil;
+                const sat = linearCeil + kneeWidth * Math.tanh(over / kneeWidth);
+                curve[i] = Math.sign(x) * sat;
+            }
+        }
+        this.masterCeiling.curve = curve;
     }
 
     /**
@@ -658,6 +716,16 @@ export class SpeakerSystem {
             case 'reverb':
                 this.reverbWet.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.05);
                 break;
+            case 'lim-threshold':
+                this.masterLimiter.threshold.setTargetAtTime(value, this.ctx.currentTime, 0.04);
+                break;
+            case 'ceiling-active': {
+                const on = Boolean(value);
+                const t = this.ctx.currentTime;
+                this._ceilingDry.gain.setTargetAtTime(on ? 0 : 1, t, 0.04);
+                this._ceilingWet.gain.setTargetAtTime(on ? 1 : 0, t, 0.04);
+                break;
+            }
         }
         this.forceUpdateAll();
     }
@@ -741,7 +809,7 @@ export class SpeakerSystem {
                 for (const s of subSpeakers) s._updateProxSat();
                 break;
             case 'lim-threshold':
-                this.masterLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                if (this.subLimiter) this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
         this.forceUpdateAll();
