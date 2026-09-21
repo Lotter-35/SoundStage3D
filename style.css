@@ -408,6 +408,61 @@ body {
     z-index: 90;
 }
 
+/* Now playing track name */
+#now-playing {
+    position: fixed;
+    bottom: 2px;
+    right: 16px;
+    color: #4ade80;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.68rem;
+    z-index: 50;
+    pointer-events: none;
+    opacity: 0.85;
+}
+
+/* FPS counter — always visible at bottom-left in light green */
+#fps-counter {
+    position: fixed;
+    bottom: 2px;
+    left: 8px;
+    color: #4ade80;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.70rem;
+    font-weight: 500;
+    z-index: 150;
+    pointer-events: none;
+    opacity: 0.9;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+}
+
+/* ─── Debug Performance Panel ─── */
+#debug-panel {
+    position: fixed;
+    top: 16px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.88);
+    border: 1px solid #555;
+    border-radius: 8px;
+    padding: 10px 16px;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-size: 0.65rem;
+    color: #ccc;
+    line-height: 1.6;
+    backdrop-filter: blur(6px);
+    pointer-events: none;
+    min-width: 340px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+}
+#debug-panel.hidden { display: none !important; }
+#debug-content { white-space: pre; }
+.dbg-title { color: #4af; font-weight: bold; }
+.dbg-val { color: #4ade80; }
+.dbg-warn { color: #fa3; }
+.dbg-bad { color: #f44; }
+
 /* ─── DSP Panels Layout (Bottom Bar) ─── */
 #dsp-panels {
     position: fixed;

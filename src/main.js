@@ -452,7 +452,7 @@ function updateFpsCounter(dt) {
 
     // Always update the small FPS counter
     const fpsEl = document.getElementById('fps-counter');
-    if (fpsEl) fpsEl.textContent = _fps;
+    if (fpsEl) fpsEl.textContent = _fps + ' FPS';
 
     _debugAccum = 0;
     _frameCount = 0;
