@@ -24,7 +24,7 @@ export const DSP_DEFAULTS = {
         'prox-near':       2.0,     // m — proximity saturation full distance
         'prox-drive':       75,     // % — max proximity saturation drive
         'bus-volume':      100,     // %  (audio node receives /100)
-        'dist-k':            8,     // ×0.001 → actual coefficient
+        'dist-k':           60,     // ×0.001 → actual coefficient
         'refl-gain':        20,     // ×0.01 → actual gain
         'refl-lpf':       1500,     // Hz
         'lim-threshold':    -3,     // dB
@@ -80,7 +80,7 @@ export const DSP_DEFAULTS = {
         'air-abs':          40,     // Hz/m — air absorption coefficient
         'treble':            0,     // dB — high-shelf boost
         'reverb':            0,     // % — reverb wet level
-        'lim-threshold':    -5,     // dB — master limiter threshold
+        'lim-threshold':    -3,     // dB — master limiter threshold
         'local-volume':    100,     // % — local output volume
         'mouse-sensitivity':100,    // % — mouse sensitivity multiplier
     },

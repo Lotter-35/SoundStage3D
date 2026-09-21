@@ -133,16 +133,6 @@ export function createGroundReflection(ctx, speakerPos, options = {}) {
     gain.value = 0.2;
     gain.gain.value = 0.2;
 
-    // Wire: input → delay → lpf → gain
-    input.connect(delay);
-    delay.connect(lpf);
-    lpf.connect(gain);
-
-    // Non-spatialized reflection for omnidirectional subwoofers
-    if (options.spatialized === false) {
-        return { input, panner: null, delayNode: delay, gainNode: gain, reflectPos, _lpf: lpf };
-    }
-
     // Spatialize from reflected position
     const panner = ctx.createPanner();
     panner.panningModel = options.panningModel || 'HRTF';
@@ -158,6 +148,10 @@ export function createGroundReflection(ctx, speakerPos, options = {}) {
     panner.coneOuterAngle = 360;
     panner.coneOuterGain = 1;
 
+    // Wire: input → delay → lpf → gain → panner
+    input.connect(delay);
+    delay.connect(lpf);
+    lpf.connect(gain);
     gain.connect(panner);
 
     return { input, panner, delayNode: delay, gainNode: gain, reflectPos, _lpf: lpf };

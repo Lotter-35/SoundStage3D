@@ -179,7 +179,6 @@ class Speaker {
         // --- Ground reflection ---
         this.reflection = createGroundReflection(ctx, def.position, {
             panningModel: 'equalpower',
-            spatialized: !this._isSub,
         });
 
         // --- Wiring ---
@@ -207,22 +206,16 @@ class Speaker {
             this._proxWet.connect(this._proxOut);
             this.highShelf.connect(this._proxDry);
             this._proxDry.connect(this._proxOut);
-
-            // Subwoofers are omnidirectional non-spatialized low-frequency radiators:
-            // Route direct to output without PannerNode (eliminates head-rotation zipper noise and phase tearing)
-            this._proxOut.connect(output);
-
-            // Sub ground reflection: direct to output (preserves distance & reflection delay without panner distortion)
-            this.distanceGain.connect(this.reflection.input);
-            this.reflection.gainNode.connect(output);
+            this._proxOut.connect(this.panner);
         } else {
             this.highShelf.connect(this.panner);
-            this.panner.connect(output);
-
-            // Reflection branch for directional speakers
-            this.distanceGain.connect(this.reflection.input);
-            this.reflection.panner.connect(output);
         }
+
+        this.panner.connect(output);
+
+        // Reflection branch: distanceGain → reflection.input → ... → reflection.panner → output
+        this.distanceGain.connect(this.reflection.input);
+        this.reflection.panner.connect(output);
     }
 
     /**
@@ -462,13 +455,12 @@ export class SpeakerSystem {
         this.fillVolume.connect(this.fillAnalyser);
 
         // Master output chain: masterOutput → limiter → localVolumeGain → ctx.destination
-        // Calibrated with -6 dB (0.50) acoustic summation headroom for 14-speaker array
         this.masterOutput = ctx.createGain();
-        this.masterOutput.gain.value = 0.5;
+        this.masterOutput.gain.value = 1;
 
         // Brick-wall peak limiter (ultra-fast 0.3 ms attack to prevent DAC clipping and meter clip)
         this.masterLimiter = ctx.createDynamicsCompressor();
-        this.masterLimiter.threshold.value = DSP_DEFAULTS.master?.['lim-threshold'] ?? -5;
+        this.masterLimiter.threshold.value = DSP_DEFAULTS.master?.['lim-threshold'] ?? -3;
         this.masterLimiter.knee.value = 2;
         this.masterLimiter.ratio.value = 20;
         this.masterLimiter.attack.value = 0.0003;
