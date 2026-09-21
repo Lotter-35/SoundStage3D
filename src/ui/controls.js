@@ -63,10 +63,12 @@ export class Controls {
 
         // State models for each bus
         const savedSens = localStorage.getItem('soundstage3d:master-mouse-sensitivity');
+        const savedUncap = localStorage.getItem('soundstage3d:master-uncapped-fps');
         this.state = {
             master: {
                 ...DSP_DEFAULTS.master,
                 'mouse-sensitivity': savedSens !== null ? Number(savedSens) : DSP_DEFAULTS.master['mouse-sensitivity'],
+                'uncapped-fps': savedUncap === 'true',
             },
             sub:  { ...DSP_DEFAULTS.sub },
             mid:  { ...DSP_DEFAULTS.mid },
@@ -181,6 +183,7 @@ export class Controls {
             }
             if (busKey === 'master' && DSP_DEFAULTS.master) {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', DSP_DEFAULTS.master['mouse-sensitivity']);
+                localStorage.setItem('soundstage3d:master-uncapped-fps', 'false');
             }
         };
 
@@ -230,6 +233,12 @@ export class Controls {
             const fLocal = gui.addFolder('Volume local 🔒');
             const cVol = fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
             this._setupController(cVol, 'master-local-volume', DSP_DEFAULTS.master['local-volume'], false);
+
+            const cUncap = fLocal.add(this.state.master, 'uncapped-fps').name('FPS Illimités 🚀').onChange(v => {
+                localStorage.setItem('soundstage3d:master-uncapped-fps', v ? 'true' : 'false');
+                if (this._onMasterDsp) this._onMasterDsp('uncapped-fps', v);
+            });
+            this._setupController(cUncap, 'master-uncapped-fps', DSP_DEFAULTS.master['uncapped-fps'] ?? false, false);
 
             const cSens = fLocal.add(this.state.master, 'mouse-sensitivity', 10, 300, 1).name('Souris (%)').onChange(v => {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);

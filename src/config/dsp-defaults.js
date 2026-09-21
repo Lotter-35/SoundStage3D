@@ -81,6 +81,7 @@ export const DSP_DEFAULTS = {
         'treble':            0,     // dB — high-shelf boost
         'reverb':            0,     // % — reverb wet level
         'local-volume':    100,     // % — local output volume
+        'uncapped-fps':    false,   // boolean — disable VSync to run uncapped / max FPS
         'mouse-sensitivity':100,    // % — mouse sensitivity multiplier
     },
 };

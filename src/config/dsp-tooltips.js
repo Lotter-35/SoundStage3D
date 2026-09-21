@@ -52,5 +52,6 @@ export const DSP_TOOLTIPS = {
     "master-treble": "Boost high-shelf global à 3 kHz. Augmente la brillance de toutes les enceintes. 0 dB = neutre. Monter pour un son plus brillant et aéré, ou compenser l'absorption atmosphérique.",
     "master-reverb": "Réverbération globale. Simule l'écho et la résonance d'un espace. 0% = son sec (aucune réverb). 100% = réverbération maximale. Ajuste le niveau du signal réverbéré mélangé au son direct.",
     "master-local-volume": "Niveau d'écoute personnel. N'affecte que votre sortie audio locale, indépendamment des autres participants en mode multi.",
+    "master-uncapped-fps": "Débride le framerate en désactivant la limite VSync de l'écran pour faire tourner le moteur graphique au maximum de FPS possible sur votre machine.",
     "master-mouse-sensitivity": "Sensibilité de la souris pour la caméra. 1.0× = normal. Non synchronisé en multi."
 };

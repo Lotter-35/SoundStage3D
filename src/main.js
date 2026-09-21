@@ -400,6 +400,10 @@ controls.onMasterDsp((param, value) => {
         listener.setSensitivity(value / 100);
         return;
     }
+    if (param === 'uncapped-fps') {
+        setUncappedFps(value);
+        return;
+    }
     if (!audioReady) return;
     speakerSystem.setMasterDspParam(param, value);
 });
@@ -584,10 +588,46 @@ ${memLines}`;
     if (!ri.autoReset) ri.reset();
 }
 
-function animate() {
-    requestAnimationFrame(animate);
+let _uncappedFps = localStorage.getItem('soundstage3d:master-uncapped-fps') === 'true';
+const _uncapChannel = typeof MessageChannel !== 'undefined' ? new MessageChannel() : null;
+let _channelPending = false;
 
-    const dt = clock.getDelta();
+function scheduleUncappedFrame() {
+    if (_uncappedFps && _uncapChannel && !document.hidden) {
+        if (!_channelPending) {
+            _channelPending = true;
+            _uncapChannel.port2.postMessage(null);
+        }
+    }
+}
+
+if (_uncapChannel) {
+    _uncapChannel.port1.onmessage = () => {
+        _channelPending = false;
+        if (_uncappedFps && !document.hidden) {
+            renderFrame();
+            scheduleUncappedFrame();
+        }
+    };
+}
+
+function setUncappedFps(enabled) {
+    _uncappedFps = Boolean(enabled);
+    if (_uncappedFps) {
+        clock.getDelta(); // reset delta so no initial time jump
+        scheduleUncappedFrame();
+    }
+}
+
+document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && _uncappedFps) {
+        clock.getDelta();
+        scheduleUncappedFrame();
+    }
+});
+
+function renderFrame() {
+    const dt = Math.min(clock.getDelta(), 0.1);
 
     // Update listener movement
     listener.update(dt);
@@ -635,4 +675,18 @@ function animate() {
     if (_debugVisible) updateDebug(dt);
 }
 
+function animate() {
+    requestAnimationFrame(animate);
+
+    if (!_uncappedFps) {
+        renderFrame();
+    } else {
+        // In uncapped mode, keep the high-speed loop active if it stalled
+        scheduleUncappedFrame();
+    }
+}
+
 animate();
+if (_uncappedFps) {
+    scheduleUncappedFrame();
+}
