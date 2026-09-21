@@ -234,8 +234,7 @@ export class Listener {
             audioListener.positionX.value = p.x;
             audioListener.positionY.value = p.y;
             audioListener.positionZ.value = p.z;
-        }
-        if (audioListener.setPosition) {
+        } else if (audioListener.setPosition) {
             audioListener.setPosition(p.x, p.y, p.z);
         }
 
@@ -251,8 +250,7 @@ export class Listener {
             audioListener.upX.value = up.x;
             audioListener.upY.value = up.y;
             audioListener.upZ.value = up.z;
-        }
-        if (audioListener.setOrientation) {
+        } else if (audioListener.setOrientation) {
             audioListener.setOrientation(
                 forward.x, forward.y, forward.z,
                 up.x, up.y, up.z
