@@ -69,11 +69,15 @@ export class Controls {
         // State models for each bus
         const savedSens = localStorage.getItem('soundstage3d:master-mouse-sensitivity');
         const savedUncap = localStorage.getItem('soundstage3d:master-uncapped-fps');
+        const savedInvY = localStorage.getItem('soundstage3d:master-invert-y');
+        const savedInvX = localStorage.getItem('soundstage3d:master-invert-x');
         this.state = {
             master: {
                 ...DSP_DEFAULTS.master,
                 'mouse-sensitivity': savedSens !== null ? Number(savedSens) : DSP_DEFAULTS.master['mouse-sensitivity'],
                 'uncapped-fps': savedUncap === 'true',
+                'invert-y': savedInvY === 'true',
+                'invert-x': savedInvX === 'true',
             },
             sub:  { ...DSP_DEFAULTS.sub },
             mid:  { ...DSP_DEFAULTS.mid },
@@ -278,6 +282,18 @@ export class Controls {
                 if (this._onMasterDsp) this._onMasterDsp('mouse-sensitivity', v);
             });
             this._setupController(cSens, 'master-mouse-sensitivity', DSP_DEFAULTS.master['mouse-sensitivity'], false);
+
+            const cInvY = fControls.add(this.state.master, 'invert-y').name('Inverser Axe Y (Haut/Bas)').onChange(v => {
+                localStorage.setItem('soundstage3d:master-invert-y', v);
+                if (this._onMasterDsp) this._onMasterDsp('invert-y', v);
+            });
+            this._setupController(cInvY, 'master-invert-y', false, false);
+
+            const cInvX = fControls.add(this.state.master, 'invert-x').name('Inverser Axe X (Gauche/Droite)').onChange(v => {
+                localStorage.setItem('soundstage3d:master-invert-x', v);
+                if (this._onMasterDsp) this._onMasterDsp('invert-x', v);
+            });
+            this._setupController(cInvX, 'master-invert-x', false, false);
 
             this._addGuiResetButton(gui, 'master');
         }

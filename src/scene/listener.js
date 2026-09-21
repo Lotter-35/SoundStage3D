@@ -127,6 +127,14 @@ export class Listener {
         this.controls.pointerSpeed = value;
     }
 
+    setInvertPitch(invert) {
+        if (this._character3D) this._character3D.invertY = Boolean(invert);
+    }
+
+    setInvertYaw(invert) {
+        if (this._character3D) this._character3D.invertX = Boolean(invert);
+    }
+
     lock() {
         this._suppressMouse(100);
         this.controls.lock();

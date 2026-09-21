@@ -195,6 +195,9 @@ listener.onCameraModeChange((mode) => {
     controls.setCameraModeLabel(mode);
 });
 controls.setCameraModeLabel(listener.cameraMode);
+listener.setSensitivity(controls.state.master['mouse-sensitivity'] / 100);
+listener.setInvertPitch(controls.state.master['invert-y']);
+listener.setInvertYaw(controls.state.master['invert-x']);
 
 controls.onEnter(async (file) => {
     await initAudio(file);
@@ -332,32 +335,7 @@ if (grassBtn) {
     });
 }
 
-// ─── Camera 1st / 3rd Person View HUD Toggle ────────────────────
-const camBtn = document.getElementById('cam-btn');
-function updateCamBtnText(is3rd) {
-    if (camBtn) {
-        camBtn.textContent = is3rd ? '🎥 Vue: 3ème pers.' : '🎥 Vue: 1ère pers.';
-        camBtn.classList.toggle('active', is3rd);
-    }
-}
-
-if (camBtn) {
-    camBtn.addEventListener('click', () => {
-        if (!listener.characterMode) {
-            // Activer d'abord le mode personnage si on était en vol libre
-            listener.characterMode = true;
-            const camEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
-            listener._character3D.snapToGround(camera.position, camEuler.y);
-            listener._character3D.toggleCameraView(true);
-        } else {
-            listener._character3D.toggleCameraView();
-        }
-    });
-}
-
-listener._character3D.onCameraModeChange((is3rd) => {
-    updateCamBtnText(is3rd);
-});
+// ─── Camera View HUD Toggle is handled via controls.onCameraToggle and listener.cycleCameraMode ───
 
 // ─── FFT Frequency Spectrum Visualizer (Headphone Output) ───
 const spectrumCanvas = document.getElementById('spectrum-visualizer');
@@ -597,6 +575,14 @@ controls.onConesToggle((bus, visible) => {
 controls.onMasterDsp((param, value) => {
     if (param === 'mouse-sensitivity') {
         listener.setSensitivity(value / 100);
+        return;
+    }
+    if (param === 'invert-y') {
+        listener.setInvertPitch(value);
+        return;
+    }
+    if (param === 'invert-x') {
+        listener.setInvertYaw(value);
         return;
     }
     if (!audioReady) return;
