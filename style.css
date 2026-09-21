@@ -511,46 +511,10 @@ body {
     width: 290px;
 }
 
-/* ─── lil-gui theme styling for slotted DSP panels ─── */
-.lil-gui {
-    --background-color: rgba(14, 16, 22, 0.90);
-    --text-color: #f1f5f9;
-    --title-background-color: rgba(24, 28, 40, 0.98);
-    --widget-color: #222736;
-    --hover-color: #31384d;
-    --focus-color: #10b981;
-    --number-color: #34d399;
-    --string-color: #60a5fa;
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
-    font-size: 11px !important;
-    border-radius: 8px !important;
-    border: 1px solid rgba(255, 255, 255, 0.14) !important;
-    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.65) !important;
-    backdrop-filter: blur(12px) !important;
-}
-
-/* Override default fixed positioning so GUIs sit in their slots */
+/* Keep default lil-gui appearance — only adjust positioning to sit within slots */
 .dsp-panel-slot .lil-gui,
 #dsp-master-wrap .lil-gui {
     position: static !important;
-    width: 100% !important;
     max-height: calc(100vh - 160px);
     overflow-y: auto;
-    margin: 0 !important;
-}
-
-.lil-gui .title {
-    font-weight: 600 !important;
-    font-size: 12px !important;
-    letter-spacing: 0.5px;
-    padding: 7px 12px !important;
-    border-radius: 7px 7px 0 0;
-}
-
-.lil-gui .controller {
-    padding: 3px 6px !important;
-}
-
-.lil-gui .controller .name {
-    font-weight: 500;
 }
