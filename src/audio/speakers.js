@@ -199,7 +199,7 @@ class Speaker {
             this._proxWet.gain.value = 0;
             this._proxDry.gain.value = 1;
             this._proxOut.gain.value = 1;
-            this._applyProxCurve(0); // linear (no distortion)
+            this._applyProxCurve(PROX_DRIVE_MAX); // Pre-computed once with max drive (never reallocated per-frame)
 
             this.highShelf.connect(this._proxShaper);
             this._proxShaper.connect(this._proxWet);
@@ -241,22 +241,24 @@ class Speaker {
         if (this._dopplerEnabled) {
             const delay = Math.min(distance / SPEED_OF_SOUND, MAX_DELAY);
             this.propagationDelay.delayTime.setTargetAtTime(delay, t, 0.05);
-        } else {
+        } else if (this.propagationDelay.delayTime.value !== 0) {
             this.propagationDelay.delayTime.setTargetAtTime(0, t, smooth);
         }
 
         // Air absorption: high-frequency rolloff with distance (24 dB/oct cascaded)
         // MID/FILL have a higher cutoff floor to preserve their useful band (90–2kHz)
-        const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
-        const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
-        this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
-        this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
+        if (!this._isSub) {
+            const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
+            const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
+            this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
+            this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
+        }
 
-        // Sub proximity saturation: ramp drive + mix from 3m to 1m (S-curve)
+        // Sub proximity saturation: smooth cross-fade via GainNodes only
+        // NO per-frame curve reallocation (eliminates audio crackles on movement)
         if (this._isSub) {
             const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
             const prox = t0 * t0 * (3 - 2 * t0); // smoothstep S-curve
-            this._applyProxCurve(prox * PROX_DRIVE_MAX);
             this._proxWet.gain.setTargetAtTime(prox, t, smooth);
             this._proxDry.gain.setTargetAtTime(1 - prox, t, smooth);
         }
@@ -269,7 +271,7 @@ class Speaker {
         const t = this.ctx.currentTime;
         const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
         const prox = t0 * t0 * (3 - 2 * t0);
-        this._applyProxCurve(prox * PROX_DRIVE_MAX);
+        this._applyProxCurve(PROX_DRIVE_MAX);
         this._proxWet.gain.setTargetAtTime(prox, t, 0.04);
         this._proxDry.gain.setTargetAtTime(1 - prox, t, 0.04);
     }
@@ -569,15 +571,11 @@ export class SpeakerSystem {
         this._lastPos.y = listenerPos.y;
         this._lastPos.z = listenerPos.z;
 
-        // Stagger: update even-indexed speakers on even frames, odd on odd
-        const parity = this._updateFrame & 1;
-        this._updateFrame++;
-        let count = 0;
-        for (let i = parity; i < this.speakers.length; i += 2) {
+        // Update all 14 speakers in unison (zero phase wobble or inter-speaker ripple)
+        for (let i = 0; i < this.speakers.length; i++) {
             this.speakers[i].update(listenerPos);
-            count++;
         }
-        this._debugStats.updatedSpeakers = count;
+        this._debugStats.updatedSpeakers = this.speakers.length;
     }
 
     /**
