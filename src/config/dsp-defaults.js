@@ -18,7 +18,7 @@ export const DSP_DEFAULTS = {
         'comp-ratio':        4,     // :1
         'comp-attack':       3,     // ms  (audio node receives /1000)
         'comp-release':    250,     // ms  (audio node receives /1000)
-        'sat-drive':       100,     // %
+        'sat-drive':        50,     // %
         'sat-mix':         100,     // %
         'prox-far':        4.0,     // m — proximity saturation start distance
         'prox-near':       2.0,     // m — proximity saturation full distance
