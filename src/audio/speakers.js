@@ -377,20 +377,7 @@ export class SpeakerSystem {
         // ── Analysers for level metering ──
         this.subAnalyser = ctx.createAnalyser();
         this.subAnalyser.fftSize = 256;
-
-        // SUB bus limiter / acoustic headroom controller
-        // Smooth soft-knee leveling designed specifically for low frequencies (<90 Hz):
-        // prevents harsh intermodulation clipping when sub energy is huge, creating a warm,
-        // room-filling sustained bass ("prendre plus d'espace") instead of crackling.
-        this.subLimiter = ctx.createDynamicsCompressor();
-        this.subLimiter.threshold.value = DSP_DEFAULTS.sub?.['lim-threshold'] ?? -3;
-        this.subLimiter.knee.value = 8;        // soft knee for smooth acoustic transition
-        this.subLimiter.ratio.value = 16;      // musical limiting ratio
-        this.subLimiter.attack.value = 0.005;  // 5 ms: lets natural sub transient punch through
-        this.subLimiter.release.value = 0.08;  // 80 ms: natural sub wave cycle tracking without distortion
-
-        this.subVolume.connect(this.subLimiter);
-        this.subLimiter.connect(this.subAnalyser);
+        this.subVolume.connect(this.subAnalyser);
 
         // MID bus limiter (brick-wall)
         this.midLimiter = ctx.createDynamicsCompressor();
@@ -509,7 +496,7 @@ export class SpeakerSystem {
         const subSplit = ctx.createChannelSplitter(2);
         const subMonoSum = ctx.createGain();
         subMonoSum.gain.value = 0.5;
-        this.subLimiter.connect(subSplit);
+        this.subVolume.connect(subSplit);
         subSplit.connect(subMonoSum, 0); // L -> mono sum
         subSplit.connect(subMonoSum, 1); // R -> mono sum
 
@@ -780,7 +767,9 @@ export class SpeakerSystem {
                 for (const s of subSpeakers) s._updateProxSat();
                 break;
             case 'lim-threshold':
-                this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                if (this.subLimiter) {
+                    this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
+                }
                 break;
         }
         this.forceUpdateAll();
