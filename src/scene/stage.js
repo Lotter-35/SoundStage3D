@@ -57,6 +57,7 @@ export function createStage(scene) {
     const backWall = new THREE.Mesh(backWallGeo, backWallMat);
     backWall.position.set(0, 10, -10);
     backWall.castShadow = true;
+    backWall.receiveShadow = true;
     scene.add(backWall);
 
     // --- Stage roof ---
