@@ -20,7 +20,7 @@
 * 🎧 **Acoustique Réaliste :** Spatialisation binaurale 3D, atténuation avec la distance, absorption de l'air et réverbération.
 * 🎛️ **Régie DSP Complète :** Panneaux de contrôle pour ajuster filtres, compresseurs, saturations et limiteurs en direct.
 * 📊 **Analyseur FFT :** Visualiseur de fréquences en temps réel branché sur votre sortie casque.
-* 🚶 **Exploration Libre :** Déplacement fluide à la première personne (mode marche ou vol).
+* 🚶 **Exploration Libre :** Déplacement fluide au sol avec personnage 3D animé (vue 1ère ou 3ème personne) ou vol libre.
 
 ![Panneaux de contrôle DSP](./src/assets/screenshots/DSP.PNG)
 
@@ -29,10 +29,12 @@
 | Action | Touche |
 | --- | --- |
 | **Se déplacer** | `Z Q S D` / `W A S D` |
-| **Regarder** | `Souris` (cliquer pour verrouiller, `Échap` / `Tab` pour libérer) |
+| **Regarder / Tourner caméra** | `Souris` (cliquer pour verrouiller, `Échap` / `Tab` pour libérer) |
 | **Sauter / Monter** | `Espace` |
 | **Descendre** | `Shift` (en vol) |
-| **Mode Vol ↔ Marche** | `F` |
+| **Mode Vol ↔ Personnage** | `F` |
+| **Vue 1ère ↔ 3ème personne** | `V` (ou bouton `🎥 Vue` dans le HUD) |
+| **Zoom caméra 3ème pers.** | `Molette de la souris` |
 
 ## 🚀 Lancer en Local
 

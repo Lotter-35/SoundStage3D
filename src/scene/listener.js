@@ -7,7 +7,7 @@
  */
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { Character } from './character.js';
+import { Character3D } from './character3D.js';
 
 const WALK_SPEED    = 5.0; // m/s — vitesse naturelle de marche en mode personnage
 const FLY_SPEED     = 18;  // m/s — speed when in free-fly mode
@@ -27,9 +27,11 @@ export class Listener {
     /**
      * @param {THREE.PerspectiveCamera} camera
      * @param {HTMLElement} domElement — the canvas or overlay element for pointer lock
+     * @param {THREE.Scene} [scene] — Three.js scene for 3D character mesh
      */
-    constructor(camera, domElement) {
+    constructor(camera, domElement, scene = null) {
         this.camera = camera;
+        this.scene = scene;
         this.controls = new PointerLockControls(camera, domElement);
         this.controls.pointerSpeed = 1.0; // default sensitivity
 
@@ -44,7 +46,9 @@ export class Listener {
         // Character mode (F to toggle)
         this.characterMode = false;
         this._onModeChange = null;
-        this._character = new Character(camera);
+
+        // 3D Animated Character & Third-person camera system
+        this._character3D = new Character3D(scene, camera, domElement);
 
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
@@ -68,7 +72,14 @@ export class Listener {
             if (!this.controls.isLocked) return;
             if (performance.now() < this._suppressMouseUntil) return;
             if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;
-            origOnMouseMove(e);
+
+            if (this.characterMode && this._character3D.isThirdPerson) {
+                // In 3rd person character mode: mouse controls orbital camera around character
+                this._character3D.handleMouseMove(e.movementX, e.movementY, this.controls.pointerSpeed || 1.0);
+            } else {
+                // In 1st person or fly mode: standard pointer lock camera rotation
+                origOnMouseMove(e);
+            }
         };
         this.controls.connect();
 
@@ -149,8 +160,19 @@ export class Listener {
             case 'ShiftLeft': case 'ShiftRight':          this.move.down = true; break;
             case 'KeyF':
                 this.characterMode = !this.characterMode;
-                if (this.characterMode) this._character.snapToGround();
+                if (this.characterMode) {
+                    const camEuler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
+                    this._character3D.snapToGround(this.camera.position, camEuler.y);
+                } else {
+                    // Leaving character mode: ensure 3rd person model is hidden in free-fly
+                    if (this._character3D.model) this._character3D.model.visible = false;
+                }
                 if (this._onModeChange) this._onModeChange(this.characterMode);
+                break;
+            case 'KeyV':
+                if (this.characterMode) {
+                    this._character3D.toggleCameraView();
+                }
                 break;
         }
     }
@@ -190,6 +212,7 @@ export class Listener {
         if (this.move.right)    direction.x += 1;
 
         direction.normalize();
+        const isMoving = this.move.forward || this.move.backward || this.move.left || this.move.right;
 
         // Choose speed based on mode: fly faster, walk slower
         const moveSpeed = this.characterMode ? WALK_SPEED : FLY_SPEED;
@@ -204,23 +227,50 @@ export class Listener {
         if (Math.abs(this._currentSpeed.x) < 0.001) this._currentSpeed.x = 0;
         if (Math.abs(this._currentSpeed.y) < 0.001) this._currentSpeed.y = 0;
 
-        // Move in the direction the camera is facing (horizontal only)
-        this.controls.moveRight(this._currentSpeed.x * dt);
-        this.controls.moveForward(this._currentSpeed.y * dt);
-
         if (this.characterMode) {
-            this._character.update(dt, this.move.up);
+            // Character Mode: move logical character position according to camera look direction
+            // Calculate forward and right vectors projected onto horizontal XZ plane
+            let forwardX, forwardZ, rightX, rightZ;
+
+            if (this._character3D.isThirdPerson) {
+                // In 3rd person: move relative to orbit yaw
+                const yaw = this._character3D.orbitYaw;
+                forwardX = -Math.sin(yaw);
+                forwardZ = -Math.cos(yaw);
+                rightX = Math.cos(yaw);
+                rightZ = -Math.sin(yaw);
+            } else {
+                // In 1st person: move relative to camera facing direction
+                const camDir = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+                camDir.y = 0;
+                camDir.normalize();
+                forwardX = camDir.x;
+                forwardZ = camDir.z;
+                rightX = -camDir.z;
+                rightZ = camDir.x;
+            }
+
+            const dx = (rightX * this._currentSpeed.x + forwardX * this._currentSpeed.y) * dt;
+            const dz = (rightZ * this._currentSpeed.x + forwardZ * this._currentSpeed.y) * dt;
+
+            this._character3D.position.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, this._character3D.position.x + dx));
+            this._character3D.position.z = Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, this._character3D.position.z + dz));
+
+            // Update character physics, animations, and camera placement
+            this._character3D.update(dt, this._currentSpeed, this.move.up, isMoving);
         } else {
-            // Free-fly vertical movement (world Y)
+            // Free-fly vertical & horizontal movement (world Y)
+            this.controls.moveRight(this._currentSpeed.x * dt);
+            this.controls.moveForward(this._currentSpeed.y * dt);
             if (this.move.up)   this.camera.position.y += VERTICAL_SPEED * dt;
             if (this.move.down) this.camera.position.y -= VERTICAL_SPEED * dt;
-        }
 
-        // Clamp to bounds
-        const p = this.camera.position;
-        p.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, p.x));
-        p.y = Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, p.y));
-        p.z = Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, p.z));
+            // Clamp camera position to world bounds
+            const p = this.camera.position;
+            p.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, p.x));
+            p.y = Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, p.y));
+            p.z = Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, p.z));
+        }
     }
 
     /**
@@ -229,7 +279,8 @@ export class Listener {
      * @param {AudioListener} audioListener — ctx.listener
      */
     syncAudioListener(audioListener, audioCtx) {
-        const p = this.camera.position;
+        // En mode personnage, l'écouteur binaural est aux oreilles du personnage
+        const p = this.position;
         const forward = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
         const up = this._up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
 
@@ -289,14 +340,28 @@ export class Listener {
         }
     }
 
-    /** Get current position as plain object */
+    /** Get current listener audio position as plain object */
     get position() {
+        if (this.characterMode && this._character3D) {
+            return {
+                x: this._character3D.position.x,
+                y: this._character3D.position.y + 1.7, // hauteur d'écoute du personnage
+                z: this._character3D.position.z,
+            };
+        }
         const p = this.camera.position;
         return { x: p.x, y: p.y, z: p.z };
     }
 
     /** Distance to FOH reference point */
     get distanceToFOH() {
+        if (this.characterMode && this._character3D) {
+            const p = this._character3D.position;
+            const dx = p.x - FOH.x;
+            const dy = (p.y + 1.7) - FOH.y;
+            const dz = p.z - FOH.z;
+            return Math.sqrt(dx * dx + dy * dy + dz * dz);
+        }
         return this.camera.position.distanceTo(FOH);
     }
 }

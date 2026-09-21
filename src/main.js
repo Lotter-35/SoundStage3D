@@ -43,8 +43,8 @@ skybox = await createSkybox(scene);
 // ─── Vegetation (instanced grass) ────────────────────────────────
 await createVegetation(scene);
 
-// ─── Listener (FPS controls) ────────────────────────────────────
-const listener = new Listener(camera, document.body);
+// ─── Listener (FPS controls + 3D Animated Character) ─────────────
+const listener = new Listener(camera, document.body, scene);
 
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
@@ -322,6 +322,33 @@ if (grassBtn) {
         setGrassQuality(preset.key);
     });
 }
+
+// ─── Camera 1st / 3rd Person View HUD Toggle ────────────────────
+const camBtn = document.getElementById('cam-btn');
+function updateCamBtnText(is3rd) {
+    if (camBtn) {
+        camBtn.textContent = is3rd ? '🎥 Vue: 3ème pers.' : '🎥 Vue: 1ère pers.';
+        camBtn.classList.toggle('active', is3rd);
+    }
+}
+
+if (camBtn) {
+    camBtn.addEventListener('click', () => {
+        if (!listener.characterMode) {
+            // Activer d'abord le mode personnage si on était en vol libre
+            listener.characterMode = true;
+            const camEuler = new THREE.Euler().setFromQuaternion(camera.quaternion, 'YXZ');
+            listener._character3D.snapToGround(camera.position, camEuler.y);
+            listener._character3D.toggleCameraView(true);
+        } else {
+            listener._character3D.toggleCameraView();
+        }
+    });
+}
+
+listener._character3D.onCameraModeChange((is3rd) => {
+    updateCamBtnText(is3rd);
+});
 
 // ─── FFT Frequency Spectrum Visualizer (Headphone Output) ───
 const spectrumCanvas = document.getElementById('spectrum-visualizer');
