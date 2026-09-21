@@ -12,6 +12,7 @@ import { AudioEngine } from './audio/audioEngine.js';
 import { Crossover } from './audio/crossover.js';
 import { SpeakerSystem } from './audio/speakers.js';
 import { createSaturation, createCompressor } from './audio/effects.js';
+import { SineGenerator } from './audio/sineGenerator.js';
 
 import { Controls } from './ui/controls.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
@@ -49,6 +50,9 @@ const listener = new Listener(camera, document.body);
 const audioEngine = new AudioEngine();
 let crossover = null;
 let speakerSystem = null;
+let sineGenerator = null;
+let _musicWasPlayingBeforeSine = false;
+let _currentAudioFileName = '';
 let effects = null; // keep reference to prevent GC
 let audioReady = false;
 
@@ -59,6 +63,12 @@ const controls = new Controls();
 async function initAudio(file = null) {
     if (audioReady) {
         if (file) {
+            _currentAudioFileName = file.name;
+            if (controls.state.sine.active) {
+                controls.setSineActive(false);
+                if (sineGenerator) sineGenerator.stop();
+            }
+            _musicWasPlayingBeforeSine = false;
             audioEngine.stop();
             await audioEngine.loadFile(file);
             audioEngine.play(crossover.input);
@@ -73,6 +83,7 @@ async function initAudio(file = null) {
     const ctx = audioEngine.init();
 
     if (file) {
+        _currentAudioFileName = file.name;
         await audioEngine.loadFile(file);
     }
 
@@ -124,6 +135,11 @@ async function initAudio(file = null) {
         crossover.topBusOutput,
         effects
     );
+
+    // Tone Generator routed into crossover input
+    sineGenerator = new SineGenerator(ctx, crossover.input);
+    sineGenerator.setFrequency(controls.state.sine.frequency);
+    sineGenerator.setVolume(controls.state.sine.volume);
 
     audioReady = true;
 
@@ -178,6 +194,18 @@ controls.onEnter(async (file) => {
 
 controls.onPlayPause(() => {
     if (!audioReady) return;
+    // If sine generator mode is active
+    if (controls.state.sine.active && sineGenerator) {
+        if (sineGenerator.isPlaying) {
+            sineGenerator.stop();
+            controls.setPlayState(false);
+        } else {
+            sineGenerator.start();
+            controls.setPlayState(true);
+        }
+        return;
+    }
+
     if (audioEngine.isPlaying) {
         audioEngine.pause();
         controls.setPlayState(false);
@@ -187,8 +215,55 @@ controls.onPlayPause(() => {
     }
 });
 
+controls.onSineToggle((active) => {
+    if (!audioReady || !sineGenerator) return;
+    const np = document.getElementById('now-playing');
+    if (active) {
+        if (audioEngine.isPlaying) {
+            _musicWasPlayingBeforeSine = true;
+            audioEngine.pause();
+        } else {
+            _musicWasPlayingBeforeSine = false;
+        }
+        sineGenerator.start();
+        controls.setPlayState(true);
+        if (np) np.textContent = `🔊 Sinus : ${controls.state.sine.frequency} Hz`;
+    } else {
+        sineGenerator.stop();
+        if (_musicWasPlayingBeforeSine) {
+            audioEngine.play(crossover.input);
+            controls.setPlayState(true);
+            if (np) np.textContent = _currentAudioFileName;
+        } else {
+            controls.setPlayState(false);
+            controls.resetMeters();
+            if (np) np.textContent = _currentAudioFileName ? `⏸ ${_currentAudioFileName}` : '';
+        }
+    }
+});
+
+controls.onSineFrequency((freq) => {
+    if (!sineGenerator) return;
+    sineGenerator.setFrequency(freq);
+    if (sineGenerator.isPlaying) {
+        const np = document.getElementById('now-playing');
+        if (np) np.textContent = `🔊 Sinus : ${freq} Hz`;
+    }
+});
+
+controls.onSineVolume((vol) => {
+    if (!sineGenerator) return;
+    sineGenerator.setVolume(vol);
+});
+
 controls.onChangeMp3(async (file) => {
     if (!audioReady) return;
+    if (controls.state.sine.active) {
+        controls.setSineActive(false);
+        if (sineGenerator) sineGenerator.stop();
+    }
+    _musicWasPlayingBeforeSine = false;
+    _currentAudioFileName = file.name;
     audioEngine.stop();
     await audioEngine.loadFile(file);
     audioEngine.play(crossover.input);
@@ -204,6 +279,12 @@ window.addEventListener('drop', async (e) => {
     e.preventDefault();
     const file = e.dataTransfer?.files?.[0];
     if (file && (file.type.startsWith('audio/') || /\.(mp3|wav|ogg|flac|m4a)$/i.test(file.name))) {
+        if (controls.state.sine.active) {
+            controls.setSineActive(false);
+            if (sineGenerator) sineGenerator.stop();
+        }
+        _musicWasPlayingBeforeSine = false;
+        _currentAudioFileName = file.name;
         if (!audioReady) {
             await initAudio(file);
         } else {
@@ -650,8 +731,9 @@ function renderFrame() {
         controls.updatePosition(listener.position, listener.distanceToFOH);
     }
 
-    // Update level meters only when playing (throttled)
-    if (audioReady && audioEngine.isPlaying) {
+    // Update level meters only when audio is playing (throttled)
+    const isAudioPlaying = audioReady && (audioEngine.isPlaying || (sineGenerator && sineGenerator.isPlaying));
+    if (isAudioPlaying) {
         _meterAccum += dt;
         if (_meterAccum >= METER_INTERVAL) {
             _meterAccum = 0;

@@ -46,6 +46,9 @@
         </div>
         <!-- Oscilloscope canvas -->
         <canvas id="oscilloscope" class="hidden" width="900" height="160"></canvas>
+        <div id="sine-btn-wrap">
+            <button id="sine-btn" class="hud-btn">🔊 Générateur Sinus ▾</button>
+        </div>
         <div id="hud-bottom">
             <span>ZQSD / WASD / Flèches : se déplacer &nbsp;|&nbsp; Souris : regarder &nbsp;|&nbsp; Space / Shift : monter / descendre &nbsp;|&nbsp; F : mode personnage &nbsp;|&nbsp; TAB / ÉCHAP : libérer la souris</span>
         </div>
@@ -97,6 +100,11 @@
         <div class="dsp-spacer"></div>
         <div id="dsp-panel-fill" class="dsp-panel-slot"></div>
         <div id="dsp-panel-sub" class="dsp-panel-slot"></div>
+    </div>
+
+    <!-- ─── Sine Generator Panel (en bas au centre) ─── -->
+    <div id="sine-panel-wrap" class="hidden">
+        <div id="sine-panel"></div>
     </div>
 
     <!-- Debug performance overlay -->

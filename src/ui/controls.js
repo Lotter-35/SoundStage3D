@@ -57,9 +57,15 @@ export class Controls {
         this._onMidDsp = null;
         this._onTopDsp = null;
         this._onFillDsp = null;
+        this._onSineToggle = null;
+        this._onSineFrequency = null;
+        this._onSineVolume = null;
 
         // UI visibility state
         this._dspVisible = false;
+        this._sinePanelVisible = false;
+        this.sineBtn = document.getElementById('sine-btn');
+        this.sinePanelWrap = document.getElementById('sine-panel-wrap');
 
         // State models for each bus
         const savedSens = localStorage.getItem('soundstage3d:master-mouse-sensitivity');
@@ -74,6 +80,11 @@ export class Controls {
             mid:  { ...DSP_DEFAULTS.mid },
             top:  { ...DSP_DEFAULTS.top },
             fill: { ...DSP_DEFAULTS.fill },
+            sine: {
+                active: false,
+                frequency: 440,
+                volume: 50,
+            },
         };
 
         this.guis = {};
@@ -199,16 +210,44 @@ export class Controls {
         gui.$title.appendChild(btn);
     }
 
+    _addSineResetButton(gui) {
+        if (!gui || !gui.$title) return;
+        const btn = document.createElement('span');
+        btn.setAttribute('role', 'button');
+        btn.setAttribute('tabindex', '0');
+        btn.className = 'lil-panel-reset-btn';
+        btn.textContent = '↺ Tout reset';
+        btn.title = 'Réinitialiser le générateur sinus aux valeurs par défaut';
+
+        const triggerReset = (e) => {
+            e.stopPropagation();
+            e.preventDefault();
+            this.resetSine();
+        };
+
+        btn.addEventListener('click', triggerReset);
+        btn.addEventListener('mousedown', (e) => e.stopPropagation());
+        btn.addEventListener('pointerdown', (e) => e.stopPropagation());
+        btn.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' || e.key === ' ') {
+                triggerReset(e);
+            }
+        });
+
+        gui.$title.appendChild(btn);
+    }
+
     _initGuis() {
         const cMaster = document.getElementById('dsp-panel-master');
         const cTop    = document.getElementById('dsp-panel-top');
         const cMid    = document.getElementById('dsp-panel-mid');
         const cFill   = document.getElementById('dsp-panel-fill');
         const cSub    = document.getElementById('dsp-panel-sub');
+        const cSine   = document.getElementById('sine-panel');
 
         // Stop click and mousedown from propagating to canvas when clicking panels
         const stopProp = (e) => e.stopPropagation();
-        [cMaster, cTop, cMid, cFill, cSub].forEach(container => {
+        [cMaster, cTop, cMid, cFill, cSub, cSine].forEach(container => {
             if (container) {
                 container.addEventListener('click', stopProp);
                 container.addEventListener('mousedown', stopProp);
@@ -446,6 +485,48 @@ export class Controls {
 
             this._addGuiResetButton(gui, 'sub');
         }
+
+        // ─── 6. SINE GENERATOR GUI (Bottom-Center) ───
+        if (cSine) {
+            const gui = new GUI({ container: cSine, title: '🔊 Générateur Sinus', closeFolders: false, width: 320 });
+            this.guis.sine = gui;
+
+            const cActive = gui.add(this.state.sine, 'active').name('Actif').onChange(v => {
+                if (this._onSineToggle) this._onSineToggle(v);
+            });
+            this._setupController(cActive, 'sine-active', false, false);
+
+            const cFreq = gui.add(this.state.sine, 'frequency', 0, 20000, 1).name('Fréquence (Hz)').onChange(v => {
+                if (this._onSineFrequency) this._onSineFrequency(v);
+            });
+            this._setupController(cFreq, 'sine-frequency', 440, false);
+
+            const cVol = gui.add(this.state.sine, 'volume', 0, 100, 1).name('Volume (%)').onChange(v => {
+                if (this._onSineVolume) this._onSineVolume(v);
+            });
+            this._setupController(cVol, 'sine-volume', 50, false);
+
+            const fPresets = gui.addFolder('Presets Fréquences');
+            const presets = [
+                { label: '40 Hz (Sub Infra)', val: 40 },
+                { label: '80 Hz (Sub Kick)', val: 80 },
+                { label: '250 Hz (Bas-Médium)', val: 250 },
+                { label: '1 000 Hz (1 kHz Médium)', val: 1000 },
+                { label: '4 000 Hz (4 kHz Aigu)', val: 4000 },
+                { label: '10 000 Hz (10 kHz Brillance)', val: 10000 },
+                { label: '15 000 Hz (15 kHz Ultra-Aigu)', val: 15000 },
+            ];
+            const presetActions = {};
+            presets.forEach(p => {
+                presetActions[p.label] = () => {
+                    cFreq.setValue(p.val);
+                };
+                fPresets.add(presetActions, p.label);
+            });
+            fPresets.close();
+
+            this._addSineResetButton(gui);
+        }
     }
 
     _initHud() {
@@ -458,6 +539,22 @@ export class Controls {
                 if (this.dspMasterWrap) this.dspMasterWrap.classList.toggle('hidden', !this._dspVisible);
                 this.dspBtn.classList.toggle('active', this._dspVisible);
             });
+        }
+
+        // Toggle Sine Generator panel visibility
+        if (this.sineBtn) {
+            this.sineBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._sinePanelVisible = !this._sinePanelVisible;
+                if (this.sinePanelWrap) this.sinePanelWrap.classList.toggle('hidden', !this._sinePanelVisible);
+                this.sineBtn.classList.toggle('active', this._sinePanelVisible);
+                this.sineBtn.textContent = this._sinePanelVisible ? '🔊 Générateur Sinus ▴' : '🔊 Générateur Sinus ▾';
+            });
+        }
+        if (this.sinePanelWrap) {
+            this.sinePanelWrap.addEventListener('pointerdown', (e) => e.stopPropagation());
+            this.sinePanelWrap.addEventListener('mousedown', (e) => e.stopPropagation());
+            this.sinePanelWrap.addEventListener('click', (e) => e.stopPropagation());
         }
 
         // HRTF button & brightness slider
@@ -602,6 +699,28 @@ export class Controls {
         }
     }
 
+    resetSine() {
+        const gui = this.guis.sine;
+        if (gui) {
+            gui.controllersRecursive().forEach(ctrl => {
+                if (ctrl.property === 'frequency') {
+                    ctrl.setValue(440);
+                } else if (ctrl.property === 'volume') {
+                    ctrl.setValue(50);
+                }
+            });
+        }
+    }
+
+    setSineActive(active) {
+        this.state.sine.active = Boolean(active);
+        const gui = this.guis.sine;
+        if (gui) {
+            const ctrl = gui.controllersRecursive().find(c => c.property === 'active');
+            if (ctrl) ctrl.updateDisplay();
+        }
+    }
+
     setPlayState(isPlaying) {
         if (this.playBtn) {
             this.playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
@@ -626,6 +745,9 @@ export class Controls {
     onMidDsp(cb) { this._onMidDsp = cb; }
     onTopDsp(cb) { this._onTopDsp = cb; }
     onFillDsp(cb) { this._onFillDsp = cb; }
+    onSineToggle(cb) { this._onSineToggle = cb; }
+    onSineFrequency(cb) { this._onSineFrequency = cb; }
+    onSineVolume(cb) { this._onSineVolume = cb; }
 
     showHUD() {
         if (this.overlay) this.overlay.classList.add('hidden');

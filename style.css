@@ -408,6 +408,82 @@ body {
     z-index: 90;
 }
 
+/* ─── Sine Generator button & panel ─── */
+#sine-btn-wrap {
+    position: fixed;
+    bottom: 22px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 100;
+    pointer-events: auto;
+}
+
+#sine-panel-wrap {
+    position: fixed;
+    bottom: 62px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 120;
+    pointer-events: auto;
+    width: 320px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
+}
+
+#sine-panel-wrap.hidden {
+    display: none !important;
+}
+
+#sine-panel {
+    width: 320px;
+    min-width: 320px;
+    max-width: 320px;
+}
+
+#sine-panel .lil-gui.root {
+    position: static !important;
+    width: 320px !important;
+    max-width: 320px !important;
+}
+
+#sine-panel .lil-gui {
+    --width: 320px;
+    --name-width: 95px;
+    --slider-input-min-width: 42px;
+    --slider-input-width: 48px;
+    --spacing: 3px;
+    --padding: 4px;
+    --widget-height: 20px;
+}
+
+#sine-panel .lil-gui .controller.button {
+    margin: 1px 0 !important;
+}
+
+#sine-panel .lil-gui .controller.button button {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: #eee !important;
+    border-radius: 3px !important;
+    height: 20px !important;
+    font-size: 10.5px !important;
+    cursor: pointer !important;
+    text-align: center !important;
+    transition: background 0.15s, border-color 0.15s !important;
+}
+
+#sine-panel .lil-gui .controller.button button:hover {
+    background: rgba(255, 255, 255, 0.22) !important;
+    border-color: rgba(255, 255, 255, 0.5) !important;
+    color: #fff !important;
+}
+
+#sine-panel .lil-gui .controller.boolean input[type="checkbox"] {
+    cursor: pointer !important;
+    accent-color: #4ade80 !important;
+    width: 15px !important;
+    height: 15px !important;
+}
+
 /* Now playing track name */
 #now-playing {
     position: fixed;
@@ -534,14 +610,16 @@ body {
 }
 
 .dsp-panel-slot .lil-gui input,
-#dsp-master-wrap .lil-gui input {
+#dsp-master-wrap .lil-gui input,
+#sine-panel .lil-gui input {
     user-select: auto !important;
     -webkit-user-select: auto !important;
 }
 
 /* Scroll handling: smooth wheel scroll if needed, NO visible scrollbars ("slider sur le côté") */
 .dsp-panel-slot .lil-gui.root > .children,
-#dsp-master-wrap .lil-gui.root > .children {
+#dsp-master-wrap .lil-gui.root > .children,
+#sine-panel .lil-gui.root > .children {
     max-height: calc(100vh - 150px);
     overflow-y: auto !important;
     overflow-x: hidden !important;
@@ -553,7 +631,9 @@ body {
 .dsp-panel-slot .lil-gui,
 .dsp-panel-slot .lil-gui *,
 #dsp-master-wrap .lil-gui,
-#dsp-master-wrap .lil-gui * {
+#dsp-master-wrap .lil-gui *,
+#sine-panel .lil-gui,
+#sine-panel .lil-gui * {
     scrollbar-width: none !important;
     -ms-overflow-style: none !important;
 }
@@ -561,7 +641,9 @@ body {
 .dsp-panel-slot .lil-gui::-webkit-scrollbar,
 .dsp-panel-slot .lil-gui *::-webkit-scrollbar,
 #dsp-master-wrap .lil-gui::-webkit-scrollbar,
-#dsp-master-wrap .lil-gui *::-webkit-scrollbar {
+#dsp-master-wrap .lil-gui *::-webkit-scrollbar,
+#sine-panel .lil-gui::-webkit-scrollbar,
+#sine-panel .lil-gui *::-webkit-scrollbar {
     display: none !important;
     width: 0 !important;
     height: 0 !important;
@@ -571,13 +653,16 @@ body {
 .dsp-panel-slot .lil-gui .children,
 #dsp-master-wrap .lil-gui .children,
 .dsp-panel-slot .lil-gui .controller,
-#dsp-master-wrap .lil-gui .controller {
+#dsp-master-wrap .lil-gui .controller,
+#sine-panel .lil-gui .children,
+#sine-panel .lil-gui .controller {
     overflow-x: hidden !important;
 }
 
 /* Controller row layout */
 .dsp-panel-slot .lil-gui .controller,
-#dsp-master-wrap .lil-gui .controller {
+#dsp-master-wrap .lil-gui .controller,
+#sine-panel .lil-gui .controller {
     display: flex !important;
     align-items: center !important;
     padding: 0 4px !important;
@@ -600,9 +685,23 @@ body {
     color: #ccc !important;
 }
 
+#sine-panel .lil-gui .controller > .name {
+    flex: 0 0 95px !important;
+    width: 95px !important;
+    min-width: 95px !important;
+    max-width: 95px !important;
+    padding-right: 4px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 11px !important;
+    color: #ccc !important;
+}
+
 /* Widget: Fills the entire remaining row width */
 .dsp-panel-slot .lil-gui .controller .widget,
-#dsp-master-wrap .lil-gui .controller .widget {
+#dsp-master-wrap .lil-gui .controller .widget,
+#sine-panel .lil-gui .controller .widget {
     display: flex !important;
     align-items: center !important;
     flex: 1 1 auto !important;
@@ -613,7 +712,8 @@ body {
 
 /* Slider Track: Wide, expansive, smooth dragging */
 .dsp-panel-slot .lil-gui .controller.number .slider,
-#dsp-master-wrap .lil-gui .controller.number .slider {
+#dsp-master-wrap .lil-gui .controller.number .slider,
+#sine-panel .lil-gui .controller.number .slider {
     flex: 1 1 auto !important;
     width: auto !important;
     min-width: 50px !important;
@@ -636,9 +736,23 @@ body {
     border-radius: 2px !important;
 }
 
+#sine-panel .lil-gui .controller.number input {
+    flex: 0 0 46px !important;
+    width: 46px !important;
+    min-width: 40px !important;
+    max-width: 50px !important;
+    height: 18px !important;
+    padding: 0 2px !important;
+    margin-left: 4px !important;
+    text-align: right !important;
+    font-size: 10.5px !important;
+    border-radius: 2px !important;
+}
+
 /* Per-option Reset Button (↺): Tiny 15x15px, elegant, no row stretching */
 .dsp-panel-slot .lil-gui .lil-reset-btn,
-#dsp-master-wrap .lil-gui .lil-reset-btn {
+#dsp-master-wrap .lil-gui .lil-reset-btn,
+#sine-panel .lil-gui .lil-reset-btn {
     flex: 0 0 15px !important;
     width: 15px !important;
     height: 15px !important;
@@ -661,7 +775,8 @@ body {
 }
 
 .dsp-panel-slot .lil-gui .lil-reset-btn:hover,
-#dsp-master-wrap .lil-gui .lil-reset-btn:hover {
+#dsp-master-wrap .lil-gui .lil-reset-btn:hover,
+#sine-panel .lil-gui .lil-reset-btn:hover {
     color: #fff !important;
     border-color: rgba(255, 255, 255, 0.5) !important;
     background: rgba(255, 255, 255, 0.15) !important;
@@ -669,7 +784,8 @@ body {
 
 /* Panel Header & "↺ Tout reset" button */
 .dsp-panel-slot .lil-gui.root > .title,
-#dsp-master-wrap .lil-gui.root > .title {
+#dsp-master-wrap .lil-gui.root > .title,
+#sine-panel .lil-gui.root > .title {
     display: flex !important;
     align-items: center !important;
     padding-right: 6px !important;
