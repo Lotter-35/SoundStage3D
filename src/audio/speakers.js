@@ -377,7 +377,20 @@ export class SpeakerSystem {
         // ── Analysers for level metering ──
         this.subAnalyser = ctx.createAnalyser();
         this.subAnalyser.fftSize = 256;
-        this.subVolume.connect(this.subAnalyser);
+
+        // SUB bus limiter / acoustic headroom controller
+        // Smooth soft-knee leveling designed specifically for low frequencies (<90 Hz):
+        // prevents harsh intermodulation clipping when sub energy is huge, creating a warm,
+        // room-filling sustained bass ("prendre plus d'espace") instead of crackling.
+        this.subLimiter = ctx.createDynamicsCompressor();
+        this.subLimiter.threshold.value = DSP_DEFAULTS.sub?.['lim-threshold'] ?? -3;
+        this.subLimiter.knee.value = 8;        // soft knee for smooth acoustic transition
+        this.subLimiter.ratio.value = 16;      // musical limiting ratio
+        this.subLimiter.attack.value = 0.005;  // 5 ms: lets natural sub transient punch through
+        this.subLimiter.release.value = 0.08;  // 80 ms: natural sub wave cycle tracking without distortion
+
+        this.subVolume.connect(this.subLimiter);
+        this.subLimiter.connect(this.subAnalyser);
 
         // MID bus limiter (brick-wall)
         this.midLimiter = ctx.createDynamicsCompressor();
@@ -452,30 +465,7 @@ export class SpeakerSystem {
         this.localVolumeGain = ctx.createGain();
         this.localVolumeGain.gain.value = 1;
         this.masterLimiter.connect(this.localVolumeGain);
-
-        // Headphone Safety Limiter & Soft-Clipper: guarantees zero DAC clipping/crackling even at 1000% volume
-        // 1. High-fidelity safety limiter (3 ms attack, 16:1 ratio, soft knee, 100 ms release)
-        // Prevents sub-frequency cycle distortion and harsh intermodulation when volume is boosted
-        this.headphoneLimiter = ctx.createDynamicsCompressor();
-        this.headphoneLimiter.threshold.value = -1.0;
-        this.headphoneLimiter.knee.value = 3.0;
-        this.headphoneLimiter.ratio.value = 16;
-        this.headphoneLimiter.attack.value = 0.003; // 3 ms
-        this.headphoneLimiter.release.value = 0.10;  // 100 ms
-
-        // 2. Analog-style tanh soft-clipper (ceiling at ±0.99) to completely round any instantaneous sub-sample transients
-        this.headphoneClipper = ctx.createWaveShaper();
-        this.headphoneClipper.oversample = '2x';
-        const clipCurve = new Float32Array(1024);
-        for (let i = 0; i < 1024; i++) {
-            const x = (i / 1023) * 4 - 2; // -2 to +2
-            clipCurve[i] = Math.tanh(x) * 0.98; // absolute ceiling at 0.98 (-0.17 dBFS)
-        }
-        this.headphoneClipper.curve = clipCurve;
-
-        this.localVolumeGain.connect(this.headphoneLimiter);
-        this.headphoneLimiter.connect(this.headphoneClipper);
-        this.headphoneClipper.connect(ctx.destination);
+        this.localVolumeGain.connect(ctx.destination);
 
         // Master analyser taps after master limiter
         this.masterAnalyser = ctx.createAnalyser();
@@ -496,7 +486,7 @@ export class SpeakerSystem {
         const subSplit = ctx.createChannelSplitter(2);
         const subMonoSum = ctx.createGain();
         subMonoSum.gain.value = 0.5;
-        this.subVolume.connect(subSplit);
+        this.subLimiter.connect(subSplit);
         subSplit.connect(subMonoSum, 0); // L -> mono sum
         subSplit.connect(subMonoSum, 1); // R -> mono sum
 
@@ -676,7 +666,8 @@ export class SpeakerSystem {
                 for (const s of this.speakers) s.setHighShelfGain(value);
                 break;
             case 'local-volume':
-                this.localVolumeGain.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.015);
+                this.localVolumeGain.gain.cancelScheduledValues(0);
+                this.localVolumeGain.gain.value = value / 100;
                 break;
             case 'reverb':
                 this.reverbWet.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.05);
@@ -767,9 +758,7 @@ export class SpeakerSystem {
                 for (const s of subSpeakers) s._updateProxSat();
                 break;
             case 'lim-threshold':
-                if (this.subLimiter) {
-                    this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
-                }
+                this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
         this.forceUpdateAll();
@@ -945,7 +934,7 @@ export class SpeakerSystem {
             a.smoothingTimeConstant = 0.8;
             a.minDecibels = -90;
             a.maxDecibels = 0;
-            (this.headphoneClipper || this.localVolumeGain).connect(a);
+            this.localVolumeGain.connect(a);
             this._headphoneAnalyser = a;
         }
         return this._headphoneAnalyser;

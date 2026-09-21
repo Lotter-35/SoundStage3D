@@ -273,7 +273,7 @@ export class Controls {
             this._setupController(cReverb, 'master-reverb', DSP_DEFAULTS.master['reverb'], false);
 
             const fLocal = gui.addFolder('Volume local 🔒');
-            const cVol = fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
+            const cVol = fLocal.add(this.state.master, 'local-volume', 0, 100, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
             this._setupController(cVol, 'master-local-volume', DSP_DEFAULTS.master['local-volume'], false);
 
             const fControls = gui.addFolder('Contrôles');
