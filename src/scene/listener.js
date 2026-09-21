@@ -228,34 +228,31 @@ export class Listener {
      */
     syncAudioListener(audioListener) {
         const p = this.camera.position;
-        const t = this._audioCtxTime; // set externally before calling
-        const smooth = 0.03; // 30ms ramp — smooth listener movement
 
-        // Position (smooth ramp to avoid crackling)
+        // Position: update WebAudio listener position
         if (audioListener.positionX) {
-            audioListener.positionX.setTargetAtTime(p.x, t, smooth);
-            audioListener.positionY.setTargetAtTime(p.y, t, smooth);
-            audioListener.positionZ.setTargetAtTime(p.z, t, smooth);
-        } else {
+            audioListener.positionX.value = p.x;
+            audioListener.positionY.value = p.y;
+            audioListener.positionZ.value = p.z;
+        }
+        if (audioListener.setPosition) {
             audioListener.setPosition(p.x, p.y, p.z);
         }
 
-        // Orientation: forward and up vectors from camera
-        const forward = this._forward;
-        this.camera.getWorldDirection(forward);
-
-        const up = this._up;
-        up.set(0, 1, 0);
-        up.applyQuaternion(this.camera.quaternion);
+        // Orientation: forward (-Z) and up (+Y) vectors derived strictly from camera quaternion.
+        // Guaranteed to be normalized (|v| = 1) and orthogonal (forward · up = 0) with zero lag.
+        const forward = this._forward.set(0, 0, -1).applyQuaternion(this.camera.quaternion);
+        const up = this._up.set(0, 1, 0).applyQuaternion(this.camera.quaternion);
 
         if (audioListener.forwardX) {
-            audioListener.forwardX.setTargetAtTime(forward.x, t, smooth);
-            audioListener.forwardY.setTargetAtTime(forward.y, t, smooth);
-            audioListener.forwardZ.setTargetAtTime(forward.z, t, smooth);
-            audioListener.upX.setTargetAtTime(up.x, t, smooth);
-            audioListener.upY.setTargetAtTime(up.y, t, smooth);
-            audioListener.upZ.setTargetAtTime(up.z, t, smooth);
-        } else {
+            audioListener.forwardX.value = forward.x;
+            audioListener.forwardY.value = forward.y;
+            audioListener.forwardZ.value = forward.z;
+            audioListener.upX.value = up.x;
+            audioListener.upY.value = up.y;
+            audioListener.upZ.value = up.z;
+        }
+        if (audioListener.setOrientation) {
             audioListener.setOrientation(
                 forward.x, forward.y, forward.z,
                 up.x, up.y, up.z
