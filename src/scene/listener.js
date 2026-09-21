@@ -60,25 +60,16 @@ export class Listener {
             this._suppressMouseUntil = performance.now() + durationMs;
         };
 
-        this._onCapturedMouseMove = (e) => {
-            // If controls are not locked, let mousemove events pass through freely to UI (sliders, drag controls)
-            if (!this.controls.isLocked) {
-                return;
-            }
-
-            // Block mouse movements during unlock/lock transitions
-            if (performance.now() < this._suppressMouseUntil) {
-                e.stopImmediatePropagation();
-                return;
-            }
-
-            // Extreme delta filter: prevents instantaneous camera snaps caused by Chromium cursor warp on unlock
-            if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) {
-                e.stopImmediatePropagation();
-                return;
-            }
+        // Wrap PointerLockControls' internal onMouseMove directly so we never intercept or cancel global mousemove events
+        this.controls.disconnect();
+        const origOnMouseMove = this.controls._onMouseMove;
+        this.controls._onMouseMove = (e) => {
+            if (!this.controls.isLocked) return;
+            if (performance.now() < this._suppressMouseUntil) return;
+            if (Math.abs(e.movementX) > 200 || Math.abs(e.movementY) > 200) return;
+            origOnMouseMove(e);
         };
-        document.addEventListener('mousemove', this._onCapturedMouseMove, true);
+        this.controls.connect();
 
         this.controls.addEventListener('lock', () => {
             this._suppressMouse(100);

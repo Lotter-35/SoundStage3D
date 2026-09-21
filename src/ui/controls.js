@@ -139,6 +139,13 @@ export class Controls {
                 ctrl.domElement.appendChild(resetBtn);
             }
 
+            // Prevent default browser drag/selection when clicking slider so drag mousemove is never suppressed
+            if (ctrl.$slider) {
+                ctrl.$slider.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                });
+            }
+
             // Double click on option row also resets
             ctrl.domElement.addEventListener('dblclick', (e) => {
                 // If user double clicks on input, let them select text
