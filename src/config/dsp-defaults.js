@@ -80,7 +80,7 @@ export const DSP_DEFAULTS = {
         'air-abs':          40,     // Hz/m — air absorption coefficient
         'treble':            0,     // dB — high-shelf boost
         'reverb':            0,     // % — reverb wet level
-        'lim-threshold':    -3,     // dB — master limiter threshold
+        'lim-threshold':    -5,     // dB — master limiter threshold
         'local-volume':    100,     // % — local output volume
         'mouse-sensitivity':100,    // % — mouse sensitivity multiplier
     },

@@ -455,15 +455,16 @@ export class SpeakerSystem {
         this.fillLimiter.connect(this.fillAnalyser);
 
         // Master output chain: masterOutput → limiter → localVolumeGain → ctx.destination
+        // Calibrated with -6 dB (0.50) acoustic summation headroom for 14-speaker array
         this.masterOutput = ctx.createGain();
-        this.masterOutput.gain.value = 1;
+        this.masterOutput.gain.value = 0.5;
 
-        // Brick-wall limiter to prevent clipping
+        // Brick-wall peak limiter (ultra-fast 0.3 ms attack to prevent DAC clipping and meter clip)
         this.masterLimiter = ctx.createDynamicsCompressor();
-        this.masterLimiter.threshold.value = DSP_DEFAULTS.master?.['lim-threshold'] ?? -3;
+        this.masterLimiter.threshold.value = DSP_DEFAULTS.master?.['lim-threshold'] ?? -5;
         this.masterLimiter.knee.value = 2;
         this.masterLimiter.ratio.value = 20;
-        this.masterLimiter.attack.value = 0.001;
+        this.masterLimiter.attack.value = 0.0003;
         this.masterLimiter.release.value = 0.05;
 
         // HRTF brightness compensation: high-shelf boost to counter HRTF dullness
