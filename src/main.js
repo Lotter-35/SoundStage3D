@@ -27,7 +27,6 @@ renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
 renderer.shadowMap.autoUpdate = false;
 renderer.shadowMap.needsUpdate = true;
-let _shadowsBaked = false;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -788,10 +787,6 @@ function renderFrame() {
     updateVegetation(camera);
 
     // Render with CPU time benchmark
-    if (!_shadowsBaked) {
-        renderer.shadowMap.needsUpdate = true;
-        _shadowsBaked = true;
-    }
     const t0 = performance.now();
     renderer.render(scene, camera);
     const renderTime = performance.now() - t0;

@@ -37,11 +37,12 @@ for (let i = -3; i <= 3; i++) {
 }
 
 export const SPEAKER_DEFS = [
-    ...SUB_DEFS,
+    ...SUB_DEFS.map(s => ({ ...s, channel: 'mono' })),
     // Mid infill / side-fill — lower, wider dispersion
     {
         id: 'midLeft',
         bus: 'mid',
+        channel: 'left',
         position: { x: -12, y: 6, z: -2 },
         omnidirectional: false,
         orientation: { x: 0, y: -0.2, z: 1 },
@@ -52,6 +53,7 @@ export const SPEAKER_DEFS = [
     {
         id: 'midRight',
         bus: 'mid',
+        channel: 'right',
         position: { x: 12, y: 6, z: -2 },
         omnidirectional: false,
         orientation: { x: 0, y: -0.2, z: 1 },
@@ -62,6 +64,7 @@ export const SPEAKER_DEFS = [
     {
         id: 'arrayLeft',
         bus: 'top',
+        channel: 'left',
         position: { x: -12, y: 8, z: 0 },
         omnidirectional: false,
         orientation: { x: 0, y: -0.3, z: 1 },
@@ -69,6 +72,7 @@ export const SPEAKER_DEFS = [
     {
         id: 'arrayRight',
         bus: 'top',
+        channel: 'right',
         position: { x: 12, y: 8, z: 0 },
         omnidirectional: false,
         orientation: { x: 0, y: -0.3, z: 1 },
@@ -77,6 +81,7 @@ export const SPEAKER_DEFS = [
     {
         id: 'fillLeft',
         bus: 'fill',
+        channel: 'left',
         position: { x: -5, y: 6, z: -3 },
         omnidirectional: false,
         orientation: { x: 0.6, y: -0.6, z: 1 },
@@ -87,6 +92,7 @@ export const SPEAKER_DEFS = [
     {
         id: 'fillRight',
         bus: 'fill',
+        channel: 'right',
         position: { x: 5, y: 6, z: -3 },
         omnidirectional: false,
         orientation: { x: -0.6, y: -0.6, z: 1 },
@@ -462,19 +468,55 @@ export class SpeakerSystem {
             master: new Float32Array(256),
         };
 
-        // Create speakers
+        // ── Channel Routing (Left, Right, Mono Sum for Subs) ──
+        // Sub: downmix stereo input to mono (L*0.5 + R*0.5) so subs don't bias to one side
+        const subSplit = ctx.createChannelSplitter(2);
+        const subMonoSum = ctx.createGain();
+        subMonoSum.gain.value = 0.5;
+        this.subVolume.connect(subSplit);
+        subSplit.connect(subMonoSum, 0); // L -> mono sum
+        subSplit.connect(subMonoSum, 1); // R -> mono sum
+
+        // Mid split
+        const midSplit = ctx.createChannelSplitter(2);
+        const midLeftGain = ctx.createGain();
+        const midRightGain = ctx.createGain();
+        this.midLimiter.connect(midSplit);
+        midSplit.connect(midLeftGain, 0);   // L channel
+        midSplit.connect(midRightGain, 1);  // R channel
+
+        // Top split
+        const topSplit = ctx.createChannelSplitter(2);
+        const topLeftGain = ctx.createGain();
+        const topRightGain = ctx.createGain();
+        this.topLimiter.connect(topSplit);
+        topSplit.connect(topLeftGain, 0);   // L channel
+        topSplit.connect(topRightGain, 1);  // R channel
+
+        // Fill split
+        const fillSplit = ctx.createChannelSplitter(2);
+        const fillLeftGain = ctx.createGain();
+        const fillRightGain = ctx.createGain();
+        this.fillLimiter.connect(fillSplit);
+        fillSplit.connect(fillLeftGain, 0);  // L channel
+        fillSplit.connect(fillRightGain, 1); // R channel
+
+        // Create speakers and wire each to its exact physical channel
         for (const def of SPEAKER_DEFS) {
             const speaker = new Speaker(ctx, def, this.masterOutput);
             this.speakers.push(speaker);
 
             if (def.bus === 'sub') {
-                this.subVolume.connect(speaker.input);
+                subMonoSum.connect(speaker.input);
             } else if (def.bus === 'mid') {
-                this.midLimiter.connect(speaker.input);
+                const src = def.channel === 'right' ? midRightGain : midLeftGain;
+                src.connect(speaker.input);
             } else if (def.bus === 'fill') {
-                this.fillLimiter.connect(speaker.input);
+                const src = def.channel === 'right' ? fillRightGain : fillLeftGain;
+                src.connect(speaker.input);
             } else {
-                this.topLimiter.connect(speaker.input);
+                const src = def.channel === 'right' ? topRightGain : topLeftGain;
+                src.connect(speaker.input);
             }
         }
 

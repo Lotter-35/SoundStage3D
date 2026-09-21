@@ -50,14 +50,13 @@ export function createStage(scene) {
     // --- Stage back wall ---
     const backWallGeo = new THREE.BoxGeometry(30, 20, 0.5);
     const backWallMat = new THREE.MeshStandardMaterial({
-        color: 0x2e2e2e,
+        color: 0x111111,
         roughness: 0.9,
         metalness: 0.1,
     });
     const backWall = new THREE.Mesh(backWallGeo, backWallMat);
     backWall.position.set(0, 10, -10);
     backWall.castShadow = true;
-    backWall.receiveShadow = true;
     scene.add(backWall);
 
     // --- Stage roof ---
