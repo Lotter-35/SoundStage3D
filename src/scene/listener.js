@@ -9,7 +9,7 @@ import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { Character } from './character.js';
 
-const WALK_SPEED    = 7;   // m/s — speed when in character mode (walking)
+const WALK_SPEED    = 5.0; // m/s — vitesse naturelle de marche en mode personnage
 const FLY_SPEED     = 18;  // m/s — speed when in free-fly mode
 const VERTICAL_SPEED = 15; // m/s — vertical speed in free-fly mode
 const PLAYER_HEIGHT  = 1.7; // eye height in m
@@ -39,6 +39,7 @@ export class Listener {
         // Movement state
         this.move = { forward: false, backward: false, left: false, right: false, up: false, down: false };
         this.velocity = new THREE.Vector3();
+        this._currentSpeed = new THREE.Vector2(0, 0); // smooth velocity interpolation
 
         // Character mode (F to toggle)
         this.characterMode = false;
@@ -106,6 +107,7 @@ export class Listener {
         this.move.right = false;
         this.move.up = false;
         this.move.down = false;
+        if (this._currentSpeed) this._currentSpeed.set(0, 0);
     }
 
     /** Set mouse look sensitivity. @param {number} value — 0.1 to 3.0 */
@@ -201,13 +203,25 @@ export class Listener {
         // Choose speed based on mode: fly faster, walk slower
         const moveSpeed = this.characterMode ? WALK_SPEED : FLY_SPEED;
 
+        // Smooth horizontal acceleration and deceleration (removes abrupt start/stop jolts)
+        const targetX = direction.x * moveSpeed;
+        const targetZ = -direction.z * moveSpeed;
+        const accelRate = this.characterMode ? 12 : 16;
+        this._currentSpeed.x += (targetX - this._currentSpeed.x) * Math.min(1, dt * accelRate);
+        this._currentSpeed.y += (targetZ - this._currentSpeed.y) * Math.min(1, dt * accelRate);
+
+        if (Math.abs(this._currentSpeed.x) < 0.001) this._currentSpeed.x = 0;
+        if (Math.abs(this._currentSpeed.y) < 0.001) this._currentSpeed.y = 0;
+
         // Move in the direction the camera is facing (horizontal only)
-        this.controls.moveRight(direction.x * moveSpeed * dt);
-        this.controls.moveForward(-direction.z * moveSpeed * dt);
+        this.controls.moveRight(this._currentSpeed.x * dt);
+        this.controls.moveForward(this._currentSpeed.y * dt);
 
         if (this.characterMode) {
-            const isMoving = this.move.forward || this.move.backward || this.move.left || this.move.right;
-            this._character.update(dt, this.move.up, isMoving);
+            const speedMag = this._currentSpeed.length();
+            const isMoving = speedMag > 0.08;
+            const speedFraction = Math.min(1, speedMag / WALK_SPEED);
+            this._character.update(dt, this.move.up, isMoving, speedFraction);
         } else {
             // Free-fly vertical movement (world Y)
             if (this.move.up)   this.camera.position.y += VERTICAL_SPEED * dt;
