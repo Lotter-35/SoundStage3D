@@ -218,10 +218,7 @@ export class Listener {
         this.controls.moveForward(this._currentSpeed.y * dt);
 
         if (this.characterMode) {
-            const speedMag = this._currentSpeed.length();
-            const isMoving = speedMag > 0.08;
-            const speedFraction = Math.min(1, speedMag / WALK_SPEED);
-            this._character.update(dt, this.move.up, isMoving, speedFraction);
+            this._character.update(dt, this.move.up);
         } else {
             // Free-fly vertical movement (world Y)
             if (this.move.up)   this.camera.position.y += VERTICAL_SPEED * dt;
