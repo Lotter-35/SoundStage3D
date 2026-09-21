@@ -18,13 +18,13 @@ export const DSP_DEFAULTS = {
         'comp-ratio':        4,     // :1
         'comp-attack':       3,     // ms  (audio node receives /1000)
         'comp-release':    250,     // ms  (audio node receives /1000)
-        'sat-drive':        50,     // %
+        'sat-drive':       100,     // %
         'sat-mix':         100,     // %
         'prox-far':        4.0,     // m — proximity saturation start distance
         'prox-near':       2.0,     // m — proximity saturation full distance
         'prox-drive':       75,     // % — max proximity saturation drive
         'bus-volume':      100,     // %  (audio node receives /100)
-        'dist-k':           60,     // ×0.001 → actual coefficient
+        'dist-k':            8,     // ×0.001 → actual coefficient
         'refl-gain':        20,     // ×0.01 → actual gain
         'refl-lpf':       1500,     // Hz
         'lim-threshold':    -3,     // dB

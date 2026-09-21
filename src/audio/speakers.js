@@ -18,7 +18,7 @@ import { createGroundReflection } from './effects.js';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 
 const SPEED_OF_SOUND = 343; // m/s
-const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.sub['dist-k'] ?? 60) / 1000;
+const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.mid?.['dist-k'] ?? 60) / 1000;
 const DEFAULT_AIR_ABS = DSP_DEFAULTS.master['air-abs'] ?? 40;
 const MAX_DELAY = 1.0;
 
@@ -40,12 +40,34 @@ for (let i = -3; i <= 3; i++) {
 
 export const SPEAKER_DEFS = [
     ...SUB_DEFS,
+    // Mid/high arrays — directional, angled slightly down (-Y) and outward (X)
+    {
+        id: 'arrayLeft',
+        bus: 'top',
+        position: { x: -12, y: 8, z: 0 },
+        omnidirectional: false,
+        orientation: { x: 0.15, y: -0.1, z: 1 },
+        coneInner: 60,
+        coneOuter: 120,
+        coneOuterGain: 0.3,
+    },
+    {
+        id: 'arrayRight',
+        bus: 'top',
+        position: { x: 12, y: 8, z: 0 },
+        omnidirectional: false,
+        orientation: { x: -0.15, y: -0.1, z: 1 },
+        coneInner: 60,
+        coneOuter: 120,
+        coneOuterGain: 0.3,
+    },
+    // Mid infill / side-fill — lower, wider dispersion
     {
         id: 'midLeft',
         bus: 'mid',
         position: { x: -12, y: 6, z: -2 },
         omnidirectional: false,
-        orientation: { x: 0, y: -0.2, z: 1 },
+        orientation: { x: 0.3, y: -0.05, z: 1 },
         coneInner: 80,
         coneOuter: 140,
         coneOuterGain: 0.35,
@@ -55,26 +77,12 @@ export const SPEAKER_DEFS = [
         bus: 'mid',
         position: { x: 12, y: 6, z: -2 },
         omnidirectional: false,
-        orientation: { x: 0, y: -0.2, z: 1 },
+        orientation: { x: -0.3, y: -0.05, z: 1 },
         coneInner: 80,
         coneOuter: 140,
         coneOuterGain: 0.35,
     },
-    {
-        id: 'arrayLeft',
-        bus: 'top',
-        position: { x: -12, y: 8, z: 0 },
-        omnidirectional: false,
-        orientation: { x: 0, y: -0.3, z: 1 },
-    },
-    {
-        id: 'arrayRight',
-        bus: 'top',
-        position: { x: 12, y: 8, z: 0 },
-        omnidirectional: false,
-        orientation: { x: 0, y: -0.3, z: 1 },
-    },
-    // 2 front-fills on stage — diagonal, covering center audience
+    // Front fills — on stage edge, angled down toward front row
     {
         id: 'fillLeft',
         bus: 'fill',
@@ -111,8 +119,10 @@ class Speaker {
         this._isSub = def.omnidirectional === true;
         this._isMid = def.bus === 'mid';
         this._isFill = def.bus === 'fill';
-        this._distanceK = DEFAULT_DISTANCE_K;
+        const busKey = def.bus || (this._isSub ? 'sub' : 'top');
+        this._distanceK = (DSP_DEFAULTS[busKey]?.['dist-k'] ?? 60) / 1000;
         this._airAbsCoeff = DEFAULT_AIR_ABS;
+        this._lastDistance = null;
 
         // --- Distance attenuation gain ---
         this.distanceGain = ctx.createGain();
@@ -277,6 +287,10 @@ class Speaker {
      */
     setDistanceK(k) {
         this._distanceK = k;
+        if (this._lastDistance != null) {
+            const gain = 1 / (1 + this._distanceK * this._lastDistance);
+            this.distanceGain.gain.setTargetAtTime(gain, this.ctx.currentTime, this._isSub ? 0.08 : 0.04);
+        }
     }
 
     /**
@@ -285,6 +299,14 @@ class Speaker {
      */
     setAirAbsCoeff(coeff) {
         this._airAbsCoeff = coeff;
+        if (this._lastDistance != null) {
+            const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
+            const cutoff = Math.max(cutoffFloor, 18000 - this._lastDistance * this._airAbsCoeff);
+            const t = this.ctx.currentTime;
+            const smooth = this._isSub ? 0.08 : 0.04;
+            this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
+            this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
+        }
     }
 
     /**
@@ -489,9 +511,31 @@ export class SpeakerSystem {
 
         // Staggered update state: alternate which half of speakers update each frame
         this._updateFrame = 0;
+        this._currentListenerPos = { x: 0, y: 1.7, z: 50 };
         this._lastPos = { x: NaN, y: NaN, z: NaN };
+        this._forceUpdate = false;
         // Debug stats
         this._debugStats = { skippedFrames: 0, updatedSpeakers: 0, totalFrames: 0 };
+
+        // Force initial update of all speakers immediately with default listener position
+        this.forceUpdateAll(this._currentListenerPos);
+    }
+
+    /**
+     * Force update all speakers with listener position immediately (no frame staggering or dirty skip).
+     * Used on startup and whenever DSP parameters change so audio updates instantly without requiring player movement.
+     * @param {{x:number,y:number,z:number}} [pos]
+     */
+    forceUpdateAll(pos = this._currentListenerPos) {
+        if (!pos) return;
+        this._currentListenerPos = pos;
+        this._lastPos.x = pos.x;
+        this._lastPos.y = pos.y;
+        this._lastPos.z = pos.z;
+        for (const speaker of this.speakers) {
+            speaker.update(pos);
+        }
+        this._debugStats.updatedSpeakers = this.speakers.length;
     }
 
     /**
@@ -502,6 +546,14 @@ export class SpeakerSystem {
      */
     update(listenerPos) {
         this._debugStats.totalFrames++;
+        this._currentListenerPos = listenerPos;
+
+        // If force update requested, update all speakers immediately
+        if (this._forceUpdate) {
+            this._forceUpdate = false;
+            this.forceUpdateAll(listenerPos);
+            return;
+        }
 
         // Dirty check: skip entirely if listener hasn't moved enough
         const dx = listenerPos.x - this._lastPos.x;
@@ -568,6 +620,7 @@ export class SpeakerSystem {
             : bus === 'fill' ? this.fillVolume
             : this.topVolume;
         node.gain.setTargetAtTime(value, this.ctx.currentTime, 0.04);
+        this.forceUpdateAll();
     }
 
     /**
@@ -584,6 +637,7 @@ export class SpeakerSystem {
                 speaker.setDistanceK(k);
             }
         }
+        this.forceUpdateAll();
     }
 
     /**
@@ -607,6 +661,7 @@ export class SpeakerSystem {
                 this.reverbWet.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.05);
                 break;
         }
+        this.forceUpdateAll();
     }
 
     /**
@@ -691,6 +746,7 @@ export class SpeakerSystem {
                 this.masterLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
+        this.forceUpdateAll();
     }
 
     /**
@@ -747,6 +803,7 @@ export class SpeakerSystem {
                 this.midLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
+        this.forceUpdateAll();
     }
 
     /**
@@ -800,6 +857,7 @@ export class SpeakerSystem {
                 this.topLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
+        this.forceUpdateAll();
     }
 
     /**
@@ -831,6 +889,7 @@ export class SpeakerSystem {
                 this.fillLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
         }
+        this.forceUpdateAll();
     }
 
     /**
