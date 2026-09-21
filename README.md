@@ -1,7 +1,6 @@
-# 🎶 SoundStage3D (Édition 2026) - Simulateur de Sonorisation de Festival
+# 🎶 SoundStage3D - Simulateur de Sonorisation de Festival
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Edition: 2026](https://img.shields.io/badge/SoundStage3D-Édition%202026-blue.svg)](https://github.com/Lotter-35/SoundStage3D)
 
 **SoundStage3D est une expérience de simulation acoustique et audio 3D immersive en temps réel qui s'exécute entièrement dans votre navigateur. Chargez vos morceaux et déplacez-vous librement dans un environnement de festival pour ressentir comment un système de sonorisation professionnel interagit avec l'espace et le public.**
 
