@@ -597,6 +597,9 @@ export class Controls {
         if (this.playBtn) {
             this.playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
         }
+        if (!isPlaying) {
+            this.resetMeters();
+        }
     }
 
     // Callbacks
@@ -627,8 +630,21 @@ export class Controls {
 
     updatePosition(pos, fohDist) {
         if (this.positionDisplay) {
-            this.positionDisplay.textContent =
-                `X: ${pos.x.toFixed(1)}  Y: ${pos.y.toFixed(1)}  Z: ${pos.z.toFixed(1)}`;
+            const str = `X: ${pos.x.toFixed(1)}  Y: ${pos.y.toFixed(1)}  Z: ${pos.z.toFixed(1)}`;
+            if (this._lastPosStr !== str) {
+                this._lastPosStr = str;
+                this.positionDisplay.textContent = str;
+            }
+        }
+    }
+
+    resetMeters() {
+        for (let i = 0; i < this._meters.length; i++) {
+            const m = this._meters[i];
+            m.fill.style.height = '0%';
+            m.peak.style.bottom = '0%';
+            m.peakHold = 0;
+            m.clip.classList.remove('active');
         }
     }
 

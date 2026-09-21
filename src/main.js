@@ -24,6 +24,8 @@ renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFShadowMap;
+renderer.shadowMap.autoUpdate = false;
+renderer.shadowMap.needsUpdate = true;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -469,26 +471,33 @@ debugBtn.addEventListener('click', () => {
     renderer.info.autoReset = !_debugVisible; // keep stats when debug is on
 });
 
-// FPS tracking
+// FPS & render performance tracking
 let _debugAccum = 0;
 let _frameCount = 0;
 let _fps = 0;
-let _frameTimes = [];
-let _frameTimeAvg = 0;
+let _frameTimeSum = 0;
 let _frameTimeMax = 0;
+let _frameTimeAvg = 0;
+let _renderTimeSum = 0;
+let _renderTimeMax = 0;
+let _renderTimeAvg = 0;
 const DEBUG_INTERVAL = 0.5; // refresh debug every 500ms
 
-function updateFpsCounter(dt) {
+function updateFpsCounter(dt, renderMs = 0) {
+    const dtMs = dt * 1000;
     _debugAccum += dt;
     _frameCount++;
-    _frameTimes.push(dt * 1000);
+    _frameTimeSum += dtMs;
+    if (dtMs > _frameTimeMax) _frameTimeMax = dtMs;
+    _renderTimeSum += renderMs;
+    if (renderMs > _renderTimeMax) _renderTimeMax = renderMs;
 
     if (_debugAccum < DEBUG_INTERVAL) return;
 
-    // Compute FPS stats
+    // Compute FPS & frame render stats
     _fps = Math.round(_frameCount / _debugAccum);
-    _frameTimeAvg = _frameTimes.reduce((a, b) => a + b, 0) / _frameTimes.length;
-    _frameTimeMax = Math.max(..._frameTimes);
+    _frameTimeAvg = _frameTimeSum / _frameCount;
+    _renderTimeAvg = _renderTimeSum / _frameCount;
 
     // Always update the small FPS counter
     const fpsEl = document.getElementById('fps-counter');
@@ -496,7 +505,10 @@ function updateFpsCounter(dt) {
 
     _debugAccum = 0;
     _frameCount = 0;
-    _frameTimes = [];
+    _frameTimeSum = 0;
+    _frameTimeMax = 0;
+    _renderTimeSum = 0;
+    _renderTimeMax = 0;
 }
 
 function updateDebug(dt) {
@@ -546,14 +558,16 @@ function updateDebug(dt) {
 
     // FPS color
     const fpsClass = _fps >= 55 ? 'dbg-val' : _fps >= 30 ? 'dbg-warn' : 'dbg-bad';
-    const ftClass = _frameTimeAvg <= 18 ? 'dbg-val' : _frameTimeAvg <= 33 ? 'dbg-warn' : 'dbg-bad';
-    const ftMaxClass = _frameTimeMax <= 20 ? 'dbg-val' : _frameTimeMax <= 50 ? 'dbg-warn' : 'dbg-bad';
+    const ftClass = _frameTimeAvg <= 8 ? 'dbg-val' : _frameTimeAvg <= 18 ? 'dbg-warn' : 'dbg-bad';
+    const ftMaxClass = _frameTimeMax <= 16 ? 'dbg-val' : _frameTimeMax <= 33 ? 'dbg-warn' : 'dbg-bad';
+    const vsyncHz = _frameTimeAvg > 0 ? Math.round(1000 / _frameTimeAvg) : 60;
 
     debugContent.innerHTML =
-`<span class="dbg-title">── FRAME ──────────────────────</span>
+`<span class="dbg-title">── FRAME & PERFORMANCE ────────</span>
   FPS              <span class="${fpsClass}">${_fps}</span>
-  Frame time avg   <span class="${ftClass}">${_frameTimeAvg.toFixed(1)} ms</span>
-  Frame time max   <span class="${ftMaxClass}">${_frameTimeMax.toFixed(1)} ms</span>
+  Render (CPU)     <span class="dbg-val">${_renderTimeAvg.toFixed(2)} ms</span>
+  Frame tick (rAF) <span class="${ftClass}">${_frameTimeAvg.toFixed(1)} ms</span>  (VSync ~${vsyncHz} Hz)
+  Frame tick max   <span class="${ftMaxClass}">${_frameTimeMax.toFixed(1)} ms</span>
   Pixel ratio      <span class="dbg-val">${renderer.getPixelRatio()}</span>
   Resolution       <span class="dbg-val">${renderer.domElement.width}×${renderer.domElement.height}</span>
 <span class="dbg-title">── THREE.JS RENDER ────────────</span>
@@ -596,8 +610,8 @@ function animate() {
         controls.updatePosition(listener.position, listener.distanceToFOH);
     }
 
-    // Update level meters (throttled)
-    if (audioReady) {
+    // Update level meters only when playing (throttled)
+    if (audioReady && audioEngine.isPlaying) {
         _meterAccum += dt;
         if (_meterAccum >= METER_INTERVAL) {
             _meterAccum = 0;
@@ -611,11 +625,13 @@ function animate() {
     // Show/hide grass chunks near camera
     updateVegetation(camera);
 
-    // Render
+    // Render with CPU time benchmark
+    const t0 = performance.now();
     renderer.render(scene, camera);
+    const renderTime = performance.now() - t0;
 
     // Debug overlay (throttled internally)
-    updateFpsCounter(dt);
+    updateFpsCounter(dt, renderTime);
     if (_debugVisible) updateDebug(dt);
 }
 

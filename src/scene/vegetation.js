@@ -80,6 +80,7 @@ export async function createVegetation(scene) {
 
         const instanced = new THREE.InstancedMesh(srcMesh.geometry, mat, 1200);
         instanced.count = 0;
+        instanced.visible = false; // Default OFF: completely skipped by Three.js renderer
         instanced.castShadow = false;
         instanced.receiveShadow = false; // massive fill-rate boost
         scene.add(instanced);
@@ -96,18 +97,27 @@ export function setGrassQuality(quality) {
         VIEW_RADIUS = 0;
         FADE_START = 0;
         MAX_VISIBLE = 0;
-    } else if (quality === 'low') {
-        VIEW_RADIUS = 16;
-        FADE_START = 10;
-        MAX_VISIBLE = 200;
-    } else if (quality === 'medium') {
-        VIEW_RADIUS = 26;
-        FADE_START = 18;
-        MAX_VISIBLE = 450;
-    } else if (quality === 'high') {
-        VIEW_RADIUS = 34;
-        FADE_START = 24;
-        MAX_VISIBLE = 750;
+        for (const m of batchMeshes) {
+            m.count = 0;
+            m.visible = false;
+        }
+    } else {
+        for (const m of batchMeshes) {
+            m.visible = true;
+        }
+        if (quality === 'low') {
+            VIEW_RADIUS = 16;
+            FADE_START = 10;
+            MAX_VISIBLE = 200;
+        } else if (quality === 'medium') {
+            VIEW_RADIUS = 26;
+            FADE_START = 18;
+            MAX_VISIBLE = 450;
+        } else if (quality === 'high') {
+            VIEW_RADIUS = 34;
+            FADE_START = 24;
+            MAX_VISIBLE = 750;
+        }
     }
 
     _lastPos.set(Infinity, Infinity);
@@ -119,6 +129,13 @@ export function setGrassQuality(quality) {
  */
 export function updateVegetation(camera) {
     if (!posGrid || batchMeshes.length === 0) return;
+    if (VIEW_RADIUS <= 0) {
+        for (const m of batchMeshes) {
+            if (m.visible) m.visible = false;
+        }
+        return;
+    }
+
     const px = camera.position.x;
     const pz = camera.position.z;
 
@@ -126,14 +143,6 @@ export function updateVegetation(camera) {
     const ddz = pz - _lastPos.y;
     if (ddx * ddx + ddz * ddz < MOVE_THRESHOLD2) return;
     _lastPos.set(px, pz);
-
-    if (VIEW_RADIUS <= 0) {
-        for (const m of batchMeshes) {
-            m.count = 0;
-            m.instanceMatrix.needsUpdate = true;
-        }
-        return;
-    }
 
     const halfG = Math.ceil(VIEW_RADIUS / CHUNK_SIZE) + 1;
     const originX = Math.round(px / CHUNK_SIZE);

@@ -78,14 +78,27 @@ export function createStage(scene) {
     });
 
     // --- Speaker boxes & markers (generated from SPEAKER_DEFS) ---
+    // Cache geometries and materials per bus type to avoid duplicate GPU allocations and shader swaps
+    const boxGeoCache = {};
+    const boxMatCache = {};
+    const markerGeoCache = {};
+    const markerMatCache = {};
+
     for (const def of SPEAKER_DEFS) {
         const vis = BUS_VISUAL[def.bus] || BUS_VISUAL.top;
         const p = def.position;
+        const busKey = def.bus;
 
         // Visual box
-        const boxGeo = new THREE.BoxGeometry(...vis.boxGeo);
-        const boxMat = new THREE.MeshStandardMaterial({ color: vis.boxColor, roughness: 0.7, metalness: 0.2 });
-        const box = new THREE.Mesh(boxGeo, boxMat);
+        if (!boxGeoCache[busKey]) {
+            boxGeoCache[busKey] = new THREE.BoxGeometry(...vis.boxGeo);
+            boxMatCache[busKey] = new THREE.MeshStandardMaterial({
+                color: vis.boxColor,
+                roughness: 0.7,
+                metalness: 0.2,
+            });
+        }
+        const box = new THREE.Mesh(boxGeoCache[busKey], boxMatCache[busKey]);
         box.position.set(p.x, p.y, p.z);
         if (def.bus === 'top') box.rotation.x = -0.08;
         if (def.orientation) {
@@ -100,7 +113,7 @@ export function createStage(scene) {
         // For top bus (line arrays), add extra stacked boxes
         if (def.bus === 'top') {
             for (let i = 1; i < 8; i++) {
-                const extraBox = new THREE.Mesh(boxGeo, boxMat);
+                const extraBox = new THREE.Mesh(boxGeoCache[busKey], boxMatCache[busKey]);
                 extraBox.position.set(p.x, p.y + 4 - i * 0.6, p.z);
                 extraBox.rotation.x = -0.08;
                 extraBox.castShadow = true;
@@ -108,16 +121,16 @@ export function createStage(scene) {
             }
         }
 
-        // Emissive marker sphere
-        const markerGeo = new THREE.SphereGeometry(vis.markerSize, 16, 16);
-        const markerMat = new THREE.MeshStandardMaterial({
-            color: vis.color,
-            emissive: vis.color,
-            emissiveIntensity: 0.6,
-            transparent: true,
-            opacity: 0.7,
-        });
-        const marker = new THREE.Mesh(markerGeo, markerMat);
+        // Emissive marker sphere (use lightweight MeshBasicMaterial instead of PBR MeshStandardMaterial)
+        if (!markerGeoCache[busKey]) {
+            markerGeoCache[busKey] = new THREE.SphereGeometry(vis.markerSize, 12, 10);
+            markerMatCache[busKey] = new THREE.MeshBasicMaterial({
+                color: vis.color,
+                transparent: true,
+                opacity: 0.75,
+            });
+        }
+        const marker = new THREE.Mesh(markerGeoCache[busKey], markerMatCache[busKey]);
         marker.position.set(p.x, p.y, p.z);
         scene.add(marker);
     }
