@@ -181,6 +181,10 @@ controls.onDopplerToggle((enabled) => {
     speakerSystem.setDoppler(enabled);
 });
 
+controls.onGrassChange((qualityKey) => {
+    setGrassQuality(qualityKey);
+});
+
 // ─── Grass Quality Preset Toggle ───
 const grassBtn = document.getElementById('grass-btn');
 const GRASS_PRESETS = [

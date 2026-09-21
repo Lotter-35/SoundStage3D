@@ -408,44 +408,7 @@ body {
     z-index: 90;
 }
 
-/* ─── DSP Panels ─── */
-#dsp-panels {
-    position: fixed;
-    bottom: 64px;
-    left: 16px;
-    right: 16px;
-    z-index: 60;
-    display: flex;
-    flex-direction: row;
-    align-items: flex-end;
-    gap: 8px;
-    pointer-events: none;
-}
-#dsp-panels > * {
-    pointer-events: auto;
-}
-
-/* Panel ordering: TOP MID [spacer] FILL SUB */
-#dsp-panel-top  { order: 1; }
-#dsp-panel-mid  { order: 2; }
-.dsp-spacer     { order: 3; flex: 1; }
-#dsp-panel-fill { order: 4; }
-#dsp-panel-sub  { order: 5; }
-
-#dsp-panels.hidden {
-    display: none;
-}
-
-/* Master panel — top-right corner */
-#dsp-master-wrap {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    z-index: 60;
-}
-#dsp-master-wrap.hidden {
-    display: none;
-}
+/* ─── DSP Panels removed — replaced by lil-gui ─── */
 
 /* Now playing track name */
 #now-playing {
@@ -498,165 +461,43 @@ body {
 .dbg-warn { color: #fa3; }
 .dbg-bad { color: #f44; }
 
-.dsp-panel {
-    background: rgba(0, 0, 0, 0.82);
-    border: 1px solid #444;
-    border-radius: 8px;
-    min-width: 280px;
-    max-width: 320px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.72rem;
-    backdrop-filter: blur(6px);
-    overflow: visible;
-}
-
-.dsp-panel-body {
-    padding: 6px 12px 10px;
-    max-height: calc(100vh - 160px);
+/* ─── lil-gui Options Styling ─── */
+.lil-gui {
+    --background-color: rgba(15, 17, 23, 0.92);
+    --text-color: #f1f5f9;
+    --title-background-color: rgba(26, 31, 44, 0.98);
+    --widget-color: #242938;
+    --hover-color: #333a4d;
+    --focus-color: #10b981;
+    --number-color: #34d399;
+    --string-color: #60a5fa;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif !important;
+    font-size: 11px !important;
+    border-radius: 8px !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.65) !important;
+    backdrop-filter: blur(14px) !important;
+    z-index: 1000 !important;
+    max-height: calc(100vh - 40px);
     overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: #555 transparent;
 }
 
-.dsp-panel-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-    cursor: pointer;
-    user-select: none;
+.lil-gui.root {
+    top: 16px !important;
+    right: 16px !important;
 }
 
-.dsp-panel-title {
-    font-size: 0.8rem;
-    font-weight: 600;
+.lil-gui .title {
+    font-weight: 600 !important;
+    font-size: 12px !important;
     letter-spacing: 0.5px;
+    padding: 6px 10px !important;
 }
 
-.dsp-panel-toggle {
-    background: none;
-    border: 1px solid rgba(255,255,255,0.2);
-    color: #aaa;
-    width: 20px;
-    height: 20px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+.lil-gui .controller {
+    padding: 3px 6px !important;
 }
 
-.dsp-panel-toggle:hover {
-    color: #fff;
-    border-color: rgba(255,255,255,0.4);
-}
-
-.dsp-panel-body.collapsed {
-    display: none;
-}
-
-.dsp-section {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255,255,255,0.06);
-}
-
-.dsp-section:first-child {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: none;
-}
-
-.dsp-section-title {
-    color: #6cf;
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 4px;
-}
-
-.dsp-param {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 3px;
-}
-
-.dsp-param label {
-    width: 62px;
-    text-align: right;
-    color: #999;
-    font-size: 0.68rem;
-    flex-shrink: 0;
-}
-
-.dsp-param input[type="range"] {
-    width: 80px;
-    accent-color: #4af;
-    cursor: pointer;
-    flex-shrink: 0;
-}
-
-.dsp-param span {
-    width: 52px;
-    color: #ccc;
-    font-size: 0.68rem;
-    flex-shrink: 0;
-}
-
-.dsp-param .reset-btn {
-    flex-shrink: 0;
-}
-
-/* ─── Tooltips (data-tooltip) — handled by JS ─── */
-[data-tooltip] {
-    cursor: help;
-}
-
-#dsp-tooltip {
-    position: fixed;
-    background: rgba(15, 15, 20, 0.95);
-    color: #ddd;
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    font-size: 0.74rem;
-    font-weight: 400;
-    line-height: 1.5;
-    padding: 10px 14px;
-    border-radius: 6px;
-    border: 1px solid rgba(100, 170, 255, 0.3);
-    width: 280px;
-    white-space: normal;
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.18s ease, visibility 0.18s ease;
-    z-index: 9999;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.6);
-}
-
-#dsp-tooltip.visible {
-    opacity: 1;
-    visibility: visible;
-}
-
-/* Arrow on right side of tooltip (pointing toward a right-side panel) */
-#dsp-tooltip::after {
-    content: '';
-    position: absolute;
-    right: -11px;
-    top: 50%;
-    transform: translateY(-50%);
-    border: 6px solid transparent;
-    border-left-color: rgba(15, 15, 20, 0.95);
-}
-/* Arrow on left side (tooltip appears to the right of a left-side panel) */
-#dsp-tooltip.arrow-right::after {
-    right: auto;
-    left: -11px;
-    border-left-color: transparent;
-    border-right-color: rgba(15, 15, 20, 0.95);
+.lil-gui .controller .name {
+    font-weight: 500;
 }
