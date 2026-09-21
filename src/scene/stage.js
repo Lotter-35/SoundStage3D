@@ -50,7 +50,7 @@ export function createStage(scene) {
     // --- Stage back wall ---
     const backWallGeo = new THREE.BoxGeometry(30, 20, 0.5);
     const backWallMat = new THREE.MeshStandardMaterial({
-        color: 0x111111,
+        color: 0x2e2e2e,
         roughness: 0.9,
         metalness: 0.1,
     });
