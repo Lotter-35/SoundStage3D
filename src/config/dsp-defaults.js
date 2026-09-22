@@ -25,6 +25,7 @@ export const DSP_DEFAULTS = {
         'comp-attack':        10,    // ms
         'comp-release':      150,    // ms
         'limiter-ceiling':  -0.1,    // dBFS (plafond brickwall)
+        'mic-volume':        100,    // % (0% à 200%) — volume du micro en direct
     },
 
     // ─── SUB ──────────────────────────────────────────────────────────

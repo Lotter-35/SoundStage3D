@@ -13,6 +13,7 @@ export const DSP_TOOLTIPS = {
     "input-comp-attack": "Temps d'attaque du compresseur d'entrée (en ms). Court = réagit instantanément aux transitoires. Long = préserve le punch initial.",
     "input-comp-release": "Temps de relâchement du compresseur d'entrée (en ms). Détermine la vitesse à laquelle le gain revient à la normale.",
     "input-limiter-ceiling": "Plafond du limiteur de crête brickwall à attaque instantanée (ex: -0.1 dBFS). Bloque tout dépassement numérique pour empêcher tout clipping du DSP.",
+    "input-mic-volume": "Volume du microphone en direct (0% à 200%). La voix traverse l'intégralité de la chaîne DSP (EQ, Compresseur, Limiteur, Crossover et Spatialisation 3D).",
 
     "mid-xover-low": "Fréquence basse du crossover (limite SUB↔MID). Monter = plus de bas-médiums dans les MID. Baisser = les MID ne reçoivent que les fréquences au-dessus de cette valeur.",
     "mid-xover-high": "Fréquence haute du crossover (limite MID↔TOP). Monter = les MID couvrent plus d'aigus. Baisser = bande MID plus étroite, les aigus partent dans les TOP plus tôt.",

@@ -183,6 +183,11 @@ export class InputStage {
         this.input = ctx.createGain();
         this.input.gain.value = 1.0;
 
+        // Entrée dédiée au microphone en direct (injectée dans this.input)
+        this.micGainNode = ctx.createGain();
+        this.micGainNode.gain.value = (def['mic-volume'] ?? 100) / 100;
+        this.micGainNode.connect(this.input);
+
         // ── 2. Nœud d'Auto-Gain (Normalisation LUFS) ───────────────────
         this.autoGainNode = ctx.createGain();
         this.autoGainNode.gain.value = 1.0;
@@ -398,6 +403,10 @@ export class InputStage {
 
             case 'limiter-ceiling':
                 this.limiterNode.threshold.setTargetAtTime(parseFloat(value), t, 0.03);
+                break;
+
+            case 'mic-volume':
+                this.micGainNode.gain.setTargetAtTime(parseFloat(value) / 100, t, 0.03);
                 break;
         }
     }

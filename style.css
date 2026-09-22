@@ -235,6 +235,13 @@ body {
     border-color: #4af;
 }
 
+#mic-btn.active {
+    background: rgba(220, 38, 38, 0.6);
+    border-color: #ef4444;
+    color: #fff;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
 /* Cone dropdown */
 .dropdown {
     position: relative;

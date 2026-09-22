@@ -14,6 +14,7 @@ import { SpeakerSystem } from './audio/speakers.js';
 import { createSaturation, createCompressor } from './audio/effects.js';
 import { SineGenerator } from './audio/sineGenerator.js';
 import { InputStage } from './audio/inputStage.js';
+import { MicrophoneInput } from './audio/microphone.js';
 
 import { Controls } from './ui/controls.js';
 import { makeDraggable } from './ui/draggable.js';
@@ -54,6 +55,7 @@ let inputStage = null;
 let crossover = null;
 let speakerSystem = null;
 let sineGenerator = null;
+let micInput = null;
 let _musicWasPlayingBeforeSine = false;
 let _currentAudioFileName = '';
 let effects = null; // keep reference to prevent GC
@@ -155,8 +157,19 @@ async function initAudio(file = null) {
     sineGenerator.setFrequency(controls.state.sine.frequency);
     sineGenerator.setVolume(controls.state.sine.volume);
 
+    // Live Microphone Input routed into InputStage micGainNode
+    micInput = new MicrophoneInput(ctx, inputStage.micGainNode);
+    micInput.setVolume(controls.state.input['mic-volume'] ?? 100);
+    micInput.onStateChange = (isActive) => {
+        controls.setMicActive(isActive);
+    };
+    micInput.onError = (err) => {
+        alert("Impossible d'accéder au microphone : " + (err.message || err));
+        controls.setMicActive(false);
+    };
+
     audioReady = true;
-    window.__DEBUG = { audioEngine, speakerSystem, listener, sineGenerator, camera, inputStage };
+    window.__DEBUG = { audioEngine, speakerSystem, listener, sineGenerator, camera, inputStage, micInput };
 
     // Apply initial bus volumes from config
     speakerSystem.setBusVolume('sub', DSP_DEFAULTS.sub['bus-volume'] / 100);
@@ -632,6 +645,20 @@ controls.onUserDsp((param, value) => {
 controls.onInputDsp((param, value) => {
     if (!audioReady || !inputStage) return;
     inputStage.setParam(param, value);
+    if (param === 'mic-volume' && micInput) {
+        micInput.setVolume(value);
+    }
+});
+
+controls.onMicToggle(async () => {
+    if (!audioReady || !micInput) {
+        if (!audioReady) {
+            await initAudio(null);
+        }
+    }
+    if (micInput) {
+        await micInput.toggle();
+    }
 });
 
 controls.onSubDsp((param, value) => {

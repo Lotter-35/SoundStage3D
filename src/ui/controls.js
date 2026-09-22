@@ -64,12 +64,14 @@ export class Controls {
         this._onSineToggle = null;
         this._onSineFrequency = null;
         this._onSineVolume = null;
+        this._onMicToggle = null;
 
         // UI visibility state
         this._dspVisible = false;
         this._sinePanelVisible = false;
         this.sineBtn = document.getElementById('sine-btn');
         this.sinePanelWrap = document.getElementById('sine-panel-wrap');
+        this.micBtn = document.getElementById('mic-btn');
 
         // State models for each bus
         const savedSens = localStorage.getItem('soundstage3d:master-mouse-sensitivity');
@@ -435,6 +437,11 @@ export class Controls {
 
             const cRel = fComp.add(this.state.input, 'comp-release', 10, 1000, 1).name('Release (ms)').onChange(v => this._onInputDsp && this._onInputDsp('comp-release', v));
             this._setupController(cRel, 'input-comp-release', DSP_DEFAULTS.input['comp-release'], true);
+
+            // 5. Microphone Direct
+            const fMic = gui.addFolder('Micro Direct');
+            const cMicVol = fMic.add(this.state.input, 'mic-volume', 0, 200, 1).name('Volume Micro (%)').onChange(v => this._onInputDsp && this._onInputDsp('mic-volume', v));
+            this._setupController(cMicVol, 'input-mic-volume', DSP_DEFAULTS.input['mic-volume'] ?? 100, true);
 
             this._addGuiResetButton(gui, 'input');
         }
@@ -839,6 +846,13 @@ export class Controls {
             });
         }
 
+        // Microphone Button
+        if (this.micBtn) {
+            this.micBtn.addEventListener('click', () => {
+                if (this._onMicToggle) this._onMicToggle();
+            });
+        }
+
         // Playback Head Controller (Bottom Center)
         this._playbackVisible = false;
         this._isPlaying = false;
@@ -1081,6 +1095,13 @@ export class Controls {
     onSineToggle(cb) { this._onSineToggle = cb; }
     onSineFrequency(cb) { this._onSineFrequency = cb; }
     onSineVolume(cb) { this._onSineVolume = cb; }
+    onMicToggle(cb) { this._onMicToggle = cb; }
+
+    setMicActive(active) {
+        if (!this.micBtn) return;
+        this.micBtn.textContent = active ? '🎤 Micro: ON' : '🎤 Micro: OFF';
+        this.micBtn.classList.toggle('active', active);
+    }
 
     /**
      * Met à jour l'affichage de l'analyse LUFS et du gain appliqué dans l'UI.
