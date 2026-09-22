@@ -354,7 +354,7 @@ window.addEventListener('drop', async (e) => {
 
 
 controls.onGrassChange((distance) => {
-    setGrassDistance(distance);
+    setGrassQuality(distance);
 });
 
 // ─── Camera View HUD Toggle is handled via controls.onCameraToggle and listener.cycleCameraMode ───

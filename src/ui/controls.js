@@ -367,7 +367,7 @@ export class Controls {
             this.guis.user = gui;
 
             const fAudio = gui.addFolder('Écoute & Environnement');
-            const cVol = fAudio.add(this.state.user, 'local-volume', 0, 1000, 1).name('Volume local (%)').onChange(v => this._onUserDsp && this._onUserDsp('local-volume', v));
+            const cVol = fAudio.add(this.state.user, 'local-volume', 0, 1000, 1).name('Volume local').onChange(v => this._onUserDsp && this._onUserDsp('local-volume', v));
             this._setupController(cVol, 'user-local-volume', DSP_DEFAULTS.user['local-volume'], false);
 
             const cGrass = fAudio.add(this.state.user, 'grass-distance', 0, 60, 1).name('Afficher herbe (m)').onChange(v => {

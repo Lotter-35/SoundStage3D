@@ -743,9 +743,18 @@ body {
     overflow-y: auto !important;
 }
 
-#dsp-col-right > #dsp-panel-sub:not([style*="position: fixed"]) .lil-gui.root {
-    max-height: min(480px, calc(52vh - 30px)) !important;
+#dsp-col-right > #dsp-panel-sub:not([style*="position: fixed"]) .lil-gui.root,
+#dsp-panel-sub .lil-gui.root {
+    max-height: min(720px, calc(100vh - 200px)) !important;
     overflow-y: auto !important;
+}
+
+#dsp-panel-sub .lil-gui.root > .children {
+    max-height: min(700px, calc(100vh - 220px)) !important;
+}
+
+#dsp-panel-master[style*="position: fixed"] {
+    right: 16px;
 }
 
 /* Environnement panel — top-right corner */

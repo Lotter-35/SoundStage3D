@@ -14,21 +14,45 @@ export function makeDraggable(panelEl, handleEl = panelEl, storageKey = null) {
     // Restore saved position from localStorage if valid
     if (storageKey) {
         try {
-            const saved = localStorage.getItem(`soundstage3d:win-pos:${storageKey}`);
-            if (saved) {
-                const { left, top } = JSON.parse(saved);
-                if (Number.isFinite(left) && Number.isFinite(top)) {
-                    const maxLeft = Math.max(10, window.innerWidth - 60);
+            const savedRaw = localStorage.getItem(`soundstage3d:win-pos:${storageKey}`);
+            if (savedRaw) {
+                const saved = JSON.parse(savedRaw);
+                const top = saved.top;
+                if (Number.isFinite(top)) {
                     const maxTop = Math.max(10, window.innerHeight - 40);
-                    const clLeft = Math.max(10, Math.min(maxLeft, left));
                     const clTop = Math.max(10, Math.min(maxTop, top));
                     panelEl.style.position = 'fixed';
-                    panelEl.style.left = `${clLeft}px`;
                     panelEl.style.top = `${clTop}px`;
                     panelEl.style.bottom = 'auto';
-                    panelEl.style.right = 'auto';
                     panelEl.style.transform = 'none';
                     panelEl.style.margin = '0';
+
+                    const rightKeys = ['master', 'sub', 'env', 'user', 'fill'];
+                    const isRight = saved.isRightAnchored || (saved.right !== undefined) ||
+                        rightKeys.includes(storageKey) || ((saved.left ?? 0) > window.innerWidth / 2);
+
+                    if (isRight) {
+                        let rightVal = saved.right;
+                        if (!Number.isFinite(rightVal)) {
+                            if (storageKey === 'master' || storageKey === 'sub' || storageKey === 'env') {
+                                rightVal = 16;
+                            } else if (storageKey === 'user') {
+                                rightVal = 328;
+                            } else if (saved.left !== undefined) {
+                                rightVal = Math.max(10, window.innerWidth - saved.left - (panelEl.offsetWidth || 300));
+                            } else {
+                                rightVal = 16;
+                            }
+                        }
+                        const clRight = Math.max(10, Math.min(window.innerWidth - 60, rightVal));
+                        panelEl.style.right = `${clRight}px`;
+                        panelEl.style.left = 'auto';
+                    } else {
+                        const maxLeft = Math.max(10, window.innerWidth - 60);
+                        const clLeft = Math.max(10, Math.min(maxLeft, saved.left ?? 16));
+                        panelEl.style.left = `${clLeft}px`;
+                        panelEl.style.right = 'auto';
+                    }
                 }
             }
         } catch (_) {}
@@ -100,13 +124,27 @@ export function makeDraggable(panelEl, handleEl = panelEl, storageKey = null) {
             document.body.style.userSelect = '';
 
             if (isDragging) {
+                const finalRect = panelEl.getBoundingClientRect();
+                const isRightAnchored = (finalRect.left + finalRect.width / 2) > (window.innerWidth / 2);
+                const rightVal = Math.max(10, window.innerWidth - finalRect.right);
+
+                // If on right half of viewport, anchor to right so resizing window keeps it aligned
+                if (isRightAnchored) {
+                    panelEl.style.right = `${rightVal}px`;
+                    panelEl.style.left = 'auto';
+                }
+
                 // Save custom position
                 if (storageKey) {
                     try {
-                        const finalRect = panelEl.getBoundingClientRect();
                         localStorage.setItem(
                             `soundstage3d:win-pos:${storageKey}`,
-                            JSON.stringify({ left: finalRect.left, top: finalRect.top })
+                            JSON.stringify({
+                                top: finalRect.top,
+                                isRightAnchored,
+                                right: rightVal,
+                                left: finalRect.left
+                            })
                         );
                     } catch (_) {}
                 }
@@ -127,4 +165,17 @@ export function makeDraggable(panelEl, handleEl = panelEl, storageKey = null) {
     };
 
     handleEl.addEventListener('pointerdown', onPointerDown);
+
+    // Keep panel in bounds if window is resized
+    window.addEventListener('resize', () => {
+        if (panelEl.style.position === 'fixed') {
+            if (panelEl.style.right && panelEl.style.right !== 'auto') {
+                const r = parseFloat(panelEl.style.right) || 16;
+                panelEl.style.right = `${Math.max(10, Math.min(window.innerWidth - 60, r))}px`;
+            } else if (panelEl.style.left && panelEl.style.left !== 'auto') {
+                const l = parseFloat(panelEl.style.left) || 16;
+                panelEl.style.left = `${Math.max(10, Math.min(window.innerWidth - 60, l))}px`;
+            }
+        }
+    });
 }
