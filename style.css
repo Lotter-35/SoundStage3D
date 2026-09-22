@@ -1037,7 +1037,10 @@ body {
 /* Panel Header & "↺ Tout reset" button */
 .dsp-panel-slot .lil-gui.root > .title,
 #dsp-master-wrap .lil-gui.root > .title,
-#sine-panel .lil-gui.root > .title {
+#env-panel-wrap .lil-gui.root > .title,
+#user-panel-wrap .lil-gui.root > .title,
+#sine-panel .lil-gui.root > .title,
+.lil-gui.root > .title {
     display: flex !important;
     align-items: center !important;
     padding-right: 6px !important;

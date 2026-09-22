@@ -132,6 +132,6 @@ export const DSP_DEFAULTS = {
         'mouse-sensitivity':100,    // % (10 à 300) — sensibilité souris
         'invert-y':        false,   // boolean — axe vertical
         'invert-x':        false,   // boolean — axe horizontal
-        'grass-enabled':   false,   // boolean — rendu herbe 3D
+        'grass-distance':     0,    // m (0 à 60) — distance d'affichage herbe (0 = désactivé)
     },
 };

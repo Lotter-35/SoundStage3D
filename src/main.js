@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { createStage } from './scene/stage.js';
 import { Listener } from './scene/listener.js';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
-import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js';
+import { createVegetation, updateVegetation, setGrassQuality, setGrassDistance } from './scene/vegetation.js';
 
 import { AudioEngine } from './audio/audioEngine.js';
 import { Crossover } from './audio/crossover.js';
@@ -353,8 +353,8 @@ window.addEventListener('drop', async (e) => {
 });
 
 
-controls.onGrassChange((qualityKey) => {
-    setGrassQuality(qualityKey);
+controls.onGrassChange((distance) => {
+    setGrassDistance(distance);
 });
 
 // ─── Camera View HUD Toggle is handled via controls.onCameraToggle and listener.cycleCameraMode ───
@@ -621,6 +621,10 @@ controls.onUserDsp((param, value) => {
         if (audioReady && speakerSystem) {
             speakerSystem.setLocalVolume(value);
         }
+        return;
+    }
+    if (param === 'grass-distance') {
+        setGrassDistance(value);
         return;
     }
 });

@@ -83,7 +83,7 @@ export class Controls {
                 'mouse-sensitivity': savedSens !== null ? Number(savedSens) : (DSP_DEFAULTS.user?.['mouse-sensitivity'] ?? 100),
                 'invert-y': savedInvY === 'true',
                 'invert-x': savedInvX === 'true',
-                'grass-enabled': false,
+                'grass-distance': DSP_DEFAULTS.user?.['grass-distance'] ?? 0,
             },
             input: {
                 ...DSP_DEFAULTS.input,
@@ -210,6 +210,11 @@ export class Controls {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', DSP_DEFAULTS.master['mouse-sensitivity']);
                 localStorage.setItem('soundstage3d:master-uncapped-fps', 'false');
             }
+            if (busKey === 'user') {
+                localStorage.setItem('soundstage3d:master-mouse-sensitivity', '100');
+                localStorage.setItem('soundstage3d:master-invert-y', 'false');
+                localStorage.setItem('soundstage3d:master-invert-x', 'false');
+            }
         };
 
         btn.addEventListener('click', triggerReset);
@@ -273,25 +278,26 @@ export class Controls {
 
         // ─── 1. MASTER OUT Stage GUI (Bottom-Right, above SUB) ───
         if (cMaster) {
-            const gui = new GUI({ container: cMaster, title: '🎚️ MASTER OUT Stage', closeFolders: true, width: 300 });
+            const gui = new GUI({ container: cMaster, title: 'MASTER output', closeFolders: false, width: 300 });
             this.guis.master = gui;
 
-            // Étape 1 : Égaliseur Global du Festival (Master EQ 4 bandes)
-            const fEq = gui.addFolder('Étape 1 : EQ Global Festival');
-            const cEqLow = fEq.add(this.state.master, 'eq-low', -12, 12, 0.5).name('Graves 80Hz (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-low', v));
+            // EQ Global (Master EQ 4 bandes)
+            const fEq = gui.addFolder('EQ Global');
+            const cEqLow = fEq.add(this.state.master, 'eq-low', -12, 12, 0.5).name('Graves (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-low', v));
             this._setupController(cEqLow, 'master-eq-low', DSP_DEFAULTS.master['eq-low'], false);
 
-            const cEqMidLow = fEq.add(this.state.master, 'eq-mid-low', -12, 12, 0.5).name('Bas-Méd 400Hz (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-mid-low', v));
+            const cEqMidLow = fEq.add(this.state.master, 'eq-mid-low', -12, 12, 0.5).name('Bas-Médiums (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-mid-low', v));
             this._setupController(cEqMidLow, 'master-eq-mid-low', DSP_DEFAULTS.master['eq-mid-low'], false);
 
-            const cEqMidHigh = fEq.add(this.state.master, 'eq-mid-high', -12, 12, 0.5).name('Haut-Méd 2.5k (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-mid-high', v));
+            const cEqMidHigh = fEq.add(this.state.master, 'eq-mid-high', -12, 12, 0.5).name('Haut-Médiums (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-mid-high', v));
             this._setupController(cEqMidHigh, 'master-eq-mid-high', DSP_DEFAULTS.master['eq-mid-high'], false);
 
-            const cEqHigh = fEq.add(this.state.master, 'eq-high', -12, 12, 0.5).name('Aigus 10kHz (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-high', v));
+            const cEqHigh = fEq.add(this.state.master, 'eq-high', -12, 12, 0.5).name('Aigus (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-high', v));
             this._setupController(cEqHigh, 'master-eq-high', DSP_DEFAULTS.master['eq-high'], false);
 
-            // Étape 2 : Compresseur de Bus ("Glue Compressor")
-            const fComp = gui.addFolder('Étape 2 : Compresseur de Bus');
+            // Compresseur ("Glue Compressor") - réduit par défaut
+            const fComp = gui.addFolder('Compresseur');
+            fComp.close();
             const cCompOn = fComp.add(this.state.master, 'comp-enabled').name('Actif').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-enabled', v));
             this._setupController(cCompOn, 'master-comp-enabled', DSP_DEFAULTS.master['comp-enabled'], false);
 
@@ -310,8 +316,8 @@ export class Controls {
             const cMakeup = fComp.add(this.state.master, 'comp-makeup', -6, 18, 0.5).name('Make-up (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-makeup', v));
             this._setupController(cMakeup, 'master-comp-makeup', DSP_DEFAULTS.master['comp-makeup'], false);
 
-            // Étape 3 : Limiteur de Sortie Final (True Peak / Brickwall)
-            const fLim = gui.addFolder('Étape 3 : Limiteur de Sortie');
+            // Limiteur de Sortie Final (True Peak / Brickwall)
+            const fLim = gui.addFolder('Limiteur');
             const cLimOn = fLim.add(this.state.master, 'limiter-enabled').name('Actif').onChange(v => this._onMasterDsp && this._onMasterDsp('limiter-enabled', v));
             this._setupController(cLimOn, 'master-limiter-enabled', DSP_DEFAULTS.master['limiter-enabled'], false);
 
@@ -329,7 +335,7 @@ export class Controls {
 
         // ─── 1.2 ENVIRONNEMENT Acoustique GUI (Top-Right) ───
         if (cEnv) {
-            const gui = new GUI({ container: cEnv, title: '🌳 Environnement Acoustique', closeFolders: false, width: 300 });
+            const gui = new GUI({ container: cEnv, title: 'Environnement Acoustique', closeFolders: false, width: 300 });
             this.guis.env = gui;
 
             const fAir = gui.addFolder('Atmosphère');
@@ -357,17 +363,18 @@ export class Controls {
 
         // ─── 1.3 CONTRÔLES Utilisateur GUI (Top-Right Offset) ───
         if (cUser) {
-            const gui = new GUI({ container: cUser, title: '👤 Contrôles Utilisateur', closeFolders: false, width: 300 });
+            const gui = new GUI({ container: cUser, title: 'Contrôles Utilisateur', closeFolders: false, width: 300 });
             this.guis.user = gui;
 
             const fAudio = gui.addFolder('Écoute & Environnement');
             const cVol = fAudio.add(this.state.user, 'local-volume', 0, 1000, 1).name('Volume local (%)').onChange(v => this._onUserDsp && this._onUserDsp('local-volume', v));
             this._setupController(cVol, 'user-local-volume', DSP_DEFAULTS.user['local-volume'], false);
 
-            const cGrass = fAudio.add(this.state.user, 'grass-enabled').name('🌿 Afficher herbe').onChange(v => {
-                if (this._onGrassChange) this._onGrassChange(v ? 'medium' : 'off');
+            const cGrass = fAudio.add(this.state.user, 'grass-distance', 0, 60, 1).name('Afficher herbe (m)').onChange(v => {
+                if (this._onGrassChange) this._onGrassChange(v);
+                if (this._onUserDsp) this._onUserDsp('grass-distance', v);
             });
-            this._setupController(cGrass, 'user-grass-enabled', false, false);
+            this._setupController(cGrass, 'user-grass-distance', 0, false);
 
             const fControls = gui.addFolder('Caméra & Navigation');
             const cSens = fControls.add(this.state.user, 'mouse-sensitivity', 10, 300, 1).name('Sensibilité (%)').onChange(v => {
@@ -393,7 +400,7 @@ export class Controls {
 
         // ─── 1.5 INPUT Stage GUI (Above TOP Pipeline) ───
         if (cInput) {
-            const gui = new GUI({ container: cInput, title: '🎚️ INPUT Stage', closeFolders: true, width: 300 });
+            const gui = new GUI({ container: cInput, title: '🎚️ INPUT Stage', closeFolders: false, width: 300 });
             this.guis.input = gui;
 
             // 1. Normalisation LUFS / Auto-Gain
@@ -423,8 +430,9 @@ export class Controls {
             const cEqHigh = fEq.add(this.state.input, 'eq-high', -12, 12, 0.5).name('Aigus (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-high', v));
             this._setupController(cEqHigh, 'input-eq-high', DSP_DEFAULTS.input['eq-high'], true);
 
-            // 4. Compresseur d'Entrée
+            // 4. Compresseur d'Entrée - réduit par défaut
             const fComp = gui.addFolder('Compresseur d\'Entrée');
+            fComp.close();
             const cCompOn = fComp.add(this.state.input, 'comp-enabled').name('Actif').onChange(v => this._onInputDsp && this._onInputDsp('comp-enabled', v));
             this._setupController(cCompOn, 'input-comp-enabled', DSP_DEFAULTS.input['comp-enabled'], true);
 

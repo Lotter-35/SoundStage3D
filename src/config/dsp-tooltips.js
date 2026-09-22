@@ -98,8 +98,8 @@ export const DSP_TOOLTIPS = {
     "user-local-volume": "Volume d'écoute personnel au casque ou enceintes locales. N'altère pas la diffusion des autres participants.",
     "user-mouse-sensitivity": "Sensibilité de la souris pour la caméra en vue subjective ou libre.",
     "user-invert-y": "Inverse l'axe vertical Y de la souris (haut/bas).",
-    "user-invert-x": "Inverse l'axe horizontal X de la souris (gauche/droite).",
     "user-grass-enabled": "Active ou désactive le rendu 3D de l'herbe instanciée sur le sol du festival.",
+    "user-grass-distance": "Distance d'affichage de l'herbe 3D en mètres (0 = désactivé pour performances maximales). Plus la valeur est élevée, plus l'herbe s'étend loin autour de vous.",
 
     "sine-active": "Active ou coupe le générateur de tonalité pure (remplace la musique dans les enceintes du festival).",
     "sine-frequency": "Fréquence de l'onde sinusoïdale pure (de 0 Hz à 20 000 Hz). Permet de tester les subs (<100Hz), médiums (1kHz) ou aigus (>4kHz).",

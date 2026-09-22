@@ -78,7 +78,7 @@ export async function createVegetation(scene) {
         mat.alphaTest = 0.4;
         mat.depthWrite = true;
 
-        const instanced = new THREE.InstancedMesh(srcMesh.geometry, mat, 1200);
+        const instanced = new THREE.InstancedMesh(srcMesh.geometry, mat, 2500);
         instanced.count = 0;
         instanced.visible = false; // Default OFF: completely skipped by Three.js renderer
         instanced.castShadow = false;
@@ -89,11 +89,14 @@ export async function createVegetation(scene) {
 }
 
 /**
- * Change grass density and view distance quality.
- * @param {'high'|'medium'|'low'|'off'} quality
+ * Dynamically set visible grass distance in metres.
+ * 0 = disabled (no instances, completely skipped by renderer).
+ * As distance increases, grass patches are rendered farther out.
+ * @param {number} dist
  */
-export function setGrassQuality(quality) {
-    if (quality === 'off') {
+export function setGrassDistance(dist) {
+    const d = Math.max(0, Number(dist) || 0);
+    if (d <= 0) {
         VIEW_RADIUS = 0;
         FADE_START = 0;
         MAX_VISIBLE = 0;
@@ -102,25 +105,31 @@ export function setGrassQuality(quality) {
             m.visible = false;
         }
     } else {
+        VIEW_RADIUS = d;
+        FADE_START = Math.max(0, d * 0.7);
+        // Estimate instances needed: PI * d^2 / (SPACING^2) with SPACING = 2.4
+        MAX_VISIBLE = Math.min(2500, Math.max(30, Math.round(Math.PI * d * d / (SPACING * SPACING))));
         for (const m of batchMeshes) {
             m.visible = true;
         }
-        if (quality === 'low') {
-            VIEW_RADIUS = 16;
-            FADE_START = 10;
-            MAX_VISIBLE = 200;
-        } else if (quality === 'medium') {
-            VIEW_RADIUS = 26;
-            FADE_START = 18;
-            MAX_VISIBLE = 450;
-        } else if (quality === 'high') {
-            VIEW_RADIUS = 34;
-            FADE_START = 24;
-            MAX_VISIBLE = 750;
-        }
     }
-
     _lastPos.set(Infinity, Infinity);
+}
+
+/**
+ * Change grass density and view distance quality.
+ * @param {'high'|'medium'|'low'|'off'} quality
+ */
+export function setGrassQuality(quality) {
+    if (quality === 'off') {
+        setGrassDistance(0);
+    } else if (quality === 'low') {
+        setGrassDistance(16);
+    } else if (quality === 'medium') {
+        setGrassDistance(26);
+    } else if (quality === 'high') {
+        setGrassDistance(34);
+    }
 }
 
 /**
