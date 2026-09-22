@@ -73,16 +73,12 @@ export class Controls {
 
         // State models for each bus
         const savedSens = localStorage.getItem('soundstage3d:master-mouse-sensitivity');
-        const savedInvY = localStorage.getItem('soundstage3d:master-invert-y');
-        const savedInvX = localStorage.getItem('soundstage3d:master-invert-x');
         this.state = {
             master: { ...DSP_DEFAULTS.master },
             env:    { ...DSP_DEFAULTS.env },
             user: {
                 ...DSP_DEFAULTS.user,
                 'mouse-sensitivity': savedSens !== null ? Number(savedSens) : (DSP_DEFAULTS.user?.['mouse-sensitivity'] ?? 100),
-                'invert-y': savedInvY === 'true',
-                'invert-x': savedInvX === 'true',
                 'grass-distance': DSP_DEFAULTS.user?.['grass-distance'] ?? 0,
             },
             input: {
@@ -212,8 +208,6 @@ export class Controls {
             }
             if (busKey === 'user') {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', '100');
-                localStorage.setItem('soundstage3d:master-invert-y', 'false');
-                localStorage.setItem('soundstage3d:master-invert-x', 'false');
             }
         };
 
@@ -366,34 +360,23 @@ export class Controls {
             const gui = new GUI({ container: cUser, title: 'Contrôles Utilisateur', closeFolders: false, width: 300 });
             this.guis.user = gui;
 
-            const fAudio = gui.addFolder('Écoute & Environnement');
+            const fAudio = gui.addFolder('Écoute');
             const cVol = fAudio.add(this.state.user, 'local-volume', 0, 1000, 1).name('Volume local').onChange(v => this._onUserDsp && this._onUserDsp('local-volume', v));
             this._setupController(cVol, 'user-local-volume', DSP_DEFAULTS.user['local-volume'], false);
 
-            const cGrass = fAudio.add(this.state.user, 'grass-distance', 0, 60, 1).name('Afficher herbe (m)').onChange(v => {
+            const fEnv = gui.addFolder('Environnement');
+            const cGrass = fEnv.add(this.state.user, 'grass-distance', 0, 60, 1).name('Afficher herbe (m)').onChange(v => {
                 if (this._onGrassChange) this._onGrassChange(v);
                 if (this._onUserDsp) this._onUserDsp('grass-distance', v);
             });
             this._setupController(cGrass, 'user-grass-distance', 0, false);
 
-            const fControls = gui.addFolder('Caméra & Navigation');
+            const fControls = gui.addFolder('Caméra');
             const cSens = fControls.add(this.state.user, 'mouse-sensitivity', 10, 300, 1).name('Sensibilité (%)').onChange(v => {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);
                 if (this._onUserDsp) this._onUserDsp('mouse-sensitivity', v);
             });
             this._setupController(cSens, 'user-mouse-sensitivity', 100, false);
-
-            const cInvY = fControls.add(this.state.user, 'invert-y').name('Inverser Axe Y (H/B)').onChange(v => {
-                localStorage.setItem('soundstage3d:master-invert-y', v);
-                if (this._onUserDsp) this._onUserDsp('invert-y', v);
-            });
-            this._setupController(cInvY, 'user-invert-y', false, false);
-
-            const cInvX = fControls.add(this.state.user, 'invert-x').name('Inverser Axe X (G/D)').onChange(v => {
-                localStorage.setItem('soundstage3d:master-invert-x', v);
-                if (this._onUserDsp) this._onUserDsp('invert-x', v);
-            });
-            this._setupController(cInvX, 'user-invert-x', false, false);
 
             this._addGuiResetButton(gui, 'user');
         }
