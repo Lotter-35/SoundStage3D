@@ -28,6 +28,79 @@ const PITCH_MIN = -Math.PI / 2.5; // -72° (regarder vers le haut)
 const PITCH_MAX = Math.PI / 3;    // +60° (regarder vers le bas)
 const CAMERA_SMOOTHING = 16.0;   // réactivité du suivi fluide (lerp)
 
+/**
+ * Génère une texture d'ombre portée douce et anatomique pour le personnage (Canvas 2D optimisé).
+ * Coût : exécuté 1 seule fois à l'initialisation (zéro impact par frame).
+ */
+function createCharacterShadowTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 128;
+    canvas.height = 256;
+    const ctx = canvas.getContext('2d');
+
+    ctx.clearRect(0, 0, 128, 256);
+    ctx.fillStyle = '#000000';
+
+    // 1. Tête (cercle diffus avec pénombre)
+    ctx.save();
+    ctx.filter = 'blur(9px)';
+    ctx.beginPath();
+    ctx.arc(64, 40, 15, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 2. Épaules et torse (ovales superposés avec flou moyen)
+    ctx.save();
+    ctx.filter = 'blur(7px)';
+    ctx.beginPath();
+    ctx.ellipse(64, 75, 24, 15, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(64, 115, 18, 30, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 3. Jambes (deux capsules douces)
+    ctx.save();
+    ctx.filter = 'blur(5px)';
+    ctx.beginPath();
+    ctx.ellipse(54, 175, 9, 32, 0.04, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(74, 175, 9, 32, -0.04, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 4. Pieds / Contact Ambient Occlusion (points d'ancrage nets et denses)
+    ctx.save();
+    ctx.filter = 'blur(2.5px)';
+    ctx.beginPath();
+    ctx.ellipse(53, 222, 7, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.beginPath();
+    ctx.ellipse(75, 222, 7, 12, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+
+    // 5. Dégradé de pénombre physique (l'ombre est plus nette au sol près des pieds, et s'adoucit vers le haut)
+    ctx.save();
+    ctx.globalCompositeOperation = 'destination-in';
+    const grad = ctx.createLinearGradient(0, 0, 0, 256);
+    grad.addColorStop(0.0, 'rgba(0,0,0,0.50)');  // Tête plus diffuse
+    grad.addColorStop(0.4, 'rgba(0,0,0,0.72)');  // Torse
+    grad.addColorStop(0.85, 'rgba(0,0,0,0.95)'); // Jambes
+    grad.addColorStop(1.0, 'rgba(0,0,0,1.0)');   // Contact pieds à 100%
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 128, 256);
+    ctx.restore();
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.generateMipmaps = false;
+    return texture;
+}
+
 export class Character3D {
     /**
      * @param {THREE.Scene} scene
@@ -69,6 +142,10 @@ export class Character3D {
         this.currentActionName = 'idle';
         this.isLoaded = false;
 
+        // Ombre portée projetée (ultra-optimisée : 1 quad, 0 ms de coût GPU)
+        this.shadowMesh = null;
+        this._createShadowMesh();
+
         // Vecteurs et objets réutilisés (Zero GC allocation par frame)
         this._targetCameraPos = new THREE.Vector3();
         this._characterTarget = new THREE.Vector3();
@@ -84,6 +161,38 @@ export class Character3D {
 
         // Démarrer le chargement du modèle
         this._loadModel();
+    }
+
+    /**
+     * Crée le maillage d'ombre portée projetée alignée avec la lumière du soleil.
+     */
+    _createShadowMesh() {
+        const texture = createCharacterShadowTexture();
+        const shadowGeo = new THREE.PlaneGeometry(0.9, 1.6);
+        shadowGeo.rotateX(-Math.PI / 2);
+        shadowGeo.translate(0, 0, -0.8); // Aligne le centre de projection sur les pieds
+
+        // Alignement avec la source lumineuse solaire principale (30, 60, 40)
+        this._sunAngle = Math.atan2(-30, -40);
+
+        const shadowMat = new THREE.MeshBasicMaterial({
+            map: texture,
+            transparent: true,
+            color: 0x05080c,
+            opacity: 0.58,
+            depthWrite: false,
+            polygonOffset: true,
+            polygonOffsetFactor: -1,
+            polygonOffsetUnits: -1,
+            side: THREE.DoubleSide,
+        });
+
+        this.shadowMesh = new THREE.Mesh(shadowGeo, shadowMat);
+        this.shadowMesh.renderOrder = 2; // Rendu prioritaire directement sur le sol
+        this.shadowMesh.rotation.y = this._sunAngle;
+        this.shadowMesh.position.set(this.position.x, 0.02, this.position.z);
+        this.shadowMesh.visible = this.enabled;
+        this.scene.add(this.shadowMesh);
     }
 
     /**
@@ -228,6 +337,13 @@ export class Character3D {
             this.model.position.copy(this.position);
             this.model.rotation.y = this.heading + Math.PI;
             this.model.visible = this.isThirdPerson && this.enabled;
+        }
+
+        if (this.shadowMesh) {
+            this.shadowMesh.position.set(this.position.x, 0.02, this.position.z);
+            this.shadowMesh.scale.set(1, 1, 1);
+            this.shadowMesh.material.opacity = 0.58;
+            this.shadowMesh.visible = this.enabled;
         }
 
         if (this.isThirdPerson && this.enabled) {
@@ -415,6 +531,36 @@ export class Character3D {
                 this.position.z
             );
         }
+
+        // ── 6. Mise à jour de l'ombre portée projetée ─────────────────
+        if (this.shadowMesh) {
+            // Détection du niveau du sol (herbe = 0, estrade scène = 3.0)
+            let groundY = 0;
+            if (this.position.x >= -15 && this.position.x <= 15 && this.position.z >= -10 && this.position.z <= 0) {
+                groundY = 3.0;
+            }
+
+            const h = Math.max(0, this.position.y - groundY);
+
+            // Masquer l'ombre si on vole trop haut (> 30m) ou si le mode personnage est désactivé
+            if (!this.enabled || (this.isFlying && this.position.y > 30)) {
+                this.shadowMesh.visible = false;
+            } else {
+                this.shadowMesh.visible = true;
+
+                // Projection de la position des pieds au sol selon le vecteur solaire (30, 60, 40)
+                const shadowX = this.position.x - h * 0.5;
+                const shadowZ = this.position.z - h * 0.667;
+                const shadowY = groundY + 0.02;
+
+                this.shadowMesh.position.set(shadowX, shadowY, shadowZ);
+
+                // Élargissement et adoucissement physique lorsque le personnage saute
+                const scale = 1.0 + Math.min(0.8, h * 0.12);
+                this.shadowMesh.scale.set(scale, 1.0, scale);
+                this.shadowMesh.material.opacity = Math.max(0.08, 0.58 / (1.0 + h * 0.35));
+            }
+        }
     }
 
     /** Nettoyage des ressources */
@@ -422,6 +568,14 @@ export class Character3D {
         window.removeEventListener('wheel', this._onWheel);
         if (this.model) {
             this.scene.remove(this.model);
+        }
+        if (this.shadowMesh) {
+            this.scene.remove(this.shadowMesh);
+            if (this.shadowMesh.geometry) this.shadowMesh.geometry.dispose();
+            if (this.shadowMesh.material) {
+                if (this.shadowMesh.material.map) this.shadowMesh.material.map.dispose();
+                this.shadowMesh.material.dispose();
+            }
         }
         if (this.mixer) {
             this.mixer.stopAllAction();
