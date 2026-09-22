@@ -513,10 +513,11 @@ export class SpeakerSystem {
             master: new Float32Array(256),
         };
 
-        // Sub array distribution: 1.0 full power so 7 subwoofers add up naturally
-        // and increase the acoustic physical sum freely as requested.
+        // Sub array distribution: 1.0 (7 subs) by default, adjustable via 'energy-limit'
         this.subArrayGain = ctx.createGain();
-        this.subArrayGain.gain.value = 1.0;
+        const initLimit = DSP_DEFAULTS.sub?.['energy-limit'] ?? 7;
+        const subCount = SUB_DEFS.length || 7;
+        this.subArrayGain.gain.value = Math.max(1, Math.min(subCount, initLimit)) / subCount;
         this.subLimiter.connect(this.subArrayGain);
 
         // ── Speaker wiring (2025 model: full stereo signal to each speaker) ──
@@ -766,6 +767,12 @@ export class SpeakerSystem {
             case 'lim-threshold':
                 this.subLimiter.threshold.setTargetAtTime(value, t, 0.04);
                 break;
+            case 'energy-limit': {
+                const subCount = subSpeakers.length || 7;
+                const factor = Math.max(1, Math.min(subCount, value)) / subCount;
+                this.subArrayGain.gain.setTargetAtTime(factor, t, 0.04);
+                break;
+            }
         }
         this.forceUpdateAll();
     }

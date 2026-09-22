@@ -28,6 +28,7 @@ export const DSP_DEFAULTS = {
         'refl-gain':        20,     // ×0.01 → actual gain
         'refl-lpf':       1500,     // Hz
         'lim-threshold':    -3,     // dB
+        'energy-limit':      7,     // Subs effectifs (1 à 7) — 7 = aucune limite, 1 = comme 1 seul sub
     },
 
     // ─── MID ──────────────────────────────────────────────────────────

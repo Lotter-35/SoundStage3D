@@ -485,6 +485,9 @@ export class Controls {
             const cLim = fAcoustics.add(this.state.sub, 'lim-threshold', -12, 0, 0.1).name('Limiteur (dB)').onChange(v => this._onSubDsp && this._onSubDsp('lim-threshold', v));
             this._setupController(cLim, 'sub-lim-threshold', DSP_DEFAULTS.sub['lim-threshold'], false);
 
+            const cEnergy = fAcoustics.add(this.state.sub, 'energy-limit', 1, 7, 0.1).name('Limite énergie (subs)').onChange(v => this._onSubDsp && this._onSubDsp('energy-limit', v));
+            this._setupController(cEnergy, 'sub-energy-limit', DSP_DEFAULTS.sub['energy-limit'], false);
+
             const cDist = fAcoustics.add(this.state.sub, 'dist-k', 0, 200, 1).name('Attén. dist (k)').onChange(v => this._onSubDsp && this._onSubDsp('dist-k', v));
             this._setupController(cDist, 'sub-dist-k', DSP_DEFAULTS.sub['dist-k'], false);
 
