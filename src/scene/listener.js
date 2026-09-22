@@ -52,6 +52,7 @@ export class Listener {
 
         // Mode Personnage activé par défaut (expérience 3D avec personnage visible)
         this.characterMode = true;
+        this.isFlying = false;
         this._onModeChange = null;
         this._onCameraModeChange = null;
 
@@ -158,29 +159,41 @@ export class Listener {
     }
 
     /**
-     * Identifiant du mode de caméra actuel : 'thirdPerson' | 'firstPerson' | 'freeFly'
+     * Identifiant du mode de caméra actuel : 'thirdPerson' | 'firstPerson'
      */
     get cameraMode() {
-        if (!this.characterMode) return 'freeFly';
         return this._character3D.isThirdPerson ? 'thirdPerson' : 'firstPerson';
     }
 
     /**
-     * Fait défiler les modes : 3ème personne -> 1ère personne -> Vol libre -> 3ème personne
+     * Bascule entre le mode de vol (F) et le mode sol tout en gardant la même perspective (1ère ou 3ème personne).
      */
-    cycleCameraMode() {
-        if (!this.characterMode) {
-            this.setCameraMode('thirdPerson');
-        } else if (this._character3D.isThirdPerson) {
-            this.setCameraMode('firstPerson');
-        } else {
-            this.setCameraMode('freeFly');
+    toggleFly() {
+        this.isFlying = !this.isFlying;
+        this._character3D.isFlying = this.isFlying;
+        if (!this.isFlying) {
+            // Revenir au sol doucement si on était en vol
+            this._character3D.onGround = false;
+        }
+        if (this._onCameraModeChange) {
+            this._onCameraModeChange(this.cameraMode, this.isFlying);
         }
     }
 
     /**
-     * Définit explicitement le mode de caméra et synchronise le personnage.
-     * @param {'thirdPerson'|'firstPerson'|'freeFly'} mode
+     * Fait défiler les modes de vue : 3ème personne <-> 1ère personne
+     */
+    cycleCameraMode() {
+        if (this._character3D.isThirdPerson) {
+            this.setCameraMode('firstPerson');
+        } else {
+            this.setCameraMode('thirdPerson');
+        }
+    }
+
+    /**
+     * Définit explicitement le mode de caméra (3ème ou 1ère personne).
+     * @param {'thirdPerson'|'firstPerson'} mode
      */
     setCameraMode(mode) {
         if (mode === 'thirdPerson') {
@@ -188,8 +201,8 @@ export class Listener {
             this._character3D.enabled = true;
             this._character3D.toggleCameraView(true);
             const camEuler = new THREE.Euler().setFromQuaternion(this.camera.quaternion, 'YXZ');
-            this._character3D.snapToGround(this._character3D.position, this._character3D.orbitYaw || camEuler.y);
-        } else if (mode === 'firstPerson') {
+            this._character3D.orbitYaw = this._character3D.orbitYaw || camEuler.y;
+        } else { // 'firstPerson'
             this.characterMode = true;
             this._character3D.enabled = true;
             this._character3D.toggleCameraView(false);
@@ -199,16 +212,10 @@ export class Listener {
                 this._character3D.position.z
             );
             this.camera.rotation.set(0, this._character3D.orbitYaw, 0, 'YXZ');
-        } else { // 'freeFly'
-            this.characterMode = false;
-            this._character3D.enabled = false;
-            if (this._character3D.model) {
-                this._character3D.model.visible = false;
-            }
         }
 
         if (this._onCameraModeChange) {
-            this._onCameraModeChange(this.cameraMode);
+            this._onCameraModeChange(this.cameraMode, this.isFlying);
         }
         if (this._onModeChange) {
             this._onModeChange(this.characterMode);
@@ -243,19 +250,13 @@ export class Listener {
             case 'ShiftLeft': case 'ShiftRight':          this.move.down = true; break;
 
             case 'KeyF':
-                // Basculer entre Mode Personnage et Vol libre
-                if (this.characterMode) {
-                    this.setCameraMode('freeFly');
-                } else {
-                    this.setCameraMode('thirdPerson');
-                }
+                // Basculer en mode vol tout en restant dans la vue courante (1ère ou 3ème personne)
+                this.toggleFly();
                 break;
 
             case 'KeyV':
                 // Basculer entre 3ème personne et 1ère personne
-                if (!this.characterMode) {
-                    this.setCameraMode('thirdPerson');
-                } else if (this._character3D.isThirdPerson) {
+                if (this._character3D.isThirdPerson) {
                     this.setCameraMode('firstPerson');
                 } else {
                     this.setCameraMode('thirdPerson');
@@ -302,8 +303,13 @@ export class Listener {
                 isMoving = this.move.forward || this.move.backward || this.move.left || this.move.right;
                 jumpInput = this.move.up;
 
-                // Shift permet de courir (sprint) au sol
-                const moveSpeed = this.move.down ? SPRINT_SPEED : WALK_SPEED;
+                // En vol : vitesse FLY_SPEED, au sol : marche (WALK_SPEED) ou sprint (SPRINT_SPEED avec Shift)
+                let moveSpeed;
+                if (this.isFlying) {
+                    moveSpeed = FLY_SPEED;
+                } else {
+                    moveSpeed = this.move.down ? SPRINT_SPEED : WALK_SPEED;
+                }
 
                 // Accélération fluide
                 const targetX = direction.x * moveSpeed;
@@ -312,7 +318,7 @@ export class Listener {
                 this._currentSpeed.x += (targetX - this._currentSpeed.x) * Math.min(1, dt * accelRate);
                 this._currentSpeed.y += (targetZ - this._currentSpeed.y) * Math.min(1, dt * accelRate);
 
-                // Déplacement selon l'orientation de la caméra
+                // Déplacement horizontal selon l'orientation de la caméra
                 let forwardX, forwardZ, rightX, rightZ;
 
                 if (this._character3D.isThirdPerson) {
@@ -336,6 +342,17 @@ export class Listener {
 
                 this._character3D.position.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, this._character3D.position.x + dx));
                 this._character3D.position.z = Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, this._character3D.position.z + dz));
+
+                // Gestion de la hauteur en mode vol : Espace = monter, Shift = descendre
+                if (this.isFlying) {
+                    if (this.move.up) {
+                        this._character3D.position.y += VERTICAL_SPEED * dt;
+                    }
+                    if (this.move.down) {
+                        this._character3D.position.y -= VERTICAL_SPEED * dt;
+                    }
+                    this._character3D.position.y = Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, this._character3D.position.y));
+                }
             } else {
                 // Ralentissement naturel si la souris est libérée
                 this._currentSpeed.x += (0 - this._currentSpeed.x) * Math.min(1, dt * 14);
@@ -345,37 +362,8 @@ export class Listener {
             if (Math.abs(this._currentSpeed.x) < 0.001) this._currentSpeed.x = 0;
             if (Math.abs(this._currentSpeed.y) < 0.001) this._currentSpeed.y = 0;
 
-            // Toujours mettre à jour le personnage (animation idle, gravité, caméra fluide) même si la souris est libérée
+            // Toujours mettre à jour le personnage (animation idle/run/vol, gravité/altitude, caméra fluide)
             this._character3D.update(dt, this._currentSpeed, jumpInput, isMoving);
-        } else {
-            // Mode vol libre (6 axes)
-            if (!this.controls.isLocked) return;
-
-            const direction = this._direction;
-            direction.set(0, 0, 0);
-
-            if (this.move.forward)  direction.z -= 1;
-            if (this.move.backward) direction.z += 1;
-            if (this.move.left)     direction.x -= 1;
-            if (this.move.right)    direction.x += 1;
-
-            direction.normalize();
-
-            const targetX = direction.x * FLY_SPEED;
-            const targetZ = -direction.z * FLY_SPEED;
-            this._currentSpeed.x += (targetX - this._currentSpeed.x) * Math.min(1, dt * 16);
-            this._currentSpeed.y += (targetZ - this._currentSpeed.y) * Math.min(1, dt * 16);
-
-            this.controls.moveRight(this._currentSpeed.x * dt);
-            this.controls.moveForward(this._currentSpeed.y * dt);
-            if (this.move.up)   this.camera.position.y += VERTICAL_SPEED * dt;
-            if (this.move.down) this.camera.position.y -= VERTICAL_SPEED * dt;
-
-            // Limites de scène
-            const p = this.camera.position;
-            p.x = Math.max(BOUNDS.minX, Math.min(BOUNDS.maxX, p.x));
-            p.y = Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, p.y));
-            p.z = Math.max(BOUNDS.minZ, Math.min(BOUNDS.maxZ, p.z));
         }
     }
 
@@ -416,7 +404,7 @@ export class Listener {
             return;
         }
 
-        const tc = 0.025; // 25ms smoothing
+        const tc = 0.04; // 40ms smoothing
 
         if (audioListener.positionX) {
             audioListener.positionX.setTargetAtTime(p.x, t, tc);

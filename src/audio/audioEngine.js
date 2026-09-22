@@ -20,7 +20,9 @@ export class AudioEngine {
             if (this.ctx.state === 'suspended') this.ctx.resume();
             return this.ctx;
         }
-        this.ctx = new (window.AudioContext || window.webkitAudioContext)();
+        // 'playback' hint ensures a larger hardware buffer to resist 3D lagspikes without dropouts
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        this.ctx = new AudioCtx({ latencyHint: 'playback' });
         if (this.ctx.state === 'suspended') {
             this.ctx.resume();
         }
@@ -41,10 +43,22 @@ export class AudioEngine {
         if (this.isPlaying) return;
         if (!this.buffer) return;
 
+        if (!this.outputGain) {
+            this.outputGain = this.ctx.createGain();
+        }
+        try { this.outputGain.disconnect(); } catch (_) {}
+        this.outputGain.connect(destination);
+
+        // Smooth fade-in (10ms) to prevent starting click, full 1.0 output
+        const now = this.ctx.currentTime;
+        this.outputGain.gain.cancelScheduledValues(0);
+        this.outputGain.gain.setValueAtTime(0, now);
+        this.outputGain.gain.setTargetAtTime(1.0, now, 0.004);
+
         this.sourceNode = this.ctx.createBufferSource();
         this.sourceNode.buffer = this.buffer;
         this.sourceNode.loop = true;
-        this.sourceNode.connect(destination);
+        this.sourceNode.connect(this.outputGain);
 
         this.sourceNode.start(0, this.startOffset);
         this.startTime = this.ctx.currentTime;
@@ -59,22 +73,50 @@ export class AudioEngine {
     }
 
     pause() {
-        if (!this.isPlaying) return;
-        this.startOffset += this.ctx.currentTime - this.startTime;
-        this.sourceNode.stop();
-        this.sourceNode.disconnect();
-        this.sourceNode = null;
+        if (!this.isPlaying || !this.sourceNode) return;
+        const now = this.ctx.currentTime;
+        this.startOffset += now - this.startTime;
         this.isPlaying = false;
+        const src = this.sourceNode;
+        this.sourceNode = null;
+
+        // Smooth de-click fade-out (15ms)
+        if (this.outputGain) {
+            this.outputGain.gain.cancelScheduledValues(0);
+            this.outputGain.gain.setTargetAtTime(0, now, 0.003);
+        }
+
+        setTimeout(() => {
+            try {
+                src.stop();
+                src.disconnect();
+            } catch (_) {}
+        }, 20);
     }
 
     stop() {
-        if (this.sourceNode) {
-            this.sourceNode.stop();
-            this.sourceNode.disconnect();
-            this.sourceNode = null;
+        if (!this.sourceNode) {
+            this.isPlaying = false;
+            this.startOffset = 0;
+            return;
         }
+        const now = this.ctx.currentTime;
         this.isPlaying = false;
         this.startOffset = 0;
+        const src = this.sourceNode;
+        this.sourceNode = null;
+
+        if (this.outputGain) {
+            this.outputGain.gain.cancelScheduledValues(0);
+            this.outputGain.gain.setTargetAtTime(0, now, 0.003);
+        }
+
+        setTimeout(() => {
+            try {
+                src.stop();
+                src.disconnect();
+            } catch (_) {}
+        }, 20);
     }
 
     get context() {

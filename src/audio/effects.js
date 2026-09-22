@@ -15,7 +15,7 @@ export function createSaturation(ctx, defaults = {}) {
     input.gain.value = 1;
 
     const shaper = ctx.createWaveShaper();
-    shaper.oversample = '2x';
+    shaper.oversample = defaults.oversample ?? 'none';
 
     const drive = defaults.drive ?? 50;
     const mix = defaults.mix ?? 100;
@@ -74,11 +74,11 @@ export function createSaturation(ctx, defaults = {}) {
 function _applySatCurve(shaper, drive) {
     const samples = 8192;
     const curve = new Float32Array(samples);
-    // drive 0 = linear, drive 100 = hard clip
+    // drive 0 = linear, drive 100 = hard clip, scaled to 0.95 ceiling to prevent 0 dBFS boundary collision
     const amount = Math.max(0.01, drive / 50); // 0..2 range
     for (let i = 0; i < samples; i++) {
         const x = (i * 2) / samples - 1;
-        curve[i] = (1 + amount) * x / (1 + amount * Math.abs(x));
+        curve[i] = 0.95 * (1 + amount) * x / (1 + amount * Math.abs(x));
     }
     shaper.curve = curve;
 }

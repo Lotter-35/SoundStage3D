@@ -47,6 +47,7 @@ export class Character3D {
         this.position = new THREE.Vector3(0, 0, 50);
         this.verticalVelocity = 0;
         this.onGround = true;
+        this.isFlying = false;
 
         // Angle d'orientation du personnage (rotation Y en radians)
         // 0 = face à la scène (vers -Z)
@@ -282,24 +283,33 @@ export class Character3D {
      * @param {boolean} [isMoving=false] — vrai si le joueur avance/recule/latéral
      */
     update(dt, horizontalVelocity, jumpInput = false, isMoving = false) {
-        // ── 1. Physique verticale (Saut & Gravité) ───────────────────
-        if (jumpInput && this.onGround) {
-            this.verticalVelocity = JUMP_VELOCITY;
+        // ── 1. Physique verticale (Saut & Gravité ou Vol) ───────────
+        if (this.isFlying) {
+            // En mode vol, pas de gravité terrestre ; la hauteur y est gérée par les contrôles
             this.onGround = false;
-        }
-
-        if (!this.onGround) {
-            this.verticalVelocity -= GRAVITY * dt;
-            this.position.y += this.verticalVelocity * dt;
-
-            // Collision avec le sol (y = 0)
-            if (this.position.y <= 0) {
+            this.verticalVelocity = 0;
+            if (this.position.y < 0) {
                 this.position.y = 0;
-                this.verticalVelocity = 0;
-                this.onGround = true;
             }
         } else {
-            this.position.y = 0;
+            if (jumpInput && this.onGround) {
+                this.verticalVelocity = JUMP_VELOCITY;
+                this.onGround = false;
+            }
+
+            if (!this.onGround) {
+                this.verticalVelocity -= GRAVITY * dt;
+                this.position.y += this.verticalVelocity * dt;
+
+                // Collision avec le sol (y = 0)
+                if (this.position.y <= 0) {
+                    this.position.y = 0;
+                    this.verticalVelocity = 0;
+                    this.onGround = true;
+                }
+            } else {
+                this.position.y = 0;
+            }
         }
 
         // ── 2. Orientation du personnage ─────────────────────────────
@@ -310,7 +320,8 @@ export class Character3D {
 
         if (isMoving && currentSpeed > 0.1) {
             // Calculer la direction de déplacement dans le plan XZ mondial
-            const moveAngle = Math.atan2(vx, vz);
+            // vx > 0 (droite), vz > 0 (avant) -> l'angle d'orientation doit pointer vers la direction de marche
+            const moveAngle = Math.atan2(-vx, vz);
             this.targetHeading = this.orbitYaw + moveAngle;
 
             // Interpolation angulaire lisse sans inversion à ±PI
@@ -327,7 +338,20 @@ export class Character3D {
 
             // ── 4. Machine à états d'animations ──────────────────────
             if (this.mixer) {
-                if (!this.onGround) {
+                if (this.isFlying) {
+                    // En vol : courir/planer si déplacement, sinon animation douce en suspension
+                    if (isMoving && currentSpeed > 0.1) {
+                        if (this.actions['run']) {
+                            this._fadeToAction('run', 0.2);
+                        } else if (this.actions['walk']) {
+                            this._fadeToAction('walk', 0.2);
+                        }
+                    } else {
+                        if (this.actions['idle']) {
+                            this._fadeToAction('idle', 0.25);
+                        }
+                    }
+                } else if (!this.onGround) {
                     // En l'air (saut) : déclencher la pose de saut / course dynamique
                     if (this.actions['run']) {
                         this._fadeToAction('run', 0.15);
@@ -380,8 +404,8 @@ export class Character3D {
                 camZ
             );
 
-            // Suivi fluide de la caméra (smooth lerp pour amortir les à-coups)
-            this.camera.position.lerp(this._targetCameraPos, Math.min(1.0, dt * CAMERA_SMOOTHING));
+            // Positionnement direct de la caméra (rigide, sans dérive angulaire lors des strafes)
+            this.camera.position.copy(this._targetCameraPos);
             this.camera.lookAt(this._characterTarget);
         } else {
             // Mode 1ère personne : caméra positionnée exactement aux yeux du joueur

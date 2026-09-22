@@ -17,6 +17,7 @@ import { SineGenerator } from './audio/sineGenerator.js';
 import { Controls } from './ui/controls.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
+import { setupAudioDebugProbes } from './audio/debugProbes.js';
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
@@ -150,6 +151,9 @@ async function initAudio(file = null) {
     speakerSystem.setBusVolume('top', DSP_DEFAULTS.top['bus-volume'] / 100);
     speakerSystem.setBusVolume('fill', DSP_DEFAULTS.fill['bus-volume'] / 100);
 
+    // Initialisation des sondes de diagnostic en temps réel
+    setupAudioDebugProbes(audioEngine, crossover, effects, speakerSystem);
+
     if (file) {
         audioEngine.play(crossover.input);
         controls.setPlayState(true);
@@ -191,10 +195,10 @@ window.addEventListener('click', unlockAudioContext);
 controls.onCameraToggle(() => {
     listener.cycleCameraMode();
 });
-listener.onCameraModeChange((mode) => {
-    controls.setCameraModeLabel(mode);
+listener.onCameraModeChange((mode, isFlying) => {
+    controls.setCameraModeLabel(mode, isFlying);
 });
-controls.setCameraModeLabel(listener.cameraMode);
+controls.setCameraModeLabel(listener.cameraMode, listener.isFlying);
 listener.setSensitivity(controls.state.master['mouse-sensitivity'] / 100);
 listener.setInvertPitch(controls.state.master['invert-y']);
 listener.setInvertYaw(controls.state.master['invert-x']);
@@ -768,21 +772,29 @@ ${memLines}`;
     if (!ri.autoReset) ri.reset();
 }
 
+let _lastFrameTime = performance.now();
+
 function renderFrame() {
+    const now = performance.now();
+    const realFrameMs = now - _lastFrameTime;
+    _lastFrameTime = now;
+
     const dt = Math.min(clock.getDelta(), 0.1);
 
     // Update listener movement
     listener.update(dt);
 
-    // Sync audio listener with camera
     if (audioReady) {
-        // Auto-resume AudioContext if browser suspended it
-        const ctx = audioEngine.context;
-        if (ctx.state === 'suspended') ctx.resume();
-
-        listener._audioCtxTime = ctx.currentTime;
-        listener.syncAudioListener(ctx.listener, ctx);
-        speakerSystem.update(listener.position);
+        // Protection anti-microcoupure : si l'onglet est en arrière-plan (Alt+Tab) ou si un lagspike 3D survient (> 45ms),
+        // on ne surcharge pas Web Audio avec des calculs spatiaux afin de garantir un flux audio continu sans saccade.
+        const isTabHidden = document.hidden;
+        const isLagSpike = realFrameMs > 45;
+        if (!isTabHidden && !isLagSpike) {
+            const ctx = audioEngine.context;
+            listener._audioCtxTime = ctx.currentTime;
+            listener.syncAudioListener(ctx.listener, ctx);
+            speakerSystem.update(listener.position);
+        }
     }
 
     // Update HUD (throttled)
@@ -798,7 +810,8 @@ function renderFrame() {
         _meterAccum += dt;
         if (_meterAccum >= METER_INTERVAL) {
             _meterAccum = 0;
-            controls.updateMeters(speakerSystem.getLevels());
+            const levels = speakerSystem.getLevels();
+            controls.updateMeters(levels);
         }
     }
 

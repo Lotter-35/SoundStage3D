@@ -273,7 +273,7 @@ export class Controls {
             this._setupController(cReverb, 'master-reverb', DSP_DEFAULTS.master['reverb'], false);
 
             const fLocal = gui.addFolder('Volume local 🔒');
-            const cVol = fLocal.add(this.state.master, 'local-volume', 0, 100, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
+            const cVol = fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
             this._setupController(cVol, 'master-local-volume', DSP_DEFAULTS.master['local-volume'], false);
 
             const fControls = gui.addFolder('Contrôles');
@@ -738,16 +738,14 @@ export class Controls {
         }
     }
 
-    setCameraModeLabel(mode) {
+    setCameraModeLabel(mode, isFlying = false) {
         if (!this.camBtn) return;
+        const flySuffix = isFlying ? ' [Vol]' : '';
         if (mode === 'thirdPerson') {
-            this.camBtn.textContent = '🎥 Vue: 3ème pers.';
+            this.camBtn.textContent = `🎥 Vue: 3ème pers.${flySuffix}`;
             this.camBtn.classList.add('active');
-        } else if (mode === 'firstPerson') {
-            this.camBtn.textContent = '🎥 Vue: 1ère pers.';
-            this.camBtn.classList.remove('active');
         } else {
-            this.camBtn.textContent = '🛸 Mode: Vol libre';
+            this.camBtn.textContent = `🎥 Vue: 1ère pers.${flySuffix}`;
             this.camBtn.classList.remove('active');
         }
     }

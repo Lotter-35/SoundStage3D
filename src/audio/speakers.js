@@ -182,7 +182,7 @@ class Speaker {
         // Sub speakers: proximity saturation between high-shelf and panner
         if (this._isSub) {
             this._proxShaper = ctx.createWaveShaper();
-            this._proxShaper.oversample = '2x';
+            this._proxShaper.oversample = 'none'; // 'none' avoids polyphase resampling spikes on 7 parallel subs
             this._proxWet = ctx.createGain();
             this._proxDry = ctx.createGain();
             this._proxOut = ctx.createGain();
@@ -379,15 +379,12 @@ export class SpeakerSystem {
         this.subAnalyser.fftSize = 256;
 
         // SUB bus limiter / acoustic headroom controller
-        // Smooth soft-knee leveling designed specifically for low frequencies (<90 Hz):
-        // prevents harsh intermodulation clipping when sub energy is huge, creating a warm,
-        // room-filling sustained bass ("prendre plus d'espace") instead of crackling.
         this.subLimiter = ctx.createDynamicsCompressor();
         this.subLimiter.threshold.value = DSP_DEFAULTS.sub?.['lim-threshold'] ?? -3;
-        this.subLimiter.knee.value = 8;        // soft knee for smooth acoustic transition
-        this.subLimiter.ratio.value = 16;      // musical limiting ratio
-        this.subLimiter.attack.value = 0.005;  // 5 ms: lets natural sub transient punch through
-        this.subLimiter.release.value = 0.08;  // 80 ms: natural sub wave cycle tracking without distortion
+        this.subLimiter.knee.value = 8;
+        this.subLimiter.ratio.value = 16;
+        this.subLimiter.attack.value = 0.005;
+        this.subLimiter.release.value = 0.08;
 
         this.subVolume.connect(this.subLimiter);
         this.subLimiter.connect(this.subAnalyser);
@@ -435,13 +432,13 @@ export class SpeakerSystem {
         this.masterOutput = ctx.createGain();
         this.masterOutput.gain.value = 1;
 
-        // Brick-wall peak limiter (ultra-fast 0.3 ms attack to prevent DAC clipping and meter clip)
+        // Brick-wall peak limiter with musical 5ms attack to avoid low-frequency wave-cycle chopping
         this.masterLimiter = ctx.createDynamicsCompressor();
         this.masterLimiter.threshold.value = DSP_DEFAULTS.master?.['lim-threshold'] ?? -3;
-        this.masterLimiter.knee.value = 2;
+        this.masterLimiter.knee.value = 6;
         this.masterLimiter.ratio.value = 20;
-        this.masterLimiter.attack.value = 0.0003;
-        this.masterLimiter.release.value = 0.05;
+        this.masterLimiter.attack.value = 0.005;
+        this.masterLimiter.release.value = 0.08;
 
         // HRTF brightness compensation: high-shelf boost to counter HRTF dullness
         this.hrtfShelf = ctx.createBiquadFilter();
@@ -454,10 +451,13 @@ export class SpeakerSystem {
         this.reverbConvolver.buffer = this._createReverbIR(2.5, 2.0);
         this.reverbWet = ctx.createGain();
         this.reverbWet.gain.value = 0; // fully dry by default
+        this.reverbSend = ctx.createGain();
+        this.reverbSend.gain.value = 0; // zero send prevents running 2.5s stereo convolution when dry
 
         this.masterOutput.connect(this.hrtfShelf);
         this.hrtfShelf.connect(this.masterLimiter);           // dry path (always full)
-        this.hrtfShelf.connect(this.reverbConvolver);          // wet send
+        this.hrtfShelf.connect(this.reverbSend);              // wet send
+        this.reverbSend.connect(this.reverbConvolver);
         this.reverbConvolver.connect(this.reverbWet);
         this.reverbWet.connect(this.masterLimiter);
 
@@ -465,7 +465,39 @@ export class SpeakerSystem {
         this.localVolumeGain = ctx.createGain();
         this.localVolumeGain.gain.value = 1;
         this.masterLimiter.connect(this.localVolumeGain);
-        this.localVolumeGain.connect(ctx.destination);
+        // Headphone Safety Limiter & Soft-Clipper: guarantees zero DAC clipping/crackling even at 1000% volume
+        this.headphoneLimiter = ctx.createDynamicsCompressor();
+        this.headphoneLimiter.threshold.value = -1.0;
+        this.headphoneLimiter.knee.value = 3.0;
+        this.headphoneLimiter.ratio.value = 16;
+        this.headphoneLimiter.attack.value = 0.003;
+        this.headphoneLimiter.release.value = 0.10;
+
+        // Transparent soft-clipper: perfectly linear for normal signals,
+        // only soft-clips peaks above ±0.85 to ceiling ±0.98.
+        // oversample: 'none' avoids audio worker resampler hiccups on focus loss / alt-tab.
+        this.headphoneClipper = ctx.createWaveShaper();
+        this.headphoneClipper.oversample = 'none';
+        const clipSamples = 2048;
+        const clipCurve = new Float32Array(clipSamples);
+        const clipKnee = 0.88;
+        const clipCeiling = 0.98;
+        for (let i = 0; i < clipSamples; i++) {
+            const x = (i / (clipSamples - 1)) * 2 - 1;
+            const a = Math.abs(x);
+            if (a <= clipKnee) {
+                clipCurve[i] = x;
+            } else {
+                const t = (a - clipKnee) / (1.0 - clipKnee);
+                const compressed = clipKnee + (clipCeiling - clipKnee) * Math.tanh(t);
+                clipCurve[i] = x > 0 ? compressed : -compressed;
+            }
+        }
+        this.headphoneClipper.curve = clipCurve;
+
+        this.localVolumeGain.connect(this.headphoneLimiter);
+        this.headphoneLimiter.connect(this.headphoneClipper);
+        this.headphoneClipper.connect(ctx.destination);
 
         // Master analyser taps after master limiter
         this.masterAnalyser = ctx.createAnalyser();
@@ -481,55 +513,25 @@ export class SpeakerSystem {
             master: new Float32Array(256),
         };
 
-        // ── Channel Routing (Left, Right, Mono Sum for Subs) ──
-        // Sub: downmix stereo input to mono (L*0.5 + R*0.5) so subs don't bias to one side
-        const subSplit = ctx.createChannelSplitter(2);
-        const subMonoSum = ctx.createGain();
-        subMonoSum.gain.value = 0.5;
-        this.subLimiter.connect(subSplit);
-        subSplit.connect(subMonoSum, 0); // L -> mono sum
-        subSplit.connect(subMonoSum, 1); // R -> mono sum
+        // Sub array distribution: 1.0 full power so 7 subwoofers add up naturally
+        // and increase the acoustic physical sum freely as requested.
+        this.subArrayGain = ctx.createGain();
+        this.subArrayGain.gain.value = 1.0;
+        this.subLimiter.connect(this.subArrayGain);
 
-        // Mid split
-        const midSplit = ctx.createChannelSplitter(2);
-        const midLeftGain = ctx.createGain();
-        const midRightGain = ctx.createGain();
-        this.midLimiter.connect(midSplit);
-        midSplit.connect(midLeftGain, 0);   // L channel
-        midSplit.connect(midRightGain, 1);  // R channel
-
-        // Top split
-        const topSplit = ctx.createChannelSplitter(2);
-        const topLeftGain = ctx.createGain();
-        const topRightGain = ctx.createGain();
-        this.topLimiter.connect(topSplit);
-        topSplit.connect(topLeftGain, 0);   // L channel
-        topSplit.connect(topRightGain, 1);  // R channel
-
-        // Fill split
-        const fillSplit = ctx.createChannelSplitter(2);
-        const fillLeftGain = ctx.createGain();
-        const fillRightGain = ctx.createGain();
-        this.fillLimiter.connect(fillSplit);
-        fillSplit.connect(fillLeftGain, 0);  // L channel
-        fillSplit.connect(fillRightGain, 1); // R channel
-
-        // Create speakers and wire each to its exact physical channel
+        // ── Speaker wiring (2025 model: full stereo signal to each speaker) ──
         for (const def of SPEAKER_DEFS) {
             const speaker = new Speaker(ctx, def, this.masterOutput);
             this.speakers.push(speaker);
 
             if (def.bus === 'sub') {
-                subMonoSum.connect(speaker.input);
+                this.subArrayGain.connect(speaker.input);
             } else if (def.bus === 'mid') {
-                const src = def.channel === 'right' ? midRightGain : midLeftGain;
-                src.connect(speaker.input);
+                this.midLimiter.connect(speaker.input);
             } else if (def.bus === 'fill') {
-                const src = def.channel === 'right' ? fillRightGain : fillLeftGain;
-                src.connect(speaker.input);
+                this.fillLimiter.connect(speaker.input);
             } else {
-                const src = def.channel === 'right' ? topRightGain : topLeftGain;
-                src.connect(speaker.input);
+                this.topLimiter.connect(speaker.input);
             }
         }
 
@@ -666,12 +668,16 @@ export class SpeakerSystem {
                 for (const s of this.speakers) s.setHighShelfGain(value);
                 break;
             case 'local-volume':
-                this.localVolumeGain.gain.cancelScheduledValues(0);
-                this.localVolumeGain.gain.value = value / 100;
+                this.localVolumeGain.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.015);
                 break;
-            case 'reverb':
-                this.reverbWet.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.05);
+            case 'reverb': {
+                const wet = value / 100;
+                this.reverbWet.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.05);
+                if (this.reverbSend) {
+                    this.reverbSend.gain.setTargetAtTime(wet > 0 ? 1 : 0, this.ctx.currentTime, 0.05);
+                }
                 break;
+            }
             case 'lim-threshold':
                 this.masterLimiter.threshold.setTargetAtTime(value, this.ctx.currentTime, 0.04);
                 break;
@@ -934,7 +940,7 @@ export class SpeakerSystem {
             a.smoothingTimeConstant = 0.8;
             a.minDecibels = -90;
             a.maxDecibels = 0;
-            this.localVolumeGain.connect(a);
+            (this.headphoneClipper || this.localVolumeGain).connect(a);
             this._headphoneAnalyser = a;
         }
         return this._headphoneAnalyser;
