@@ -26,15 +26,14 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPrefere
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFShadowMap;
-renderer.shadowMap.autoUpdate = false;
-renderer.shadowMap.needsUpdate = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.autoUpdate = true;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
 // Build 3D stage
-const { coneContainer, coneGroups } = createStage(scene);
+const { coneContainer, coneGroups, dirLight } = createStage(scene);
 
 // ─── Skybox ───────────────────────────────────────────────────────
 // Fond couleur fallback (avant que le GLB soit prêt)
@@ -861,6 +860,13 @@ function renderFrame() {
 
     // Show/hide grass chunks near camera
     updateVegetation(camera);
+
+    // Update dynamic shadow camera to follow player smoothly
+    if (dirLight && listener) {
+        const lp = listener.position;
+        dirLight.target.position.set(lp.x, lp.y, lp.z);
+        dirLight.position.set(lp.x + 32, lp.y + 40, lp.z + 38);
+    }
 
     // Render with CPU time benchmark
     const t0 = performance.now();

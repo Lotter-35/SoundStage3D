@@ -155,17 +155,20 @@ export function createStage(scene) {
     scene.add(hemiLight);
 
     const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
-    dirLight.position.set(30, 60, 40);
+    dirLight.position.set(32, 45, 38);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 512;
-    dirLight.shadow.mapSize.height = 512;
-    dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 150;
-    dirLight.shadow.camera.left = -60;
-    dirLight.shadow.camera.right = 60;
-    dirLight.shadow.camera.top = 60;
-    dirLight.shadow.camera.bottom = -60;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 10;
+    dirLight.shadow.camera.far = 130;
+    dirLight.shadow.camera.left = -25;
+    dirLight.shadow.camera.right = 25;
+    dirLight.shadow.camera.top = 25;
+    dirLight.shadow.camera.bottom = -25;
+    dirLight.shadow.bias = -0.0003;
+    dirLight.shadow.normalBias = 0.02;
     scene.add(dirLight);
+    scene.add(dirLight.target);
 
     // Stage lights (colored point lights — subtle in daytime)
     const stageLight1 = new THREE.PointLight(0xff3366, 0.5, 30);
@@ -244,5 +247,5 @@ export function createStage(scene) {
         }
     }
 
-    return { coneContainer, coneGroups };
+    return { coneContainer, coneGroups, dirLight };
 }
