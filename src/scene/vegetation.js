@@ -121,6 +121,10 @@ export function setGrassDistance(dist) {
  * @param {'high'|'medium'|'low'|'off'} quality
  */
 export function setGrassQuality(quality) {
+    if (typeof quality === 'number' || (!isNaN(Number(quality)) && quality !== 'off' && quality !== 'low' && quality !== 'medium' && quality !== 'high')) {
+        setGrassDistance(Number(quality));
+        return;
+    }
     if (quality === 'off') {
         setGrassDistance(0);
     } else if (quality === 'low') {

@@ -6,7 +6,7 @@ import * as THREE from 'three';
 import { createStage } from './scene/stage.js';
 import { Listener } from './scene/listener.js';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
-import { createVegetation, updateVegetation, setGrassQuality, setGrassDistance } from './scene/vegetation.js';
+import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
 
 import { AudioEngine } from './audio/audioEngine.js';
 import { Crossover } from './audio/crossover.js';
@@ -624,7 +624,7 @@ controls.onUserDsp((param, value) => {
         return;
     }
     if (param === 'grass-distance') {
-        setGrassDistance(value);
+        setGrassQuality(value);
         return;
     }
 });
