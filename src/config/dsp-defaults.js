@@ -93,13 +93,45 @@ export const DSP_DEFAULTS = {
         'lim-threshold':    -3,     // dB
     },
 
-    // ─── MASTER GLOBAL ────────────────────────────────────────────────
+    // ─── MASTER OUT STAGE ─────────────────────────────────────────────
     master: {
-        'air-abs':          40,     // Hz/m — air absorption coefficient
-        'treble':            0,     // dB — high-shelf boost
-        'reverb':            0,     // % — reverb wet level
-        'lim-threshold':    -3,     // dB — master limiter threshold
-        'local-volume':    100,     // % — local output volume
-        'mouse-sensitivity':100,    // % — mouse sensitivity multiplier
+        // Étape 1 : EQ Global Festival (4 bandes paramétriques)
+        'eq-low':            0,     // dB (-12 à +12) — Low Shelf 80 Hz
+        'eq-mid-low':        0,     // dB (-12 à +12) — Peaking 400 Hz
+        'eq-mid-high':       0,     // dB (-12 à +12) — Peaking 2500 Hz
+        'eq-high':           0,     // dB (-12 à +12) — High Shelf 10000 Hz
+
+        // Étape 2 : Compresseur de Bus ("Glue Compressor")
+        'comp-enabled':   false,    // boolean — bypass par défaut
+        'comp-threshold':   -12,    // dB (-40 à 0)
+        'comp-ratio':       2.0,    // :1 (1 à 20)
+        'comp-attack':       30,    // ms (0.1 à 100)
+        'comp-release':     100,    // ms (10 à 1000)
+        'comp-makeup':        0,    // dB (-6 à +18)
+
+        // Étape 3 : Limiteur de Sortie Final (True Peak / Brickwall)
+        'limiter-enabled': true,    // boolean — actif par défaut
+        'limiter-threshold': -0.1,  // dBFS (-12 à 0)
+        'limiter-attack':   0.5,    // ms (0.1 à 10)
+        'limiter-release':   50,    // ms (10 à 500)
+    },
+
+    // ─── ENVIRONNEMENT ACOUSTIQUE ─────────────────────────────────────
+    env: {
+        'air-abs':           40,    // Hz/m — coefficient d'absorption de l'air
+        'treble':             0,    // dB — brillance générale
+        'reverb-wet':         0,    // % (0 à 100) — niveau wet
+        'reverb-decay':     2.5,    // s (0.5 à 8.0) — durée de queue
+        'reverb-damping':  6000,    // Hz (1000 à 18000) — amortissement HF
+        'reverb-predelay':   10,    // ms (0 à 100) — pré-délai
+    },
+
+    // ─── CONTRÔLES UTILISATEUR ────────────────────────────────────────
+    user: {
+        'local-volume':     100,    // % (0 à 1000) — écoute locale
+        'mouse-sensitivity':100,    // % (10 à 300) — sensibilité souris
+        'invert-y':        false,   // boolean — axe vertical
+        'invert-x':        false,   // boolean — axe horizontal
+        'grass-enabled':   false,   // boolean — rendu herbe 3D
     },
 };

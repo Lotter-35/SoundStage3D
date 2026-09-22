@@ -24,7 +24,8 @@ export class Controls {
         this.changeMp3Btn = document.getElementById('change-mp3-btn');
         this.dspBtn = document.getElementById('dsp-btn');
         this.dspPanels = document.getElementById('dsp-panels');
-        this.dspMasterWrap = document.getElementById('dsp-master-wrap');
+        this.envPanelWrap = document.getElementById('env-panel-wrap');
+        this.userPanelWrap = document.getElementById('user-panel-wrap');
         this.positionDisplay = document.getElementById('position-display');
         this.tooltipEl = document.getElementById('dsp-tooltip');
         this._tooltipTimer = null;
@@ -53,6 +54,8 @@ export class Controls {
         this._onHrtfBrightness = null;
         this._onGrassChange = null;
         this._onMasterDsp = null;
+        this._onEnvDsp = null;
+        this._onUserDsp = null;
         this._onInputDsp = null;
         this._onSubDsp = null;
         this._onMidDsp = null;
@@ -70,16 +73,17 @@ export class Controls {
 
         // State models for each bus
         const savedSens = localStorage.getItem('soundstage3d:master-mouse-sensitivity');
-        const savedUncap = localStorage.getItem('soundstage3d:master-uncapped-fps');
         const savedInvY = localStorage.getItem('soundstage3d:master-invert-y');
         const savedInvX = localStorage.getItem('soundstage3d:master-invert-x');
         this.state = {
-            master: {
-                ...DSP_DEFAULTS.master,
-                'mouse-sensitivity': savedSens !== null ? Number(savedSens) : DSP_DEFAULTS.master['mouse-sensitivity'],
-                'uncapped-fps': savedUncap === 'true',
+            master: { ...DSP_DEFAULTS.master },
+            env:    { ...DSP_DEFAULTS.env },
+            user: {
+                ...DSP_DEFAULTS.user,
+                'mouse-sensitivity': savedSens !== null ? Number(savedSens) : (DSP_DEFAULTS.user?.['mouse-sensitivity'] ?? 100),
                 'invert-y': savedInvY === 'true',
                 'invert-x': savedInvX === 'true',
+                'grass-enabled': false,
             },
             input: {
                 ...DSP_DEFAULTS.input,
@@ -249,6 +253,8 @@ export class Controls {
 
     _initGuis() {
         const cMaster = document.getElementById('dsp-panel-master');
+        const cEnv    = document.getElementById('dsp-panel-env');
+        const cUser   = document.getElementById('dsp-panel-user');
         const cInput  = document.getElementById('dsp-panel-input');
         const cTop    = document.getElementById('dsp-panel-top');
         const cMid    = document.getElementById('dsp-panel-mid');
@@ -258,52 +264,131 @@ export class Controls {
 
         // Stop click and mousedown from propagating to canvas when clicking panels
         const stopProp = (e) => e.stopPropagation();
-        [cMaster, cInput, cTop, cMid, cFill, cSub, cSine].forEach(container => {
+        [cMaster, cEnv, cUser, cInput, cTop, cMid, cFill, cSub, cSine].forEach(container => {
             if (container) {
                 container.addEventListener('click', stopProp);
                 container.addEventListener('mousedown', stopProp);
             }
         });
 
-        // ─── 1. Master GUI (Top-Right, right group) ───
+        // ─── 1. MASTER OUT Stage GUI (Bottom-Right, above SUB) ───
         if (cMaster) {
-            const gui = new GUI({ container: cMaster, title: '🎚 Master & Environnement', closeFolders: false, width: 300 });
+            const gui = new GUI({ container: cMaster, title: '🎚️ MASTER OUT Stage', closeFolders: true, width: 300 });
             this.guis.master = gui;
 
-            const fEnv = gui.addFolder('Environnement');
-            const cAir = fEnv.add(this.state.master, 'air-abs', 0, 50, 1).name('Abs. air (Hz/m)').onChange(v => this._onMasterDsp && this._onMasterDsp('air-abs', v));
-            this._setupController(cAir, 'master-air-abs', DSP_DEFAULTS.master['air-abs'], false);
+            // Étape 1 : Égaliseur Global du Festival (Master EQ 4 bandes)
+            const fEq = gui.addFolder('Étape 1 : EQ Global Festival');
+            const cEqLow = fEq.add(this.state.master, 'eq-low', -12, 12, 0.5).name('Graves 80Hz (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-low', v));
+            this._setupController(cEqLow, 'master-eq-low', DSP_DEFAULTS.master['eq-low'], false);
 
-            const cTreble = fEnv.add(this.state.master, 'treble', 0, 15, 0.1).name('Aigus (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('treble', v));
-            this._setupController(cTreble, 'master-treble', DSP_DEFAULTS.master['treble'], false);
+            const cEqMidLow = fEq.add(this.state.master, 'eq-mid-low', -12, 12, 0.5).name('Bas-Méd 400Hz (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-mid-low', v));
+            this._setupController(cEqMidLow, 'master-eq-mid-low', DSP_DEFAULTS.master['eq-mid-low'], false);
 
-            const cReverb = fEnv.add(this.state.master, 'reverb', 0, 100, 1).name('Réverb (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('reverb', v));
-            this._setupController(cReverb, 'master-reverb', DSP_DEFAULTS.master['reverb'], false);
+            const cEqMidHigh = fEq.add(this.state.master, 'eq-mid-high', -12, 12, 0.5).name('Haut-Méd 2.5k (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-mid-high', v));
+            this._setupController(cEqMidHigh, 'master-eq-mid-high', DSP_DEFAULTS.master['eq-mid-high'], false);
 
-            const fLocal = gui.addFolder('Volume local 🔒');
-            const cVol = fLocal.add(this.state.master, 'local-volume', 0, 1000, 1).name('Volume (%)').onChange(v => this._onMasterDsp && this._onMasterDsp('local-volume', v));
-            this._setupController(cVol, 'master-local-volume', DSP_DEFAULTS.master['local-volume'], false);
+            const cEqHigh = fEq.add(this.state.master, 'eq-high', -12, 12, 0.5).name('Aigus 10kHz (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('eq-high', v));
+            this._setupController(cEqHigh, 'master-eq-high', DSP_DEFAULTS.master['eq-high'], false);
 
-            const fControls = gui.addFolder('Contrôles');
-            const cSens = fControls.add(this.state.master, 'mouse-sensitivity', 10, 300, 1).name('Sensibilité (%)').onChange(v => {
-                localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);
-                if (this._onMasterDsp) this._onMasterDsp('mouse-sensitivity', v);
-            });
-            this._setupController(cSens, 'master-mouse-sensitivity', DSP_DEFAULTS.master['mouse-sensitivity'], false);
+            // Étape 2 : Compresseur de Bus ("Glue Compressor")
+            const fComp = gui.addFolder('Étape 2 : Compresseur de Bus');
+            const cCompOn = fComp.add(this.state.master, 'comp-enabled').name('Actif').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-enabled', v));
+            this._setupController(cCompOn, 'master-comp-enabled', DSP_DEFAULTS.master['comp-enabled'], false);
 
-            const cInvY = fControls.add(this.state.master, 'invert-y').name('Inverser Axe Y (Haut/Bas)').onChange(v => {
-                localStorage.setItem('soundstage3d:master-invert-y', v);
-                if (this._onMasterDsp) this._onMasterDsp('invert-y', v);
-            });
-            this._setupController(cInvY, 'master-invert-y', false, false);
+            const cThresh = fComp.add(this.state.master, 'comp-threshold', -40, 0, 0.5).name('Seuil (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-threshold', v));
+            this._setupController(cThresh, 'master-comp-threshold', DSP_DEFAULTS.master['comp-threshold'], false);
 
-            const cInvX = fControls.add(this.state.master, 'invert-x').name('Inverser Axe X (Gauche/Droite)').onChange(v => {
-                localStorage.setItem('soundstage3d:master-invert-x', v);
-                if (this._onMasterDsp) this._onMasterDsp('invert-x', v);
-            });
-            this._setupController(cInvX, 'master-invert-x', false, false);
+            const cRatio = fComp.add(this.state.master, 'comp-ratio', 1, 20, 0.1).name('Ratio (:1)').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-ratio', v));
+            this._setupController(cRatio, 'master-comp-ratio', DSP_DEFAULTS.master['comp-ratio'], false);
+
+            const cAtt = fComp.add(this.state.master, 'comp-attack', 0.1, 100, 0.5).name('Attaque (ms)').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-attack', v));
+            this._setupController(cAtt, 'master-comp-attack', DSP_DEFAULTS.master['comp-attack'], false);
+
+            const cRel = fComp.add(this.state.master, 'comp-release', 10, 1000, 5).name('Release (ms)').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-release', v));
+            this._setupController(cRel, 'master-comp-release', DSP_DEFAULTS.master['comp-release'], false);
+
+            const cMakeup = fComp.add(this.state.master, 'comp-makeup', -6, 18, 0.5).name('Make-up (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-makeup', v));
+            this._setupController(cMakeup, 'master-comp-makeup', DSP_DEFAULTS.master['comp-makeup'], false);
+
+            // Étape 3 : Limiteur de Sortie Final (True Peak / Brickwall)
+            const fLim = gui.addFolder('Étape 3 : Limiteur de Sortie');
+            const cLimOn = fLim.add(this.state.master, 'limiter-enabled').name('Actif').onChange(v => this._onMasterDsp && this._onMasterDsp('limiter-enabled', v));
+            this._setupController(cLimOn, 'master-limiter-enabled', DSP_DEFAULTS.master['limiter-enabled'], false);
+
+            const cCeil = fLim.add(this.state.master, 'limiter-threshold', -12, 0, 0.1).name('Plafond (dBFS)').onChange(v => this._onMasterDsp && this._onMasterDsp('limiter-threshold', v));
+            this._setupController(cCeil, 'master-limiter-threshold', DSP_DEFAULTS.master['limiter-threshold'], false);
+
+            const cLimAtt = fLim.add(this.state.master, 'limiter-attack', 0.1, 10, 0.1).name('Attaque (ms)').onChange(v => this._onMasterDsp && this._onMasterDsp('limiter-attack', v));
+            this._setupController(cLimAtt, 'master-limiter-attack', DSP_DEFAULTS.master['limiter-attack'], false);
+
+            const cLimRel = fLim.add(this.state.master, 'limiter-release', 10, 500, 5).name('Release (ms)').onChange(v => this._onMasterDsp && this._onMasterDsp('limiter-release', v));
+            this._setupController(cLimRel, 'master-limiter-release', DSP_DEFAULTS.master['limiter-release'], false);
 
             this._addGuiResetButton(gui, 'master');
+        }
+
+        // ─── 1.2 ENVIRONNEMENT Acoustique GUI (Top-Right) ───
+        if (cEnv) {
+            const gui = new GUI({ container: cEnv, title: '🌳 Environnement Acoustique', closeFolders: false, width: 300 });
+            this.guis.env = gui;
+
+            const fAir = gui.addFolder('Atmosphère');
+            const cAir = fAir.add(this.state.env, 'air-abs', 0, 50, 1).name('Abs. air (Hz/m)').onChange(v => this._onEnvDsp && this._onEnvDsp('air-abs', v));
+            this._setupController(cAir, 'env-air-abs', DSP_DEFAULTS.env['air-abs'], false);
+
+            const cTreble = fAir.add(this.state.env, 'treble', 0, 15, 0.5).name('Aigus (dB)').onChange(v => this._onEnvDsp && this._onEnvDsp('treble', v));
+            this._setupController(cTreble, 'env-treble', DSP_DEFAULTS.env['treble'], false);
+
+            const fRev = gui.addFolder('Réverbération Acoustique');
+            const cWet = fRev.add(this.state.env, 'reverb-wet', 0, 100, 1).name('Dry / Wet (%)').onChange(v => this._onEnvDsp && this._onEnvDsp('reverb-wet', v));
+            this._setupController(cWet, 'env-reverb-wet', DSP_DEFAULTS.env['reverb-wet'], false);
+
+            const cDecay = fRev.add(this.state.env, 'reverb-decay', 0.5, 8.0, 0.1).name('Durée RT60 (s)').onChange(v => this._onEnvDsp && this._onEnvDsp('reverb-decay', v));
+            this._setupController(cDecay, 'env-reverb-decay', DSP_DEFAULTS.env['reverb-decay'], false);
+
+            const cDamp = fRev.add(this.state.env, 'reverb-damping', 1000, 18000, 100).name('Amort. HF (Hz)').onChange(v => this._onEnvDsp && this._onEnvDsp('reverb-damping', v));
+            this._setupController(cDamp, 'env-reverb-damping', DSP_DEFAULTS.env['reverb-damping'], false);
+
+            const cPre = fRev.add(this.state.env, 'reverb-predelay', 0, 100, 1).name('Pré-délai (ms)').onChange(v => this._onEnvDsp && this._onEnvDsp('reverb-predelay', v));
+            this._setupController(cPre, 'env-reverb-predelay', DSP_DEFAULTS.env['reverb-predelay'], false);
+
+            this._addGuiResetButton(gui, 'env');
+        }
+
+        // ─── 1.3 CONTRÔLES Utilisateur GUI (Top-Right Offset) ───
+        if (cUser) {
+            const gui = new GUI({ container: cUser, title: '👤 Contrôles Utilisateur', closeFolders: false, width: 300 });
+            this.guis.user = gui;
+
+            const fAudio = gui.addFolder('Écoute & Environnement');
+            const cVol = fAudio.add(this.state.user, 'local-volume', 0, 1000, 1).name('Volume local (%)').onChange(v => this._onUserDsp && this._onUserDsp('local-volume', v));
+            this._setupController(cVol, 'user-local-volume', DSP_DEFAULTS.user['local-volume'], false);
+
+            const cGrass = fAudio.add(this.state.user, 'grass-enabled').name('🌿 Afficher herbe').onChange(v => {
+                if (this._onGrassChange) this._onGrassChange(v ? 'medium' : 'off');
+            });
+            this._setupController(cGrass, 'user-grass-enabled', false, false);
+
+            const fControls = gui.addFolder('Caméra & Navigation');
+            const cSens = fControls.add(this.state.user, 'mouse-sensitivity', 10, 300, 1).name('Sensibilité (%)').onChange(v => {
+                localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);
+                if (this._onUserDsp) this._onUserDsp('mouse-sensitivity', v);
+            });
+            this._setupController(cSens, 'user-mouse-sensitivity', 100, false);
+
+            const cInvY = fControls.add(this.state.user, 'invert-y').name('Inverser Axe Y (H/B)').onChange(v => {
+                localStorage.setItem('soundstage3d:master-invert-y', v);
+                if (this._onUserDsp) this._onUserDsp('invert-y', v);
+            });
+            this._setupController(cInvY, 'user-invert-y', false, false);
+
+            const cInvX = fControls.add(this.state.user, 'invert-x').name('Inverser Axe X (G/D)').onChange(v => {
+                localStorage.setItem('soundstage3d:master-invert-x', v);
+                if (this._onUserDsp) this._onUserDsp('invert-x', v);
+            });
+            this._setupController(cInvX, 'user-invert-x', false, false);
+
+            this._addGuiResetButton(gui, 'user');
         }
 
         // ─── 1.5 INPUT Stage GUI (Above TOP Pipeline) ───
@@ -357,11 +442,6 @@ export class Controls {
 
             const cRel = fComp.add(this.state.input, 'comp-release', 10, 1000, 1).name('Release (ms)').onChange(v => this._onInputDsp && this._onInputDsp('comp-release', v));
             this._setupController(cRel, 'input-comp-release', DSP_DEFAULTS.input['comp-release'], true);
-
-            // 5. Limiteur Brickwall
-            const fLim = gui.addFolder('Limiteur Brickwall');
-            const cLim = fLim.add(this.state.input, 'limiter-ceiling', -6, 0, 0.1).name('Plafond (dBFS)').onChange(v => this._onInputDsp && this._onInputDsp('limiter-ceiling', v));
-            this._setupController(cLim, 'input-limiter-ceiling', DSP_DEFAULTS.input['limiter-ceiling'], true);
 
             this._addGuiResetButton(gui, 'input');
         }
@@ -609,7 +689,7 @@ export class Controls {
             this._addSineResetButton(gui);
         }
 
-        // Clean up any stale position saved when INPUT was stuck in the top-left corner under meters
+        // Clean up any stale position saved when INPUT was stuck in the top-left or MASTER was in old top-right wrap
         try {
             const savedInputPos = localStorage.getItem('soundstage3d:win-pos:input');
             if (savedInputPos) {
@@ -618,15 +698,24 @@ export class Controls {
                     localStorage.removeItem('soundstage3d:win-pos:input');
                 }
             }
+            const savedMasterPos = localStorage.getItem('soundstage3d:win-pos:master');
+            if (savedMasterPos) {
+                const parsed = JSON.parse(savedMasterPos);
+                if (parsed && typeof parsed.top === 'number' && parsed.top < 200) {
+                    localStorage.removeItem('soundstage3d:win-pos:master');
+                }
+            }
         } catch (_) {}
 
         // Make all panels draggable by their title header
-        if (this.guis.master?.$title) makeDraggable(document.getElementById('dsp-master-wrap'), this.guis.master.$title, 'master');
+        if (this.guis.master?.$title) makeDraggable(document.getElementById('dsp-panel-master'), this.guis.master.$title, 'master');
         if (this.guis.input?.$title)  makeDraggable(document.getElementById('dsp-panel-input'), this.guis.input.$title, 'input');
         if (this.guis.top?.$title)    makeDraggable(document.getElementById('dsp-panel-top'), this.guis.top.$title, 'top');
         if (this.guis.mid?.$title)    makeDraggable(document.getElementById('dsp-panel-mid'), this.guis.mid.$title, 'mid');
         if (this.guis.fill?.$title)   makeDraggable(document.getElementById('dsp-panel-fill'), this.guis.fill.$title, 'fill');
         if (this.guis.sub?.$title)    makeDraggable(document.getElementById('dsp-panel-sub'), this.guis.sub.$title, 'sub');
+        if (this.guis.env?.$title)    makeDraggable(document.getElementById('env-panel-wrap'), this.guis.env.$title, 'env');
+        if (this.guis.user?.$title)   makeDraggable(document.getElementById('user-panel-wrap'), this.guis.user.$title, 'user');
         if (this.guis.sine?.$title)   makeDraggable(document.getElementById('sine-panel-wrap'), this.guis.sine.$title, 'sine');
     }
 
@@ -637,7 +726,8 @@ export class Controls {
             this.dspBtn.addEventListener('click', () => {
                 this._dspVisible = !this._dspVisible;
                 if (this.dspPanels) this.dspPanels.classList.toggle('hidden', !this._dspVisible);
-                if (this.dspMasterWrap) this.dspMasterWrap.classList.toggle('hidden', !this._dspVisible);
+                if (this.envPanelWrap) this.envPanelWrap.classList.toggle('hidden', !this._dspVisible);
+                if (this.userPanelWrap) this.userPanelWrap.classList.toggle('hidden', !this._dspVisible);
                 this.dspBtn.classList.toggle('active', this._dspVisible);
             });
         }
@@ -985,6 +1075,8 @@ export class Controls {
     onConesToggle(cb) { this._onConesToggle = cb; }
     onGrassChange(cb) { this._onGrassChange = cb; }
     onMasterDsp(cb) { this._onMasterDsp = cb; }
+    onEnvDsp(cb) { this._onEnvDsp = cb; }
+    onUserDsp(cb) { this._onUserDsp = cb; }
     onInputDsp(cb) { this._onInputDsp = cb; }
     onSubDsp(cb) { this._onSubDsp = cb; }
     onMidDsp(cb) { this._onMidDsp = cb; }

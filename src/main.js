@@ -212,9 +212,9 @@ listener.onCameraModeChange((mode, isFlying) => {
     controls.setCameraModeLabel(mode, isFlying);
 });
 controls.setCameraModeLabel(listener.cameraMode, listener.isFlying);
-listener.setSensitivity(controls.state.master['mouse-sensitivity'] / 100);
-listener.setInvertPitch(controls.state.master['invert-y']);
-listener.setInvertYaw(controls.state.master['invert-x']);
+listener.setSensitivity((controls.state.user?.['mouse-sensitivity'] ?? 100) / 100);
+listener.setInvertPitch(controls.state.user?.['invert-y'] ?? false);
+listener.setInvertYaw(controls.state.user?.['invert-x'] ?? false);
 
 controls.onEnter(async (file) => {
     await initAudio(file);
@@ -356,24 +356,6 @@ window.addEventListener('drop', async (e) => {
 controls.onGrassChange((qualityKey) => {
     setGrassQuality(qualityKey);
 });
-
-// ─── Grass Quality Preset Toggle ───
-const grassBtn = document.getElementById('grass-btn');
-const GRASS_PRESETS = [
-    { label: '🌿 Herbe: OFF',     key: 'off' },
-    { label: '🌿 Herbe: Éco',     key: 'low' },
-    { label: '🌿 Herbe: Normale', key: 'medium' },
-    { label: '🌿 Herbe: Haute',   key: 'high' },
-];
-let currentGrassIdx = 0;
-if (grassBtn) {
-    grassBtn.addEventListener('click', () => {
-        currentGrassIdx = (currentGrassIdx + 1) % GRASS_PRESETS.length;
-        const preset = GRASS_PRESETS[currentGrassIdx];
-        grassBtn.textContent = preset.label;
-        setGrassQuality(preset.key);
-    });
-}
 
 // ─── Camera View HUD Toggle is handled via controls.onCameraToggle and listener.cycleCameraMode ───
 
@@ -613,6 +595,16 @@ controls.onConesToggle((bus, visible) => {
 });
 
 controls.onMasterDsp((param, value) => {
+    if (!audioReady || !speakerSystem) return;
+    speakerSystem.setMasterDspParam(param, value);
+});
+
+controls.onEnvDsp((param, value) => {
+    if (!audioReady || !speakerSystem) return;
+    speakerSystem.setEnvDspParam(param, value);
+});
+
+controls.onUserDsp((param, value) => {
     if (param === 'mouse-sensitivity') {
         listener.setSensitivity(value / 100);
         return;
@@ -625,8 +617,12 @@ controls.onMasterDsp((param, value) => {
         listener.setInvertYaw(value);
         return;
     }
-    if (!audioReady) return;
-    speakerSystem.setMasterDspParam(param, value);
+    if (param === 'local-volume') {
+        if (audioReady && speakerSystem) {
+            speakerSystem.setLocalVolume(value);
+        }
+        return;
+    }
 });
 
 controls.onInputDsp((param, value) => {

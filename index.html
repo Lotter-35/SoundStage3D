@@ -40,7 +40,6 @@
             <button id="spectrum-btn" class="hud-btn">📊 Spectre: OFF</button>
             <button id="sine-btn" class="hud-btn">🔊 Sinus ▾</button>
             <button id="playback-btn" class="hud-btn">⏱️ Lecteur ▾</button>
-            <button id="grass-btn" class="hud-btn">🌿 Herbe: OFF</button>
             <button id="play-btn" class="hud-btn">⏸ Pause</button>
             <button id="change-mp3-btn" class="hud-btn">📂 Changer MP3</button>
             <button id="debug-btn" class="hud-btn">🐛 Debug</button>
@@ -86,13 +85,19 @@
     <!-- ─── Tooltip container for DSP parameters ─── -->
     <div id="dsp-tooltip"></div>
 
-    <!-- ─── Master & Environnement Panel (en haut à droite, indépendant) ─── -->
-    <div id="dsp-master-wrap" class="hidden">
-        <div id="dsp-panel-master"></div>
+    <!-- ─── Environnement Panel (en haut à droite) ─── -->
+    <div id="env-panel-wrap" class="hidden">
+        <div id="dsp-panel-env"></div>
+    </div>
+
+    <!-- ─── Contrôles Utilisateur Panel (en haut à droite, indépendant) ─── -->
+    <div id="user-panel-wrap" class="hidden">
+        <div id="dsp-panel-user"></div>
     </div>
 
     <!-- ─── DSP Panels (per-bus pipeline controls in bottom bar) ─── -->
     <div id="dsp-panels" class="hidden">
+        <!-- Colonne Gauche : INPUT Stage au-dessus de TOP Pipeline -->
         <div id="dsp-col-left">
             <div id="dsp-panel-input" class="dsp-panel-slot"></div>
             <div id="dsp-panel-top" class="dsp-panel-slot"></div>
@@ -100,7 +105,11 @@
         <div id="dsp-panel-mid" class="dsp-panel-slot"></div>
         <div class="dsp-spacer"></div>
         <div id="dsp-panel-fill" class="dsp-panel-slot"></div>
-        <div id="dsp-panel-sub" class="dsp-panel-slot"></div>
+        <!-- Colonne Droite : MASTER OUT Stage au-dessus de SUB Pipeline -->
+        <div id="dsp-col-right">
+            <div id="dsp-panel-master" class="dsp-panel-slot"></div>
+            <div id="dsp-panel-sub" class="dsp-panel-slot"></div>
+        </div>
     </div>
 
     <!-- ─── Sine Generator Panel (en bas au centre) ─── -->

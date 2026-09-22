@@ -720,22 +720,55 @@ body {
     pointer-events: auto;
 }
 
-#dsp-panel-sub {
+#dsp-col-right {
     position: fixed;
     bottom: 64px;
     right: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    pointer-events: none;
+    z-index: 70;
+    max-height: calc(100vh - 100px);
+}
+
+#dsp-col-right > .dsp-panel-slot {
+    position: static;
     pointer-events: auto;
 }
 
-/* Master panel — top-right corner */
-#dsp-master-wrap {
+#dsp-col-right > #dsp-panel-master:not([style*="position: fixed"]) .lil-gui.root {
+    max-height: min(360px, calc(42vh - 30px)) !important;
+    overflow-y: auto !important;
+}
+
+#dsp-col-right > #dsp-panel-sub:not([style*="position: fixed"]) .lil-gui.root {
+    max-height: min(480px, calc(52vh - 30px)) !important;
+    overflow-y: auto !important;
+}
+
+/* Environnement panel — top-right corner */
+#env-panel-wrap {
     position: fixed;
     top: 16px;
     right: 16px;
     z-index: 60;
     pointer-events: auto;
 }
-#dsp-master-wrap.hidden {
+#env-panel-wrap.hidden {
+    display: none !important;
+}
+
+/* Contrôles Utilisateur panel — top-right offset */
+#user-panel-wrap {
+    position: fixed;
+    top: 16px;
+    right: 328px;
+    z-index: 60;
+    pointer-events: auto;
+}
+#user-panel-wrap.hidden {
     display: none !important;
 }
 
@@ -777,7 +810,9 @@ body {
 
 /* Slot sizing */
 .dsp-panel-slot,
-#dsp-panel-master {
+#dsp-panel-master,
+#dsp-panel-env,
+#dsp-panel-user {
     width: 300px;
     min-width: 300px;
     max-width: 300px;
@@ -786,7 +821,9 @@ body {
 
 /* Lil-gui Root & Positioning */
 .dsp-panel-slot .lil-gui.root,
-#dsp-master-wrap .lil-gui.root {
+#dsp-master-wrap .lil-gui.root,
+#env-panel-wrap .lil-gui.root,
+#user-panel-wrap .lil-gui.root {
     position: static !important;
     width: 300px !important;
     max-width: 300px !important;
@@ -794,7 +831,9 @@ body {
 }
 
 .dsp-panel-slot .lil-gui,
-#dsp-master-wrap .lil-gui {
+#dsp-master-wrap .lil-gui,
+#env-panel-wrap .lil-gui,
+#user-panel-wrap .lil-gui {
     --width: 300px;
     --name-width: 82px;
     --slider-input-min-width: 36px;
@@ -808,6 +847,8 @@ body {
 
 .dsp-panel-slot .lil-gui input,
 #dsp-master-wrap .lil-gui input,
+#env-panel-wrap .lil-gui input,
+#user-panel-wrap .lil-gui input,
 #sine-panel .lil-gui input {
     user-select: auto !important;
     -webkit-user-select: auto !important;
@@ -815,7 +856,8 @@ body {
 
 /* Scroll handling: smooth wheel scroll if needed, NO visible scrollbars ("slider sur le côté") */
 .dsp-panel-slot .lil-gui.root > .children,
-#dsp-master-wrap .lil-gui.root > .children,
+#env-panel-wrap .lil-gui.root > .children,
+#user-panel-wrap .lil-gui.root > .children,
 #sine-panel .lil-gui.root > .children {
     max-height: calc(100vh - 150px);
     overflow-y: auto !important;
@@ -827,8 +869,10 @@ body {
 /* Prevent any horizontal or vertical scrollbars on any lil-gui elements and folders */
 .dsp-panel-slot .lil-gui,
 .dsp-panel-slot .lil-gui *,
-#dsp-master-wrap .lil-gui,
-#dsp-master-wrap .lil-gui *,
+#env-panel-wrap .lil-gui,
+#env-panel-wrap .lil-gui *,
+#user-panel-wrap .lil-gui,
+#user-panel-wrap .lil-gui *,
 #sine-panel .lil-gui,
 #sine-panel .lil-gui * {
     scrollbar-width: none !important;
@@ -837,8 +881,10 @@ body {
 
 .dsp-panel-slot .lil-gui::-webkit-scrollbar,
 .dsp-panel-slot .lil-gui *::-webkit-scrollbar,
-#dsp-master-wrap .lil-gui::-webkit-scrollbar,
-#dsp-master-wrap .lil-gui *::-webkit-scrollbar,
+#env-panel-wrap .lil-gui::-webkit-scrollbar,
+#env-panel-wrap .lil-gui *::-webkit-scrollbar,
+#user-panel-wrap .lil-gui::-webkit-scrollbar,
+#user-panel-wrap .lil-gui *::-webkit-scrollbar,
 #sine-panel .lil-gui::-webkit-scrollbar,
 #sine-panel .lil-gui *::-webkit-scrollbar {
     display: none !important;
@@ -848,9 +894,11 @@ body {
 
 /* Ensure folders and controllers never create horizontal scrollbars or overflow */
 .dsp-panel-slot .lil-gui .children,
-#dsp-master-wrap .lil-gui .children,
+#env-panel-wrap .lil-gui .children,
+#user-panel-wrap .lil-gui .children,
 .dsp-panel-slot .lil-gui .controller,
-#dsp-master-wrap .lil-gui .controller,
+#env-panel-wrap .lil-gui .controller,
+#user-panel-wrap .lil-gui .controller,
 #sine-panel .lil-gui .children,
 #sine-panel .lil-gui .controller {
     overflow-x: hidden !important;
@@ -858,7 +906,8 @@ body {
 
 /* Controller row layout */
 .dsp-panel-slot .lil-gui .controller,
-#dsp-master-wrap .lil-gui .controller,
+#env-panel-wrap .lil-gui .controller,
+#user-panel-wrap .lil-gui .controller,
 #sine-panel .lil-gui .controller {
     display: flex !important;
     align-items: center !important;
@@ -869,7 +918,8 @@ body {
 
 /* Option Name/Label: Compact fixed width */
 .dsp-panel-slot .lil-gui .controller > .name,
-#dsp-master-wrap .lil-gui .controller > .name {
+#env-panel-wrap .lil-gui .controller > .name,
+#user-panel-wrap .lil-gui .controller > .name {
     flex: 0 0 82px !important;
     width: 82px !important;
     min-width: 82px !important;
@@ -897,7 +947,8 @@ body {
 
 /* Widget: Fills the entire remaining row width */
 .dsp-panel-slot .lil-gui .controller .widget,
-#dsp-master-wrap .lil-gui .controller .widget,
+#env-panel-wrap .lil-gui .controller .widget,
+#user-panel-wrap .lil-gui .controller .widget,
 #sine-panel .lil-gui .controller .widget {
     display: flex !important;
     align-items: center !important;
@@ -909,7 +960,8 @@ body {
 
 /* Slider Track: Wide, expansive, smooth dragging */
 .dsp-panel-slot .lil-gui .controller.number .slider,
-#dsp-master-wrap .lil-gui .controller.number .slider,
+#env-panel-wrap .lil-gui .controller.number .slider,
+#user-panel-wrap .lil-gui .controller.number .slider,
 #sine-panel .lil-gui .controller.number .slider {
     flex: 1 1 auto !important;
     width: auto !important;
@@ -920,7 +972,8 @@ body {
 
 /* Numeric Input: Compact, crisp, right-aligned */
 .dsp-panel-slot .lil-gui .controller.number input,
-#dsp-master-wrap .lil-gui .controller.number input {
+#env-panel-wrap .lil-gui .controller.number input,
+#user-panel-wrap .lil-gui .controller.number input {
     flex: 0 0 38px !important;
     width: 38px !important;
     min-width: 36px !important;
@@ -948,7 +1001,8 @@ body {
 
 /* Per-option Reset Button (↺): Tiny 15x15px, elegant, no row stretching */
 .dsp-panel-slot .lil-gui .lil-reset-btn,
-#dsp-master-wrap .lil-gui .lil-reset-btn,
+#env-panel-wrap .lil-gui .lil-reset-btn,
+#user-panel-wrap .lil-gui .lil-reset-btn,
 #sine-panel .lil-gui .lil-reset-btn {
     flex: 0 0 15px !important;
     width: 15px !important;
@@ -972,7 +1026,8 @@ body {
 }
 
 .dsp-panel-slot .lil-gui .lil-reset-btn:hover,
-#dsp-master-wrap .lil-gui .lil-reset-btn:hover,
+#env-panel-wrap .lil-gui .lil-reset-btn:hover,
+#user-panel-wrap .lil-gui .lil-reset-btn:hover,
 #sine-panel .lil-gui .lil-reset-btn:hover {
     color: #fff !important;
     border-color: rgba(255, 255, 255, 0.5) !important;

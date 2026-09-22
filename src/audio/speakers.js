@@ -16,9 +16,10 @@
 
 import { createGroundReflection } from './effects.js';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
+import { MasterStage } from './masterStage.js';
 
 const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.sub['dist-k'] ?? 60) / 1000;
-const DEFAULT_AIR_ABS = DSP_DEFAULTS.master['air-abs'] ?? 40;
+const DEFAULT_AIR_ABS = DSP_DEFAULTS.env?.['air-abs'] ?? DSP_DEFAULTS.master?.['air-abs'] ?? 40;
 
 // Proximity saturation thresholds (sub only) — mutable via UI
 let PROX_FAR  = DSP_DEFAULTS.sub['prox-far'] ?? 4.0;
@@ -428,43 +429,54 @@ export class SpeakerSystem {
         this.fillAnalyser.fftSize = 256;
         this.fillLimiter.connect(this.fillAnalyser);
 
-        // Master output chain: masterOutput → limiter → localVolumeGain → ctx.destination
+        // ─── MASTER OUT STAGE & ENVIRONNEMENT CHAIN ────────────────────────
         this.masterOutput = ctx.createGain();
         this.masterOutput.gain.value = 1;
 
-        // Brick-wall peak limiter with musical 5ms attack to avoid low-frequency wave-cycle chopping
-        this.masterLimiter = ctx.createDynamicsCompressor();
-        this.masterLimiter.threshold.value = DSP_DEFAULTS.master?.['lim-threshold'] ?? -3;
-        this.masterLimiter.knee.value = 6;
-        this.masterLimiter.ratio.value = 20;
-        this.masterLimiter.attack.value = 0.005;
-        this.masterLimiter.release.value = 0.08;
+        // Étage Master Out (EQ Global, Compresseur de Bus, Limiteur Final)
+        this.masterStage = new MasterStage(ctx, DSP_DEFAULTS.master || {});
+        this.masterOutput.connect(this.masterStage.input);
 
-        // HRTF brightness compensation: high-shelf boost to counter HRTF dullness
+        // HRTF brightness compensation
         this.hrtfShelf = ctx.createBiquadFilter();
         this.hrtfShelf.type = 'highshelf';
         this.hrtfShelf.frequency.value = 2500;
         this.hrtfShelf.gain.value = 0; // off by default (equalpower mode)
 
-        // Reverb: parallel wet/dry send off hrtfShelf → masterLimiter
+        // Réverbération Acoustique Environnementale
+        this._reverbDecay = DSP_DEFAULTS.env?.['reverb-decay'] ?? 2.5;
         this.reverbConvolver = ctx.createConvolver();
-        this.reverbConvolver.buffer = this._createReverbIR(2.5, 2.0);
-        this.reverbWet = ctx.createGain();
-        this.reverbWet.gain.value = 0; // fully dry by default
-        this.reverbSend = ctx.createGain();
-        this.reverbSend.gain.value = 0; // zero send prevents running 2.5s stereo convolution when dry
+        this.reverbConvolver.buffer = this._createReverbIR(this._reverbDecay, 2.0);
 
-        this.masterOutput.connect(this.hrtfShelf);
-        this.hrtfShelf.connect(this.masterLimiter);           // dry path (always full)
-        this.hrtfShelf.connect(this.reverbSend);              // wet send
-        this.reverbSend.connect(this.reverbConvolver);
+        this.reverbPreDelay = ctx.createDelay(0.5);
+        this.reverbPreDelay.delayTime.value = (DSP_DEFAULTS.env?.['reverb-predelay'] ?? 10) / 1000;
+
+        this.reverbDamping = ctx.createBiquadFilter();
+        this.reverbDamping.type = 'lowpass';
+        this.reverbDamping.frequency.value = DSP_DEFAULTS.env?.['reverb-damping'] ?? 6000;
+
+        this.reverbWet = ctx.createGain();
+        const initReverbWet = (DSP_DEFAULTS.env?.['reverb-wet'] ?? 0) / 100;
+        this.reverbWet.gain.value = initReverbWet;
+        this.reverbSend = ctx.createGain();
+        this.reverbSend.gain.value = initReverbWet > 0 ? 1 : 0;
+
+        // Routage : Master Comp -> acoustique/reverb -> Master Limiteur
+        this.masterStage.compOutput.connect(this.hrtfShelf);
+        this.hrtfShelf.connect(this.masterStage.limiterInput); // chemin direct
+
+        this.hrtfShelf.connect(this.reverbSend);               // départ réverbération
+        this.reverbSend.connect(this.reverbPreDelay);
+        this.reverbPreDelay.connect(this.reverbDamping);
+        this.reverbDamping.connect(this.reverbConvolver);
         this.reverbConvolver.connect(this.reverbWet);
-        this.reverbWet.connect(this.masterLimiter);
+        this.reverbWet.connect(this.masterStage.limiterInput); // retour réverb
 
         // Local volume gain — end-of-chain, not synchronized in multi: for the local user only
         this.localVolumeGain = ctx.createGain();
-        this.localVolumeGain.gain.value = 1;
-        this.masterLimiter.connect(this.localVolumeGain);
+        this.localVolumeGain.gain.value = (DSP_DEFAULTS.user?.['local-volume'] ?? 100) / 100;
+        this.masterStage.output.connect(this.localVolumeGain);
+
         // Headphone Safety Limiter & Soft-Clipper: guarantees zero DAC clipping/crackling even at 1000% volume
         this.headphoneLimiter = ctx.createDynamicsCompressor();
         this.headphoneLimiter.threshold.value = -1.0;
@@ -499,10 +511,10 @@ export class SpeakerSystem {
         this.headphoneLimiter.connect(this.headphoneClipper);
         this.headphoneClipper.connect(ctx.destination);
 
-        // Master analyser taps after master limiter
+        // Master analyser taps after master stage limiter
         this.masterAnalyser = ctx.createAnalyser();
         this.masterAnalyser.fftSize = 256;
-        this.masterLimiter.connect(this.masterAnalyser);
+        this.masterStage.output.connect(this.masterAnalyser);
 
         // Pre-allocated buffers for level metering (avoid GC)
         this._meterBufs = {
@@ -656,34 +668,67 @@ export class SpeakerSystem {
     }
 
     /**
-     * Set a global Master DSP parameter (air absorption or treble boost).
-     * @param {string} param — parameter key from the Master panel
-     * @param {number} value — raw slider value
+     * Set a parameter on the MASTER OUT Stage (EQ, Bus Comp, Limiter).
+     * @param {string} param
+     * @param {number|boolean} value
      */
     setMasterDspParam(param, value) {
+        if (this.masterStage) {
+            this.masterStage.setParam(param, value);
+        }
+    }
+
+    /**
+     * Set an ENVIRONNEMENT parameter (air absorption, treble, or advanced reverb).
+     * @param {string} param
+     * @param {number} value
+     */
+    setEnvDspParam(param, value) {
+        const t = this.ctx.currentTime;
         switch (param) {
             case 'air-abs':
                 for (const s of this.speakers) s.setAirAbsCoeff(value);
+                this.forceUpdateAll();
                 break;
             case 'treble':
                 for (const s of this.speakers) s.setHighShelfGain(value);
+                this.forceUpdateAll();
                 break;
-            case 'local-volume':
-                this.localVolumeGain.gain.setTargetAtTime(value / 100, this.ctx.currentTime, 0.015);
-                break;
+            case 'reverb-wet':
             case 'reverb': {
-                const wet = value / 100;
-                this.reverbWet.gain.setTargetAtTime(wet, this.ctx.currentTime, 0.05);
+                const wet = Math.max(0, Math.min(100, value)) / 100;
+                this.reverbWet.gain.setTargetAtTime(wet, t, 0.04);
                 if (this.reverbSend) {
-                    this.reverbSend.gain.setTargetAtTime(wet > 0 ? 1 : 0, this.ctx.currentTime, 0.05);
+                    this.reverbSend.gain.setTargetAtTime(wet > 0 ? 1 : 0, t, 0.04);
                 }
                 break;
             }
-            case 'lim-threshold':
-                this.masterLimiter.threshold.setTargetAtTime(value, this.ctx.currentTime, 0.04);
+            case 'reverb-decay': {
+                this._reverbDecay = Math.max(0.5, Math.min(8.0, value));
+                try {
+                    this.reverbConvolver.buffer = this._createReverbIR(this._reverbDecay, 2.0);
+                } catch (_) {}
+                break;
+            }
+            case 'reverb-damping':
+                if (this.reverbDamping) {
+                    this.reverbDamping.frequency.setTargetAtTime(value, t, 0.04);
+                }
+                break;
+            case 'reverb-predelay':
+                if (this.reverbPreDelay) {
+                    this.reverbPreDelay.delayTime.setTargetAtTime(Math.max(0, value / 1000), t, 0.04);
+                }
                 break;
         }
-        this.forceUpdateAll();
+    }
+
+    /**
+     * Set local user headphone volume.
+     * @param {number} percent — 0 to 1000%
+     */
+    setLocalVolume(percent) {
+        this.localVolumeGain.gain.setTargetAtTime(percent / 100, this.ctx.currentTime, 0.015);
     }
 
     /**

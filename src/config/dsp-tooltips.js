@@ -69,6 +69,38 @@ export const DSP_TOOLTIPS = {
     "master-reverb": "Réverbération globale. Simule l'écho et la résonance d'un espace. 0% = son sec (aucune réverb). 100% = réverbération maximale. Ajuste le niveau du signal réverbéré mélangé au son direct.",
     "master-local-volume": "Niveau d'écoute personnel. N'affecte que votre sortie audio locale, indépendamment des autres participants en mode multi.",
     "master-mouse-sensitivity": "Sensibilité de la souris pour la caméra vue subjective (FPS). 100% = normal.",
+
+    // MASTER OUT STAGE
+    "master-eq-low": "Égaliseur Master : Graves (Low Shelf à 80 Hz). Ajuste la chaleur et la profondeur générale du festival (±12 dB).",
+    "master-eq-mid-low": "Égaliseur Master : Bas-médiums (Peaking à 400 Hz). Corrige la boue acoustique ou donne du corps (±12 dB).",
+    "master-eq-mid-high": "Égaliseur Master : Haut-médiums (Peaking à 2.5 kHz). Ajuste la clarté et l'impact vocal/leads (±12 dB).",
+    "master-eq-high": "Égaliseur Master : Aigus (High Shelf à 10 kHz). Ajuste l'air et la brillance globale du mix final (±12 dB).",
+    "master-comp-enabled": "Active ou contourne (Bypass) le compresseur de bus Master 'Glue'.",
+    "master-comp-threshold": "Seuil de compression du bus Master. Les crêtes dépassant ce niveau sont atténuées.",
+    "master-comp-ratio": "Taux de compression du bus Master (ex: 2:1 ou 4:1 pour un effet glue naturel).",
+    "master-comp-attack": "Temps d'attaque du compresseur Master en ms. Une attaque lente (ex: 30 ms) préserve les transitoires et le punch.",
+    "master-comp-release": "Temps de relâchement du compresseur Master en ms. Laisse respirer le mixage.",
+    "master-comp-makeup": "Gain de compensation (Make-up Gain) après compression pour rattraper la dynamique atténuée.",
+    "master-limiter-enabled": "Active ou contourne (Bypass) le limiteur de sortie final Brickwall.",
+    "master-limiter-threshold": "Plafond maximal (Ceiling) autorisé en sortie du festival (ex: -0.1 dBFS). Empêche tout clipping numérique.",
+    "master-limiter-attack": "Temps d'attaque du limiteur Master en ms. Pratiquement instantané pour bloquer net chaque crête.",
+    "master-limiter-release": "Temps de relâchement du limiteur Master en ms.",
+
+    // ENVIRONNEMENT ACOUSTIQUE
+    "env-air-abs": "Coefficient d'absorption atmosphérique global. Plus la valeur est élevée, plus les hautes fréquences s'atténuent avec la distance.",
+    "env-treble": "Brillance générale des enceintes du festival (High Shelf à 3 kHz).",
+    "env-reverb-wet": "Niveau de réverbération wet mélangé au mix (0% = sec, 100% = réverbération immersive maximale).",
+    "env-reverb-decay": "Durée de réverbération (RT60 / Decay) en secondes. Simule de petits espaces ou de vastes plaines/hangars.",
+    "env-reverb-damping": "Filtre d'amortissement HF (Low-pass) sur la réverbération. Simule l'absorption naturelle de l'air et des obstacles.",
+    "env-reverb-predelay": "Temps de pré-délai en millisecondes avant l'arrivée des premières réflexions de réverbération.",
+
+    // CONTRÔLES UTILISATEUR
+    "user-local-volume": "Volume d'écoute personnel au casque ou enceintes locales. N'altère pas la diffusion des autres participants.",
+    "user-mouse-sensitivity": "Sensibilité de la souris pour la caméra en vue subjective ou libre.",
+    "user-invert-y": "Inverse l'axe vertical Y de la souris (haut/bas).",
+    "user-invert-x": "Inverse l'axe horizontal X de la souris (gauche/droite).",
+    "user-grass-enabled": "Active ou désactive le rendu 3D de l'herbe instanciée sur le sol du festival.",
+
     "sine-active": "Active ou coupe le générateur de tonalité pure (remplace la musique dans les enceintes du festival).",
     "sine-frequency": "Fréquence de l'onde sinusoïdale pure (de 0 Hz à 20 000 Hz). Permet de tester les subs (<100Hz), médiums (1kHz) ou aigus (>4kHz).",
     "sine-volume": "Volume d'injection de la fréquence sinusoïdale dans le bus de diffusion (0% à 100%)."
