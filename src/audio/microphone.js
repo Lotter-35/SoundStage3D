@@ -16,7 +16,9 @@ export class MicrophoneInput {
         this.stream = null;
         this.sourceNode = null;
         this.gainNode = ctx.createGain();
-        this.gainNode.gain.value = 1.0; // 100% par défaut
+        this._currentVolume = 100;
+        this.gainNode.gain.value = 0.0; // commence muet tant que non activé
+
         this.gainNode.connect(this.destinationNode);
 
         this.isActive = false;
@@ -29,34 +31,45 @@ export class MicrophoneInput {
      * @param {number} volPercent
      */
     setVolume(volPercent) {
-        const linear = Math.max(0, Number(volPercent) || 0) / 100;
-        if (this.gainNode) {
-            this.gainNode.gain.setTargetAtTime(linear, this.ctx.currentTime, 0.02);
+        this._currentVolume = Math.max(0, Number(volPercent) || 0);
+        if (this.gainNode && this.isActive) {
+            const linear = this._currentVolume / 100;
+            this.gainNode.gain.setTargetAtTime(linear, this.ctx.currentTime, 0.01);
         }
     }
 
     /**
-     * Active le microphone de l'utilisateur.
+     * Active le microphone de l'utilisateur de manière fluide et continue (sans hachage).
      * @returns {Promise<boolean>}
      */
     async start() {
-        if (this.isActive) return true;
-
         if (this.ctx.state === 'suspended') {
             await this.ctx.resume();
         }
 
         try {
+            // Si le flux et le nœud source sont déjà initialisés, on réactive simplement le gain sans recréer le MediaStream
+            if (this.stream && this.sourceNode && this.stream.active) {
+                this.isActive = true;
+                const linear = this._currentVolume / 100;
+                this.gainNode.gain.setTargetAtTime(linear, this.ctx.currentTime, 0.01);
+                if (this.onStateChange) this.onStateChange(true);
+                return true;
+            }
+
             if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
                 throw new Error('getUserMedia non supporté par ce navigateur.');
             }
 
-            // Options audio optimales pour le micro en direct (désactivation de l'écho-annulation agressive si souhaité, mais utile pour éviter le larsen casque/enceintes)
+            // Options audio optimales en direct continu :
+            // Pas de coupures de paquets, pas d'AGC ni de noise suppression qui hachent la voix.
             this.stream = await navigator.mediaDevices.getUserMedia({
                 audio: {
-                    echoCancellation: true,
+                    echoCancellation: false,
                     noiseSuppression: false,
                     autoGainControl: false,
+                    channelCount: { ideal: 1 },
+                    latency: { ideal: 0.005 },
                 },
                 video: false,
             });
@@ -65,6 +78,9 @@ export class MicrophoneInput {
             this.sourceNode.connect(this.gainNode);
 
             this.isActive = true;
+            const linear = this._currentVolume / 100;
+            this.gainNode.gain.setTargetAtTime(linear, this.ctx.currentTime, 0.01);
+
             if (this.onStateChange) this.onStateChange(true);
             return true;
         } catch (err) {
@@ -76,27 +92,30 @@ export class MicrophoneInput {
     }
 
     /**
-     * Coupe et libère le microphone.
+     * Coupe le son du micro instantanément (gain à 0) tout en gardant la capture active pour éviter les artefacts de reprise.
      */
     stop() {
+        this.isActive = false;
+        if (this.gainNode) {
+            this.gainNode.gain.setTargetAtTime(0.0, this.ctx.currentTime, 0.01);
+        }
+        if (this.onStateChange) {
+            this.onStateChange(false);
+        }
+    }
+
+    /**
+     * Ferme complètement le flux matériel (si nécessaire).
+     */
+    dispose() {
+        this.stop();
         if (this.sourceNode) {
-            try {
-                this.sourceNode.disconnect();
-            } catch (_) {}
+            try { this.sourceNode.disconnect(); } catch (_) {}
             this.sourceNode = null;
         }
-
         if (this.stream) {
-            try {
-                this.stream.getTracks().forEach(track => track.stop());
-            } catch (_) {}
+            try { this.stream.getTracks().forEach(track => track.stop()); } catch (_) {}
             this.stream = null;
-        }
-
-        const wasActive = this.isActive;
-        this.isActive = false;
-        if (wasActive && this.onStateChange) {
-            this.onStateChange(false);
         }
     }
 
