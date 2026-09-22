@@ -684,9 +684,9 @@ export class Controls {
         this.pbTimeCurrent = document.getElementById('pb-time-current');
         this.pbTimeTotal = document.getElementById('pb-time-total');
         this.pbSlider = document.getElementById('pb-slider');
-        this.pbRwdBtn = document.getElementById('pb-rwd-btn');
+        this.pbPrevBtn = document.getElementById('pb-prev-btn');
         this.pbPlayBtn = document.getElementById('pb-play-btn');
-        this.pbFwdBtn = document.getElementById('pb-fwd-btn');
+        this.pbNextBtn = document.getElementById('pb-next-btn');
 
         if (this.playbackBtn) {
             this.playbackBtn.addEventListener('click', (e) => {
@@ -697,7 +697,7 @@ export class Controls {
                 this.playbackBtn.textContent = this._playbackVisible ? '⏱️ Lecteur ▴' : '⏱️ Lecteur ▾';
 
                 if (this._playbackVisible && this.pbPlayBtn) {
-                    this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
+                    this.pbPlayBtn.textContent = this._isPlaying ? '⏸' : '▶';
                 }
             });
         }
@@ -732,16 +732,24 @@ export class Controls {
             this.pbSlider.addEventListener('mouseup', () => { this._isUserScrubbing = false; });
             this.pbSlider.addEventListener('touchend', () => { this._isUserScrubbing = false; });
         }
-        if (this.pbRwdBtn) {
-            this.pbRwdBtn.addEventListener('click', (e) => {
+        if (this.pbPrevBtn) {
+            this.pbPrevBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (this._onSkip) this._onSkip(-10);
+                if (this._onPrev) {
+                    this._onPrev();
+                } else if (this._onSeek) {
+                    this._onSeek(0);
+                }
             });
         }
-        if (this.pbFwdBtn) {
-            this.pbFwdBtn.addEventListener('click', (e) => {
+        if (this.pbNextBtn) {
+            this.pbNextBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (this._onSkip) this._onSkip(10);
+                if (this._onNext) {
+                    this._onNext();
+                } else if (this._onSeek) {
+                    this._onSeek(0);
+                }
             });
         }
         if (this.pbPlayBtn) {
@@ -834,7 +842,7 @@ export class Controls {
             this.playBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
         }
         if (this.pbPlayBtn) {
-            this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
+            this.pbPlayBtn.textContent = this._isPlaying ? '⏸' : '▶';
         }
         if (!this._isPlaying) {
             this.resetMeters();
@@ -860,7 +868,7 @@ export class Controls {
             this.pbTrackTitle.textContent = trackName;
         }
         if (this.pbPlayBtn) {
-            this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
+            this.pbPlayBtn.textContent = this._isPlaying ? '⏸' : '▶';
         }
         if (this.playBtn) {
             this.playBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
@@ -869,6 +877,8 @@ export class Controls {
 
     onSeek(cb) { this._onSeek = cb; }
     onSkip(cb) { this._onSkip = cb; }
+    onPrev(cb) { this._onPrev = cb; }
+    onNext(cb) { this._onNext = cb; }
 
     setCameraModeLabel(mode, isFlying = false) {
         if (!this.camBtn) return;

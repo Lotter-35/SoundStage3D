@@ -570,7 +570,8 @@ body {
 
 .pb-buttons {
     justify-content: center;
-    gap: 10px;
+    align-items: center;
+    gap: 12px;
     padding-top: 2px;
 }
 
@@ -578,11 +579,16 @@ body {
     background: rgba(255, 255, 255, 0.08);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #ddd;
-    border-radius: 4px;
-    padding: 5px 12px;
-    font-size: 0.72rem;
+    border-radius: 6px;
+    width: 38px;
+    height: 30px;
+    font-size: 0.95rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     cursor: pointer;
     transition: all 0.15s ease;
+    line-height: 1;
 }
 
 .pb-btn:hover {
@@ -596,6 +602,9 @@ body {
     border-color: #3b82f6;
     color: #fff;
     font-weight: 600;
+    width: 44px;
+    height: 32px;
+    font-size: 1.05rem;
 }
 
 .pb-btn-main:hover {

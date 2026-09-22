@@ -243,6 +243,17 @@ controls.onSkip((deltaSec) => {
     audioEngine.seek(audioEngine.getCurrentTime() + deltaSec);
 });
 
+controls.onPrev(() => {
+    if (!audioReady) return;
+    audioEngine.seek(0);
+});
+
+controls.onNext(() => {
+    if (!audioReady) return;
+    // Loop back to start since there is only one track currently loaded
+    audioEngine.seek(0);
+});
+
 controls.onSineToggle((active) => {
     if (!audioReady || !sineGenerator) return;
     const np = document.getElementById('now-playing');
