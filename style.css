@@ -410,12 +410,11 @@ body {
     z-index: 90;
 }
 
-/* ─── Sine Generator panel (au milieu en bas) ─── */
+/* ─── Sine Generator panel (en bas à gauche, à droite de MID Pipeline) ─── */
 #sine-panel-wrap {
     position: fixed;
-    bottom: 24px;
-    left: 50%;
-    transform: translateX(-50%);
+    bottom: 64px;
+    left: 640px;
     z-index: 125;
     pointer-events: auto;
     width: 320px;
@@ -482,7 +481,7 @@ body {
 /* ─── Playback Head Controller (en bas au centre, au-dessus de la barre HUD) ─── */
 #playback-bar-wrap {
     position: fixed;
-    bottom: 24px;
+    bottom: 80px;
     left: 50%;
     transform: translateX(-50%);
     z-index: 126;
@@ -658,33 +657,45 @@ body {
 .dbg-warn { color: #fa3; }
 .dbg-bad { color: #f44; }
 
-/* ─── DSP Panels Layout (Bottom Bar) ─── */
+/* ─── DSP Panels Layout (Positioned Slots) ─── */
 #dsp-panels {
     position: fixed;
-    bottom: 64px;
-    left: 16px;
-    right: 16px;
+    inset: 0;
     z-index: 60;
-    display: flex;
-    flex-direction: row;
-    align-items: flex-end;
-    gap: 12px;
     pointer-events: none;
-}
-#dsp-panels > * {
-    pointer-events: auto;
 }
 
 #dsp-panels.hidden {
     display: none !important;
 }
 
-/* Panel ordering: TOP MID [spacer] FILL SUB */
-#dsp-panel-top  { order: 1; }
-#dsp-panel-mid  { order: 2; }
-.dsp-spacer     { order: 3; flex: 1; pointer-events: none; }
-#dsp-panel-fill { order: 4; }
-#dsp-panel-sub  { order: 5; }
+#dsp-panel-top {
+    position: fixed;
+    bottom: 64px;
+    left: 16px;
+    pointer-events: auto;
+}
+
+#dsp-panel-mid {
+    position: fixed;
+    bottom: 64px;
+    left: 328px;
+    pointer-events: auto;
+}
+
+#dsp-panel-fill {
+    position: fixed;
+    bottom: 64px;
+    right: 328px;
+    pointer-events: auto;
+}
+
+#dsp-panel-sub {
+    position: fixed;
+    bottom: 64px;
+    right: 16px;
+    pointer-events: auto;
+}
 
 /* Master panel — top-right corner */
 #dsp-master-wrap {
@@ -696,6 +707,42 @@ body {
 }
 #dsp-master-wrap.hidden {
     display: none !important;
+}
+
+/* Draggable window handles */
+.lil-gui.root > .title {
+    cursor: grab !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+.lil-gui.root > .title:active {
+    cursor: grabbing !important;
+}
+
+.pb-info {
+    cursor: grab;
+    user-select: none;
+}
+.pb-info:active {
+    cursor: grabbing;
+}
+
+#debug-panel {
+    cursor: grab;
+    pointer-events: auto;
+    user-select: none;
+}
+#debug-panel:active {
+    cursor: grabbing;
+}
+
+#meters {
+    pointer-events: auto;
+    cursor: grab;
+    user-select: none;
+}
+#meters:active {
+    cursor: grabbing;
 }
 
 /* Slot sizing */

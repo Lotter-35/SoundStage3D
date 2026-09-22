@@ -11,6 +11,7 @@
 import GUI from 'lil-gui';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 import { DSP_TOOLTIPS } from '../config/dsp-tooltips.js';
+import { makeDraggable } from './draggable.js';
 
 export class Controls {
     constructor() {
@@ -537,6 +538,14 @@ export class Controls {
 
             this._addSineResetButton(gui);
         }
+
+        // Make all panels draggable by their title header
+        if (this.guis.master?.$title) makeDraggable(document.getElementById('dsp-master-wrap'), this.guis.master.$title, 'master');
+        if (this.guis.top?.$title)    makeDraggable(document.getElementById('dsp-panel-top'), this.guis.top.$title, 'top');
+        if (this.guis.mid?.$title)    makeDraggable(document.getElementById('dsp-panel-mid'), this.guis.mid.$title, 'mid');
+        if (this.guis.fill?.$title)   makeDraggable(document.getElementById('dsp-panel-fill'), this.guis.fill.$title, 'fill');
+        if (this.guis.sub?.$title)    makeDraggable(document.getElementById('dsp-panel-sub'), this.guis.sub.$title, 'sub');
+        if (this.guis.sine?.$title)   makeDraggable(document.getElementById('sine-panel-wrap'), this.guis.sine.$title, 'sine');
     }
 
     _initHud() {
@@ -559,15 +568,6 @@ export class Controls {
                 if (this.sinePanelWrap) this.sinePanelWrap.classList.toggle('hidden', !this._sinePanelVisible);
                 this.sineBtn.classList.toggle('active', this._sinePanelVisible);
                 this.sineBtn.textContent = this._sinePanelVisible ? '🔊 Sinus ▴' : '🔊 Sinus ▾';
-
-                if (this._sinePanelVisible && this._playbackVisible) {
-                    this._playbackVisible = false;
-                    if (this.playbackBarWrap) this.playbackBarWrap.classList.add('hidden');
-                    if (this.playbackBtn) {
-                        this.playbackBtn.classList.remove('active');
-                        this.playbackBtn.textContent = '⏱️ Lecteur ▾';
-                    }
-                }
             });
         }
         if (this.sinePanelWrap) {
@@ -696,20 +696,8 @@ export class Controls {
                 this.playbackBtn.classList.toggle('active', this._playbackVisible);
                 this.playbackBtn.textContent = this._playbackVisible ? '⏱️ Lecteur ▴' : '⏱️ Lecteur ▾';
 
-                if (this._playbackVisible) {
-                    // Close sine panel if open so they don't collide at bottom center
-                    if (this._sinePanelVisible) {
-                        this._sinePanelVisible = false;
-                        if (this.sinePanelWrap) this.sinePanelWrap.classList.add('hidden');
-                        if (this.sineBtn) {
-                            this.sineBtn.classList.remove('active');
-                            this.sineBtn.textContent = '🔊 Sinus ▾';
-                        }
-                    }
-                    // Immediately sync playback button state
-                    if (this.pbPlayBtn) {
-                        this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
-                    }
+                if (this._playbackVisible && this.pbPlayBtn) {
+                    this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
                 }
             });
         }
@@ -761,6 +749,16 @@ export class Controls {
                 e.stopPropagation();
                 if (this._onPlayPause) this._onPlayPause();
             });
+        }
+
+        // Make playback controller and level meters draggable
+        if (this.playbackBarWrap) {
+            const pbHandle = this.playbackBarWrap.querySelector('.pb-info') || this.playbackBarWrap;
+            makeDraggable(this.playbackBarWrap, pbHandle, 'playback');
+        }
+        const metersEl = document.getElementById('meters');
+        if (metersEl) {
+            makeDraggable(metersEl, metersEl, 'meters');
         }
 
         // Change MP3 button

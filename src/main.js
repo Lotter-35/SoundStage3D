@@ -15,6 +15,7 @@ import { createSaturation, createCompressor } from './audio/effects.js';
 import { SineGenerator } from './audio/sineGenerator.js';
 
 import { Controls } from './ui/controls.js';
+import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
 import { setupAudioDebugProbes } from './audio/debugProbes.js';
@@ -671,6 +672,9 @@ debugBtn.addEventListener('click', () => {
     debugBtn.classList.toggle('active', _debugVisible);
     renderer.info.autoReset = !_debugVisible; // keep stats when debug is on
 });
+if (debugPanel) {
+    makeDraggable(debugPanel, debugPanel, 'debug');
+}
 
 // FPS & render performance tracking
 let _debugAccum = 0;
