@@ -678,6 +678,13 @@ body {
     display: none !important;
 }
 
+#dsp-panel-input {
+    position: fixed;
+    top: 70px;
+    left: 16px;
+    pointer-events: auto;
+}
+
 #dsp-panel-top {
     position: fixed;
     bottom: 64px;

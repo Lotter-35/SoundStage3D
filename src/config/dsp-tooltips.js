@@ -1,4 +1,19 @@
 export const DSP_TOOLTIPS = {
+    // ─── Input Stage Tooltips ───
+    "input-auto-gain": "Active la normalisation dynamique du volume d'entrée basée sur la mesure LUFS du fichier audio. Permet d'égaliser automatiquement le niveau perçu de tous les morceaux.",
+    "input-target-lufs": "Niveau de loudness cible en LUFS. -14 LUFS = standard streaming moderne (Spotify, YouTube, Apple Music). -23 LUFS = standard broadcast EBU R128.",
+    "input-trim": "Potentiomètre de pré-gain global (Input Trim). Multiplie le signal d'entrée post-normalisation avant l'envoi vers le reste du DSP. 100% = gain neutre.",
+    "input-eq-low": "Égaliseur Graves (Low Shelf à 100 Hz). Permet d'atténuer ou de booster les basses fréquences de la source avant distribution (-12 dB à +12 dB).",
+    "input-eq-mid": "Égaliseur Médiums (Filtre Bell à 1000 Hz, Q=1.0). Permet de corriger la présence vocale et le corps de l'instrumentation (-12 dB à +12 dB).",
+    "input-eq-high": "Égaliseur Aigus (High Shelf à 6000 Hz). Permet d'ajuster l'aération, la brillance ou de calmer les cymbales/sifflantes (-12 dB à +12 dB).",
+    "input-comp-enabled": "Active ou désactive le compresseur de dynamique d'entrée. Utile pour lisser les écarts de dynamique résiduels de la piste avant le crossover.",
+    "input-comp-threshold": "Seuil de déclenchement du compresseur d'entrée (en dB). Plus bas = compression plus fréquente et plus soutenue.",
+    "input-comp-knee": "Courbure de transition autour du seuil (Knee). Élevé = compression musicale et douce. Faible = compression dure et franche.",
+    "input-comp-ratio": "Taux de réduction du compresseur d'entrée. 3:1 = contrôle naturel et transparent.",
+    "input-comp-attack": "Temps d'attaque du compresseur d'entrée (en ms). Court = réagit instantanément aux transitoires. Long = préserve le punch initial.",
+    "input-comp-release": "Temps de relâchement du compresseur d'entrée (en ms). Détermine la vitesse à laquelle le gain revient à la normale.",
+    "input-limiter-ceiling": "Plafond du limiteur de crête brickwall à attaque instantanée (ex: -0.1 dBFS). Bloque tout dépassement numérique pour empêcher tout clipping du DSP.",
+
     "mid-xover-low": "Fréquence basse du crossover (limite SUB↔MID). Monter = plus de bas-médiums dans les MID. Baisser = les MID ne reçoivent que les fréquences au-dessus de cette valeur.",
     "mid-xover-high": "Fréquence haute du crossover (limite MID↔TOP). Monter = les MID couvrent plus d'aigus. Baisser = bande MID plus étroite, les aigus partent dans les TOP plus tôt.",
     "mid-comp-threshold": "Seuil au-dessus duquel la compression s'active. Plus bas = compression plus agressive sur les mediums.",

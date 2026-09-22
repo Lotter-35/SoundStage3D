@@ -53,6 +53,7 @@ export class Controls {
         this._onHrtfBrightness = null;
         this._onGrassChange = null;
         this._onMasterDsp = null;
+        this._onInputDsp = null;
         this._onSubDsp = null;
         this._onMidDsp = null;
         this._onTopDsp = null;
@@ -79,6 +80,11 @@ export class Controls {
                 'uncapped-fps': savedUncap === 'true',
                 'invert-y': savedInvY === 'true',
                 'invert-x': savedInvX === 'true',
+            },
+            input: {
+                ...DSP_DEFAULTS.input,
+                'measured-lufs': '--',
+                'applied-gain': '0.0 dB',
             },
             sub:  { ...DSP_DEFAULTS.sub },
             mid:  { ...DSP_DEFAULTS.mid },
@@ -243,6 +249,7 @@ export class Controls {
 
     _initGuis() {
         const cMaster = document.getElementById('dsp-panel-master');
+        const cInput  = document.getElementById('dsp-panel-input');
         const cTop    = document.getElementById('dsp-panel-top');
         const cMid    = document.getElementById('dsp-panel-mid');
         const cFill   = document.getElementById('dsp-panel-fill');
@@ -251,7 +258,7 @@ export class Controls {
 
         // Stop click and mousedown from propagating to canvas when clicking panels
         const stopProp = (e) => e.stopPropagation();
-        [cMaster, cTop, cMid, cFill, cSub, cSine].forEach(container => {
+        [cMaster, cInput, cTop, cMid, cFill, cSub, cSine].forEach(container => {
             if (container) {
                 container.addEventListener('click', stopProp);
                 container.addEventListener('mousedown', stopProp);
@@ -297,6 +304,66 @@ export class Controls {
             this._setupController(cInvX, 'master-invert-x', false, false);
 
             this._addGuiResetButton(gui, 'master');
+        }
+
+        // ─── 1.5 INPUT Stage GUI (Above TOP Pipeline) ───
+        if (cInput) {
+            const gui = new GUI({ container: cInput, title: '🎚️ INPUT Stage', closeFolders: false, width: 300 });
+            this.guis.input = gui;
+
+            // 1. Normalisation LUFS / Auto-Gain
+            const fLufs = gui.addFolder('Normalisation LUFS (Auto-Gain)');
+            const cAutoGain = fLufs.add(this.state.input, 'auto-gain').name('Actif').onChange(v => this._onInputDsp && this._onInputDsp('auto-gain', v));
+            this._setupController(cAutoGain, 'input-auto-gain', DSP_DEFAULTS.input['auto-gain'], false);
+
+            const cTargetLufs = fLufs.add(this.state.input, 'target-lufs', [-14, -23, -16, -18, -20]).name('Cible LUFS').onChange(v => this._onInputDsp && this._onInputDsp('target-lufs', Number(v)));
+            this._setupController(cTargetLufs, 'input-target-lufs', DSP_DEFAULTS.input['target-lufs'], false);
+
+            this._inputLufsDisplay = fLufs.add(this.state.input, 'measured-lufs').name('LUFS mesuré').listen().disable();
+            this._inputGainDisplay = fLufs.add(this.state.input, 'applied-gain').name('Gain appliqué').listen().disable();
+
+            // 2. Input Trim / Pré-gain Global
+            const fTrim = gui.addFolder('Pré-Gain Global (Trim)');
+            const cTrim = fTrim.add(this.state.input, 'input-trim', 0, 200, 1).name('Trim (%)').onChange(v => this._onInputDsp && this._onInputDsp('input-trim', v));
+            this._setupController(cTrim, 'input-trim', DSP_DEFAULTS.input['input-trim'], false);
+
+            // 3. Égaliseur 3 Bandes
+            const fEq = gui.addFolder('Égaliseur 3 Bandes');
+            const cEqLow = fEq.add(this.state.input, 'eq-low', -12, 12, 0.5).name('Graves (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-low', v));
+            this._setupController(cEqLow, 'input-eq-low', DSP_DEFAULTS.input['eq-low'], false);
+
+            const cEqMid = fEq.add(this.state.input, 'eq-mid', -12, 12, 0.5).name('Médiums (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-mid', v));
+            this._setupController(cEqMid, 'input-eq-mid', DSP_DEFAULTS.input['eq-mid'], false);
+
+            const cEqHigh = fEq.add(this.state.input, 'eq-high', -12, 12, 0.5).name('Aigus (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-high', v));
+            this._setupController(cEqHigh, 'input-eq-high', DSP_DEFAULTS.input['eq-high'], false);
+
+            // 4. Compresseur d'Entrée
+            const fComp = gui.addFolder('Compresseur d\'Entrée');
+            const cCompOn = fComp.add(this.state.input, 'comp-enabled').name('Actif').onChange(v => this._onInputDsp && this._onInputDsp('comp-enabled', v));
+            this._setupController(cCompOn, 'input-comp-enabled', DSP_DEFAULTS.input['comp-enabled'], false);
+
+            const cThresh = fComp.add(this.state.input, 'comp-threshold', -60, 0, 0.5).name('Seuil (dB)').onChange(v => this._onInputDsp && this._onInputDsp('comp-threshold', v));
+            this._setupController(cThresh, 'input-comp-threshold', DSP_DEFAULTS.input['comp-threshold'], false);
+
+            const cKnee = fComp.add(this.state.input, 'comp-knee', 0, 40, 0.5).name('Knee (dB)').onChange(v => this._onInputDsp && this._onInputDsp('comp-knee', v));
+            this._setupController(cKnee, 'input-comp-knee', DSP_DEFAULTS.input['comp-knee'], false);
+
+            const cRatio = fComp.add(this.state.input, 'comp-ratio', 1, 20, 0.1).name('Ratio (:1)').onChange(v => this._onInputDsp && this._onInputDsp('comp-ratio', v));
+            this._setupController(cRatio, 'input-comp-ratio', DSP_DEFAULTS.input['comp-ratio'], false);
+
+            const cAttack = fComp.add(this.state.input, 'comp-attack', 0, 100, 0.5).name('Attaque (ms)').onChange(v => this._onInputDsp && this._onInputDsp('comp-attack', v));
+            this._setupController(cAttack, 'input-comp-attack', DSP_DEFAULTS.input['comp-attack'], false);
+
+            const cRel = fComp.add(this.state.input, 'comp-release', 10, 1000, 1).name('Release (ms)').onChange(v => this._onInputDsp && this._onInputDsp('comp-release', v));
+            this._setupController(cRel, 'input-comp-release', DSP_DEFAULTS.input['comp-release'], false);
+
+            // 5. Limiteur Brickwall
+            const fLim = gui.addFolder('Limiteur Brickwall');
+            const cLim = fLim.add(this.state.input, 'limiter-ceiling', -6, 0, 0.1).name('Plafond (dBFS)').onChange(v => this._onInputDsp && this._onInputDsp('limiter-ceiling', v));
+            this._setupController(cLim, 'input-limiter-ceiling', DSP_DEFAULTS.input['limiter-ceiling'], false);
+
+            this._addGuiResetButton(gui, 'input');
         }
 
         // ─── 2. TOP GUI (Bottom-Left, left group) ───
@@ -544,6 +611,7 @@ export class Controls {
 
         // Make all panels draggable by their title header
         if (this.guis.master?.$title) makeDraggable(document.getElementById('dsp-master-wrap'), this.guis.master.$title, 'master');
+        if (this.guis.input?.$title)  makeDraggable(document.getElementById('dsp-panel-input'), this.guis.input.$title, 'input');
         if (this.guis.top?.$title)    makeDraggable(document.getElementById('dsp-panel-top'), this.guis.top.$title, 'top');
         if (this.guis.mid?.$title)    makeDraggable(document.getElementById('dsp-panel-mid'), this.guis.mid.$title, 'mid');
         if (this.guis.fill?.$title)   makeDraggable(document.getElementById('dsp-panel-fill'), this.guis.fill.$title, 'fill');
@@ -906,6 +974,7 @@ export class Controls {
     onConesToggle(cb) { this._onConesToggle = cb; }
     onGrassChange(cb) { this._onGrassChange = cb; }
     onMasterDsp(cb) { this._onMasterDsp = cb; }
+    onInputDsp(cb) { this._onInputDsp = cb; }
     onSubDsp(cb) { this._onSubDsp = cb; }
     onMidDsp(cb) { this._onMidDsp = cb; }
     onTopDsp(cb) { this._onTopDsp = cb; }
@@ -913,6 +982,19 @@ export class Controls {
     onSineToggle(cb) { this._onSineToggle = cb; }
     onSineFrequency(cb) { this._onSineFrequency = cb; }
     onSineVolume(cb) { this._onSineVolume = cb; }
+
+    /**
+     * Met à jour l'affichage de l'analyse LUFS et du gain appliqué dans l'UI.
+     * @param {{ measuredLufs: number|null, measuredRms: number|null, appliedGainDb: number }} data
+     */
+    updateInputAnalysis(data) {
+        if (!data || !this.state.input) return;
+        const { measuredLufs, appliedGainDb } = data;
+        this.state.input['measured-lufs'] = (measuredLufs !== null && measuredLufs !== undefined) ? `${measuredLufs} LUFS` : '--';
+        this.state.input['applied-gain'] = (appliedGainDb !== undefined) ? `${appliedGainDb > 0 ? '+' : ''}${appliedGainDb} dB` : '0.0 dB';
+        if (this._inputLufsDisplay) this._inputLufsDisplay.updateDisplay();
+        if (this._inputGainDisplay) this._inputGainDisplay.updateDisplay();
+    }
 
     showHUD() {
         if (this.overlay) this.overlay.classList.add('hidden');

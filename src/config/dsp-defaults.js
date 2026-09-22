@@ -10,6 +10,23 @@
 
 export const DSP_DEFAULTS = {
 
+    // ─── INPUT (Étage d'Entrée) ───────────────────────────────────────
+    input: {
+        'auto-gain':         true,   // Normalisation LUFS activée par défaut
+        'target-lufs':       -14,    // dB LUFS (-14 standard streaming, -23 standard broadcast)
+        'input-trim':        100,    // % (0% - 200%)
+        'eq-low':              0,    // dB (-12 à +12, low-shelf 100Hz)
+        'eq-mid':              0,    // dB (-12 à +12, peaking 1kHz)
+        'eq-high':             0,    // dB (-12 à +12, high-shelf 6kHz)
+        'comp-enabled':    false,    // Compresseur optionnel (désactivé par défaut)
+        'comp-threshold':    -18,    // dB
+        'comp-knee':          12,    // dB
+        'comp-ratio':          3,    // :1
+        'comp-attack':        10,    // ms
+        'comp-release':      150,    // ms
+        'limiter-ceiling':  -0.1,    // dBFS (plafond brickwall)
+    },
+
     // ─── SUB ──────────────────────────────────────────────────────────
     sub: {
         'xover-freq':      90,      // Hz — crossover LP frequency

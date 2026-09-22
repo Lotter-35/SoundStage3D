@@ -13,6 +13,7 @@ import { Crossover } from './audio/crossover.js';
 import { SpeakerSystem } from './audio/speakers.js';
 import { createSaturation, createCompressor } from './audio/effects.js';
 import { SineGenerator } from './audio/sineGenerator.js';
+import { InputStage } from './audio/inputStage.js';
 
 import { Controls } from './ui/controls.js';
 import { makeDraggable } from './ui/draggable.js';
@@ -49,6 +50,7 @@ const listener = new Listener(camera, document.body, scene);
 
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
+let inputStage = null;
 let crossover = null;
 let speakerSystem = null;
 let sineGenerator = null;
@@ -72,7 +74,8 @@ async function initAudio(file = null) {
             _musicWasPlayingBeforeSine = false;
             audioEngine.stop();
             await audioEngine.loadFile(file);
-            audioEngine.play(crossover.input);
+            if (inputStage) inputStage.analyzeBuffer(audioEngine.buffer);
+            audioEngine.play(inputStage ? inputStage.input : crossover.input);
             controls.setPlayState(true);
             const np = document.getElementById('now-playing');
             if (np) np.textContent = file.name;
@@ -88,11 +91,21 @@ async function initAudio(file = null) {
         await audioEngine.loadFile(file);
     }
 
+    // Build Input Stage (Normalisation LUFS, Trim, EQ 3 bandes, Compresseur, Limiteur)
+    inputStage = new InputStage(ctx);
+    inputStage.onAnalysisUpdate(data => controls.updateInputAnalysis(data));
+    if (audioEngine.buffer) {
+        inputStage.analyzeBuffer(audioEngine.buffer);
+    }
+
     // Build DSP graph
     crossover = new Crossover(ctx, {
         lowFreq: DSP_DEFAULTS.sub['xover-freq'],
         highFreq: DSP_DEFAULTS.mid['xover-high'] ?? DSP_DEFAULTS.top['xover-freq'],
     });
+
+    // Connect InputStage output to Crossover input
+    inputStage.output.connect(crossover.input);
 
     const subComp = createCompressor(ctx, {
         threshold: DSP_DEFAULTS.sub['comp-threshold'],
@@ -137,13 +150,13 @@ async function initAudio(file = null) {
         effects
     );
 
-    // Tone Generator routed into crossover input
-    sineGenerator = new SineGenerator(ctx, crossover.input);
+    // Tone Generator routed into InputStage input
+    sineGenerator = new SineGenerator(ctx, inputStage.input);
     sineGenerator.setFrequency(controls.state.sine.frequency);
     sineGenerator.setVolume(controls.state.sine.volume);
 
     audioReady = true;
-    window.__DEBUG = { audioEngine, speakerSystem, listener, sineGenerator, camera };
+    window.__DEBUG = { audioEngine, speakerSystem, listener, sineGenerator, camera, inputStage };
 
     // Apply initial bus volumes from config
     speakerSystem.setBusVolume('sub', DSP_DEFAULTS.sub['bus-volume'] / 100);
@@ -155,7 +168,7 @@ async function initAudio(file = null) {
     setupAudioDebugProbes(audioEngine, crossover, effects, speakerSystem);
 
     if (file) {
-        audioEngine.play(crossover.input);
+        audioEngine.play(inputStage.input);
         controls.setPlayState(true);
         const np = document.getElementById('now-playing');
         if (np) np.textContent = file.name;
@@ -227,7 +240,7 @@ controls.onPlayPause(() => {
         audioEngine.pause();
         controls.setPlayState(false);
     } else {
-        audioEngine.play(crossover.input);
+        audioEngine.play(inputStage ? inputStage.input : crossover.input);
         controls.setPlayState(true);
     }
 });
@@ -269,7 +282,7 @@ controls.onSineToggle((active) => {
     } else {
         sineGenerator.stop();
         if (_musicWasPlayingBeforeSine) {
-            audioEngine.play(crossover.input);
+            audioEngine.play(inputStage ? inputStage.input : crossover.input);
             controls.setPlayState(true);
             if (np) np.textContent = _currentAudioFileName;
         } else {
@@ -304,7 +317,8 @@ controls.onChangeMp3(async (file) => {
     _currentAudioFileName = file.name;
     audioEngine.stop();
     await audioEngine.loadFile(file);
-    audioEngine.play(crossover.input);
+    if (inputStage) inputStage.analyzeBuffer(audioEngine.buffer);
+    audioEngine.play(inputStage ? inputStage.input : crossover.input);
     controls.setPlayState(true);
     const np = document.getElementById('now-playing');
     if (np) np.textContent = file.name;
@@ -328,7 +342,8 @@ window.addEventListener('drop', async (e) => {
         } else {
             audioEngine.stop();
             await audioEngine.loadFile(file);
-            audioEngine.play(crossover.input);
+            if (inputStage) inputStage.analyzeBuffer(audioEngine.buffer);
+            audioEngine.play(inputStage ? inputStage.input : crossover.input);
             controls.setPlayState(true);
             const np = document.getElementById('now-playing');
             if (np) np.textContent = file.name;
@@ -612,6 +627,11 @@ controls.onMasterDsp((param, value) => {
     }
     if (!audioReady) return;
     speakerSystem.setMasterDspParam(param, value);
+});
+
+controls.onInputDsp((param, value) => {
+    if (!audioReady || !inputStage) return;
+    inputStage.setParam(param, value);
 });
 
 controls.onSubDsp((param, value) => {
