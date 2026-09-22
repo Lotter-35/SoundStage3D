@@ -558,7 +558,16 @@ export class Controls {
                 this._sinePanelVisible = !this._sinePanelVisible;
                 if (this.sinePanelWrap) this.sinePanelWrap.classList.toggle('hidden', !this._sinePanelVisible);
                 this.sineBtn.classList.toggle('active', this._sinePanelVisible);
-                this.sineBtn.textContent = this._sinePanelVisible ? '🔊 Générateur Sinus ▴' : '🔊 Générateur Sinus ▾';
+                this.sineBtn.textContent = this._sinePanelVisible ? '🔊 Sinus ▴' : '🔊 Sinus ▾';
+
+                if (this._sinePanelVisible && this._playbackVisible) {
+                    this._playbackVisible = false;
+                    if (this.playbackBarWrap) this.playbackBarWrap.classList.add('hidden');
+                    if (this.playbackBtn) {
+                        this.playbackBtn.classList.remove('active');
+                        this.playbackBtn.textContent = '⏱️ Lecteur ▾';
+                    }
+                }
             });
         }
         if (this.sinePanelWrap) {
@@ -662,8 +671,9 @@ export class Controls {
             });
         }
 
-        // Playback Head Dock & Controller (Bottom-Right)
+        // Playback Head Controller (Bottom Center)
         this._playbackVisible = false;
+        this._isPlaying = false;
         this._isUserScrubbing = false;
         this._onSeek = null;
         this._onSkip = null;
@@ -684,7 +694,23 @@ export class Controls {
                 this._playbackVisible = !this._playbackVisible;
                 if (this.playbackBarWrap) this.playbackBarWrap.classList.toggle('hidden', !this._playbackVisible);
                 this.playbackBtn.classList.toggle('active', this._playbackVisible);
-                this.playbackBtn.textContent = this._playbackVisible ? '⏱️ Tête de lecture ▴' : '⏱️ Tête de lecture ▾';
+                this.playbackBtn.textContent = this._playbackVisible ? '⏱️ Lecteur ▴' : '⏱️ Lecteur ▾';
+
+                if (this._playbackVisible) {
+                    // Close sine panel if open so they don't collide at bottom center
+                    if (this._sinePanelVisible) {
+                        this._sinePanelVisible = false;
+                        if (this.sinePanelWrap) this.sinePanelWrap.classList.add('hidden');
+                        if (this.sineBtn) {
+                            this.sineBtn.classList.remove('active');
+                            this.sineBtn.textContent = '🔊 Sinus ▾';
+                        }
+                    }
+                    // Immediately sync playback button state
+                    if (this.pbPlayBtn) {
+                        this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
+                    }
+                }
             });
         }
         if (this.playbackBarWrap) {
@@ -699,7 +725,7 @@ export class Controls {
                 if (this.playbackBarWrap) this.playbackBarWrap.classList.add('hidden');
                 if (this.playbackBtn) {
                     this.playbackBtn.classList.remove('active');
-                    this.playbackBtn.textContent = '⏱️ Tête de lecture ▾';
+                    this.playbackBtn.textContent = '⏱️ Lecteur ▾';
                 }
             });
         }
@@ -805,13 +831,14 @@ export class Controls {
     }
 
     setPlayState(isPlaying) {
+        this._isPlaying = Boolean(isPlaying);
         if (this.playBtn) {
-            this.playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+            this.playBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
         }
         if (this.pbPlayBtn) {
-            this.pbPlayBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+            this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
         }
-        if (!isPlaying) {
+        if (!this._isPlaying) {
             this.resetMeters();
         }
     }
@@ -824,6 +851,7 @@ export class Controls {
     }
 
     updatePlayback(currentTime, duration, isPlaying, trackName) {
+        this._isPlaying = Boolean(isPlaying);
         if (!this._isUserScrubbing && this.pbSlider) {
             this.pbSlider.max = duration > 0 ? duration : 100;
             this.pbSlider.value = currentTime || 0;
@@ -834,7 +862,10 @@ export class Controls {
             this.pbTrackTitle.textContent = trackName;
         }
         if (this.pbPlayBtn) {
-            this.pbPlayBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+            this.pbPlayBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
+        }
+        if (this.playBtn) {
+            this.playBtn.textContent = this._isPlaying ? '⏸ Pause' : '▶ Play';
         }
     }
 

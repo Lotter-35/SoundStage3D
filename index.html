@@ -39,6 +39,7 @@
             </div>
             <button id="spectrum-btn" class="hud-btn">📊 Spectre: OFF</button>
             <button id="sine-btn" class="hud-btn">🔊 Sinus ▾</button>
+            <button id="playback-btn" class="hud-btn">⏱️ Lecteur ▾</button>
             <button id="grass-btn" class="hud-btn">🌿 Herbe: OFF</button>
             <button id="play-btn" class="hud-btn">⏸ Pause</button>
             <button id="change-mp3-btn" class="hud-btn">📂 Changer MP3</button>
@@ -109,27 +110,24 @@
         <div id="debug-content"></div>
     </div>
 
-    <!-- ─── Playback Head Controller (en bas à droite) ─── -->
-    <div id="playback-dock">
-        <div id="playback-bar-wrap" class="hidden">
-            <div id="playback-bar">
-                <div class="pb-row pb-info">
-                    <span id="pb-track-title">Aucun fichier chargé</span>
-                    <button id="pb-close-btn" class="pb-icon-btn" title="Fermer">✕</button>
-                </div>
-                <div class="pb-row pb-scrub">
-                    <span id="pb-time-current" class="pb-time">00:00</span>
-                    <input type="range" id="pb-slider" min="0" max="100" step="0.1" value="0">
-                    <span id="pb-time-total" class="pb-time">00:00</span>
-                </div>
-                <div class="pb-row pb-buttons">
-                    <button id="pb-rwd-btn" class="pb-btn" title="Reculer de 10s">⏪ -10s</button>
-                    <button id="pb-play-btn" class="pb-btn pb-btn-main">⏸ Pause</button>
-                    <button id="pb-fwd-btn" class="pb-btn" title="Avancer de 10s">⏩ +10s</button>
-                </div>
+    <!-- ─── Playback Head Controller (en bas au centre) ─── -->
+    <div id="playback-bar-wrap" class="hidden">
+        <div id="playback-bar">
+            <div class="pb-row pb-info">
+                <span id="pb-track-title">Aucun fichier chargé</span>
+                <button id="pb-close-btn" class="pb-icon-btn" title="Fermer">✕</button>
+            </div>
+            <div class="pb-row pb-scrub">
+                <span id="pb-time-current" class="pb-time">00:00</span>
+                <input type="range" id="pb-slider" min="0" max="100" step="0.1" value="0">
+                <span id="pb-time-total" class="pb-time">00:00</span>
+            </div>
+            <div class="pb-row pb-buttons">
+                <button id="pb-rwd-btn" class="pb-btn" title="Reculer de 10s">⏪ -10s</button>
+                <button id="pb-play-btn" class="pb-btn pb-btn-main">▶ Play</button>
+                <button id="pb-fwd-btn" class="pb-btn" title="Avancer de 10s">⏩ +10s</button>
             </div>
         </div>
-        <button id="playback-btn" class="hud-btn">⏱️ Tête de lecture ▾</button>
     </div>
 
     <div id="now-playing"></div>
