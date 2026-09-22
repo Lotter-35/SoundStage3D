@@ -678,18 +678,32 @@ body {
     display: none !important;
 }
 
-#dsp-panel-input {
-    position: fixed;
-    top: 70px;
-    left: 16px;
-    pointer-events: auto;
-}
-
-#dsp-panel-top {
+#dsp-col-left {
     position: fixed;
     bottom: 64px;
     left: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    pointer-events: none;
+    z-index: 70;
+    max-height: calc(100vh - 100px);
+}
+
+#dsp-col-left > .dsp-panel-slot {
+    position: static;
     pointer-events: auto;
+}
+
+#dsp-col-left > #dsp-panel-input:not([style*="position: fixed"]) .lil-gui.root {
+    max-height: min(360px, calc(42vh - 30px)) !important;
+    overflow-y: auto !important;
+}
+
+#dsp-col-left > #dsp-panel-top:not([style*="position: fixed"]) .lil-gui.root {
+    max-height: min(480px, calc(52vh - 30px)) !important;
+    overflow-y: auto !important;
 }
 
 #dsp-panel-mid {
@@ -767,6 +781,7 @@ body {
     width: 300px;
     min-width: 300px;
     max-width: 300px;
+    pointer-events: auto;
 }
 
 /* Lil-gui Root & Positioning */

@@ -308,16 +308,16 @@ export class Controls {
 
         // ─── 1.5 INPUT Stage GUI (Above TOP Pipeline) ───
         if (cInput) {
-            const gui = new GUI({ container: cInput, title: '🎚️ INPUT Stage', closeFolders: false, width: 300 });
+            const gui = new GUI({ container: cInput, title: '🎚️ INPUT Stage', closeFolders: true, width: 300 });
             this.guis.input = gui;
 
             // 1. Normalisation LUFS / Auto-Gain
             const fLufs = gui.addFolder('Normalisation LUFS (Auto-Gain)');
             const cAutoGain = fLufs.add(this.state.input, 'auto-gain').name('Actif').onChange(v => this._onInputDsp && this._onInputDsp('auto-gain', v));
-            this._setupController(cAutoGain, 'input-auto-gain', DSP_DEFAULTS.input['auto-gain'], false);
+            this._setupController(cAutoGain, 'input-auto-gain', DSP_DEFAULTS.input['auto-gain'], true);
 
             const cTargetLufs = fLufs.add(this.state.input, 'target-lufs', [-14, -23, -16, -18, -20]).name('Cible LUFS').onChange(v => this._onInputDsp && this._onInputDsp('target-lufs', Number(v)));
-            this._setupController(cTargetLufs, 'input-target-lufs', DSP_DEFAULTS.input['target-lufs'], false);
+            this._setupController(cTargetLufs, 'input-target-lufs', DSP_DEFAULTS.input['target-lufs'], true);
 
             this._inputLufsDisplay = fLufs.add(this.state.input, 'measured-lufs').name('LUFS mesuré').listen().disable();
             this._inputGainDisplay = fLufs.add(this.state.input, 'applied-gain').name('Gain appliqué').listen().disable();
@@ -325,43 +325,43 @@ export class Controls {
             // 2. Input Trim / Pré-gain Global
             const fTrim = gui.addFolder('Pré-Gain Global (Trim)');
             const cTrim = fTrim.add(this.state.input, 'input-trim', 0, 200, 1).name('Trim (%)').onChange(v => this._onInputDsp && this._onInputDsp('input-trim', v));
-            this._setupController(cTrim, 'input-trim', DSP_DEFAULTS.input['input-trim'], false);
+            this._setupController(cTrim, 'input-trim', DSP_DEFAULTS.input['input-trim'], true);
 
             // 3. Égaliseur 3 Bandes
             const fEq = gui.addFolder('Égaliseur 3 Bandes');
             const cEqLow = fEq.add(this.state.input, 'eq-low', -12, 12, 0.5).name('Graves (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-low', v));
-            this._setupController(cEqLow, 'input-eq-low', DSP_DEFAULTS.input['eq-low'], false);
+            this._setupController(cEqLow, 'input-eq-low', DSP_DEFAULTS.input['eq-low'], true);
 
             const cEqMid = fEq.add(this.state.input, 'eq-mid', -12, 12, 0.5).name('Médiums (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-mid', v));
-            this._setupController(cEqMid, 'input-eq-mid', DSP_DEFAULTS.input['eq-mid'], false);
+            this._setupController(cEqMid, 'input-eq-mid', DSP_DEFAULTS.input['eq-mid'], true);
 
             const cEqHigh = fEq.add(this.state.input, 'eq-high', -12, 12, 0.5).name('Aigus (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-high', v));
-            this._setupController(cEqHigh, 'input-eq-high', DSP_DEFAULTS.input['eq-high'], false);
+            this._setupController(cEqHigh, 'input-eq-high', DSP_DEFAULTS.input['eq-high'], true);
 
             // 4. Compresseur d'Entrée
             const fComp = gui.addFolder('Compresseur d\'Entrée');
             const cCompOn = fComp.add(this.state.input, 'comp-enabled').name('Actif').onChange(v => this._onInputDsp && this._onInputDsp('comp-enabled', v));
-            this._setupController(cCompOn, 'input-comp-enabled', DSP_DEFAULTS.input['comp-enabled'], false);
+            this._setupController(cCompOn, 'input-comp-enabled', DSP_DEFAULTS.input['comp-enabled'], true);
 
             const cThresh = fComp.add(this.state.input, 'comp-threshold', -60, 0, 0.5).name('Seuil (dB)').onChange(v => this._onInputDsp && this._onInputDsp('comp-threshold', v));
-            this._setupController(cThresh, 'input-comp-threshold', DSP_DEFAULTS.input['comp-threshold'], false);
+            this._setupController(cThresh, 'input-comp-threshold', DSP_DEFAULTS.input['comp-threshold'], true);
 
             const cKnee = fComp.add(this.state.input, 'comp-knee', 0, 40, 0.5).name('Knee (dB)').onChange(v => this._onInputDsp && this._onInputDsp('comp-knee', v));
-            this._setupController(cKnee, 'input-comp-knee', DSP_DEFAULTS.input['comp-knee'], false);
+            this._setupController(cKnee, 'input-comp-knee', DSP_DEFAULTS.input['comp-knee'], true);
 
             const cRatio = fComp.add(this.state.input, 'comp-ratio', 1, 20, 0.1).name('Ratio (:1)').onChange(v => this._onInputDsp && this._onInputDsp('comp-ratio', v));
-            this._setupController(cRatio, 'input-comp-ratio', DSP_DEFAULTS.input['comp-ratio'], false);
+            this._setupController(cRatio, 'input-comp-ratio', DSP_DEFAULTS.input['comp-ratio'], true);
 
             const cAttack = fComp.add(this.state.input, 'comp-attack', 0, 100, 0.5).name('Attaque (ms)').onChange(v => this._onInputDsp && this._onInputDsp('comp-attack', v));
-            this._setupController(cAttack, 'input-comp-attack', DSP_DEFAULTS.input['comp-attack'], false);
+            this._setupController(cAttack, 'input-comp-attack', DSP_DEFAULTS.input['comp-attack'], true);
 
             const cRel = fComp.add(this.state.input, 'comp-release', 10, 1000, 1).name('Release (ms)').onChange(v => this._onInputDsp && this._onInputDsp('comp-release', v));
-            this._setupController(cRel, 'input-comp-release', DSP_DEFAULTS.input['comp-release'], false);
+            this._setupController(cRel, 'input-comp-release', DSP_DEFAULTS.input['comp-release'], true);
 
             // 5. Limiteur Brickwall
             const fLim = gui.addFolder('Limiteur Brickwall');
             const cLim = fLim.add(this.state.input, 'limiter-ceiling', -6, 0, 0.1).name('Plafond (dBFS)').onChange(v => this._onInputDsp && this._onInputDsp('limiter-ceiling', v));
-            this._setupController(cLim, 'input-limiter-ceiling', DSP_DEFAULTS.input['limiter-ceiling'], false);
+            this._setupController(cLim, 'input-limiter-ceiling', DSP_DEFAULTS.input['limiter-ceiling'], true);
 
             this._addGuiResetButton(gui, 'input');
         }
@@ -608,6 +608,17 @@ export class Controls {
 
             this._addSineResetButton(gui);
         }
+
+        // Clean up any stale position saved when INPUT was stuck in the top-left corner under meters
+        try {
+            const savedInputPos = localStorage.getItem('soundstage3d:win-pos:input');
+            if (savedInputPos) {
+                const parsed = JSON.parse(savedInputPos);
+                if (parsed && typeof parsed.top === 'number' && parsed.top < 250) {
+                    localStorage.removeItem('soundstage3d:win-pos:input');
+                }
+            }
+        } catch (_) {}
 
         // Make all panels draggable by their title header
         if (this.guis.master?.$title) makeDraggable(document.getElementById('dsp-master-wrap'), this.guis.master.$title, 'master');
