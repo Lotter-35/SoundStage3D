@@ -129,7 +129,7 @@ export const DSP_DEFAULTS = {
     // ─── CONTRÔLES UTILISATEUR ────────────────────────────────────────
     user: {
         'local-volume':     100,    // % (0 à 1000) — écoute locale
-        'mouse-sensitivity':100,    // % (10 à 300) — sensibilité souris
+        'mouse-sensitivity': 60,    // % (0 à 200+) — sensibilité souris (défaut 60)
         'grass-distance':     0,    // m (0 à 60) — distance d'affichage herbe (0 = désactivé)
     },
 };

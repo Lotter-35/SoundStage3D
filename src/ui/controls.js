@@ -78,7 +78,7 @@ export class Controls {
             env:    { ...DSP_DEFAULTS.env },
             user: {
                 ...DSP_DEFAULTS.user,
-                'mouse-sensitivity': savedSens !== null ? Number(savedSens) : (DSP_DEFAULTS.user?.['mouse-sensitivity'] ?? 100),
+                'mouse-sensitivity': savedSens !== null ? Number(savedSens) : (DSP_DEFAULTS.user?.['mouse-sensitivity'] ?? 60),
                 'grass-distance': DSP_DEFAULTS.user?.['grass-distance'] ?? 0,
             },
             input: {
@@ -207,7 +207,7 @@ export class Controls {
                 localStorage.setItem('soundstage3d:master-uncapped-fps', 'false');
             }
             if (busKey === 'user') {
-                localStorage.setItem('soundstage3d:master-mouse-sensitivity', '100');
+                localStorage.setItem('soundstage3d:master-mouse-sensitivity', '60');
             }
         };
 
@@ -272,7 +272,7 @@ export class Controls {
 
         // ─── 1. MASTER OUT Stage GUI (Bottom-Right, above SUB) ───
         if (cMaster) {
-            const gui = new GUI({ container: cMaster, title: 'MASTER output', closeFolders: false, width: 300 });
+            const gui = new GUI({ container: cMaster, title: 'MASTER Output', closeFolders: false, width: 300 });
             this.guis.master = gui;
 
             // EQ Global (Master EQ 4 bandes)
@@ -310,8 +310,9 @@ export class Controls {
             const cMakeup = fComp.add(this.state.master, 'comp-makeup', -6, 18, 0.5).name('Make-up (dB)').onChange(v => this._onMasterDsp && this._onMasterDsp('comp-makeup', v));
             this._setupController(cMakeup, 'master-comp-makeup', DSP_DEFAULTS.master['comp-makeup'], false);
 
-            // Limiteur de Sortie Final (True Peak / Brickwall)
+            // Limiteur de Sortie Final (True Peak / Brickwall) - réduit par défaut
             const fLim = gui.addFolder('Limiteur');
+            fLim.close();
             const cLimOn = fLim.add(this.state.master, 'limiter-enabled').name('Actif').onChange(v => this._onMasterDsp && this._onMasterDsp('limiter-enabled', v));
             this._setupController(cLimOn, 'master-limiter-enabled', DSP_DEFAULTS.master['limiter-enabled'], false);
 
@@ -372,11 +373,12 @@ export class Controls {
             this._setupController(cGrass, 'user-grass-distance', 0, false);
 
             const fControls = gui.addFolder('Caméra');
-            const cSens = fControls.add(this.state.user, 'mouse-sensitivity', 10, 300, 1).name('Sensibilité (%)').onChange(v => {
+            const cSens = fControls.add(this.state.user, 'mouse-sensitivity', 0, 200, 1).name('Sensibilité (%)').onChange(v => {
                 localStorage.setItem('soundstage3d:master-mouse-sensitivity', v);
                 if (this._onUserDsp) this._onUserDsp('mouse-sensitivity', v);
             });
-            this._setupController(cSens, 'user-mouse-sensitivity', 100, false);
+            cSens.max(Infinity); // Permet de saisir au clavier une valeur supérieure à 200
+            this._setupController(cSens, 'user-mouse-sensitivity', DSP_DEFAULTS.user['mouse-sensitivity'] ?? 60, false);
 
             this._addGuiResetButton(gui, 'user');
         }
@@ -413,8 +415,8 @@ export class Controls {
             const cEqHigh = fEq.add(this.state.input, 'eq-high', -12, 12, 0.5).name('Aigus (dB)').onChange(v => this._onInputDsp && this._onInputDsp('eq-high', v));
             this._setupController(cEqHigh, 'input-eq-high', DSP_DEFAULTS.input['eq-high'], true);
 
-            // 4. Compresseur d'Entrée - réduit par défaut
-            const fComp = gui.addFolder('Compresseur d\'Entrée');
+            // 4. Compresseur - réduit par défaut
+            const fComp = gui.addFolder('Compresseur');
             fComp.close();
             const cCompOn = fComp.add(this.state.input, 'comp-enabled').name('Actif').onChange(v => this._onInputDsp && this._onInputDsp('comp-enabled', v));
             this._setupController(cCompOn, 'input-comp-enabled', DSP_DEFAULTS.input['comp-enabled'], true);
@@ -447,6 +449,7 @@ export class Controls {
             this._setupController(cXover, 'top-xover-freq', DSP_DEFAULTS.top['xover-freq'], true);
 
             const fComp = gui.addFolder('Compresseur');
+            fComp.close();
             const cThresh = fComp.add(this.state.top, 'comp-threshold', -60, 0, 0.1).name('Seuil (dB)').onChange(v => this._onTopDsp && this._onTopDsp('comp-threshold', v));
             this._setupController(cThresh, 'top-comp-threshold', DSP_DEFAULTS.top['comp-threshold'], true);
 
@@ -502,6 +505,7 @@ export class Controls {
             this._setupController(cHigh, 'mid-xover-high', DSP_DEFAULTS.mid['xover-high'], true);
 
             const fComp = gui.addFolder('Compresseur');
+            fComp.close();
             const cThresh = fComp.add(this.state.mid, 'comp-threshold', -60, 0, 0.1).name('Seuil (dB)').onChange(v => this._onMidDsp && this._onMidDsp('comp-threshold', v));
             this._setupController(cThresh, 'mid-comp-threshold', DSP_DEFAULTS.mid['comp-threshold'], true);
 
@@ -583,6 +587,7 @@ export class Controls {
             this._setupController(cLow, 'sub-xover-freq', DSP_DEFAULTS.sub['xover-freq'], false);
 
             const fComp = gui.addFolder('Compresseur');
+            fComp.close();
             const cThresh = fComp.add(this.state.sub, 'comp-threshold', -60, 0, 0.1).name('Seuil (dB)').onChange(v => this._onSubDsp && this._onSubDsp('comp-threshold', v));
             this._setupController(cThresh, 'sub-comp-threshold', DSP_DEFAULTS.sub['comp-threshold'], false);
 
