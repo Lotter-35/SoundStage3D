@@ -662,6 +662,81 @@ export class Controls {
             });
         }
 
+        // Playback Head Dock & Controller (Bottom-Right)
+        this._playbackVisible = false;
+        this._isUserScrubbing = false;
+        this._onSeek = null;
+        this._onSkip = null;
+        this.playbackBtn = document.getElementById('playback-btn');
+        this.playbackBarWrap = document.getElementById('playback-bar-wrap');
+        this.pbTrackTitle = document.getElementById('pb-track-title');
+        this.pbCloseBtn = document.getElementById('pb-close-btn');
+        this.pbTimeCurrent = document.getElementById('pb-time-current');
+        this.pbTimeTotal = document.getElementById('pb-time-total');
+        this.pbSlider = document.getElementById('pb-slider');
+        this.pbRwdBtn = document.getElementById('pb-rwd-btn');
+        this.pbPlayBtn = document.getElementById('pb-play-btn');
+        this.pbFwdBtn = document.getElementById('pb-fwd-btn');
+
+        if (this.playbackBtn) {
+            this.playbackBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._playbackVisible = !this._playbackVisible;
+                if (this.playbackBarWrap) this.playbackBarWrap.classList.toggle('hidden', !this._playbackVisible);
+                this.playbackBtn.classList.toggle('active', this._playbackVisible);
+                this.playbackBtn.textContent = this._playbackVisible ? '⏱️ Tête de lecture ▴' : '⏱️ Tête de lecture ▾';
+            });
+        }
+        if (this.playbackBarWrap) {
+            this.playbackBarWrap.addEventListener('pointerdown', (e) => e.stopPropagation());
+            this.playbackBarWrap.addEventListener('mousedown', (e) => e.stopPropagation());
+            this.playbackBarWrap.addEventListener('click', (e) => e.stopPropagation());
+        }
+        if (this.pbCloseBtn) {
+            this.pbCloseBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this._playbackVisible = false;
+                if (this.playbackBarWrap) this.playbackBarWrap.classList.add('hidden');
+                if (this.playbackBtn) {
+                    this.playbackBtn.classList.remove('active');
+                    this.playbackBtn.textContent = '⏱️ Tête de lecture ▾';
+                }
+            });
+        }
+        if (this.pbSlider) {
+            this.pbSlider.addEventListener('mousedown', () => { this._isUserScrubbing = true; });
+            this.pbSlider.addEventListener('touchstart', () => { this._isUserScrubbing = true; }, { passive: true });
+            this.pbSlider.addEventListener('input', () => {
+                const val = Number(this.pbSlider.value);
+                if (this.pbTimeCurrent) this.pbTimeCurrent.textContent = this._formatTime(val);
+            });
+            this.pbSlider.addEventListener('change', () => {
+                const val = Number(this.pbSlider.value);
+                if (this._onSeek) this._onSeek(val);
+                this._isUserScrubbing = false;
+            });
+            this.pbSlider.addEventListener('mouseup', () => { this._isUserScrubbing = false; });
+            this.pbSlider.addEventListener('touchend', () => { this._isUserScrubbing = false; });
+        }
+        if (this.pbRwdBtn) {
+            this.pbRwdBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this._onSkip) this._onSkip(-10);
+            });
+        }
+        if (this.pbFwdBtn) {
+            this.pbFwdBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this._onSkip) this._onSkip(10);
+            });
+        }
+        if (this.pbPlayBtn) {
+            this.pbPlayBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                if (this._onPlayPause) this._onPlayPause();
+            });
+        }
+
         // Change MP3 button
         if (this.changeMp3Btn) {
             this.changeMp3Btn.addEventListener('click', () => {
@@ -733,10 +808,38 @@ export class Controls {
         if (this.playBtn) {
             this.playBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
         }
+        if (this.pbPlayBtn) {
+            this.pbPlayBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+        }
         if (!isPlaying) {
             this.resetMeters();
         }
     }
+
+    _formatTime(sec) {
+        if (!Number.isFinite(sec) || sec < 0) sec = 0;
+        const m = Math.floor(sec / 60);
+        const s = Math.floor(sec % 60);
+        return `${m < 10 ? '0' : ''}${m}:${s < 10 ? '0' : ''}${s}`;
+    }
+
+    updatePlayback(currentTime, duration, isPlaying, trackName) {
+        if (!this._isUserScrubbing && this.pbSlider) {
+            this.pbSlider.max = duration > 0 ? duration : 100;
+            this.pbSlider.value = currentTime || 0;
+            if (this.pbTimeCurrent) this.pbTimeCurrent.textContent = this._formatTime(currentTime);
+            if (this.pbTimeTotal) this.pbTimeTotal.textContent = this._formatTime(duration);
+        }
+        if (trackName && this.pbTrackTitle) {
+            this.pbTrackTitle.textContent = trackName;
+        }
+        if (this.pbPlayBtn) {
+            this.pbPlayBtn.textContent = isPlaying ? '⏸ Pause' : '▶ Play';
+        }
+    }
+
+    onSeek(cb) { this._onSeek = cb; }
+    onSkip(cb) { this._onSkip = cb; }
 
     setCameraModeLabel(mode, isFlying = false) {
         if (!this.camBtn) return;

@@ -119,6 +119,47 @@ export class AudioEngine {
         }, 20);
     }
 
+    seek(targetTime) {
+        if (!this.buffer) return;
+        const dur = this.buffer.duration;
+        targetTime = Math.max(0, Math.min(dur, Number(targetTime) || 0));
+        this.startOffset = targetTime;
+
+        if (this.isPlaying && this.outputGain) {
+            const oldSrc = this.sourceNode;
+            this.sourceNode = null;
+            if (oldSrc) {
+                try {
+                    oldSrc.stop();
+                    oldSrc.disconnect();
+                } catch (_) {}
+            }
+
+            this.sourceNode = this.ctx.createBufferSource();
+            this.sourceNode.buffer = this.buffer;
+            this.sourceNode.loop = true;
+            this.sourceNode.connect(this.outputGain);
+
+            this.sourceNode.start(0, this.startOffset);
+            this.startTime = this.ctx.currentTime;
+        }
+    }
+
+    getCurrentTime() {
+        if (!this.buffer) return 0;
+        const dur = this.buffer.duration;
+        if (!dur) return 0;
+        if (this.isPlaying) {
+            const elapsed = this.ctx.currentTime - this.startTime;
+            return (this.startOffset + elapsed) % dur;
+        }
+        return this.startOffset % dur;
+    }
+
+    getDuration() {
+        return this.buffer ? this.buffer.duration : 0;
+    }
+
     get context() {
         return this.ctx;
     }

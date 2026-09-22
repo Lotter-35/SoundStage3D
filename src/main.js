@@ -232,6 +232,16 @@ controls.onPlayPause(() => {
     }
 });
 
+controls.onSeek((targetTime) => {
+    if (!audioReady) return;
+    audioEngine.seek(targetTime);
+});
+
+controls.onSkip((deltaSec) => {
+    if (!audioReady) return;
+    audioEngine.seek(audioEngine.getCurrentTime() + deltaSec);
+});
+
 controls.onSineToggle((active) => {
     if (!audioReady || !sineGenerator) return;
     const np = document.getElementById('now-playing');
@@ -645,8 +655,10 @@ window.addEventListener('resize', () => {
 const clock = new THREE.Clock();
 let _meterAccum = 0;
 let _posAccum = 0;
+let _pbAccum = 0;
 const METER_INTERVAL = 1 / 15;  // ~15 fps for meters
 const POS_INTERVAL = 1 / 10;    // ~10 fps for position text
+const PB_INTERVAL = 1 / 10;     // ~10 fps for playback scrubber
 
 // ─── Debug performance panel ────────────────────────────────────
 const debugPanel = document.getElementById('debug-panel');
@@ -812,6 +824,20 @@ function renderFrame() {
             _meterAccum = 0;
             const levels = speakerSystem.getLevels();
             controls.updateMeters(levels);
+        }
+    }
+
+    // Update Playback Head Scrubber (throttled)
+    _pbAccum += dt;
+    if (_pbAccum >= PB_INTERVAL) {
+        _pbAccum = 0;
+        if (audioReady) {
+            controls.updatePlayback(
+                audioEngine.getCurrentTime(),
+                audioEngine.getDuration(),
+                audioEngine.isPlaying,
+                _currentAudioFileName
+            );
         }
     }
 
