@@ -46,16 +46,19 @@ export class AmbiancePanel {
         this.lights = []; // [{ id, name, light, type, isBuiltin, markerMesh, helper, defaultConfig }]
         this._nextId = 1;
 
-        // Groupes 3D pour repères et helpers
+        // Groupes 3D pour repères et helpers (masqués par défaut tant que le menu Ambiance est fermé)
         this.markersGroup = new THREE.Group();
         this.markersGroup.name = 'ambiance-markers-group';
+        this.markersGroup.visible = false;
         this.scene.add(this.markersGroup);
 
         this.helpersGroup = new THREE.Group();
         this.helpersGroup.name = 'ambiance-helpers-group';
+        this.helpersGroup.visible = false;
         this.scene.add(this.helpersGroup);
 
         this.markersVisible = true;
+        this.gizmoVisible = true;
         this.isDraggingGizmo = false;
 
         // Raycaster pour sélection au clic
@@ -126,6 +129,7 @@ export class AmbiancePanel {
 
         // Cacher le gizmo par défaut
         this.transformControls.enabled = false;
+        this.transformControls.visible = false;
         this.scene.add(this.transformControls);
     }
 
@@ -145,9 +149,12 @@ export class AmbiancePanel {
             });
         }
 
-        // Sélectionner par défaut la première lumière s'il y en a une
+        // Assigner la première lumière comme cible par défaut (sans afficher le gizmo tant que le menu n'est pas ouvert)
         if (this.lights.length > 0) {
-            this.selectLight(this.lights[0]);
+            this.selectedEntry = this.lights[0];
+            this.transformControls.detach();
+            this.transformControls.visible = false;
+            this.transformControls.enabled = false;
         }
     }
 
@@ -316,10 +323,12 @@ export class AmbiancePanel {
 
         if (!entry || entry.type === 'AmbientLight') {
             this.transformControls.detach();
+            this.transformControls.visible = false;
             this.transformControls.enabled = false;
         } else {
             this.transformControls.attach(entry.light);
-            this.transformControls.enabled = this.isOpen;
+            this.transformControls.visible = this.isOpen && this.gizmoVisible;
+            this.transformControls.enabled = this.isOpen && this.gizmoVisible;
         }
 
         // Mettre en valeur le repère sélectionné
@@ -341,6 +350,46 @@ export class AmbiancePanel {
 
         // Reconstruire la section de l'inspecteur pour la lumière sélectionnée
         this._rebuildInspectorGui();
+    }
+
+    /**
+     * Quitte le mode Gizmo et désélectionne la lumière
+     */
+    deselectLight() {
+        this.selectedEntry = null;
+        this.transformControls.detach();
+        this.transformControls.visible = false;
+        this.transformControls.enabled = false;
+
+        this.lights.forEach(e => {
+            if (e.markerMesh) {
+                const ring = e.markerMesh.children[1];
+                if (ring) {
+                    ring.scale.setScalar(1.0);
+                    ring.material.color.set(0xffffff);
+                    ring.material.opacity = 0.6;
+                }
+            }
+            if (e.helper) {
+                e.helper.visible = false;
+            }
+        });
+
+        this._rebuildInspectorGui();
+    }
+
+    setGizmoVisible(val) {
+        this.gizmoVisible = Boolean(val);
+        if (this.selectedEntry && this.selectedEntry.type !== 'AmbientLight') {
+            this.transformControls.visible = this.isOpen && this.gizmoVisible;
+            this.transformControls.enabled = this.isOpen && this.gizmoVisible;
+        } else {
+            this.transformControls.visible = false;
+            this.transformControls.enabled = false;
+        }
+        if (this._cShowGizmo && this._cShowGizmo.getValue() !== this.gizmoVisible) {
+            this._cShowGizmo.setValue(this.gizmoVisible);
+        }
     }
 
     setMarkersVisible(val) {
@@ -406,6 +455,9 @@ export class AmbiancePanel {
             if (hitEntry) {
                 this.selectLight(hitEntry);
             }
+        } else {
+            // Clic dans le vide 3D : désélectionne la lumière et quitte le mode gizmo
+            this.deselectLight();
         }
     }
 
@@ -617,6 +669,10 @@ export class AmbiancePanel {
 
         const toolsState = {
             showMarkers: this.markersVisible,
+            showGizmo: this.gizmoVisible,
+            deselect: () => {
+                this.deselectLight();
+            },
             toggleMarkers: () => {
                 this.setMarkersVisible(!this.markersVisible);
             },
@@ -631,6 +687,12 @@ export class AmbiancePanel {
             this.setMarkersVisible(val);
         });
 
+        this._cShowGizmo = fTools.add(toolsState, 'showGizmo').name('Flèches Gizmo');
+        this._cShowGizmo.onChange(val => {
+            this.setGizmoVisible(val);
+        });
+
+        fTools.add(toolsState, 'deselect').name('❌ Quitter Gizmo (Échap)');
         fTools.add(toolsState, 'toggleMarkers').name('💡 Afficher / Cacher lumières');
         fTools.add(toolsState, 'focusLight').name('🎯 Voir la lumière (Focus)');
 
@@ -707,6 +769,7 @@ export class AmbiancePanel {
 
         // Boutons d'action pour la lumière
         const lightActions = {
+            deselect: () => this.deselectLight(),
             reset: () => this.resetLight(entry),
             duplicate: () => this.duplicateSelectedLight(),
             delete: () => this.removeLight(entry),
@@ -714,6 +777,7 @@ export class AmbiancePanel {
 
         const fActions = this.fInspector.addFolder('⚡ Actions');
         fActions.open();
+        fActions.add(lightActions, 'deselect').name('❌ Quitter Gizmo (Désél.)');
         fActions.add(lightActions, 'reset').name('↺ Reset cette lumière');
         fActions.add(lightActions, 'duplicate').name('📋 Dupliquer');
         if (light.target) {
@@ -933,15 +997,29 @@ export class AmbiancePanel {
             this.ambianceBtn.classList.toggle('active', this.isOpen);
         }
 
-        // Activer / désactiver TransformControls et helpers
-        this.transformControls.enabled = this.isOpen && (this.selectedEntry && this.selectedEntry.type !== 'AmbientLight');
-        if (this.selectedEntry && this.selectedEntry.helper) {
-            this.selectedEntry.helper.visible = this.isOpen && this.markersVisible;
-        }
+        if (this.isOpen) {
+            // Ouvrir : afficher les repères et attacher le gizmo si une lumière est sélectionnée
+            this.markersGroup.visible = this.markersVisible;
+            if (this.selectedEntry && this.selectedEntry.type !== 'AmbientLight') {
+                this.transformControls.attach(this.selectedEntry.light);
+                this.transformControls.visible = this.gizmoVisible;
+                this.transformControls.enabled = this.gizmoVisible;
+            }
+            if (this.selectedEntry && this.selectedEntry.helper) {
+                this.selectedEntry.helper.visible = this.markersVisible;
+            }
 
-        // Si le panneau s'ouvre, déverrouiller le pointeur souris pour permettre l'interaction fluide
-        if (this.isOpen && this.listener && this.listener.controls.isLocked) {
-            this.listener.unlock();
+            // Déverrouiller le pointeur souris pour permettre l'interaction fluide
+            if (this.listener && this.listener.controls.isLocked) {
+                this.listener.unlock();
+            }
+        } else {
+            // Quitter le mode Gizmo & fermer : détachement et masquage complet
+            this.transformControls.detach();
+            this.transformControls.visible = false;
+            this.transformControls.enabled = false;
+            this.markersGroup.visible = false;
+            this.helpersGroup.visible = false;
         }
 
         return this.isOpen;
@@ -976,14 +1054,28 @@ export class AmbiancePanel {
             }
         });
 
-        // Raccourcis clavier quand le panneau est ouvert (W = Déplacement, E = Rotation)
+        // Raccourcis clavier (Échap pour quitter le mode Gizmo ou fermer le panneau)
         window.addEventListener('keydown', (e) => {
+            if (e.code === 'Escape') {
+                if (this.isOpen) {
+                    if (this.selectedEntry) {
+                        // 1er Échap : désélectionne la lumière et quitte le mode Gizmo
+                        this.deselectLight();
+                    } else {
+                        // 2ème Échap : ferme le menu Ambiance et rend la main au joueur
+                        this.toggle(false);
+                    }
+                    e.stopPropagation();
+                    return;
+                }
+            }
+
             if (!this.isOpen || this.isDraggingGizmo) return;
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
-            if (e.key === 'w' || e.key === 'W') {
+            if (e.key === 'g' || e.key === 'G') {
                 this.transformControls.setMode('translate');
-            } else if (e.key === 'e' || e.key === 'E') {
+            } else if (e.key === 'r' || e.key === 'R') {
                 this.transformControls.setMode('rotate');
             }
         });
