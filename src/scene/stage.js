@@ -47,6 +47,112 @@ export function createStage(scene) {
     stageMesh.receiveShadow = true;
     scene.add(stageMesh);
 
+    // --- Stairs on both sides (left & right) ---
+    function buildStaircase(isLeft) {
+        const group = new THREE.Group();
+        const signX = isLeft ? -1 : 1;
+        const numSteps = 10;
+        const totalRise = 3.0;
+        const stairDepthZ = 2.4;
+        const runX = 3.8;
+        const stepWidthX = runX / numSteps; // 0.38m
+        const stepHeightY = totalRise / numSteps; // 0.30m
+        const startX = signX * 18.8; // base on grass
+        const endX = signX * 15.0;   // top flush with stage floor
+        const centerZ = -5.0;        // centered on stage depth [-10, 0]
+
+        const stepMat = new THREE.MeshStandardMaterial({
+            color: 0x1f1f1f,
+            roughness: 0.7,
+            metalness: 0.4,
+        });
+        const railMat = new THREE.MeshStandardMaterial({
+            color: 0x555555,
+            roughness: 0.4,
+            metalness: 0.8,
+        });
+
+        // 10 solid steps climbing towards the stage
+        for (let i = 0; i < numSteps; i++) {
+            const h = (i + 1) * stepHeightY;
+            const x = isLeft ? (startX + (i + 0.5) * stepWidthX) : (startX - (i + 0.5) * stepWidthX);
+            const stepGeo = new THREE.BoxGeometry(stepWidthX, h, stairDepthZ);
+            const stepMesh = new THREE.Mesh(stepGeo, stepMat);
+            stepMesh.position.set(x, h / 2, centerZ);
+            stepMesh.castShadow = true;
+            stepMesh.receiveShadow = true;
+            group.add(stepMesh);
+        }
+
+        // Handrails along front (z = -3.8) and back (z = -6.2)
+        const halfZ = stairDepthZ / 2;
+        [-halfZ, halfZ].forEach(offsetZ => {
+            const z = centerZ + offsetZ;
+            const postGeo = new THREE.CylinderGeometry(0.03, 0.03, 1.0, 8);
+
+            // Bottom post at ground
+            const pBottom = new THREE.Mesh(postGeo, railMat);
+            pBottom.position.set(startX, 0.5, z);
+            pBottom.castShadow = true;
+            group.add(pBottom);
+
+            // Mid post
+            const pMid = new THREE.Mesh(postGeo, railMat);
+            pMid.position.set((startX + endX) / 2, totalRise / 2 + 0.5, z);
+            pMid.castShadow = true;
+            group.add(pMid);
+
+            // Top post at stage floor
+            const pTop = new THREE.Mesh(postGeo, railMat);
+            pTop.position.set(endX, totalRise + 0.5, z);
+            pTop.castShadow = true;
+            group.add(pTop);
+
+            // Slanted handrail bar
+            const railLen = Math.sqrt(runX * runX + totalRise * totalRise);
+            const railGeo = new THREE.CylinderGeometry(0.04, 0.04, railLen, 8);
+            const railMesh = new THREE.Mesh(railGeo, railMat);
+            railMesh.position.set((startX + endX) / 2, totalRise / 2 + 1.0, z);
+
+            const stairAngle = Math.atan2(totalRise, runX);
+            railMesh.rotation.z = isLeft ? (stairAngle - Math.PI / 2) : (Math.PI / 2 - stairAngle);
+            railMesh.castShadow = true;
+            group.add(railMesh);
+        });
+
+        scene.add(group);
+    }
+    buildStaircase(true);  // Left staircase
+    buildStaircase(false); // Right staircase
+
+    // --- DJ Booth Table on Stage ---
+    const djGroup = new THREE.Group();
+    const djTableMat = new THREE.MeshStandardMaterial({ color: 0x161616, roughness: 0.6, metalness: 0.3 });
+    const djTableGeo = new THREE.BoxGeometry(3.6, 0.95, 1.0);
+    const djTable = new THREE.Mesh(djTableGeo, djTableMat);
+    djTable.position.set(0, 3.0 + 0.95 / 2, -5.0);
+    djTable.castShadow = true;
+    djTable.receiveShadow = true;
+    djGroup.add(djTable);
+
+    const djDeckMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.4, metalness: 0.7 });
+    const djDeckGeo = new THREE.BoxGeometry(3.2, 0.08, 0.7);
+    const djDecks = new THREE.Mesh(djDeckGeo, djDeckMat);
+    djDecks.position.set(0, 3.0 + 0.95 + 0.04, -5.0);
+    djDecks.castShadow = true;
+    djGroup.add(djDecks);
+
+    const djLedMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
+    const djLedLeft = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 16), djLedMat);
+    djLedLeft.position.set(-1.0, 3.0 + 0.95 + 0.09, -5.0);
+    djGroup.add(djLedLeft);
+
+    const djLedRight = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 16), djLedMat);
+    djLedRight.position.set(1.0, 3.0 + 0.95 + 0.09, -5.0);
+    djGroup.add(djLedRight);
+
+    scene.add(djGroup);
+
     // --- Stage back wall ---
     const backWallGeo = new THREE.BoxGeometry(30, 20, 0.5);
     const backWallMat = new THREE.MeshStandardMaterial({
@@ -78,14 +184,27 @@ export function createStage(scene) {
     });
 
     // --- Speaker boxes & markers (generated from SPEAKER_DEFS) ---
+    // Cache geometries and materials per bus type to avoid duplicate GPU allocations and shader swaps
+    const boxGeoCache = {};
+    const boxMatCache = {};
+    const markerGeoCache = {};
+    const markerMatCache = {};
+
     for (const def of SPEAKER_DEFS) {
         const vis = BUS_VISUAL[def.bus] || BUS_VISUAL.top;
         const p = def.position;
+        const busKey = def.bus;
 
         // Visual box
-        const boxGeo = new THREE.BoxGeometry(...vis.boxGeo);
-        const boxMat = new THREE.MeshStandardMaterial({ color: vis.boxColor, roughness: 0.7, metalness: 0.2 });
-        const box = new THREE.Mesh(boxGeo, boxMat);
+        if (!boxGeoCache[busKey]) {
+            boxGeoCache[busKey] = new THREE.BoxGeometry(...vis.boxGeo);
+            boxMatCache[busKey] = new THREE.MeshStandardMaterial({
+                color: vis.boxColor,
+                roughness: 0.7,
+                metalness: 0.2,
+            });
+        }
+        const box = new THREE.Mesh(boxGeoCache[busKey], boxMatCache[busKey]);
         box.position.set(p.x, p.y, p.z);
         if (def.bus === 'top') box.rotation.x = -0.08;
         if (def.orientation) {
@@ -100,7 +219,7 @@ export function createStage(scene) {
         // For top bus (line arrays), add extra stacked boxes
         if (def.bus === 'top') {
             for (let i = 1; i < 8; i++) {
-                const extraBox = new THREE.Mesh(boxGeo, boxMat);
+                const extraBox = new THREE.Mesh(boxGeoCache[busKey], boxMatCache[busKey]);
                 extraBox.position.set(p.x, p.y + 4 - i * 0.6, p.z);
                 extraBox.rotation.x = -0.08;
                 extraBox.castShadow = true;
@@ -108,16 +227,16 @@ export function createStage(scene) {
             }
         }
 
-        // Emissive marker sphere
-        const markerGeo = new THREE.SphereGeometry(vis.markerSize, 16, 16);
-        const markerMat = new THREE.MeshStandardMaterial({
-            color: vis.color,
-            emissive: vis.color,
-            emissiveIntensity: 0.6,
-            transparent: true,
-            opacity: 0.7,
-        });
-        const marker = new THREE.Mesh(markerGeo, markerMat);
+        // Emissive marker sphere (use lightweight MeshBasicMaterial instead of PBR MeshStandardMaterial)
+        if (!markerGeoCache[busKey]) {
+            markerGeoCache[busKey] = new THREE.SphereGeometry(vis.markerSize, 12, 10);
+            markerMatCache[busKey] = new THREE.MeshBasicMaterial({
+                color: vis.color,
+                transparent: true,
+                opacity: 0.75,
+            });
+        }
+        const marker = new THREE.Mesh(markerGeoCache[busKey], markerMatCache[busKey]);
         marker.position.set(p.x, p.y, p.z);
         scene.add(marker);
     }
@@ -142,17 +261,20 @@ export function createStage(scene) {
     scene.add(hemiLight);
 
     const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
-    dirLight.position.set(30, 60, 40);
+    dirLight.position.set(32, 45, 38);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 512;
-    dirLight.shadow.mapSize.height = 512;
-    dirLight.shadow.camera.near = 0.5;
-    dirLight.shadow.camera.far = 150;
-    dirLight.shadow.camera.left = -60;
-    dirLight.shadow.camera.right = 60;
-    dirLight.shadow.camera.top = 60;
-    dirLight.shadow.camera.bottom = -60;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
+    dirLight.shadow.camera.near = 10;
+    dirLight.shadow.camera.far = 130;
+    dirLight.shadow.camera.left = -25;
+    dirLight.shadow.camera.right = 25;
+    dirLight.shadow.camera.top = 25;
+    dirLight.shadow.camera.bottom = -25;
+    dirLight.shadow.bias = -0.0003;
+    dirLight.shadow.normalBias = 0.02;
     scene.add(dirLight);
+    scene.add(dirLight.target);
 
     // Stage lights (colored point lights — subtle in daytime)
     const stageLight1 = new THREE.PointLight(0xff3366, 0.5, 30);
@@ -231,5 +353,5 @@ export function createStage(scene) {
         }
     }
 
-    return { coneContainer, coneGroups };
+    return { coneContainer, coneGroups, dirLight };
 }

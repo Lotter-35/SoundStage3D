@@ -1,0 +1,12 @@
+{
+  "name": "soundstage3d-server",
+  "version": "1.0.0",
+  "description": "Multiplayer WebSocket & Audio Server for SoundStage3D",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.21.3"
+  }
+}

@@ -1,32 +1,36 @@
 /**
- * Vegetation — Instanced grass patches around the camera.
- * Uses a SINGLE InstancedMesh per sub-mesh (constant draw calls regardless of chunk size).
- * A spatial position grid is queried each time the camera moves to update the batch.
+ * Vegetation — Authentic 3D instanced grass system.
+ * Uses the genuine 3D grass model exclusively (no flat cardboard/star quads).
+ * Smooth radial distance fading seamlessly blends grass into the ground texture.
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 const GRASS_URL = 'src/assets/models/grass.glb';
 const GROUND_HALF = 190;
-const SPACING = 2;            // metres between grass patches
-const JITTER = 0.3;
-const GRASS_SCALE = 0.15;
-const CHUNK_SIZE = 8;         // spatial index resolution (smaller = smoother circle edge)
-const VIEW_RADIUS = 60;       // visible radius around camera
-const MAX_VISIBLE = 3200;     // max instances in the single batch (sized for π*60²/2²)
+const SPACING = 2.4;           // distance between patches in metres
+const JITTER = 0.4;
+const GRASS_SCALE = 0.17;      // slightly larger tufts for dense, natural coverage
+const CHUNK_SIZE = 8;
+
+// Distance settings (default OFF for maximum performance on startup)
+let VIEW_RADIUS = 0;           // visible radius around camera (metres)
+let FADE_START = 0;            // distance at which grass smoothly shrinks into ground texture
+let MAX_VISIBLE = 0;           // max instances
 
 function isStageZone(x, z) {
-    return false; // no exclusion — grass everywhere including under the stage
+    // Exclude grass from growing inside/under the main stage platform
+    return x >= -16 && x <= 16 && z >= -11 && z <= 2;
 }
 
 /** Spatial grid: Map<"ix,iz", Array<{x,z,rotY}>> */
 let posGrid = null;
-/** Single InstancedMesh per GLB sub-mesh */
 let batchMeshes = [];
+
 let _yOffset = 0;
 const _dummy = new THREE.Object3D();
 const _lastPos = new THREE.Vector2(Infinity, Infinity);
-const MOVE_THRESHOLD2 = (CHUNK_SIZE * 0.5) ** 2;
+const MOVE_THRESHOLD2 = 2.0 ** 2; // update batch when moved > 2m
 
 export async function createVegetation(scene) {
     const loader = new GLTFLoader();
@@ -47,7 +51,7 @@ export async function createVegetation(scene) {
     }
     _yOffset = -bbox.min.y;
 
-    // Build spatial position grid (pure data, no Three.js objects)
+    // Build spatial position grid
     posGrid = new Map();
     for (let cx = -GROUND_HALF; cx < GROUND_HALF; cx += CHUNK_SIZE) {
         for (let cz = -GROUND_HALF; cz < GROUND_HALF; cz += CHUNK_SIZE) {
@@ -67,25 +71,84 @@ export async function createVegetation(scene) {
         }
     }
 
-    // ONE InstancedMesh per GLB sub-mesh — constant draw calls forever
+    // Single InstancedMesh per GLB sub-mesh — 100% genuine 3D model
     for (const srcMesh of meshes) {
-        const instanced = new THREE.InstancedMesh(
-            srcMesh.geometry, srcMesh.material.clone(), MAX_VISIBLE);
+        const mat = srcMesh.material.clone();
+        mat.side = THREE.DoubleSide;
+        mat.alphaTest = 0.4;
+        mat.depthWrite = true;
+
+        const instanced = new THREE.InstancedMesh(srcMesh.geometry, mat, 2500);
         instanced.count = 0;
-        instanced.material.side = THREE.DoubleSide;
+        instanced.visible = false; // Default OFF: completely skipped by Three.js renderer
         instanced.castShadow = false;
-        instanced.receiveShadow = true;
+        instanced.receiveShadow = false; // massive fill-rate boost
         scene.add(instanced);
         batchMeshes.push(instanced);
     }
 }
 
 /**
- * Refresh the batch when the camera moves. O(visible chunks) work, constant draw calls.
+ * Dynamically set visible grass distance in metres.
+ * 0 = disabled (no instances, completely skipped by renderer).
+ * As distance increases, grass patches are rendered farther out.
+ * @param {number} dist
+ */
+export function setGrassDistance(dist) {
+    const d = Math.max(0, Number(dist) || 0);
+    if (d <= 0) {
+        VIEW_RADIUS = 0;
+        FADE_START = 0;
+        MAX_VISIBLE = 0;
+        for (const m of batchMeshes) {
+            m.count = 0;
+            m.visible = false;
+        }
+    } else {
+        VIEW_RADIUS = d;
+        FADE_START = Math.max(0, d * 0.7);
+        // Estimate instances needed: PI * d^2 / (SPACING^2) with SPACING = 2.4
+        MAX_VISIBLE = Math.min(2500, Math.max(30, Math.round(Math.PI * d * d / (SPACING * SPACING))));
+        for (const m of batchMeshes) {
+            m.visible = true;
+        }
+    }
+    _lastPos.set(Infinity, Infinity);
+}
+
+/**
+ * Change grass density and view distance quality.
+ * @param {'high'|'medium'|'low'|'off'} quality
+ */
+export function setGrassQuality(quality) {
+    if (typeof quality === 'number' || (!isNaN(Number(quality)) && quality !== 'off' && quality !== 'low' && quality !== 'medium' && quality !== 'high')) {
+        setGrassDistance(Number(quality));
+        return;
+    }
+    if (quality === 'off') {
+        setGrassDistance(0);
+    } else if (quality === 'low') {
+        setGrassDistance(16);
+    } else if (quality === 'medium') {
+        setGrassDistance(26);
+    } else if (quality === 'high') {
+        setGrassDistance(34);
+    }
+}
+
+/**
+ * Refresh grass batch with smooth radial fade.
  * @param {THREE.Camera} camera
  */
 export function updateVegetation(camera) {
-    if (!posGrid) return;
+    if (!posGrid || batchMeshes.length === 0) return;
+    if (VIEW_RADIUS <= 0) {
+        for (const m of batchMeshes) {
+            if (m.visible) m.visible = false;
+        }
+        return;
+    }
+
     const px = camera.position.x;
     const pz = camera.position.z;
 
@@ -94,11 +157,10 @@ export function updateVegetation(camera) {
     if (ddx * ddx + ddz * ddz < MOVE_THRESHOLD2) return;
     _lastPos.set(px, pz);
 
-    // Collect all positions within VIEW_RADIUS — test each grass position individually
-    const r2 = VIEW_RADIUS * VIEW_RADIUS;
     const halfG = Math.ceil(VIEW_RADIUS / CHUNK_SIZE) + 1;
     const originX = Math.round(px / CHUNK_SIZE);
     const originZ = Math.round(pz / CHUNK_SIZE);
+    const r2 = VIEW_RADIUS * VIEW_RADIUS;
 
     const visible = [];
     for (let dx = -halfG; dx <= halfG; dx++) {
@@ -107,9 +169,11 @@ export function updateVegetation(camera) {
             if (!positions) continue;
             for (const p of positions) {
                 if (visible.length >= MAX_VISIBLE) break;
-                // Per-position circle test → perfect circle edge
                 const ex = p.x - px, ez = p.z - pz;
-                if (ex * ex + ez * ez < r2) visible.push(p);
+                const dist2 = ex * ex + ez * ez;
+                if (dist2 < r2) {
+                    visible.push({ ...p, dist: Math.sqrt(dist2) });
+                }
             }
         }
     }
@@ -118,9 +182,17 @@ export function updateVegetation(camera) {
     for (const instanced of batchMeshes) {
         for (let i = 0; i < count; i++) {
             const p = visible[i];
-            _dummy.position.set(p.x, _yOffset * GRASS_SCALE, p.z);
+
+            // Smooth scale fade at the outer perimeter
+            let scale = GRASS_SCALE;
+            if (p.dist > FADE_START) {
+                const factor = 1 - (p.dist - FADE_START) / (VIEW_RADIUS - FADE_START);
+                scale = GRASS_SCALE * Math.max(0.01, factor);
+            }
+
+            _dummy.position.set(p.x, _yOffset * scale, p.z);
             _dummy.rotation.set(0, p.rotY, 0);
-            _dummy.scale.setScalar(GRASS_SCALE);
+            _dummy.scale.setScalar(scale);
             _dummy.updateMatrix();
             instanced.setMatrixAt(i, _dummy.matrix);
         }

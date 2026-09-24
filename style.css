@@ -1,7 +1,32 @@
+:root {
+    color-scheme: dark;
+}
+
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.18) rgba(0, 0, 0, 0.25);
+}
+
+::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+}
+
+::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.25);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.32);
 }
 
 body {
@@ -193,6 +218,109 @@ body {
     background: rgba(60, 60, 60, 0.8);
 }
 
+.dsp-btn-with-reset {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 14px;
+}
+
+.dsp-btn-label {
+    display: inline-block;
+    pointer-events: none;
+}
+
+.dsp-reset-icon {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.85rem;
+    line-height: 1;
+    color: #a0aec0;
+    margin-left: 2px;
+    cursor: pointer;
+    user-select: none;
+    transition: color 0.15s;
+}
+
+.dsp-reset-icon:hover {
+    color: #38bdf8;
+}
+
+.hud-btn:disabled,
+.pb-btn:disabled {
+    opacity: 0.35 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+    filter: grayscale(1) !important;
+    background: rgba(30, 30, 30, 0.5) !important;
+    border-color: rgba(255, 255, 255, 0.12) !important;
+    color: #777 !important;
+    box-shadow: none !important;
+}
+
+#dsp-wrapper {
+    position: relative;
+    display: inline-flex;
+}
+
+.dsp-confirm-drop {
+    position: absolute;
+    bottom: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    margin-bottom: 6px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: rgba(18, 20, 26, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 6px;
+    box-shadow: 0 6px 16px rgba(0, 0, 0, 0.6);
+    white-space: nowrap;
+    z-index: 200;
+    backdrop-filter: blur(8px);
+}
+
+.dsp-confirm-drop.hidden {
+    display: none !important;
+}
+
+.dsp-confirm-btn {
+    padding: 3px 8px;
+    font-size: 0.75rem;
+    font-weight: 600;
+    border-radius: 4px;
+    border: 1px solid transparent;
+    cursor: pointer;
+    line-height: 1.2;
+    transition: background 0.15s, border-color 0.15s;
+}
+
+.dsp-confirm-yes {
+    background: rgba(239, 68, 68, 0.25);
+    border-color: rgba(239, 68, 68, 0.5);
+    color: #fca5a5;
+}
+
+.dsp-confirm-yes:hover {
+    background: rgba(239, 68, 68, 0.6);
+    color: #fff;
+    border-color: #ef4444;
+}
+
+.dsp-confirm-no {
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #e2e8f0;
+}
+
+.dsp-confirm-no:hover {
+    background: rgba(255, 255, 255, 0.25);
+    color: #fff;
+}
+
 #hrtf-wrapper {
     position: relative;
 }
@@ -234,6 +362,38 @@ body {
     background: rgba(40, 100, 180, 0.5);
     border-color: #4af;
 }
+
+#mic-btn.active {
+    background: rgba(220, 38, 38, 0.6);
+    border-color: #ef4444;
+    color: #fff;
+    box-shadow: 0 0 10px rgba(239, 68, 68, 0.5);
+}
+
+/* Invite button — distinct green accent */
+.hud-btn-invite {
+    border-color: #22c55e;
+    color: #86efac;
+}
+.hud-btn-invite:hover {
+    background: rgba(34, 197, 94, 0.25);
+}
+
+/* Multiplayer player count badge */
+.mp-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 6px 12px;
+    background: rgba(0, 0, 0, 0.55);
+    border: 1px solid #444;
+    border-radius: 6px;
+    font-size: 0.82rem;
+    color: #ccc;
+    white-space: nowrap;
+    pointer-events: none;
+    user-select: none;
+}
+
 
 /* Cone dropdown */
 .dropdown {
@@ -288,21 +448,23 @@ body {
     pointer-events: none;
 }
 
-/* ─── Oscilloscope ─── */
-#oscilloscope {
+/* ─── FFT Frequency Spectrum Visualizer ─── */
+#spectrum-visualizer {
     position: fixed;
-    bottom: 50px;
+    bottom: 46px;
     left: 50%;
     transform: translateX(-50%);
-    width: min(900px, 80vw);
-    height: 160px;
-    background: rgba(0, 0, 0, 0.75);
-    border: 1px solid #444;
-    border-radius: 8px;
+    width: min(920px, 86vw);
+    height: 200px;
+    background: rgba(8, 12, 22, 0.90);
+    border: 1px solid rgba(0, 210, 255, 0.35);
+    border-radius: 10px;
     z-index: 110;
+    backdrop-filter: blur(8px);
+    box-shadow: 0 10px 36px rgba(0, 0, 0, 0.8), inset 0 0 24px rgba(0, 30, 60, 0.5);
     pointer-events: none;
 }
-#oscilloscope.hidden {
+#spectrum-visualizer.hidden {
     display: none;
 }
 
@@ -408,68 +570,1171 @@ body {
     z-index: 90;
 }
 
-/* ─── DSP Panels ─── */
-#dsp-panels {
+/* ─── Sine Generator panel (en bas à gauche, à droite de MID Pipeline) ─── */
+#sine-panel-wrap {
     position: fixed;
     bottom: 64px;
-    left: 16px;
-    right: 16px;
-    z-index: 60;
-    display: flex;
-    flex-direction: row;
-    align-items: flex-end;
-    gap: 8px;
-    pointer-events: none;
+    left: 640px;
+    z-index: 125;
+    pointer-events: auto;
+    width: 320px;
+    box-shadow: 0 10px 32px rgba(0, 0, 0, 0.8), 0 0 1px rgba(255, 255, 255, 0.2);
+    border-radius: 8px;
+    overflow: hidden;
 }
-#dsp-panels > * {
+
+#sine-panel-wrap.hidden {
+    display: none !important;
+}
+
+#sine-panel {
+    width: 320px;
+    min-width: 320px;
+    max-width: 320px;
+}
+
+#sine-panel .lil-gui.root {
+    position: static !important;
+    width: 320px !important;
+    max-width: 320px !important;
+}
+
+#sine-panel .lil-gui {
+    --width: 320px;
+    --name-width: 95px;
+    --slider-input-min-width: 42px;
+    --slider-input-width: 48px;
+    --spacing: 3px;
+    --padding: 4px;
+    --widget-height: 20px;
+}
+
+#sine-panel .lil-gui .controller.button {
+    margin: 1px 0 !important;
+}
+
+#sine-panel .lil-gui .controller.button button {
+    background: rgba(255, 255, 255, 0.08) !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: #eee !important;
+    border-radius: 3px !important;
+    height: 20px !important;
+    font-size: 10.5px !important;
+    cursor: pointer !important;
+    text-align: center !important;
+    transition: background 0.15s, border-color 0.15s !important;
+}
+
+#sine-panel .lil-gui .controller.button button:hover {
+    background: rgba(255, 255, 255, 0.22) !important;
+    border-color: rgba(255, 255, 255, 0.5) !important;
+    color: #fff !important;
+}
+
+#sine-panel .lil-gui .controller.boolean input[type="checkbox"] {
+    cursor: pointer !important;
+    accent-color: #4ade80 !important;
+    width: 15px !important;
+    height: 15px !important;
+}
+
+/* ─── Playback Head Controller (en bas au centre) ─── */
+#playback-bar-wrap {
+    position: fixed;
+    bottom: 80px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 126;
+    width: 520px;
+    min-width: 320px;
+    min-height: 150px;
+    height: 480px;
+    max-width: calc(100vw - 32px);
+    max-height: calc(100vh - 32px);
+    box-sizing: border-box;
+    background: rgba(20, 20, 24, 0.95);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    border-radius: 6px;
+    padding: 10px 14px 12px 14px;
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.8);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    user-select: none;
     pointer-events: auto;
 }
 
-/* Panel ordering: TOP MID [spacer] FILL SUB */
-#dsp-panel-top  { order: 1; }
-#dsp-panel-mid  { order: 2; }
-.dsp-spacer     { order: 3; flex: 1; }
-#dsp-panel-fill { order: 4; }
-#dsp-panel-sub  { order: 5; }
+#playback-bar-wrap.hidden {
+    display: none !important;
+}
 
-#dsp-panels.hidden {
+#playback-bar-wrap.pb-compact {
+    min-height: 145px;
+}
+
+#playback-bar-wrap.pb-compact .pb-bottom-section {
+    display: none !important;
+}
+
+#playback-bar-wrap.pb-compact .pb-buttons {
+    margin-bottom: 2px !important;
+}
+
+#playback-bar {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    height: 100%;
+    min-height: 0;
+    width: 100%;
+    overflow: hidden;
+}
+
+.pb-row {
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.pb-info {
+    justify-content: space-between;
+    font-size: 0.8rem;
+    color: #e4e4e7;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.pb-info-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-shrink: 0;
+}
+
+#pb-track-title {
+    color: #f4f4f5;
+    font-weight: 500;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: calc(100% - 90px);
+    font-size: 0.82rem;
+}
+
+.pb-icon-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    color: #d4d4d8;
+    cursor: pointer;
+    font-size: 0.85rem;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 4px;
+    line-height: 1;
+    transition: all 0.15s;
+}
+
+.pb-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+.pb-scrub {
+    gap: 8px;
+    font-size: 0.72rem;
+    color: #a1a1aa;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    margin-top: 4px;
+    margin-bottom: 10px;
+    flex-shrink: 0;
+}
+
+.pb-time {
+    min-width: 38px;
+    text-align: center;
+    font-variant-numeric: tabular-nums;
+}
+
+/* ─── Waveform Scrubber (SoundCloud Style) ─── */
+.pb-waveform-wrap {
+    flex: 1 1 auto;
+    min-width: 80px;
+    height: 32px;
+    position: relative;
+    display: flex;
+    align-items: center;
+    background: rgba(0, 0, 0, 0.40);
+    border: 1px solid rgba(255, 255, 255, 0.10);
+    border-radius: 4px;
+    cursor: pointer;
+    user-select: none;
+    touch-action: none;
+    overflow: visible;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.pb-waveform-wrap:hover {
+    border-color: rgba(255, 255, 255, 0.22);
+    background: rgba(0, 0, 0, 0.55);
+}
+
+.pb-waveform-wrap.disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.pb-waveform-canvas {
+    width: 100%;
+    height: 100%;
+    display: block;
+    border-radius: 3px;
+    pointer-events: none;
+}
+
+.pb-waveform-hover-line {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1.5px;
+    background: rgba(255, 255, 255, 0.95);
+    pointer-events: none;
+    z-index: 5;
+    box-shadow: 0 0 4px rgba(255, 255, 255, 0.5);
+}
+
+.pb-waveform-hover-time {
+    position: absolute;
+    bottom: calc(100% + 5px);
+    transform: translateX(-50%);
+    background: #18181b;
+    border: 1px solid rgba(255, 255, 255, 0.25);
+    border-radius: 3px;
+    padding: 2px 6px;
+    font-size: 0.68rem;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    color: #ffffff;
+    pointer-events: none;
+    white-space: nowrap;
+    z-index: 10;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.7);
+}
+
+.pb-waveform-playhead {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 1.5px;
+    background: #ffffff;
+    box-shadow: 0 0 6px rgba(255, 255, 255, 0.85);
+    pointer-events: none;
+    z-index: 4;
+    left: 0%;
     display: none;
 }
 
-/* Master panel — top-right corner */
-#dsp-master-wrap {
-    position: fixed;
-    top: 16px;
-    right: 16px;
-    z-index: 60;
-}
-#dsp-master-wrap.hidden {
-    display: none;
+.pb-slider-hidden {
+    display: none !important;
 }
 
-/* Now playing track name */
+/* ─── Bottom Section (Playlist Selector + Lists Splitter) ─── */
+.pb-bottom-section {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0px;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+}
+
+/* Playlist Selector & Management Toolbar */
+.pb-playlist-bar {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+    padding: 4px 0;
+    border-top: 1px solid rgba(255, 255, 255, 0.07);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    flex-shrink: 0;
+}
+
+.pb-playlist-select {
+    flex: 1;
+    min-width: 0;
+    background: rgba(0, 0, 0, 0.4);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 4px;
+    color: #e4e4e7;
+    font-size: 0.74rem;
+    padding: 3px 6px;
+    outline: none;
+    cursor: pointer;
+    color-scheme: dark;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    transition: border-color 0.15s ease, background 0.15s ease;
+}
+
+.pb-playlist-select:hover, .pb-playlist-select:focus {
+    background: rgba(0, 0, 0, 0.6);
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.pb-playlist-select option {
+    background: #18181b;
+    color: #f4f4f5;
+    padding: 4px;
+}
+
+.pb-playlist-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.pb-playlist-actions .pb-icon-btn {
+    width: 22px;
+    height: 22px;
+    font-size: 0.76rem;
+}
+
+.pb-playlist-status {
+    font-size: 0.68rem;
+    font-style: italic;
+    white-space: nowrap;
+    margin: 0 4px;
+    flex-shrink: 0;
+    user-select: none;
+    transition: color 0.2s ease, opacity 0.2s ease;
+}
+
+.pb-playlist-status.saving,
+.pb-playlist-status.reloading {
+    color: #a1a1aa;
+    opacity: 0.85;
+}
+
+.pb-playlist-status.saved,
+.pb-playlist-status.reloaded {
+    color: #22c55e;
+    opacity: 0.95;
+    font-weight: 500;
+}
+
+.pb-playlist-status.hidden {
+    display: none !important;
+}
+
+.pb-icon-btn:disabled,
+.pb-icon-btn.disabled {
+    opacity: 0.28 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+    border-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+/* ─── Playback Lists Split (Playlist + Splitter + Queue) ─── */
+.pb-lists-split {
+    --pl-flex: 1;
+    --q-flex: 1.2;
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 0px;
+    min-height: 0;
+    height: 100%;
+    overflow: hidden;
+    gap: 0;
+}
+
+/* Playlist Tracks Section */
+.pb-pl-section {
+    display: flex;
+    flex-direction: column;
+    flex: var(--pl-flex, 1) 1 0px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.pb-pl-section.collapsed {
+    flex: 0 0 auto !important;
+}
+
+.pb-pl-toggle {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    flex-wrap: wrap;
+    gap: 4px;
+    margin-top: 2px;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+}
+
+.pb-pl-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+}
+
+.pb-action-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.15);
+    color: #e4e4e7;
+    font-size: 0.68rem;
+    padding: 2px 7px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    font-weight: 500;
+    transition: all 0.15s ease;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.pb-action-btn svg {
+    display: block;
+    pointer-events: none;
+    flex-shrink: 0;
+}
+
+.pb-action-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.16);
+    border-color: rgba(255, 255, 255, 0.32);
+    color: #ffffff;
+}
+
+.pb-action-btn:disabled,
+.pb-action-btn.disabled {
+    opacity: 0.28 !important;
+    cursor: not-allowed !important;
+    pointer-events: none !important;
+    border-color: rgba(255, 255, 255, 0.06) !important;
+    background: rgba(255, 255, 255, 0.04) !important;
+    color: #71717a !important;
+}
+
+.pb-pl-empty-add-btn {
+    margin-top: 6px;
+    background: rgba(255, 255, 255, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.18);
+    color: #f4f4f5;
+    font-size: 0.72rem;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    transition: all 0.15s ease;
+}
+
+.pb-pl-empty-add-btn:hover {
+    background: rgba(255, 255, 255, 0.18);
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #ffffff;
+}
+
+.pb-pl-container {
+    flex: 1 1 0px;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+}
+
+.pb-pl-container.collapsed {
+    display: none !important;
+}
+
+.pb-pl-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.pb-pl-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 3px;
+    font-size: 0.72rem;
+    color: #d4d4d8;
+    cursor: pointer;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.pb-pl-item:hover {
+    background: rgba(255, 255, 255, 0.09);
+    border-color: rgba(255, 255, 255, 0.16);
+}
+
+.pb-pl-item.playing,
+.pb-pl-item.active {
+    background: rgba(56, 189, 248, 0.12) !important;
+    border-color: rgba(56, 189, 248, 0.42) !important;
+    box-shadow: inset 3px 0 0 #38bdf8;
+}
+
+.pb-pl-item.playing .pb-queue-num,
+.pb-pl-item.active .pb-queue-num {
+    color: #38bdf8 !important;
+    font-weight: 700 !important;
+}
+
+.pb-pl-item.playing .pb-queue-name,
+.pb-pl-item.active .pb-queue-name {
+    color: #f0f9ff !important;
+    font-weight: 600 !important;
+}
+
+.pb-pl-playing-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    font-size: 0.62rem;
+    font-weight: 500;
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.14);
+    border: 1px solid rgba(56, 189, 248, 0.32);
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 6px;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.pb-eq-bars {
+    display: inline-flex;
+    align-items: flex-end;
+    gap: 1.5px;
+    height: 9px;
+    width: 8px;
+}
+
+.pb-eq-bars span {
+    flex: 1;
+    background: #38bdf8;
+    border-radius: 0.5px;
+    animation: pbEqAnim 0.7s ease-in-out infinite alternate;
+}
+
+.pb-eq-bars span:nth-child(1) { height: 40%; animation-delay: 0.15s; }
+.pb-eq-bars span:nth-child(2) { height: 95%; animation-delay: 0.35s; }
+.pb-eq-bars span:nth-child(3) { height: 65%; animation-delay: 0.05s; }
+
+@keyframes pbEqAnim {
+    0% { height: 25%; }
+    100% { height: 100%; }
+}
+
+.pb-pl-drag-handle {
+    cursor: grab;
+    color: #71717a;
+    font-size: 0.75rem;
+    user-select: none;
+    line-height: 1;
+    padding: 0 2px;
+    opacity: 0.6;
+    transition: opacity 0.15s, color 0.15s;
+}
+
+.pb-pl-item:hover .pb-pl-drag-handle {
+    opacity: 1;
+    color: #d4d4d8;
+}
+
+.pb-pl-item.dragging {
+    opacity: 0.35;
+    border: 1px dashed rgba(255, 255, 255, 0.4);
+}
+
+.pb-pl-item.drag-over-top::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #38bdf8;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.pb-pl-item.drag-over-bottom::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #38bdf8;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.pb-pl-actions {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    margin-left: auto;
+    flex-shrink: 0;
+}
+
+.pb-pl-remove-btn {
+    background: none;
+    border: none;
+    color: #71717a;
+    font-size: 0.72rem;
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, transform 0.1s;
+}
+
+.pb-pl-remove-btn:hover {
+    color: #f87171;
+    transform: scale(1.15);
+}
+
+.pb-pl-add-track-btn {
+    background: none;
+    border: none;
+    color: #a1a1aa;
+    font-size: 0.70rem;
+    cursor: pointer;
+    padding: 0 4px;
+    border-radius: 2px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: color 0.15s, transform 0.1s;
+}
+
+.pb-pl-add-track-btn:hover {
+    color: #38bdf8;
+    transform: scale(1.15);
+}
+
+.pb-pl-add-track-btn svg {
+    display: block;
+    pointer-events: none;
+}
+
+/* Badge statut serveur sur les morceaux de la playlist */
+.pb-pl-item.not-on-server {
+    opacity: 0.82;
+}
+
+.pb-pl-server-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 3px;
+    font-size: 0.60rem;
+    font-weight: 500;
+    line-height: 1.1;
+    padding: 1px 5px;
+    border-radius: 3px;
+    margin-left: 6px;
+    flex-shrink: 0;
+    user-select: none;
+}
+
+.pb-pl-server-badge.offline {
+    color: #f59e0b;
+    background: rgba(245, 158, 11, 0.12);
+    border: 1px solid rgba(245, 158, 11, 0.32);
+}
+
+.pb-pl-server-badge.uploading {
+    color: #38bdf8;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.32);
+}
+
+/* ─── Interactive Splitter between Playlist and Queue ─── */
+.pb-split-resizer {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 10px;
+    min-height: 10px;
+    flex: 0 0 10px;
+    cursor: row-resize;
+    user-select: none;
+    touch-action: none;
+    position: relative;
+    padding: 2px 0;
+    margin: 2px 0;
+    z-index: 10;
+}
+
+.pb-split-resizer::before {
+    content: '';
+    position: absolute;
+    left: 2px;
+    right: 2px;
+    top: 50%;
+    transform: translateY(-50%);
+    height: 1px;
+    background: rgba(255, 255, 255, 0.10);
+    transition: background 0.15s ease;
+}
+
+.pb-split-resizer-line {
+    width: 32px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.25);
+    position: relative;
+    z-index: 2;
+    transition: background 0.15s ease, width 0.15s ease, box-shadow 0.15s ease;
+}
+
+.pb-split-resizer:hover::before,
+.pb-split-resizer.is-resizing::before {
+    background: rgba(56, 189, 248, 0.45);
+}
+
+.pb-split-resizer:hover .pb-split-resizer-line,
+.pb-split-resizer.is-resizing .pb-split-resizer-line {
+    background: #38bdf8;
+    width: 48px;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.65);
+}
+
+.pb-lists-split.no-split .pb-split-resizer {
+    display: none !important;
+}
+
+/* ─── Queue Section ─── */
+.pb-queue-section {
+    display: flex;
+    flex-direction: column;
+    flex: var(--q-flex, 1.2) 1 0px;
+    min-height: 0;
+    overflow: hidden;
+}
+
+.pb-queue-section.collapsed {
+    flex: 0 0 auto !important;
+}
+
+.pb-queue-toggle {
+    display: flex;
+    align-items: center;
+    margin-top: 2px;
+    margin-bottom: 4px;
+    flex-shrink: 0;
+}
+
+.pb-queue-btn {
+    background: none;
+    border: none;
+    color: #a1a1aa;
+    font-size: 0.74rem;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 2px 0;
+    transition: color 0.15s;
+}
+
+.pb-queue-btn:hover {
+    color: #ffffff;
+}
+
+/* Common container styling for both scrollable lists */
+.pb-queue-container {
+    flex: 1 1 0px;
+    min-height: 0;
+    height: auto;
+    max-height: none;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: rgba(0, 0, 0, 0.25);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 4px;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    color-scheme: dark;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.2) rgba(0, 0, 0, 0.2);
+}
+
+.pb-queue-container::-webkit-scrollbar {
+    width: 5px;
+}
+
+.pb-queue-container::-webkit-scrollbar-track {
+    background: rgba(0, 0, 0, 0.2);
+    border-radius: 3px;
+}
+
+.pb-queue-container::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.18);
+    border-radius: 3px;
+    transition: background 0.15s ease;
+}
+
+.pb-queue-container::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.35);
+}
+
+.pb-queue-empty {
+    color: #71717a;
+    font-size: 0.72rem;
+    font-style: italic;
+    text-align: center;
+    padding: 14px 0;
+    user-select: none;
+    margin: auto 0;
+}
+
+.pb-queue-container.collapsed {
+    display: none !important;
+}
+
+/* Spotify Queue Sub-sections */
+.pb-q-section {
+    display: flex;
+    flex-direction: column;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.pb-q-section.hidden {
+    display: none !important;
+}
+
+.pb-q-header {
+    font-size: 0.68rem;
+    font-weight: 700;
+    color: #e4e4e7;
+    padding: 3px 2px 4px 2px;
+    letter-spacing: 0.3px;
+    opacity: 0.9;
+}
+
+.pb-q-header-split {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.pb-q-header-title {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pb-q-clear-btn {
+    background: none;
+    border: none;
+    color: #a1a1aa;
+    font-size: 0.66rem;
+    cursor: pointer;
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: inherit;
+    transition: color 0.15s, background 0.15s;
+    font-weight: 500;
+}
+
+.pb-q-clear-btn:hover {
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.12);
+}
+
+.pb-queue-list {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.pb-queue-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 3px;
+    font-size: 0.72rem;
+    color: #d4d4d8;
+    cursor: grab;
+    transition: background 0.12s, border-color 0.12s;
+}
+
+.pb-queue-num {
+    font-size: 0.68rem;
+    color: #a1a1aa;
+    font-family: 'SF Mono', 'Fira Code', monospace;
+    font-variant-numeric: tabular-nums;
+    min-width: 16px;
+    text-align: right;
+    margin-right: 2px;
+    flex-shrink: 0;
+    user-select: none;
+    opacity: 0.85;
+}
+
+.pb-queue-item.active .pb-queue-num {
+    color: #4ade80;
+    font-weight: 600;
+    opacity: 1;
+}
+
+/* Ligne d'insertion lors du drag and drop entre deux morceaux */
+.pb-queue-item.drag-over-top::before {
+    content: '';
+    position: absolute;
+    top: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #38bdf8;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.pb-queue-item.drag-over-bottom::after {
+    content: '';
+    position: absolute;
+    bottom: -2px;
+    left: 0;
+    right: 0;
+    height: 2px;
+    background: #38bdf8;
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.85);
+    border-radius: 1px;
+    pointer-events: none;
+    z-index: 10;
+}
+
+.pb-queue-item:active {
+    cursor: grabbing;
+}
+
+.pb-queue-item.dragging {
+    opacity: 0.35;
+    border: 1px dashed rgba(255, 255, 255, 0.4);
+}
+
+.pb-queue-item.active {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #ffffff;
+    font-weight: 500;
+}
+
+.pb-queue-item.loading {
+    opacity: 0.75;
+}
+
+.pb-queue-spinner {
+    width: 10px;
+    height: 10px;
+    border: 1.5px solid rgba(255, 255, 255, 0.2);
+    border-top-color: #e4e4e7;
+    border-radius: 50%;
+    animation: pb-spin 0.75s linear infinite;
+    flex-shrink: 0;
+}
+
+@keyframes pb-spin {
+    to { transform: rotate(360deg); }
+}
+
+.pb-queue-status {
+    font-size: 0.65rem;
+    color: #a1a1aa;
+    font-style: italic;
+    margin-right: 2px;
+    white-space: nowrap;
+}
+
+.pb-queue-drag-handle {
+    color: #71717a;
+    font-size: 0.75rem;
+    cursor: grab;
+}
+
+.pb-queue-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.pb-queue-remove {
+    background: none;
+    border: none;
+    color: #71717a;
+    cursor: pointer;
+    font-size: 0.75rem;
+    padding: 0 4px;
+    line-height: 1;
+}
+
+.pb-queue-remove:hover {
+    color: #ef4444;
+}
+
+.pb-queue-empty {
+    font-size: 0.70rem;
+    color: #71717a;
+    text-align: center;
+    padding: 6px 0;
+}
+
+.pb-buttons {
+    justify-content: center;
+    align-items: center;
+    gap: 10px;
+    padding-top: 2px;
+    margin-bottom: 8px;
+    flex-shrink: 0;
+}
+
+.pb-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #e4e4e7;
+    border-radius: 4px;
+    width: 36px;
+    height: 28px;
+    font-size: 0.85rem;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    line-height: 1;
+    flex-shrink: 0;
+}
+
+.pb-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #fff;
+}
+
+.pb-btn-main {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.28);
+    color: #fff;
+    width: 42px;
+    height: 28px;
+    font-size: 0.95rem;
+}
+
+.pb-btn-main:hover {
+    background: rgba(255, 255, 255, 0.22);
+    border-color: rgba(255, 255, 255, 0.45);
+}
+
+.pb-shuffle-btn {
+    position: relative;
+    color: #82828e;
+    transition: all 0.15s ease;
+}
+
+.pb-shuffle-btn svg.pb-shuffle-icon {
+    display: block;
+    pointer-events: none;
+    transition: stroke 0.15s ease, color 0.15s ease;
+}
+
+.pb-shuffle-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    border-color: rgba(255, 255, 255, 0.25);
+    color: #e4e4e7;
+}
+
+.pb-shuffle-btn.active {
+    background: rgba(255, 255, 255, 0.14);
+    border-color: rgba(255, 255, 255, 0.35);
+    color: #ffffff;
+}
+
+.pb-shuffle-btn.active::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 3px;
+    height: 3px;
+    background: #22c55e;
+    border-radius: 50%;
+}
+
+/* Now playing track name — bottom-right at the exact same level as FPS counter & movement info */
 #now-playing {
     position: fixed;
     bottom: 2px;
-    right: 16px;
-    color: #4f4;
+    right: 8px;
+    color: #4ade80;
     font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.68rem;
-    z-index: 50;
+    font-size: 0.70rem;
+    font-weight: 500;
+    z-index: 150;
     pointer-events: none;
-    opacity: 0.85;
+    opacity: 0.9;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
+    max-width: 35vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    text-align: right;
 }
 
+/* FPS counter — always visible at bottom-left in light green */
 #fps-counter {
     position: fixed;
     bottom: 2px;
-    left: 4px;
-    color: #4f4;
+    left: 8px;
+    color: #4ade80;
     font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.68rem;
-    z-index: 50;
+    font-size: 0.70rem;
+    font-weight: 500;
+    z-index: 150;
     pointer-events: none;
-    opacity: 0.85;
+    opacity: 0.9;
+    text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9);
 }
 
 /* ─── Debug Performance Panel ─── */
@@ -490,136 +1755,438 @@ body {
     backdrop-filter: blur(6px);
     pointer-events: none;
     min-width: 340px;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.7);
 }
-#debug-panel.hidden { display: none; }
+#debug-panel.hidden { display: none !important; }
 #debug-content { white-space: pre; }
 .dbg-title { color: #4af; font-weight: bold; }
-.dbg-val { color: #4f4; }
+.dbg-val { color: #4ade80; }
 .dbg-warn { color: #fa3; }
 .dbg-bad { color: #f44; }
 
-.dsp-panel {
-    background: rgba(0, 0, 0, 0.82);
-    border: 1px solid #444;
-    border-radius: 8px;
-    min-width: 280px;
-    max-width: 320px;
-    font-family: 'SF Mono', 'Fira Code', monospace;
-    font-size: 0.72rem;
-    backdrop-filter: blur(6px);
-    overflow: visible;
+/* ─── DSP Panels Layout (Positioned Slots) ─── */
+#dsp-panels {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    pointer-events: none;
 }
 
-.dsp-panel-body {
-    padding: 6px 12px 10px;
-    max-height: calc(100vh - 160px);
-    overflow-y: auto;
-    scrollbar-width: thin;
-    scrollbar-color: #555 transparent;
+#dsp-panels.hidden {
+    display: none !important;
 }
 
-.dsp-panel-header {
+#dsp-col-left {
+    position: fixed;
+    bottom: 64px;
+    left: 16px;
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 8px 12px;
-    border-bottom: 1px solid rgba(255,255,255,0.1);
-    cursor: pointer;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    pointer-events: none;
+    z-index: 70;
+    max-height: calc(100vh - 100px);
+}
+
+#dsp-col-left > .dsp-panel-slot {
+    position: static;
+    pointer-events: auto;
+}
+
+#dsp-col-left > #dsp-panel-input:not([style*="position: fixed"]) .lil-gui.root {
+    max-height: min(360px, calc(42vh - 30px)) !important;
+    overflow-y: auto !important;
+}
+
+#dsp-col-left > #dsp-panel-top:not([style*="position: fixed"]) .lil-gui.root {
+    max-height: min(480px, calc(52vh - 30px)) !important;
+    overflow-y: auto !important;
+}
+
+#dsp-panel-mid {
+    position: fixed;
+    bottom: 64px;
+    left: 328px;
+    pointer-events: auto;
+}
+
+#dsp-panel-fill {
+    position: fixed;
+    bottom: 64px;
+    right: 328px;
+    pointer-events: auto;
+}
+
+#dsp-col-right {
+    position: fixed;
+    bottom: 64px;
+    right: 16px;
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    gap: 8px;
+    pointer-events: none;
+    z-index: 70;
+    max-height: calc(100vh - 100px);
+}
+
+#dsp-col-right > .dsp-panel-slot {
+    position: static;
+    pointer-events: auto;
+}
+
+#dsp-col-right > #dsp-panel-master:not([style*="position: fixed"]) .lil-gui.root {
+    max-height: min(360px, calc(42vh - 30px)) !important;
+    overflow-y: auto !important;
+}
+
+#dsp-col-right > #dsp-panel-sub:not([style*="position: fixed"]) .lil-gui.root,
+#dsp-panel-sub .lil-gui.root {
+    max-height: min(720px, calc(100vh - 200px)) !important;
+    overflow-y: auto !important;
+}
+
+#dsp-panel-sub .lil-gui.root > .children {
+    max-height: min(700px, calc(100vh - 220px)) !important;
+}
+
+#dsp-panel-master[style*="position: fixed"] {
+    right: 16px;
+}
+
+/* Environnement panel — top-right corner */
+#env-panel-wrap {
+    position: fixed;
+    top: 16px;
+    right: 16px;
+    z-index: 60;
+    pointer-events: auto;
+}
+#env-panel-wrap.hidden {
+    display: none !important;
+}
+
+/* Contrôles Utilisateur panel — top-right offset */
+#user-panel-wrap {
+    position: fixed;
+    top: 16px;
+    right: 328px;
+    z-index: 60;
+    pointer-events: auto;
+}
+#user-panel-wrap.hidden {
+    display: none !important;
+}
+
+/* Draggable window handles */
+.lil-gui.root > .title {
+    cursor: grab !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+.lil-gui.root > .title:active {
+    cursor: grabbing !important;
+}
+
+.pb-info {
+    cursor: grab;
     user-select: none;
 }
-
-.dsp-panel-title {
-    font-size: 0.8rem;
-    font-weight: 600;
-    letter-spacing: 0.5px;
+.pb-info:active {
+    cursor: grabbing;
 }
 
-.dsp-panel-toggle {
-    background: none;
-    border: 1px solid rgba(255,255,255,0.2);
-    color: #aaa;
-    width: 20px;
-    height: 20px;
-    border-radius: 3px;
-    cursor: pointer;
-    font-size: 0.85rem;
-    line-height: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
+#debug-panel {
+    cursor: grab;
+    pointer-events: auto;
+    user-select: none;
+}
+#debug-panel:active {
+    cursor: grabbing;
 }
 
-.dsp-panel-toggle:hover {
-    color: #fff;
-    border-color: rgba(255,255,255,0.4);
+#meters {
+    pointer-events: auto;
+    cursor: grab;
+    user-select: none;
+}
+#meters:active {
+    cursor: grabbing;
 }
 
-.dsp-panel-body.collapsed {
-    display: none;
+/* Slot sizing */
+.dsp-panel-slot,
+#dsp-panel-master,
+#dsp-panel-env,
+#dsp-panel-user {
+    width: 300px;
+    min-width: 300px;
+    max-width: 300px;
+    pointer-events: auto;
 }
 
-.dsp-section {
-    margin-top: 6px;
-    padding-top: 6px;
-    border-top: 1px solid rgba(255,255,255,0.06);
+/* Lil-gui Root & Positioning */
+.dsp-panel-slot .lil-gui.root,
+#dsp-master-wrap .lil-gui.root,
+#env-panel-wrap .lil-gui.root,
+#user-panel-wrap .lil-gui.root {
+    position: static !important;
+    width: 300px !important;
+    max-width: 300px !important;
+    max-height: calc(100vh - 120px);
 }
 
-.dsp-section:first-child {
-    margin-top: 0;
-    padding-top: 0;
-    border-top: none;
+.dsp-panel-slot .lil-gui,
+#dsp-master-wrap .lil-gui,
+#env-panel-wrap .lil-gui,
+#user-panel-wrap .lil-gui {
+    --width: 300px;
+    --name-width: 82px;
+    --slider-input-min-width: 36px;
+    --slider-input-width: 38px;
+    --spacing: 3px;
+    --padding: 4px;
+    --widget-height: 20px;
+    user-select: none !important;
+    -webkit-user-select: none !important;
 }
 
-.dsp-section-title {
-    color: #6cf;
-    font-size: 0.68rem;
-    font-weight: 600;
-    text-transform: uppercase;
-    letter-spacing: 0.8px;
-    margin-bottom: 4px;
+.dsp-panel-slot .lil-gui input,
+#dsp-master-wrap .lil-gui input,
+#env-panel-wrap .lil-gui input,
+#user-panel-wrap .lil-gui input,
+#sine-panel .lil-gui input {
+    user-select: auto !important;
+    -webkit-user-select: auto !important;
 }
 
-.dsp-param {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-bottom: 3px;
+/* Scroll handling: smooth wheel scroll if needed, NO visible scrollbars ("slider sur le côté") */
+.dsp-panel-slot .lil-gui.root > .children,
+#env-panel-wrap .lil-gui.root > .children,
+#user-panel-wrap .lil-gui.root > .children,
+#sine-panel .lil-gui.root > .children {
+    max-height: calc(100vh - 150px);
+    overflow-y: auto !important;
+    overflow-x: hidden !important;
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
 }
 
-.dsp-param label {
-    width: 62px;
-    text-align: right;
-    color: #999;
-    font-size: 0.68rem;
-    flex-shrink: 0;
+/* Prevent any horizontal or vertical scrollbars on any lil-gui elements and folders */
+.dsp-panel-slot .lil-gui,
+.dsp-panel-slot .lil-gui *,
+#env-panel-wrap .lil-gui,
+#env-panel-wrap .lil-gui *,
+#user-panel-wrap .lil-gui,
+#user-panel-wrap .lil-gui *,
+#sine-panel .lil-gui,
+#sine-panel .lil-gui * {
+    scrollbar-width: none !important;
+    -ms-overflow-style: none !important;
 }
 
-.dsp-param input[type="range"] {
-    width: 80px;
-    accent-color: #4af;
-    cursor: pointer;
-    flex-shrink: 0;
+.dsp-panel-slot .lil-gui::-webkit-scrollbar,
+.dsp-panel-slot .lil-gui *::-webkit-scrollbar,
+#env-panel-wrap .lil-gui::-webkit-scrollbar,
+#env-panel-wrap .lil-gui *::-webkit-scrollbar,
+#user-panel-wrap .lil-gui::-webkit-scrollbar,
+#user-panel-wrap .lil-gui *::-webkit-scrollbar,
+#sine-panel .lil-gui::-webkit-scrollbar,
+#sine-panel .lil-gui *::-webkit-scrollbar {
+    display: none !important;
+    width: 0 !important;
+    height: 0 !important;
 }
 
-.dsp-param span {
-    width: 52px;
-    color: #ccc;
-    font-size: 0.68rem;
-    flex-shrink: 0;
+/* Ensure folders and controllers never create horizontal scrollbars or overflow */
+.dsp-panel-slot .lil-gui .children,
+#env-panel-wrap .lil-gui .children,
+#user-panel-wrap .lil-gui .children,
+.dsp-panel-slot .lil-gui .controller,
+#env-panel-wrap .lil-gui .controller,
+#user-panel-wrap .lil-gui .controller,
+#sine-panel .lil-gui .children,
+#sine-panel .lil-gui .controller {
+    overflow-x: hidden !important;
 }
 
-.dsp-param .reset-btn {
-    flex-shrink: 0;
+/* Controller row layout */
+.dsp-panel-slot .lil-gui .controller,
+#env-panel-wrap .lil-gui .controller,
+#user-panel-wrap .lil-gui .controller,
+#sine-panel .lil-gui .controller {
+    display: flex !important;
+    align-items: center !important;
+    padding: 0 4px !important;
+    margin: 2px 0 !important;
+    overflow: hidden !important;
 }
 
-/* ─── Tooltips (data-tooltip) — handled by JS ─── */
-[data-tooltip] {
-    cursor: help;
+/* Option Name/Label: Compact fixed width */
+.dsp-panel-slot .lil-gui .controller > .name,
+#env-panel-wrap .lil-gui .controller > .name,
+#user-panel-wrap .lil-gui .controller > .name {
+    flex: 0 0 82px !important;
+    width: 82px !important;
+    min-width: 82px !important;
+    max-width: 82px !important;
+    padding-right: 4px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 11px !important;
+    color: #ccc !important;
 }
 
+#sine-panel .lil-gui .controller > .name {
+    flex: 0 0 95px !important;
+    width: 95px !important;
+    min-width: 95px !important;
+    max-width: 95px !important;
+    padding-right: 4px !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+    font-size: 11px !important;
+    color: #ccc !important;
+}
+
+/* Widget: Fills the entire remaining row width */
+.dsp-panel-slot .lil-gui .controller .widget,
+#env-panel-wrap .lil-gui .controller .widget,
+#user-panel-wrap .lil-gui .controller .widget,
+#sine-panel .lil-gui .controller .widget {
+    display: flex !important;
+    align-items: center !important;
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+    overflow: hidden !important;
+}
+
+/* Slider Track: Wide, expansive, smooth dragging */
+.dsp-panel-slot .lil-gui .controller.number .slider,
+#env-panel-wrap .lil-gui .controller.number .slider,
+#user-panel-wrap .lil-gui .controller.number .slider,
+#sine-panel .lil-gui .controller.number .slider {
+    flex: 1 1 auto !important;
+    width: auto !important;
+    min-width: 50px !important;
+    height: 18px !important;
+    cursor: ew-resize !important;
+}
+
+/* Numeric Input: Compact, crisp, right-aligned */
+.dsp-panel-slot .lil-gui .controller.number input,
+#env-panel-wrap .lil-gui .controller.number input,
+#user-panel-wrap .lil-gui .controller.number input {
+    flex: 0 0 38px !important;
+    width: 38px !important;
+    min-width: 36px !important;
+    max-width: 42px !important;
+    height: 18px !important;
+    padding: 0 2px !important;
+    margin-left: 4px !important;
+    text-align: right !important;
+    font-size: 10.5px !important;
+    border-radius: 2px !important;
+}
+
+#sine-panel .lil-gui .controller.number input {
+    flex: 0 0 46px !important;
+    width: 46px !important;
+    min-width: 40px !important;
+    max-width: 50px !important;
+    height: 18px !important;
+    padding: 0 2px !important;
+    margin-left: 4px !important;
+    text-align: right !important;
+    font-size: 10.5px !important;
+    border-radius: 2px !important;
+}
+
+/* Per-option Reset Button (↺): Tiny 15x15px, elegant, no row stretching */
+.dsp-panel-slot .lil-gui .lil-reset-btn,
+#env-panel-wrap .lil-gui .lil-reset-btn,
+#user-panel-wrap .lil-gui .lil-reset-btn,
+#sine-panel .lil-gui .lil-reset-btn {
+    flex: 0 0 15px !important;
+    width: 15px !important;
+    height: 15px !important;
+    min-width: 15px !important;
+    max-width: 15px !important;
+    margin: 0 0 0 3px !important;
+    padding: 0 !important;
+    background: transparent !important;
+    border: 1px solid rgba(255, 255, 255, 0.2) !important;
+    color: #888 !important;
+    border-radius: 2px !important;
+    font-size: 10px !important;
+    line-height: 1 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    user-select: none !important;
+    transition: color 0.15s, border-color 0.15s, background 0.15s !important;
+}
+
+.dsp-panel-slot .lil-gui .lil-reset-btn:hover,
+#env-panel-wrap .lil-gui .lil-reset-btn:hover,
+#user-panel-wrap .lil-gui .lil-reset-btn:hover,
+#sine-panel .lil-gui .lil-reset-btn:hover {
+    color: #fff !important;
+    border-color: rgba(255, 255, 255, 0.5) !important;
+    background: rgba(255, 255, 255, 0.15) !important;
+}
+
+/* Panel Header & "↺ Tout reset" button */
+.dsp-panel-slot .lil-gui.root > .title,
+#dsp-master-wrap .lil-gui.root > .title,
+#env-panel-wrap .lil-gui.root > .title,
+#user-panel-wrap .lil-gui.root > .title,
+#sine-panel .lil-gui.root > .title,
+.lil-gui.root > .title {
+    display: flex !important;
+    align-items: center !important;
+    padding-right: 6px !important;
+    height: 26px !important;
+}
+
+.lil-panel-reset-btn {
+    margin-left: auto !important;
+    margin-right: 2px !important;
+    background: rgba(255, 255, 255, 0.1) !important;
+    border: 1px solid rgba(255, 255, 255, 0.25) !important;
+    color: #ccc !important;
+    border-radius: 3px !important;
+    font-size: 10px !important;
+    font-weight: 500 !important;
+    padding: 2px 7px !important;
+    cursor: pointer !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+    transition: all 0.15s ease !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
+}
+
+.lil-panel-reset-btn:hover {
+    background: rgba(255, 255, 255, 0.25) !important;
+    border-color: rgba(255, 255, 255, 0.6) !important;
+    color: #fff !important;
+}
+
+.lil-panel-reset-btn:active {
+    background: rgba(255, 255, 255, 0.35) !important;
+    transform: scale(0.96);
+}
+
+/* ─── DSP Tooltip (position: fixed) ─── */
 #dsp-tooltip {
     position: fixed;
-    background: rgba(15, 15, 20, 0.95);
+    background: rgba(15, 15, 20, 0.96);
     color: #ddd;
     font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     font-size: 0.74rem;
@@ -627,15 +2194,15 @@ body {
     line-height: 1.5;
     padding: 10px 14px;
     border-radius: 6px;
-    border: 1px solid rgba(100, 170, 255, 0.3);
+    border: 1px solid rgba(100, 170, 255, 0.35);
     width: 280px;
     white-space: normal;
     pointer-events: none;
     opacity: 0;
     visibility: hidden;
-    transition: opacity 0.18s ease, visibility 0.18s ease;
+    transition: opacity 0.15s ease, visibility 0.15s ease;
     z-index: 9999;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.6);
+    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.75);
 }
 
 #dsp-tooltip.visible {
@@ -643,7 +2210,6 @@ body {
     visibility: visible;
 }
 
-/* Arrow on right side of tooltip (pointing toward a right-side panel) */
 #dsp-tooltip::after {
     content: '';
     position: absolute;
@@ -651,12 +2217,369 @@ body {
     top: 50%;
     transform: translateY(-50%);
     border: 6px solid transparent;
-    border-left-color: rgba(15, 15, 20, 0.95);
+    border-left-color: rgba(15, 15, 20, 0.96);
 }
-/* Arrow on left side (tooltip appears to the right of a left-side panel) */
+
 #dsp-tooltip.arrow-right::after {
     right: auto;
     left: -11px;
     border-left-color: transparent;
-    border-right-color: rgba(15, 15, 20, 0.95);
+    border-right-color: rgba(15, 15, 20, 0.96);
 }
+
+/* ==================================================================
+   EMOTE & DANCE MENU (Fenetre Flottante, Sobre & Redimensionnable)
+   ================================================================== */
+.emote-window {
+    position: fixed;
+    top: 90px;
+    left: 60px;
+    width: 480px;
+    min-width: 340px;
+    max-width: 90vw;
+    height: 520px;
+    min-height: 280px;
+    max-height: 90vh;
+    background: rgba(18, 18, 22, 0.95);
+    backdrop-filter: blur(14px);
+    -webkit-backdrop-filter: blur(14px);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7);
+    border-radius: 10px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    color: #e4e4e7;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    user-select: none;
+    z-index: 500;
+    transition: opacity 0.15s ease, transform 0.15s ease;
+}
+
+.emote-window.hidden {
+    opacity: 0;
+    pointer-events: none;
+    visibility: hidden;
+    transform: scale(0.98);
+}
+
+.emote-window-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 10px 14px;
+    background: rgba(255, 255, 255, 0.03);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+    cursor: grab;
+    flex-shrink: 0;
+}
+
+.emote-window-header:active {
+    cursor: grabbing;
+}
+
+.emote-window-title {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #f4f4f5;
+    letter-spacing: 0.3px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.emote-hint-x {
+    font-size: 0.70rem;
+    font-weight: normal;
+    color: #ffffff;
+    opacity: 0.85;
+    margin-left: 6px;
+}
+
+.emote-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.emote-refresh-text-btn {
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.14);
+    color: #e4e4e7;
+    padding: 4px 10px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 0.75rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
+}
+
+.emote-refresh-text-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #ffffff;
+    border-color: rgba(255, 255, 255, 0.28);
+}
+
+.emote-close-btn {
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: #a1a1aa;
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.80rem;
+    transition: all 0.15s ease;
+}
+
+.emote-close-btn:hover {
+    background: rgba(239, 68, 68, 0.2);
+    color: #f87171;
+    border-color: rgba(239, 68, 68, 0.4);
+}
+
+/* Slots bar 1..9 */
+.emote-slots-bar {
+    display: grid;
+    grid-template-columns: repeat(9, 1fr);
+    gap: 4px;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.2);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.emote-slot-btn {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    padding: 4px 2px;
+    cursor: pointer;
+    text-align: center;
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    height: 42px;
+    color: #d4d4d8;
+    overflow: hidden;
+    transition: all 0.15s ease;
+}
+
+.emote-slot-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: rgba(255, 255, 255, 0.2);
+}
+
+.emote-slot-btn.selecting {
+    border-color: #e4e4e7;
+    background: rgba(255, 255, 255, 0.12);
+}
+
+.emote-slot-btn.playing {
+    border-color: #4ade80 !important;
+    background: rgba(74, 222, 128, 0.12) !important;
+    box-shadow: 0 0 6px rgba(74, 222, 128, 0.25);
+}
+
+.emote-slot-btn .slot-num {
+    font-size: 0.74rem;
+    font-weight: 700;
+    color: #a1a1aa;
+    line-height: 1;
+}
+
+.emote-slot-btn.assigned .slot-num {
+    color: #f4f4f5;
+}
+
+.emote-slot-btn .slot-name {
+    font-size: 0.62rem;
+    color: #a1a1aa;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    width: 100%;
+    padding: 0 2px;
+    line-height: 1.1;
+    margin-top: 3px;
+}
+
+.emote-slot-btn .slot-clear {
+    position: absolute;
+    top: 0px;
+    right: 3px;
+    font-size: 0.70rem;
+    color: #71717a;
+    display: none;
+}
+
+.emote-slot-btn:hover .slot-clear {
+    display: block;
+}
+
+.emote-slot-btn .slot-clear:hover {
+    color: #f87171;
+}
+
+/* Barre de recherche */
+.emote-search-bar {
+    padding: 8px 12px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    flex-shrink: 0;
+}
+
+.emote-search-bar input {
+    width: 100%;
+    background: rgba(0, 0, 0, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 5px;
+    padding: 6px 10px;
+    color: #f4f4f5;
+    font-size: 0.80rem;
+    outline: none;
+    transition: border-color 0.15s ease;
+}
+
+.emote-search-bar input:focus {
+    border-color: rgba(255, 255, 255, 0.25);
+}
+
+/* Liste des animations */
+.emote-list-scroll {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+    scrollbar-width: thin;
+    scrollbar-color: rgba(255, 255, 255, 0.15) transparent;
+}
+
+.emote-list-scroll::-webkit-scrollbar {
+    width: 5px;
+}
+
+.emote-list-scroll::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.15);
+    border-radius: 3px;
+}
+
+.emote-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
+    gap: 8px;
+    padding-bottom: 8px;
+}
+
+.emote-card {
+    background: rgba(255, 255, 255, 0.035);
+    border: 1px solid rgba(255, 255, 255, 0.07);
+    border-radius: 8px;
+    padding: 10px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    min-height: 72px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.emote-card:hover {
+    background: rgba(255, 255, 255, 0.07);
+    border-color: rgba(255, 255, 255, 0.16);
+    transform: translateY(-1px);
+}
+
+.emote-card.playing {
+    background: rgba(74, 222, 128, 0.08);
+    border-color: rgba(74, 222, 128, 0.4);
+    box-shadow: 0 0 10px rgba(74, 222, 128, 0.15);
+}
+
+.emote-card-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 6px;
+}
+
+.emote-card-play-icon {
+    font-size: 0.76rem;
+    color: #71717a;
+    transition: color 0.15s ease;
+}
+
+.emote-card:hover .emote-card-play-icon {
+    color: #e4e4e7;
+}
+
+.emote-card.playing .emote-card-play-icon {
+    color: #4ade80;
+}
+
+.emote-card-body {
+    flex: 1;
+    display: flex;
+    align-items: flex-end;
+}
+
+.emote-card-name {
+    font-size: 0.78rem;
+    color: #e4e4e7;
+    font-weight: 500;
+    line-height: 1.25;
+    word-break: break-word;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+
+.emote-card.playing .emote-card-name {
+    color: #ffffff;
+    font-weight: 600;
+}
+
+/* Slot select dans la carte */
+.emote-card .emote-slot-dropdown {
+    background: #18181b;
+    border: 1px solid rgba(255, 255, 255, 0.22);
+    color: #ffffff;
+    font-size: 0.74rem;
+    font-weight: 600;
+    padding: 3px 6px;
+    border-radius: 4px;
+    outline: none;
+    cursor: pointer;
+    line-height: 1;
+    color-scheme: dark; /* Force le menu déroulant natif du navigateur en mode sombre avec texte blanc */
+}
+
+.emote-card .emote-slot-dropdown:hover {
+    background: #27272a;
+    border-color: rgba(255, 255, 255, 0.45);
+    color: #ffffff;
+}
+
+.emote-card .emote-slot-dropdown option {
+    background-color: #18181b;
+    color: #ffffff;
+    padding: 6px 10px;
+    font-size: 0.85rem;
+    font-weight: 500;
+}
+
+.emote-empty-item {
+    grid-column: 1 / -1;
+    text-align: center;
+    padding: 32px 16px;
+    color: #71717a;
+    font-size: 0.82rem;
+    font-style: italic;
+}
+

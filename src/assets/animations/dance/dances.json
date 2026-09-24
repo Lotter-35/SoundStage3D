@@ -1,0 +1,122 @@
+[
+  {
+    "id": "dance_backflip_fbx",
+    "name": "Backflip",
+    "file": "backflip.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": false
+  },
+  {
+    "id": "dance_cheering_fbx",
+    "name": "Cheering",
+    "file": "Cheering.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_clapping_fbx",
+    "name": "Clapping",
+    "file": "Clapping.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_dying_fbx",
+    "name": "Dying",
+    "file": "Dying.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": false
+  },
+  {
+    "id": "dance_flying_kick_fbx",
+    "name": "Flying Kick",
+    "file": "Flying Kick.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": false
+  },
+  {
+    "id": "dance_running_forward_flip_fbx",
+    "name": "Frontflip",
+    "file": "Running Forward Flip.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": false
+  },
+  {
+    "id": "dance_gangnam_style_fbx",
+    "name": "Gangnam Style",
+    "file": "Gangnam Style.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_head_spinning_fbx",
+    "name": "Head Spinning",
+    "file": "Head Spinning.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_hip_hop_dancing_fbx",
+    "name": "Hip Hop",
+    "file": "Hip Hop Dancing.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_sleeping_idle_fbx",
+    "name": "Sleep",
+    "file": "Sleeping Idle.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_northern_soul_floor_combo_fbx",
+    "name": "Soul",
+    "file": "Northern Soul Floor Combo.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_standing_up_fbx",
+    "name": "Standing Up",
+    "file": "Standing Up.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_swing_dancing_fbx",
+    "name": "Swing Dancing - 1",
+    "file": "Swing Dancing.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_swing_dancing__1__fbx",
+    "name": "Swing Dancing - 2",
+    "file": "Swing Dancing (1).fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  },
+  {
+    "id": "dance_twerk_fbx",
+    "name": "Twerk",
+    "file": "twerk.fbx",
+    "category": "Général",
+    "speed": 1,
+    "loop": true
+  }
+]
