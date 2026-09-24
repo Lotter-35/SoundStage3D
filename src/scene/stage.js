@@ -329,13 +329,16 @@ export function createStage(scene) {
 
     // --- Lighting ---
     const ambientLight = new THREE.AmbientLight(0x99bbdd, 1.0);
+    ambientLight.name = 'Ambiance Générale';
     scene.add(ambientLight);
 
     // Hemisphere light for sky/ground color bleed
     const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 0.8);
+    hemiLight.name = 'Ciel / Sol';
     scene.add(hemiLight);
 
     const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
+    dirLight.name = 'Soleil Principal';
     dirLight.position.set(30, 60, 40);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 4096;
@@ -355,10 +358,12 @@ export function createStage(scene) {
 
     // Stage lights (colored point lights — subtle in daytime)
     const stageLight1 = new THREE.PointLight(0xff3366, 0.5, 30);
+    stageLight1.name = 'Projecteur Scène Gauche';
     stageLight1.position.set(-8, 18, -2);
     scene.add(stageLight1);
 
     const stageLight2 = new THREE.PointLight(0x3366ff, 0.5, 30);
+    stageLight2.name = 'Projecteur Scène Droit';
     stageLight2.position.set(8, 18, -2);
     scene.add(stageLight2);
 
@@ -430,5 +435,6 @@ export function createStage(scene) {
         }
     }
 
-    return { coneContainer, coneGroups, dirLight };
+    const initialLights = [ambientLight, hemiLight, dirLight, stageLight1, stageLight2];
+    return { coneContainer, coneGroups, dirLight, lights: initialLights };
 }

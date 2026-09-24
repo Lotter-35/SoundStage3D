@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Festival Sound System Simulator</title>
-    <link rel="stylesheet" href="style.css?v=43">
+    <link rel="stylesheet" href="style.css?v=44">
     <script type="importmap">
     {
         "imports": {
@@ -20,6 +20,14 @@
         <div id="hud-center">
         </div>
         <div id="hud-right">
+            <!-- 0. Ambiance -->
+            <div id="ambiance-wrapper">
+                <button id="ambiance-btn" class="hud-btn dsp-btn-with-reset">
+                    <span class="dsp-btn-label">💡 Ambiance</span>
+                    <span id="ambiance-reset-all-btn" class="dsp-reset-icon" title="Réinitialiser toutes les lumières et l'ambiance">↺</span>
+                </button>
+            </div>
+
             <!-- 1. DSP -->
             <div id="dsp-wrapper">
                 <button id="dsp-btn" class="hud-btn dsp-btn-with-reset">
@@ -128,6 +136,11 @@
     <!-- ─── Contrôles Utilisateur Panel (en haut à droite, indépendant) ─── -->
     <div id="user-panel-wrap" class="hidden">
         <div id="dsp-panel-user"></div>
+    </div>
+
+    <!-- ─── Panneau Ambiance & Éclairage 3D ─── -->
+    <div id="ambiance-panel-wrap" class="hidden">
+        <div id="ambiance-panel"></div>
     </div>
 
     <!-- ─── DSP Panels (per-bus pipeline controls in bottom bar) ─── -->
@@ -275,6 +288,6 @@
 
     <canvas id="canvas"></canvas>
 
-    <script type="module" src="src/main.js?v=157"></script>
+    <script type="module" src="src/main.js?v=158"></script>
 </body>
 </html>

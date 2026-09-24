@@ -3,7 +3,7 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js?v=156';
+import { createStage } from './scene/stage.js?v=158';
 import { Listener } from './scene/listener.js?v=154';
 import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
@@ -18,7 +18,8 @@ import { InputStage } from './audio/inputStage.js';
 import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
-import { Controls } from './ui/controls.js?v=157';
+import { Controls } from './ui/controls.js?v=158';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=158';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
@@ -47,7 +48,7 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
 // Build 3D stage
-const { coneContainer, coneGroups, dirLight } = createStage(scene);
+const { coneContainer, coneGroups, dirLight, lights } = createStage(scene);
 if (dirLight && dirLight.shadow) {
     const maxTex = renderer.capabilities.maxTextureSize || 4096;
     const shadowRes = Math.min(4096, maxTex);
@@ -69,6 +70,15 @@ await DanceManager.refreshCatalog(true);
 // ─── Listener (FPS controls + 3D Animated Character) ─────────────
 const listener = new Listener(camera, document.body, scene);
 
+// ─── Ambiance & Éclairage 3D ─────────────────────────────────────
+const ambiancePanel = new AmbiancePanel({
+    scene,
+    camera,
+    renderer,
+    listener,
+    initialLights: lights,
+});
+
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
 let inputStage = null;
@@ -86,6 +96,7 @@ let _isNewTrackStarting = false;
 
 // ─── UI ──────────────────────────────────────────────────────────
 const controls = new Controls();
+controls.ambiancePanel = ambiancePanel;
 
 // ─── Playback & Spotify Queue State ──────────────────────────────
 let _isShuffle = false;
@@ -2554,6 +2565,10 @@ listener.onLockChange((locked) => {
 
 // Re-lock on canvas click and ensure audio context is active
 canvas.addEventListener('click', () => {
+    // Si le panneau Ambiance est ouvert ou qu'un gizmo 3D est en cours de manipulation, ne pas verrouiller la souris
+    if (ambiancePanel && (ambiancePanel.isOpen || ambiancePanel.isDraggingGizmo)) {
+        return;
+    }
     if (!audioReady) {
         initAudio();
     }
@@ -2729,6 +2744,7 @@ ${memLines}`;
 }
 
 let _lastFrameTime = performance.now();
+const _dirLightOffset = new THREE.Vector3(30, 60, 40);
 
 function renderFrame() {
     const now = performance.now();
@@ -2852,7 +2868,16 @@ function renderFrame() {
         const lp = listener.position;
         dirLight.target.position.set(lp.x, lp.y, lp.z);
         dirLight.target.updateMatrixWorld();
-        dirLight.position.set(lp.x + 30, lp.y + 60, lp.z + 40);
+        if (ambiancePanel && ambiancePanel.selectedEntry && ambiancePanel.selectedEntry.light === dirLight && (ambiancePanel.isDraggingGizmo || ambiancePanel.isOpen)) {
+            _dirLightOffset.copy(dirLight.position).sub(lp);
+        } else {
+            dirLight.position.set(lp.x + _dirLightOffset.x, lp.y + _dirLightOffset.y, lp.z + _dirLightOffset.z);
+        }
+    }
+
+    // Update Ambiance light markers animation
+    if (ambiancePanel) {
+        ambiancePanel.update(dt);
     }
 
     // Update Hitbox Visualizer (player position)
