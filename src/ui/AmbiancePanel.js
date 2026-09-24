@@ -100,9 +100,15 @@ export class AmbiancePanel {
         this.transformControls.size = 0.85;
         this.transformControls.setMode('translate');
 
+        this._dragEndTime = 0;
+        this._isSwitchingLight = false;
+
         // Éviter tout conflit avec la caméra / listener pendant le glissement du gizmo
         this.transformControls.addEventListener('dragging-changed', (event) => {
             this.isDraggingGizmo = event.value;
+            if (!event.value) {
+                this._dragEndTime = performance.now();
+            }
             if (this.listener) {
                 if (event.value) {
                     this.listener.resetMovement();
@@ -115,16 +121,18 @@ export class AmbiancePanel {
 
         // Quand le gizmo déplace la lumière, synchroniser les repères et l'UI
         this.transformControls.addEventListener('change', () => {
-            if (this.selectedEntry) {
-                const entry = this.selectedEntry;
-                if (entry.markerMesh) {
-                    entry.markerMesh.position.copy(entry.light.position);
-                }
-                if (entry.helper && entry.helper.update) {
-                    entry.helper.update();
-                }
-                this._syncGuiPosition();
+            // Ignorer strictement tout événement déclenché pendant la sélection d'une autre lumière
+            if (this._isSwitchingLight || !this.selectedEntry) return;
+            if (this.transformControls.object !== this.selectedEntry.light) return;
+
+            const entry = this.selectedEntry;
+            if (entry.markerMesh) {
+                entry.markerMesh.position.copy(entry.light.position);
             }
+            if (entry.helper && entry.helper.update) {
+                entry.helper.update();
+            }
+            this._syncGuiPosition();
         });
 
         // Cacher le gizmo par défaut
@@ -319,37 +327,62 @@ export class AmbiancePanel {
 
     // ─── 3. Sélection & Clic 3D ──────────────────────────────────────
     selectLight(entry) {
-        this.selectedEntry = entry;
+        if (!entry) {
+            this.deselectLight();
+            return;
+        }
 
-        if (!entry || entry.type === 'AmbientLight') {
+        // Si cette lumière est déjà sélectionnée et attachée, ne rien faire
+        if (this.selectedEntry === entry && this.transformControls.object === entry.light) {
+            return;
+        }
+
+        this._isSwitchingLight = true;
+
+        try {
+            // 1. Détacher et masquer immédiatement le Gizmo de la lumière précédente
             this.transformControls.detach();
             this.transformControls.visible = false;
             this.transformControls.enabled = false;
-        } else {
-            this.transformControls.attach(entry.light);
-            this.transformControls.visible = this.isOpen && this.gizmoVisible;
-            this.transformControls.enabled = this.isOpen && this.gizmoVisible;
-        }
 
-        // Mettre en valeur le repère sélectionné
-        this.lights.forEach(e => {
-            if (e.markerMesh) {
-                const isSel = (e === entry);
-                const ring = e.markerMesh.children[1];
-                if (ring) {
-                    ring.scale.setScalar(isSel ? 1.4 : 1.0);
-                    ring.material.color.set(isSel ? 0x38bdf8 : 0xffffff);
-                    ring.material.opacity = isSel ? 1.0 : 0.6;
+            // 2. Rompre toute liaison avec les anciens contrôleurs de position
+            this.ctrlPosX = null;
+            this.ctrlPosY = null;
+            this.ctrlPosZ = null;
+
+            // 3. Définir la nouvelle lumière active
+            this.selectedEntry = entry;
+            this._currentInspectorEntry = entry;
+
+            // 4. Mettre en valeur visuelle le repère 3D correspondant
+            this.lights.forEach(e => {
+                if (e.markerMesh) {
+                    const isSel = (e === entry);
+                    const ring = e.markerMesh.children[1];
+                    if (ring) {
+                        ring.scale.setScalar(isSel ? 1.4 : 1.0);
+                        ring.material.color.set(isSel ? 0x38bdf8 : 0xffffff);
+                        ring.material.opacity = isSel ? 1.0 : 0.6;
+                    }
                 }
-            }
-            if (e.helper) {
-                e.helper.visible = (e === entry) && this.markersVisible && this.isOpen;
-                if (e.helper.update) e.helper.update();
-            }
-        });
+                if (e.helper) {
+                    e.helper.visible = (e === entry) && this.markersVisible && this.isOpen;
+                    if (e.helper.update) e.helper.update();
+                }
+            });
 
-        // Reconstruire la section de l'inspecteur pour la lumière sélectionnée
-        this._rebuildInspectorGui();
+            // 5. Reconstruire l'interface inspecteur AVANT d'attacher le Gizmo
+            this._rebuildInspectorGui();
+
+            // 6. Attacher le Gizmo à la nouvelle lumière sélectionnée
+            if (entry.type !== 'AmbientLight') {
+                this.transformControls.attach(entry.light);
+                this.transformControls.visible = this.isOpen && this.gizmoVisible;
+                this.transformControls.enabled = this.isOpen && this.gizmoVisible;
+            }
+        } finally {
+            this._isSwitchingLight = false;
+        }
     }
 
     /**
@@ -427,6 +460,8 @@ export class AmbiancePanel {
 
     handleCanvasClick(event) {
         if (!this.isOpen || this.isDraggingGizmo) return;
+        // Si un drag de Gizmo vient tout juste de se terminer, ne pas interpréter comme un clic
+        if (performance.now() - (this._dragEndTime || 0) < 120) return;
         // Si la souris survole ou manipule une flèche du Gizmo, ignorer la sélection
         if (this.transformControls && (this.transformControls.axis !== null || this.transformControls.dragging)) return;
 
@@ -736,7 +771,11 @@ export class AmbiancePanel {
     _rebuildInspectorGui() {
         if (!this.fInspector) return;
 
-        // Vider le dossier inspecteur existant
+        // Vider le dossier inspecteur existant et rompre toute référence
+        this.ctrlPosX = null;
+        this.ctrlPosY = null;
+        this.ctrlPosZ = null;
+
         while (this.fInspector.controllers.length > 0) {
             this.fInspector.controllers[0].destroy();
         }
@@ -745,11 +784,13 @@ export class AmbiancePanel {
         }
 
         if (!this.selectedEntry) {
+            this._currentInspectorEntry = null;
             const noSel = { info: 'Aucune lumière sélectionnée' };
             this.fInspector.add(noSel, 'info').name('Statut').disable();
             return;
         }
 
+        this._currentInspectorEntry = this.selectedEntry;
         const entry = this.selectedEntry;
         const light = entry.light;
         const def = entry.defaultConfig;
@@ -979,11 +1020,19 @@ export class AmbiancePanel {
     }
 
     _syncGuiPosition() {
-        if (!this.selectedEntry) return;
+        if (this._isSwitchingLight || !this.selectedEntry) return;
+        if (this._currentInspectorEntry !== this.selectedEntry) return;
+
         const p = this.selectedEntry.light.position;
-        if (this.ctrlPosX) this.ctrlPosX.setValue(p.x);
-        if (this.ctrlPosY) this.ctrlPosY.setValue(p.y);
-        if (this.ctrlPosZ) this.ctrlPosZ.setValue(p.z);
+        if (this.ctrlPosX && typeof this.ctrlPosX.setValue === 'function') {
+            this.ctrlPosX.setValue(p.x);
+        }
+        if (this.ctrlPosY && typeof this.ctrlPosY.setValue === 'function') {
+            this.ctrlPosY.setValue(p.y);
+        }
+        if (this.ctrlPosZ && typeof this.ctrlPosZ.setValue === 'function') {
+            this.ctrlPosZ.setValue(p.z);
+        }
     }
 
     // ─── 7. Toggle & Événements ──────────────────────────────────────
