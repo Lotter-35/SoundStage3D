@@ -3,9 +3,9 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js';
-import { Listener } from './scene/listener.js';
-import { createHitboxVisualizer } from './scene/collision.js';
+import { createStage } from './scene/stage.js?v=153';
+import { Listener } from './scene/listener.js?v=154';
+import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
 
@@ -48,6 +48,11 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 
 // Build 3D stage
 const { coneContainer, coneGroups, dirLight } = createStage(scene);
+if (dirLight && dirLight.shadow) {
+    const maxTex = renderer.capabilities.maxTextureSize || 4096;
+    const shadowRes = Math.min(4096, maxTex);
+    dirLight.shadow.mapSize.set(shadowRes, shadowRes);
+}
 
 // ─── Skybox ───────────────────────────────────────────────────────
 // Fond couleur fallback (avant que le GLB soit prêt)
@@ -2842,19 +2847,17 @@ function renderFrame() {
     // Show/hide grass chunks near camera
     updateVegetation(camera);
 
-    // Update dynamic shadow camera to follow player smoothly while keeping stage in view
+    // Update dynamic shadow camera to follow player directly and smoothly
     if (dirLight && listener) {
         const lp = listener.position;
-        const targetX = Math.max(-40, Math.min(40, lp.x * 0.4));
-        const targetY = 3.0;
-        const targetZ = Math.max(-5, Math.min(50, lp.z * 0.5));
-        dirLight.target.position.set(targetX, targetY, targetZ);
-        dirLight.position.set(targetX + 50, targetY + 65, targetZ + 55);
+        dirLight.target.position.set(lp.x, lp.y, lp.z);
+        dirLight.target.updateMatrixWorld();
+        dirLight.position.set(lp.x + 30, lp.y + 60, lp.z + 40);
     }
 
     // Update Hitbox Visualizer (player position)
     if (hitboxVisualizer && hitboxVisualizer.isVisible && listener) {
-        hitboxVisualizer.update(listener.position);
+        hitboxVisualizer.update(listener.feetPosition);
     }
 
     // Render with CPU time benchmark

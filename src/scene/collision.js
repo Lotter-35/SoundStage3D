@@ -118,17 +118,23 @@ export function checkSolidObstacle(x, z, y, radius = 0.35) {
         }
     }
 
-    // 3. Garde-corps latéraux des escaliers (empêche de traverser les rambardes à z = -6.2 et z = -3.8)
+    // 3. Garde-corps latéraux des escaliers (rambardes physiques à z = -6.2 et z = -3.8)
     const onLeftStairX = x >= STAIRS_LEFT.minX - 0.2 && x <= STAIRS_LEFT.maxX + 0.2;
     if (onLeftStairX) {
-        if (Math.abs(z - STAIRS_LEFT.minZ) < 0.15 + radius || Math.abs(z - STAIRS_LEFT.maxZ) < 0.15 + radius) {
-            return true;
+        const stairY = getGroundHeight(x, -5.0);
+        if (y >= stairY - 0.2 && y < stairY + 1.15) {
+            if (Math.abs(z - STAIRS_LEFT.minZ) < 0.15 + radius || Math.abs(z - STAIRS_LEFT.maxZ) < 0.15 + radius) {
+                return true;
+            }
         }
     }
     const onRightStairX = x >= STAIRS_RIGHT.minX - 0.2 && x <= STAIRS_RIGHT.maxX + 0.2;
     if (onRightStairX) {
-        if (Math.abs(z - STAIRS_RIGHT.minZ) < 0.15 + radius || Math.abs(z - STAIRS_RIGHT.maxZ) < 0.15 + radius) {
-            return true;
+        const stairY = getGroundHeight(x, -5.0);
+        if (y >= stairY - 0.2 && y < stairY + 1.15) {
+            if (Math.abs(z - STAIRS_RIGHT.minZ) < 0.15 + radius || Math.abs(z - STAIRS_RIGHT.maxZ) < 0.15 + radius) {
+                return true;
+            }
         }
     }
 

@@ -34,14 +34,43 @@ export function createStage(scene) {
     ground.receiveShadow = true;
     scene.add(ground);
 
+    // --- Matériau unifié pour la scène (plancher) et le mur de fond ---
+    // Teinte sombre d'origine de la scène (charbon profond 0x24272e / noir de scène)
+    // avec réactivité photonique dynamique :
+    // 1) Reste sombre, profond et naturel sous la lumière ambiante (ne devient JAMAIS blanc)
+    // 2) S'illumine vivement et prend fidèlement la couleur de toute lampe ou spot placé à proximité
+    function createStageMaterial() {
+        const mat = new THREE.MeshStandardMaterial({
+            color: 0x24272e,
+            roughness: 0.52,
+            metalness: 0.12,
+        });
+        mat.customProgramCacheKey = () => 'stageDarkReactive';
+        mat.onBeforeCompile = (shader) => {
+            shader.fragmentShader = shader.fragmentShader.replace(
+                '#include <lights_fragment_end>',
+                `
+                #include <lights_fragment_end>
+                // Réactivité dynamique aux lampes et projecteurs pour surface sombre :
+                // Permet au mur et au sol de rester bien sombres dans l'ambiance globale,
+                // mais de capter intensément la couleur et la lumière de toute lampe ou spot placé à proximité !
+                reflectedLight.directDiffuse *= 4.5;
+                reflectedLight.directSpecular *= 2.5;
+                `
+            );
+        };
+        return mat;
+    }
+
     // --- Stage platform ---
     const stageGeo = new THREE.BoxGeometry(30, 3, 10);
-    const stageMat = new THREE.MeshStandardMaterial({
-        color: 0x1a1a1a,
-        roughness: 0.8,
-        metalness: 0.2,
-    });
-    const stageMesh = new THREE.Mesh(stageGeo, stageMat);
+    if (stageGeo.attributes.uv) stageGeo.setAttribute('uv2', stageGeo.attributes.uv.clone());
+    const stageMatSides = createStageMaterial();
+    const stageMatTop = createStageMaterial();
+    const stageMesh = new THREE.Mesh(stageGeo, [
+        stageMatSides, stageMatSides, stageMatTop, stageMatSides, stageMatSides, stageMatSides
+    ]);
+    stageMesh.name = 'stagePlatform';
     stageMesh.position.set(0, 1.5, -5);
     stageMesh.castShadow = true;
     stageMesh.receiveShadow = true;
@@ -158,15 +187,16 @@ export function createStage(scene) {
 
     scene.add(djGroup);
 
-    // --- Stage back wall ---
-    const backWallGeo = new THREE.BoxGeometry(30, 20, 0.5);
-    const backWallMat = new THREE.MeshStandardMaterial({
-        color: 0x111111,
-        roughness: 0.9,
-        metalness: 0.1,
-    });
-    const backWall = new THREE.Mesh(backWallGeo, backWallMat);
-    backWall.position.set(0, 10, -10);
+    // --- Stage back wall (1.5m d'épaisseur pour blocage physique total de la lumière sans fuite) ---
+    const backWallGeo = new THREE.BoxGeometry(30, 20, 1.5);
+    if (backWallGeo.attributes.uv) backWallGeo.setAttribute('uv2', backWallGeo.attributes.uv.clone());
+    const backWallMatGeneral = createStageMaterial();
+    const backWallMatFront = createStageMaterial();
+    const backWall = new THREE.Mesh(backWallGeo, [
+        backWallMatGeneral, backWallMatGeneral, backWallMatGeneral, backWallMatGeneral, backWallMatFront, backWallMatGeneral
+    ]);
+    backWall.name = 'stageBackWall';
+    backWall.position.set(0, 10, -10.75);
     backWall.castShadow = true;
     backWall.receiveShadow = true;
     scene.add(backWall);
@@ -271,18 +301,20 @@ export function createStage(scene) {
     scene.add(hemiLight);
 
     const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
-    dirLight.position.set(50, 70, 55);
+    dirLight.position.set(30, 60, 40);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
-    dirLight.shadow.camera.near = 5;
+    dirLight.shadow.mapSize.width = 4096;
+    dirLight.shadow.mapSize.height = 4096;
+    dirLight.shadow.camera.near = 1;
     dirLight.shadow.camera.far = 300;
-    dirLight.shadow.camera.left = -85;
-    dirLight.shadow.camera.right = 85;
-    dirLight.shadow.camera.top = 85;
-    dirLight.shadow.camera.bottom = -85;
-    dirLight.shadow.bias = -0.0003;
-    dirLight.shadow.normalBias = 0.025;
+    dirLight.shadow.camera.left = -60;
+    dirLight.shadow.camera.right = 60;
+    dirLight.shadow.camera.top = 60;
+    dirLight.shadow.camera.bottom = -60;
+    dirLight.shadow.bias = 0.00002;
+    dirLight.shadow.normalBias = 0.08;
+    dirLight.shadow.radius = 1.8;
+    dirLight.shadow.camera.updateProjectionMatrix();
     scene.add(dirLight);
     scene.add(dirLight.target);
 

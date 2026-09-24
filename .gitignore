@@ -8,3 +8,8 @@ musics/
 # Server persistent storage (uploaded audio files, metadata, playlists)
 server/storage/
 *.bin
+
+# Heavy binary raw assets
+*.exr
+*.blend
+src/assets/textures/scene/

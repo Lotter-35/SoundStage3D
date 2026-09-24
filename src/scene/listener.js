@@ -588,6 +588,19 @@ export class Listener {
         return { x: p.x, y: p.y, z: p.z };
     }
 
+    /** Position au niveau du sol / des pieds du personnage (ou sous la caméra) */
+    get feetPosition() {
+        if (this.characterMode && this._character3D) {
+            return {
+                x: this._character3D.position.x,
+                y: this._character3D.position.y,
+                z: this._character3D.position.z,
+            };
+        }
+        const p = this.camera.position;
+        return { x: p.x, y: Math.max(0, p.y - PLAYER_HEIGHT), z: p.z };
+    }
+
     /** Distance au point de référence de la régie FOH */
     get distanceToFOH() {
         if (this.characterMode && this._character3D) {
