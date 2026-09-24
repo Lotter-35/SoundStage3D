@@ -10,6 +10,8 @@
  * - Table DJ régie  : centre scène à (0, -5.0), X ∈ [-1.9, 1.9], Z ∈ [-5.6, -4.4], Y ∈ [3.0, 4.3]
  */
 
+import * as THREE from 'three';
+
 export const STAGE_BOUNDS = {
     minX: -15.0,
     maxX:  15.0,
@@ -214,4 +216,144 @@ export function resolveCollision(oldX, oldZ, newX, newZ, currentY, isFlying = fa
 
     // 4. Bloqué sur les deux axes
     return { x: oldX, z: oldZ };
+}
+
+/**
+ * Crée et gère la visualisation 3D de l'ensemble des hitboxes de collision de la scène.
+ * @param {THREE.Scene} scene
+ * @returns {{ group: THREE.Group, toggle: (force?: boolean) => boolean, update: (pos: THREE.Vector3) => void, isVisible: boolean }}
+ */
+export function createHitboxVisualizer(scene) {
+    const group = new THREE.Group();
+    group.name = 'hitbox-visualizer';
+    group.visible = false;
+
+    // Helper pour créer une boîte de collision colorée translucide avec arêtes nettes
+    function addBox(w, h, d, x, y, z, color = 0x00ff88) {
+        const subGroup = new THREE.Group();
+        const geo = new THREE.BoxGeometry(w, h, d);
+
+        const fillMat = new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        subGroup.add(new THREE.Mesh(geo, fillMat));
+
+        const edgeGeo = new THREE.EdgesGeometry(geo);
+        const lineMat = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+        subGroup.add(new THREE.LineSegments(edgeGeo, lineMat));
+
+        subGroup.position.set(x, y, z);
+        group.add(subGroup);
+        return subGroup;
+    }
+
+    // Helper pour créer un cylindre de collision (piliers truss, joueur)
+    function addCylinder(r, h, x, y, z, color = 0xff2222) {
+        const subGroup = new THREE.Group();
+        const geo = new THREE.CylinderGeometry(r, r, h, 16);
+
+        const fillMat = new THREE.MeshBasicMaterial({
+            color,
+            transparent: true,
+            opacity: 0.22,
+            depthWrite: false,
+            side: THREE.DoubleSide
+        });
+        subGroup.add(new THREE.Mesh(geo, fillMat));
+
+        const edgeGeo = new THREE.EdgesGeometry(geo);
+        const lineMat = new THREE.LineBasicMaterial({ color, linewidth: 2 });
+        subGroup.add(new THREE.LineSegments(edgeGeo, lineMat));
+
+        subGroup.position.set(x, y, z);
+        group.add(subGroup);
+        return subGroup;
+    }
+
+    // 1. Plancher scène principale (marchable Y=3.0m - Vert)
+    addBox(30.0, 0.1, 10.0, 0, 3.0, -5.0, 0x00ff88);
+    // Corps scène (obstacle bloquant Y ∈ [0, 3.0] - Rouge)
+    addBox(30.0, 2.9, 10.0, 0, 1.45, -5.0, 0xff3333);
+
+    // 2. Caissons de basse Subs (marchable dessus Y=2.0m - Cyan)
+    addBox(20.5, 0.1, 1.0, 0, 2.0, 0.5, 0x00e5ff);
+    // Façade subs (obstacle bloquant Y ∈ [0, 2.0] - Orange)
+    addBox(20.5, 1.9, 1.0, 0, 0.95, 0.5, 0xff8800);
+
+    // 3. Escaliers (10 marches physiques - Vert)
+    const numSteps = 10;
+    const runX = 3.8;
+    const totalRise = 3.0;
+    const stepW = runX / numSteps;
+    const stepH = totalRise / numSteps;
+
+    // Escalier gauche (montée vers +X)
+    for (let i = 0; i < numSteps; i++) {
+        const h = (i + 1) * stepH;
+        const x = -18.8 + (i + 0.5) * stepW;
+        addBox(stepW, h, 2.4, x, h / 2, -5.0, 0x00ff88);
+    }
+    // Escalier droit (montée vers -X)
+    for (let i = 0; i < numSteps; i++) {
+        const h = (i + 1) * stepH;
+        const x = 18.8 - (i + 0.5) * stepW;
+        addBox(stepW, h, 2.4, x, h / 2, -5.0, 0x00ff88);
+    }
+
+    // Rambardes bloquantes des escaliers (Rouge)
+    addBox(3.8, 1.2, 0.15, -16.9, 2.0, -3.8, 0xff2222);
+    addBox(3.8, 1.2, 0.15, -16.9, 2.0, -6.2, 0xff2222);
+    addBox(3.8, 1.2, 0.15,  16.9, 2.0, -3.8, 0xff2222);
+    addBox(3.8, 1.2, 0.15,  16.9, 2.0, -6.2, 0xff2222);
+
+    // 4. 4 Piliers truss (cylindres verticaux rayon 0.35m, hauteur 20m - Rouge)
+    addCylinder(0.35, 20.0, -17.0, 10.0,   0.0, 0xff2222);
+    addCylinder(0.35, 20.0,  17.0, 10.0,   0.0, 0xff2222);
+    addCylinder(0.35, 20.0, -17.0, 10.0, -10.0, 0xff2222);
+    addCylinder(0.35, 20.0,  17.0, 10.0, -10.0, 0xff2222);
+
+    // 5. Mur de fond de scène (bloquant arrière - Rouge foncé)
+    addBox(30.4, 20.0, 0.7, 0, 10.0, -10.05, 0xcc0033);
+
+    // 6. Table régie DJ (bloquant Y ∈ [3.0, 4.3] - Jaune doré)
+    addBox(3.8, 1.3, 1.2, 0, 3.65, -5.0, 0xffbb00);
+
+    // 7. Hitbox dynamique du joueur local (Cylindre Magenta fluo)
+    const playerHitbox = new THREE.Group();
+    playerHitbox.name = 'player-hitbox-marker';
+    const pGeo = new THREE.CylinderGeometry(0.35, 0.35, 1.8, 16);
+    const pMat = new THREE.MeshBasicMaterial({
+        color: 0xff00cc,
+        transparent: true,
+        opacity: 0.35,
+        depthWrite: false,
+        side: THREE.DoubleSide
+    });
+    playerHitbox.add(new THREE.Mesh(pGeo, pMat));
+    playerHitbox.add(new THREE.LineSegments(
+        new THREE.EdgesGeometry(pGeo),
+        new THREE.LineBasicMaterial({ color: 0xff00ff, linewidth: 2 })
+    ));
+    group.add(playerHitbox);
+
+    scene.add(group);
+
+    return {
+        group,
+        toggle(forceState) {
+            group.visible = (forceState !== undefined) ? forceState : !group.visible;
+            return group.visible;
+        },
+        update(pos) {
+            if (!group.visible || !pos) return;
+            playerHitbox.position.set(pos.x, pos.y + 0.9, pos.z);
+        },
+        get isVisible() {
+            return group.visible;
+        }
+    };
 }

@@ -75,11 +75,14 @@
 
             <!-- 11. Debug -->
             <button id="debug-btn" class="hud-btn">🐛 Debug</button>
+
+            <!-- 12. Hitbox -->
+            <button id="hitbox-btn" class="hud-btn" title="Afficher / Masquer les hitboxes de collision (Raccourci: H)">📦 Hitbox: OFF</button>
         </div>
         <!-- FFT Frequency Spectrum Visualizer (Headphone Output) -->
         <canvas id="spectrum-visualizer" class="hidden" width="900" height="200"></canvas>
         <div id="hud-bottom">
-            <span>ZQSD : se déplacer &nbsp;|&nbsp; F : Vol ON/OFF &nbsp;|&nbsp; Espace : Saut (sol) / Monter (vol) &nbsp;|&nbsp; Shift : Courir (sol) / Descendre (vol) &nbsp;|&nbsp; V : Vue 1ère ↔ 3ème pers. &nbsp;|&nbsp; TAB : Curseur</span>
+            <span>ZQSD : se déplacer &nbsp;|&nbsp; F : Vol ON/OFF &nbsp;|&nbsp; H : Hitboxes &nbsp;|&nbsp; Espace : Saut (sol) / Monter (vol) &nbsp;|&nbsp; Shift : Courir (sol) / Descendre (vol) &nbsp;|&nbsp; V : Vue 1ère ↔ 3ème pers. &nbsp;|&nbsp; TAB : Curseur</span>
         </div>
         <!-- Level meters (top-left, inside HUD so only visible in-game) -->
         <div id="meters">
@@ -272,6 +275,6 @@
 
     <canvas id="canvas"></canvas>
 
-    <script type="module" src="src/main.js?v=149"></script>
+    <script type="module" src="src/main.js?v=151"></script>
 </body>
 </html>

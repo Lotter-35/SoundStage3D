@@ -5,6 +5,7 @@ import * as THREE from 'three';
 
 import { createStage } from './scene/stage.js';
 import { Listener } from './scene/listener.js';
+import { createHitboxVisualizer } from './scene/collision.js';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
 
@@ -2590,6 +2591,26 @@ if (debugPanel) {
     makeDraggable(debugPanel, debugPanel, 'debug');
 }
 
+// ─── Hitbox visualizer ──────────────────────────────────────────
+const hitboxBtn = document.getElementById('hitbox-btn');
+const hitboxVisualizer = createHitboxVisualizer(scene);
+
+function toggleHitboxes() {
+    const isVis = hitboxVisualizer.toggle();
+    if (hitboxBtn) {
+        hitboxBtn.classList.toggle('active', isVis);
+        hitboxBtn.textContent = isVis ? '📦 Hitbox: ON' : '📦 Hitbox: OFF';
+    }
+}
+
+if (hitboxBtn) {
+    hitboxBtn.addEventListener('click', toggleHitboxes);
+}
+
+if (listener) {
+    listener.onToggleHitbox = toggleHitboxes;
+}
+
 // FPS & render performance tracking
 let _debugAccum = 0;
 let _frameCount = 0;
@@ -2821,11 +2842,19 @@ function renderFrame() {
     // Show/hide grass chunks near camera
     updateVegetation(camera);
 
-    // Update dynamic shadow camera to follow player smoothly
+    // Update dynamic shadow camera to follow player smoothly while keeping stage in view
     if (dirLight && listener) {
         const lp = listener.position;
-        dirLight.target.position.set(lp.x, lp.y, lp.z);
-        dirLight.position.set(lp.x + 32, lp.y + 40, lp.z + 38);
+        const targetX = Math.max(-40, Math.min(40, lp.x * 0.4));
+        const targetY = 3.0;
+        const targetZ = Math.max(-5, Math.min(50, lp.z * 0.5));
+        dirLight.target.position.set(targetX, targetY, targetZ);
+        dirLight.position.set(targetX + 50, targetY + 65, targetZ + 55);
+    }
+
+    // Update Hitbox Visualizer (player position)
+    if (hitboxVisualizer && hitboxVisualizer.isVisible && listener) {
+        hitboxVisualizer.update(listener.position);
     }
 
     // Render with CPU time benchmark

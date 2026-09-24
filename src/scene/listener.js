@@ -369,6 +369,11 @@ export class Listener {
                     this.setCameraMode('thirdPerson');
                 }
                 break;
+
+            case 'KeyH':
+                // Touche H : Afficher / Masquer les hitboxes de collision
+                if (this.onToggleHitbox) this.onToggleHitbox();
+                break;
         }
     }
 

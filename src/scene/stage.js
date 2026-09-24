@@ -94,18 +94,21 @@ export function createStage(scene) {
             const pBottom = new THREE.Mesh(postGeo, railMat);
             pBottom.position.set(startX, 0.5, z);
             pBottom.castShadow = true;
+            pBottom.receiveShadow = true;
             group.add(pBottom);
 
             // Mid post
             const pMid = new THREE.Mesh(postGeo, railMat);
             pMid.position.set((startX + endX) / 2, totalRise / 2 + 0.5, z);
             pMid.castShadow = true;
+            pMid.receiveShadow = true;
             group.add(pMid);
 
             // Top post at stage floor
             const pTop = new THREE.Mesh(postGeo, railMat);
             pTop.position.set(endX, totalRise + 0.5, z);
             pTop.castShadow = true;
+            pTop.receiveShadow = true;
             group.add(pTop);
 
             // Slanted handrail bar
@@ -117,6 +120,7 @@ export function createStage(scene) {
             const stairAngle = Math.atan2(totalRise, runX);
             railMesh.rotation.z = isLeft ? (stairAngle - Math.PI / 2) : (Math.PI / 2 - stairAngle);
             railMesh.castShadow = true;
+            railMesh.receiveShadow = true;
             group.add(railMesh);
         });
 
@@ -140,6 +144,7 @@ export function createStage(scene) {
     const djDecks = new THREE.Mesh(djDeckGeo, djDeckMat);
     djDecks.position.set(0, 3.0 + 0.95 + 0.04, -5.0);
     djDecks.castShadow = true;
+    djDecks.receiveShadow = true;
     djGroup.add(djDecks);
 
     const djLedMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
@@ -163,6 +168,7 @@ export function createStage(scene) {
     const backWall = new THREE.Mesh(backWallGeo, backWallMat);
     backWall.position.set(0, 10, -10);
     backWall.castShadow = true;
+    backWall.receiveShadow = true;
     scene.add(backWall);
 
     // --- Stage roof ---
@@ -171,6 +177,7 @@ export function createStage(scene) {
     const roof = new THREE.Mesh(roofGeo, roofMat);
     roof.position.set(0, 20, -3);
     roof.castShadow = true;
+    roof.receiveShadow = true;
     scene.add(roof);
 
     // --- Side truss columns ---
@@ -180,6 +187,7 @@ export function createStage(scene) {
         const truss = new THREE.Mesh(trussGeo, trussMat);
         truss.position.set(x, y, z);
         truss.castShadow = true;
+        truss.receiveShadow = true;
         scene.add(truss);
     });
 
@@ -214,6 +222,7 @@ export function createStage(scene) {
             )) * 0.3;
         }
         box.castShadow = true;
+        box.receiveShadow = true;
         scene.add(box);
 
         // For top bus (line arrays), add extra stacked boxes
@@ -223,6 +232,7 @@ export function createStage(scene) {
                 extraBox.position.set(p.x, p.y + 4 - i * 0.6, p.z);
                 extraBox.rotation.x = -0.08;
                 extraBox.castShadow = true;
+                extraBox.receiveShadow = true;
                 scene.add(extraBox);
             }
         }
@@ -261,18 +271,18 @@ export function createStage(scene) {
     scene.add(hemiLight);
 
     const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
-    dirLight.position.set(32, 45, 38);
+    dirLight.position.set(50, 70, 55);
     dirLight.castShadow = true;
     dirLight.shadow.mapSize.width = 2048;
     dirLight.shadow.mapSize.height = 2048;
-    dirLight.shadow.camera.near = 10;
-    dirLight.shadow.camera.far = 130;
-    dirLight.shadow.camera.left = -25;
-    dirLight.shadow.camera.right = 25;
-    dirLight.shadow.camera.top = 25;
-    dirLight.shadow.camera.bottom = -25;
+    dirLight.shadow.camera.near = 5;
+    dirLight.shadow.camera.far = 300;
+    dirLight.shadow.camera.left = -85;
+    dirLight.shadow.camera.right = 85;
+    dirLight.shadow.camera.top = 85;
+    dirLight.shadow.camera.bottom = -85;
     dirLight.shadow.bias = -0.0003;
-    dirLight.shadow.normalBias = 0.02;
+    dirLight.shadow.normalBias = 0.025;
     scene.add(dirLight);
     scene.add(dirLight.target);
 
