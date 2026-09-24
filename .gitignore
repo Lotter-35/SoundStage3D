@@ -12,4 +12,4 @@ server/storage/
 # Heavy binary raw assets
 *.exr
 *.blend
-src/assets/textures/scene/
+src/assets/textures/scene/textures/*disp*

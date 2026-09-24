@@ -34,28 +34,59 @@ export function createStage(scene) {
     ground.receiveShadow = true;
     scene.add(ground);
 
-    // --- Matériau unifié pour la scène (plancher) et le mur de fond ---
-    // Teinte sombre d'origine de la scène (charbon profond 0x24272e / noir de scène)
-    // avec réactivité photonique dynamique :
-    // 1) Reste sombre, profond et naturel sous la lumière ambiante (ne devient JAMAIS blanc)
-    // 2) S'illumine vivement et prend fidèlement la couleur de toute lampe ou spot placé à proximité
-    function createStageMaterial() {
+    // --- Textures PBR de la scène (sol, mur de fond, poteaux, toit, marches) ---
+    const sceneTextureLoader = new THREE.TextureLoader();
+
+    const sceneDiffMap = sceneTextureLoader.load('src/assets/textures/scene/textures/linoleum_black_diff_4k.jpg');
+    sceneDiffMap.wrapS = THREE.RepeatWrapping;
+    sceneDiffMap.wrapT = THREE.RepeatWrapping;
+    sceneDiffMap.colorSpace = THREE.SRGBColorSpace;
+
+    const sceneNorMap = sceneTextureLoader.load('src/assets/textures/scene/textures/linoleum_brown_nor.jpg');
+    sceneNorMap.wrapS = THREE.RepeatWrapping;
+    sceneNorMap.wrapT = THREE.RepeatWrapping;
+
+    const sceneRoughMap = sceneTextureLoader.load('src/assets/textures/scene/textures/linoleum_brown_rough.jpg');
+    sceneRoughMap.wrapS = THREE.RepeatWrapping;
+    sceneRoughMap.wrapT = THREE.RepeatWrapping;
+
+    /**
+     * Génère un matériau PBR réaliste avec la texture de scène linoleum_brown pour chaque élément
+     * @param {number} repeatX - Répétitions horizontales
+     * @param {number} repeatY - Répétitions verticales
+     * @param {object} [options]
+     */
+    function createSceneMaterial(repeatX = 1, repeatY = 1, options = {}) {
+        const diff = sceneDiffMap.clone();
+        diff.repeat.set(repeatX, repeatY);
+        diff.needsUpdate = true;
+
+        const nor = sceneNorMap.clone();
+        nor.repeat.set(repeatX, repeatY);
+        nor.needsUpdate = true;
+
+        const rough = sceneRoughMap.clone();
+        rough.repeat.set(repeatX, repeatY);
+        rough.needsUpdate = true;
+
         const mat = new THREE.MeshStandardMaterial({
-            color: 0x24272e,
-            roughness: 0.52,
-            metalness: 0.12,
+            map: diff,
+            normalMap: nor,
+            normalScale: new THREE.Vector2(options.normalScale || 0.85, options.normalScale || 0.85),
+            roughnessMap: rough,
+            roughness: options.roughness !== undefined ? options.roughness : 0.65,
+            metalness: options.metalness !== undefined ? options.metalness : 0.08,
         });
-        mat.customProgramCacheKey = () => 'stageDarkReactive';
+
+        mat.customProgramCacheKey = () => `sceneMat_${repeatX}_${repeatY}`;
         mat.onBeforeCompile = (shader) => {
             shader.fragmentShader = shader.fragmentShader.replace(
                 '#include <lights_fragment_end>',
                 `
                 #include <lights_fragment_end>
-                // Réactivité dynamique aux lampes et projecteurs pour surface sombre :
-                // Permet au mur et au sol de rester bien sombres dans l'ambiance globale,
-                // mais de capter intensément la couleur et la lumière de toute lampe ou spot placé à proximité !
-                reflectedLight.directDiffuse *= 4.5;
-                reflectedLight.directSpecular *= 2.5;
+                // Réactivité dynamique aux éclairages et spots proches :
+                reflectedLight.directDiffuse *= 1.35;
+                reflectedLight.directSpecular *= 1.25;
                 `
             );
         };
@@ -65,10 +96,11 @@ export function createStage(scene) {
     // --- Stage platform ---
     const stageGeo = new THREE.BoxGeometry(30, 3, 10);
     if (stageGeo.attributes.uv) stageGeo.setAttribute('uv2', stageGeo.attributes.uv.clone());
-    const stageMatSides = createStageMaterial();
-    const stageMatTop = createStageMaterial();
+    const stageMatSidesX = createSceneMaterial(3.33, 1.0);
+    const stageMatTop = createSceneMaterial(10.0, 3.33);
+    const stageMatSidesZ = createSceneMaterial(10.0, 1.0);
     const stageMesh = new THREE.Mesh(stageGeo, [
-        stageMatSides, stageMatSides, stageMatTop, stageMatSides, stageMatSides, stageMatSides
+        stageMatSidesX, stageMatSidesX, stageMatTop, stageMatTop, stageMatSidesZ, stageMatSidesZ
     ]);
     stageMesh.name = 'stagePlatform';
     stageMesh.position.set(0, 1.5, -5);
@@ -77,6 +109,7 @@ export function createStage(scene) {
     scene.add(stageMesh);
 
     // --- Stairs on both sides (left & right) ---
+    const stepMat = createSceneMaterial(1.2, 1.2);
     function buildStaircase(isLeft) {
         const group = new THREE.Group();
         const signX = isLeft ? -1 : 1;
@@ -90,11 +123,6 @@ export function createStage(scene) {
         const endX = signX * 15.0;   // top flush with stage floor
         const centerZ = -5.0;        // centered on stage depth [-10, 0]
 
-        const stepMat = new THREE.MeshStandardMaterial({
-            color: 0x1f1f1f,
-            roughness: 0.7,
-            metalness: 0.4,
-        });
         const railMat = new THREE.MeshStandardMaterial({
             color: 0x555555,
             roughness: 0.4,
@@ -160,7 +188,7 @@ export function createStage(scene) {
 
     // --- DJ Booth Table on Stage ---
     const djGroup = new THREE.Group();
-    const djTableMat = new THREE.MeshStandardMaterial({ color: 0x161616, roughness: 0.6, metalness: 0.3 });
+    const djTableMat = createSceneMaterial(1.5, 1.0, { roughness: 0.55 });
     const djTableGeo = new THREE.BoxGeometry(3.6, 0.95, 1.0);
     const djTable = new THREE.Mesh(djTableGeo, djTableMat);
     djTable.position.set(0, 3.0 + 0.95 / 2, -5.0);
@@ -190,10 +218,11 @@ export function createStage(scene) {
     // --- Stage back wall (1.5m d'épaisseur pour blocage physique total de la lumière sans fuite) ---
     const backWallGeo = new THREE.BoxGeometry(30, 20, 1.5);
     if (backWallGeo.attributes.uv) backWallGeo.setAttribute('uv2', backWallGeo.attributes.uv.clone());
-    const backWallMatGeneral = createStageMaterial();
-    const backWallMatFront = createStageMaterial();
+    const wallMatSidesX = createSceneMaterial(0.5, 6.67);
+    const wallMatTopBottom = createSceneMaterial(10.0, 0.5);
+    const wallMatFace = createSceneMaterial(10.0, 6.67);
     const backWall = new THREE.Mesh(backWallGeo, [
-        backWallMatGeneral, backWallMatGeneral, backWallMatGeneral, backWallMatGeneral, backWallMatFront, backWallMatGeneral
+        wallMatSidesX, wallMatSidesX, wallMatTopBottom, wallMatTopBottom, wallMatFace, wallMatFace
     ]);
     backWall.name = 'stageBackWall';
     backWall.position.set(0, 10, -10.75);
@@ -203,8 +232,13 @@ export function createStage(scene) {
 
     // --- Stage roof ---
     const roofGeo = new THREE.BoxGeometry(34, 0.3, 14);
-    const roofMat = new THREE.MeshStandardMaterial({ color: 0x222222 });
-    const roof = new THREE.Mesh(roofGeo, roofMat);
+    if (roofGeo.attributes.uv) roofGeo.setAttribute('uv2', roofGeo.attributes.uv.clone());
+    const roofMatSidesX = createSceneMaterial(4.67, 0.2);
+    const roofMatTopBottom = createSceneMaterial(11.3, 4.67);
+    const roofMatSidesZ = createSceneMaterial(11.3, 0.2);
+    const roof = new THREE.Mesh(roofGeo, [
+        roofMatSidesX, roofMatSidesX, roofMatTopBottom, roofMatTopBottom, roofMatSidesZ, roofMatSidesZ
+    ]);
     roof.position.set(0, 20, -3);
     roof.castShadow = true;
     roof.receiveShadow = true;
@@ -212,7 +246,8 @@ export function createStage(scene) {
 
     // --- Side truss columns ---
     const trussGeo = new THREE.BoxGeometry(0.4, 20, 0.4);
-    const trussMat = new THREE.MeshStandardMaterial({ color: 0x444444, metalness: 0.6 });
+    if (trussGeo.attributes.uv) trussGeo.setAttribute('uv2', trussGeo.attributes.uv.clone());
+    const trussMat = createSceneMaterial(0.3, 6.67, { roughness: 0.6, normalScale: 1.0 });
     [[-17, 10, 0], [17, 10, 0], [-17, 10, -10], [17, 10, -10]].forEach(([x, y, z]) => {
         const truss = new THREE.Mesh(trussGeo, trussMat);
         truss.position.set(x, y, z);

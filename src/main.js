@@ -3,7 +3,7 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js?v=153';
+import { createStage } from './scene/stage.js?v=156';
 import { Listener } from './scene/listener.js?v=154';
 import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
@@ -18,7 +18,7 @@ import { InputStage } from './audio/inputStage.js';
 import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
-import { Controls } from './ui/controls.js?v=149';
+import { Controls } from './ui/controls.js?v=157';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
