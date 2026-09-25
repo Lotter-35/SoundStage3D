@@ -2240,17 +2240,29 @@ export class AmbiancePanel {
         const cAddIntensity = fAdd.add(this.creationParams, 'intensity', 0.1, 20.0, 0.1).name('Intensité');
 
         const updateAddInputsVisibility = (type) => {
-            const isLaser = type === '🔴 LaserPod';
+            const isLaser = type === '🔴 LaserPod' || (typeof type === 'string' && type.includes('Laser'));
             if (isLaser) {
                 if (cAddColor.hide) cAddColor.hide();
-                if (cAddColor.domElement) cAddColor.domElement.style.display = 'none';
+                if (cAddColor.domElement) {
+                    cAddColor.domElement.style.setProperty('display', 'none', 'important');
+                    cAddColor.domElement.classList.add('hidden');
+                }
                 if (cAddIntensity.hide) cAddIntensity.hide();
-                if (cAddIntensity.domElement) cAddIntensity.domElement.style.display = 'none';
+                if (cAddIntensity.domElement) {
+                    cAddIntensity.domElement.style.setProperty('display', 'none', 'important');
+                    cAddIntensity.domElement.classList.add('hidden');
+                }
             } else {
                 if (cAddColor.show) cAddColor.show();
-                if (cAddColor.domElement) cAddColor.domElement.style.display = '';
+                if (cAddColor.domElement) {
+                    cAddColor.domElement.style.removeProperty('display');
+                    cAddColor.domElement.classList.remove('hidden');
+                }
                 if (cAddIntensity.show) cAddIntensity.show();
-                if (cAddIntensity.domElement) cAddIntensity.domElement.style.display = '';
+                if (cAddIntensity.domElement) {
+                    cAddIntensity.domElement.style.removeProperty('display');
+                    cAddIntensity.domElement.classList.remove('hidden');
+                }
             }
         };
 

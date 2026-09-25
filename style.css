@@ -2053,6 +2053,18 @@ body {
     overflow: hidden !important;
 }
 
+/* Controller hidden override (when hidden by lil-gui or .hidden class) */
+.dsp-panel-slot .lil-gui .controller[style*="display: none"],
+#env-panel-wrap .lil-gui .controller[style*="display: none"],
+#user-panel-wrap .lil-gui .controller[style*="display: none"],
+#ambiance-panel-wrap .lil-gui .controller[style*="display: none"],
+#sine-panel .lil-gui .controller[style*="display: none"],
+.dsp-panel-slot .lil-gui .controller.hidden,
+#ambiance-panel-wrap .lil-gui .controller.hidden,
+.lil-gui .controller.hidden {
+    display: none !important;
+}
+
 /* Option Name/Label: Compact fixed width */
 .dsp-panel-slot .lil-gui .controller > .name,
 #env-panel-wrap .lil-gui .controller > .name,
@@ -2884,8 +2896,8 @@ body {
 
 
 /* -----------------------------------------------------------------------
-   LASER INSPECTOR PANEL — Panneau de contrôle individuel d'un laser
-   Positionné à gauche de l'écran, glassmorph dark, cohérent avec l'UI
+   LASER INSPECTOR PANEL ï¿½ Panneau de contrï¿½le individuel d'un laser
+   Positionnï¿½ ï¿½ gauche de l'ï¿½cran, glassmorph dark, cohï¿½rent avec l'UI
    ----------------------------------------------------------------------- */
 
 .laser-inspector-panel {
