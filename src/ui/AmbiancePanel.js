@@ -224,11 +224,15 @@ export class AmbiancePanel {
         }
     }
 
-    // ─── 1b. Environnement Céleste (Jour / Nuit / Crépuscule & Étoiles) ─
+    // ─── 1b. Environnement Céleste (23 Ambiances & Voûte Étoilée Dynamique) ─
     _initEnvironment() {
         this.envPresets = {
+            // ════════════════════════════════════════════════════════════
+            // ☀️ CATÉGORIE 1 : PLEIN JOUR (6 ambiances)
+            // ════════════════════════════════════════════════════════════
             day: {
-                name: '☀️ Plein Jour',
+                name: '☀️ Plein Jour (Standard)',
+                hasStars: false,
                 skyboxColor: '#ffffff',
                 fogColor: 0x87ceeb,
                 fogNear: 150,
@@ -239,20 +243,147 @@ export class AmbiancePanel {
                 stage1: { color: '#ff3366', intensity: 0.5, distance: 30 },
                 stage2: { color: '#3366ff', intensity: 0.5, distance: 30 },
             },
-            night: {
-                name: '🌙 Mode Nuit',
-                skyboxColor: '#050814',
-                fogColor: 0x050814,
-                fogNear: 110,
-                fogFar: 360,
-                ambient: { color: '#141d2e', intensity: 0.25 },
-                hemi: { skyColor: '#0e1626', groundColor: '#070a10', intensity: 0.2 },
-                dir: { color: '#7ba7e8', intensity: 0.45 },
-                stage1: { color: '#ff1166', intensity: 2.8, distance: 45 },
-                stage2: { color: '#00ccff', intensity: 2.8, distance: 45 },
+            day_zenith: {
+                name: '☀️ Zénith Méditerranéen',
+                hasStars: false,
+                skyboxColor: '#ffffff',
+                fogColor: 0x90d2f0,
+                fogNear: 160,
+                fogFar: 440,
+                ambient: { color: '#a2ccf0', intensity: 1.15 },
+                hemi: { skyColor: '#8ec5f5', groundColor: '#4a8228', intensity: 0.95 },
+                dir: { color: '#fffdf0', intensity: 2.1 },
+                stage1: { color: '#ff3366', intensity: 0.4, distance: 28 },
+                stage2: { color: '#3366ff', intensity: 0.4, distance: 28 },
             },
+            day_tropical: {
+                name: '🌴 Soleil Tropical Intense',
+                hasStars: false,
+                skyboxColor: '#f7fbff',
+                fogColor: 0x7eccdf,
+                fogNear: 140,
+                fogFar: 410,
+                ambient: { color: '#9ee0db', intensity: 1.1 },
+                hemi: { skyColor: '#72d2e8', groundColor: '#528522', intensity: 0.9 },
+                dir: { color: '#fff4cc', intensity: 2.3 },
+                stage1: { color: '#ff0066', intensity: 0.45, distance: 30 },
+                stage2: { color: '#00d4ff', intensity: 0.45, distance: 30 },
+            },
+            day_overcast: {
+                name: '☁️ Ciel Voilé Scandinave',
+                hasStars: false,
+                skyboxColor: '#d6dde3',
+                fogColor: 0xc4ccd4,
+                fogNear: 110,
+                fogFar: 330,
+                ambient: { color: '#b0b8c2', intensity: 1.25 },
+                hemi: { skyColor: '#c0c8d2', groundColor: '#4a5442', intensity: 0.85 },
+                dir: { color: '#f0f4f8', intensity: 1.1 },
+                stage1: { color: '#ff5577', intensity: 0.6, distance: 30 },
+                stage2: { color: '#55aaff', intensity: 0.6, distance: 30 },
+            },
+            day_spring: {
+                name: '🌸 Matinée Printanière',
+                hasStars: false,
+                skyboxColor: '#fcfaff',
+                fogColor: 0xaad4f5,
+                fogNear: 135,
+                fogFar: 390,
+                ambient: { color: '#b5d5ed', intensity: 1.05 },
+                hemi: { skyColor: '#9ecbf0', groundColor: '#4f802e', intensity: 0.85 },
+                dir: { color: '#fff9ea', intensity: 1.7 },
+                stage1: { color: '#ff4081', intensity: 0.5, distance: 30 },
+                stage2: { color: '#00e5ff', intensity: 0.5, distance: 30 },
+            },
+            day_desert_haze: {
+                name: '🏜️ Mirage & Brume Déserte',
+                hasStars: false,
+                skyboxColor: '#fff9ed',
+                fogColor: 0xdfcbaf,
+                fogNear: 120,
+                fogFar: 350,
+                ambient: { color: '#d8c29d', intensity: 1.1 },
+                hemi: { skyColor: '#e0c99f', groundColor: '#705428', intensity: 0.85 },
+                dir: { color: '#fff1d0', intensity: 2.2 },
+                stage1: { color: '#ff2200', intensity: 0.5, distance: 30 },
+                stage2: { color: '#2255ff', intensity: 0.5, distance: 30 },
+            },
+
+            // ════════════════════════════════════════════════════════════
+            // 🌇 CATÉGORIE 2 : FIN DE JOURNÉE / GOLDEN HOUR (5 ambiances)
+            // ════════════════════════════════════════════════════════════
+            golden_california: {
+                name: '🌇 Golden Hour Californienne',
+                hasStars: false,
+                skyboxColor: '#f7a840',
+                fogColor: 0xb56525,
+                fogNear: 130,
+                fogFar: 390,
+                ambient: { color: '#7a4218', intensity: 0.75 },
+                hemi: { skyColor: '#9e521b', groundColor: '#2b1507', intensity: 0.7 },
+                dir: { color: '#ffaa33', intensity: 1.85 },
+                stage1: { color: '#ff0055', intensity: 1.4, distance: 35 },
+                stage2: { color: '#0099ff', intensity: 1.4, distance: 35 },
+            },
+            golden_copper: {
+                name: '🥉 Couchant Cuivré Ocre',
+                hasStars: false,
+                skyboxColor: '#d6682b',
+                fogColor: 0x8a3814,
+                fogNear: 120,
+                fogFar: 370,
+                ambient: { color: '#662d14', intensity: 0.7 },
+                hemi: { skyColor: '#8a3c18', groundColor: '#240d05', intensity: 0.65 },
+                dir: { color: '#ff7722', intensity: 1.6 },
+                stage1: { color: '#ff2266', intensity: 1.6, distance: 35 },
+                stage2: { color: '#2266ff', intensity: 1.6, distance: 35 },
+            },
+            golden_peach: {
+                name: '🍑 Horizon Pêche & Améthyste',
+                hasStars: false,
+                skyboxColor: '#d98282',
+                fogColor: 0x824968,
+                fogNear: 125,
+                fogFar: 380,
+                ambient: { color: '#593246', intensity: 0.65 },
+                hemi: { skyColor: '#78405b', groundColor: '#1f1019', intensity: 0.65 },
+                dir: { color: '#ff9e80', intensity: 1.45 },
+                stage1: { color: '#e040fb', intensity: 1.6, distance: 35 },
+                stage2: { color: '#00e5ff', intensity: 1.6, distance: 35 },
+            },
+            golden_vintage: {
+                name: '🎞️ Rétro Vintage 70s',
+                hasStars: false,
+                skyboxColor: '#e09838',
+                fogColor: 0x8c521a,
+                fogNear: 115,
+                fogFar: 360,
+                ambient: { color: '#5c3614', intensity: 0.7 },
+                hemi: { skyColor: '#784618', groundColor: '#261405', intensity: 0.65 },
+                dir: { color: '#ffb347', intensity: 1.7 },
+                stage1: { color: '#d00000', intensity: 1.5, distance: 35 },
+                stage2: { color: '#03045e', intensity: 1.5, distance: 35 },
+            },
+            golden_festival: {
+                name: '🔥 Coucher Torride Festival',
+                hasStars: false,
+                skyboxColor: '#e64a19',
+                fogColor: 0x8c2106,
+                fogNear: 110,
+                fogFar: 350,
+                ambient: { color: '#611a09', intensity: 0.75 },
+                hemi: { skyColor: '#8a240c', groundColor: '#210702', intensity: 0.7 },
+                dir: { color: '#ff5722', intensity: 1.9 },
+                stage1: { color: '#ff0077', intensity: 1.8, distance: 36 },
+                stage2: { color: '#00d2ff', intensity: 1.8, distance: 36 },
+            },
+
+            // ════════════════════════════════════════════════════════════
+            // 🌅 CATÉGORIE 3 : CRÉPUSCULE (6 ambiances)
+            // ════════════════════════════════════════════════════════════
             sunset: {
-                name: '🌅 Crépuscule',
+                name: '🌅 Crépuscule (Standard)',
+                hasStars: true,
                 skyboxColor: '#d9653b',
                 fogColor: 0x4a2430,
                 fogNear: 125,
@@ -263,12 +394,161 @@ export class AmbiancePanel {
                 stage1: { color: '#ff2255', intensity: 1.6, distance: 35 },
                 stage2: { color: '#3355ee', intensity: 1.6, distance: 35 },
             },
+            sunset_blue_hour: {
+                name: '🌌 Heure Bleue Crépusculaire',
+                hasStars: true,
+                skyboxColor: '#0b1b3d',
+                fogColor: 0x0d1e44,
+                fogNear: 110,
+                fogFar: 370,
+                ambient: { color: '#162b55', intensity: 0.45 },
+                hemi: { skyColor: '#1c366a', groundColor: '#081122', intensity: 0.45 },
+                dir: { color: '#4488ee', intensity: 0.8 },
+                stage1: { color: '#ff3366', intensity: 2.2, distance: 38 },
+                stage2: { color: '#00ffcc', intensity: 2.2, distance: 38 },
+            },
+            sunset_carmine: {
+                name: '🍷 Crépuscule Carmin Sanglant',
+                hasStars: true,
+                skyboxColor: '#45101a',
+                fogColor: 0x3d0d17,
+                fogNear: 100,
+                fogFar: 350,
+                ambient: { color: '#42161f', intensity: 0.5 },
+                hemi: { skyColor: '#5c1b27', groundColor: '#17060a', intensity: 0.5 },
+                dir: { color: '#ff3344', intensity: 1.1 },
+                stage1: { color: '#ff8800', intensity: 2.4, distance: 40 },
+                stage2: { color: '#ff0055', intensity: 2.4, distance: 40 },
+            },
+            sunset_synthwave: {
+                name: '🌴 Synthwave 80s Outrun',
+                hasStars: true,
+                skyboxColor: '#541548',
+                fogColor: 0x48113e,
+                fogNear: 105,
+                fogFar: 360,
+                ambient: { color: '#42173a', intensity: 0.55 },
+                hemi: { skyColor: '#6e1d5e', groundColor: '#1a0717', intensity: 0.55 },
+                dir: { color: '#ff2299', intensity: 1.2 },
+                stage1: { color: '#ff00a0', intensity: 2.7, distance: 42 },
+                stage2: { color: '#00f5d4', intensity: 2.7, distance: 42 },
+            },
+            sunset_sahara: {
+                name: '🏜️ Crépuscule Saharien',
+                hasStars: true,
+                skyboxColor: '#6e3814',
+                fogColor: 0x5a2d10,
+                fogNear: 95,
+                fogFar: 340,
+                ambient: { color: '#542d13', intensity: 0.5 },
+                hemi: { skyColor: '#783e18', groundColor: '#211005', intensity: 0.5 },
+                dir: { color: '#ff9933', intensity: 1.25 },
+                stage1: { color: '#ff4400', intensity: 2.3, distance: 38 },
+                stage2: { color: '#ffcc00', intensity: 2.3, distance: 38 },
+            },
+            sunset_autumn: {
+                name: '🍂 Crépuscule d\'Automne',
+                hasStars: true,
+                skyboxColor: '#3b232e',
+                fogColor: 0x331c27,
+                fogNear: 85,
+                fogFar: 310,
+                ambient: { color: '#38222c', intensity: 0.45 },
+                hemi: { skyColor: '#4d2d3c', groundColor: '#140c10', intensity: 0.45 },
+                dir: { color: '#e88866', intensity: 1.0 },
+                stage1: { color: '#e63946', intensity: 2.2, distance: 36 },
+                stage2: { color: '#457b9d', intensity: 2.2, distance: 36 },
+            },
+
+            // ════════════════════════════════════════════════════════════
+            // 🌙 CATÉGORIE 4 : NUIT NOIRE (6 ambiances)
+            // ════════════════════════════════════════════════════════════
+            night: {
+                name: '🌙 Nuit (Standard)',
+                hasStars: true,
+                skyboxColor: '#050814',
+                fogColor: 0x050814,
+                fogNear: 110,
+                fogFar: 360,
+                ambient: { color: '#141d2e', intensity: 0.25 },
+                hemi: { skyColor: '#0e1626', groundColor: '#070a10', intensity: 0.2 },
+                dir: { color: '#7ba7e8', intensity: 0.45 },
+                stage1: { color: '#ff1166', intensity: 2.8, distance: 45 },
+                stage2: { color: '#00ccff', intensity: 2.8, distance: 45 },
+            },
+            night_deep: {
+                name: '🌌 Nuit Noire d\'Encre (Atacama)',
+                hasStars: true,
+                skyboxColor: '#020308',
+                fogColor: 0x020308,
+                fogNear: 120,
+                fogFar: 380,
+                ambient: { color: '#090d18', intensity: 0.15 },
+                hemi: { skyColor: '#0b1122', groundColor: '#030508', intensity: 0.15 },
+                dir: { color: '#6888c0', intensity: 0.3 },
+                stage1: { color: '#ff0055', intensity: 3.2, distance: 48 },
+                stage2: { color: '#00e5ff', intensity: 3.2, distance: 48 },
+            },
+            night_aurora: {
+                name: '🌠 Nuit Polaire (Aurore Boréale)',
+                hasStars: true,
+                skyboxColor: '#04161c',
+                fogColor: 0x031418,
+                fogNear: 90,
+                fogFar: 340,
+                ambient: { color: '#08252a', intensity: 0.3 },
+                hemi: { skyColor: '#093a38', groundColor: '#030d0d', intensity: 0.35 },
+                dir: { color: '#44ffcc', intensity: 0.55 },
+                stage1: { color: '#00ffaa', intensity: 3.0, distance: 45 },
+                stage2: { color: '#aa00ff', intensity: 3.0, distance: 45 },
+            },
+            night_moon: {
+                name: '🌕 Pleine Lune d\'Argent',
+                hasStars: true,
+                skyboxColor: '#060a18',
+                fogColor: 0x070c1e,
+                fogNear: 130,
+                fogFar: 420,
+                ambient: { color: '#162238', intensity: 0.35 },
+                hemi: { skyColor: '#1d2e4d', groundColor: '#09101c', intensity: 0.35 },
+                dir: { color: '#b8d5ff', intensity: 0.85 },
+                stage1: { color: '#ff3388', intensity: 2.6, distance: 42 },
+                stage2: { color: '#3388ff', intensity: 2.6, distance: 42 },
+            },
+            night_cyber: {
+                name: '⚡ Nuit Cyberpunk Néon',
+                hasStars: true,
+                skyboxColor: '#0a0518',
+                fogColor: 0x0c061e,
+                fogNear: 80,
+                fogFar: 320,
+                ambient: { color: '#250f38', intensity: 0.4 },
+                hemi: { skyColor: '#3d1252', groundColor: '#07020d', intensity: 0.4 },
+                dir: { color: '#ff00aa', intensity: 0.6 },
+                stage1: { color: '#ff0077', intensity: 3.5, distance: 50 },
+                stage2: { color: '#00f0ff', intensity: 3.5, distance: 50 },
+            },
+            night_storm: {
+                name: '🌩️ Nuit d\'Orage Électrique',
+                hasStars: true,
+                skyboxColor: '#080812',
+                fogColor: 0x080914,
+                fogNear: 70,
+                fogFar: 280,
+                ambient: { color: '#141428', intensity: 0.25 },
+                hemi: { skyColor: '#1e1c3a', groundColor: '#05050a', intensity: 0.25 },
+                dir: { color: '#9d88ff', intensity: 0.7 },
+                stage1: { color: '#ffea00', intensity: 3.4, distance: 48 },
+                stage2: { color: '#7700ff', intensity: 3.4, distance: 48 },
+            },
         };
 
         this.envState = {
-            nightMode: false,
             presetKey: 'day',
             stars: true,
+            starSize: 2.0,
+            starCount: 6000,
+            starBrightness: 1.0,
             stageBoost: 1.0,
         };
 
@@ -293,20 +573,17 @@ export class AmbiancePanel {
         ];
 
         const radius = 860;
+        const maxRegular = 12000;
+        const maxBright = 2000;
 
-        // Générateur de points pour la voûte céleste couvrant 100% de la sphère à 360°
-        const generatePoints = (count, size, opacity, isProminent = false) => {
+        const buildPointsLayer = (maxCount, size, opacity, isProminent) => {
             const geometry = new THREE.BufferGeometry();
-            const positions = new Float32Array(count * 3);
-            const colors = new Float32Array(count * 3);
+            const positions = new Float32Array(maxCount * 3);
+            const colors = new Float32Array(maxCount * 3);
+            const baseColorsArr = new Float32Array(maxCount * 3);
 
-            for (let i = 0; i < count; i++) {
+            for (let i = 0; i < maxCount; i++) {
                 const theta = Math.random() * Math.PI * 2;
-
-                // Répartition uniforme sphérique sans pincement aux pôles :
-                // 82% des étoiles dans l'hémisphère supérieur et la bande de transition sous l'horizon (cosPhi: [-0.25, 1.0])
-                // 18% des étoiles dans l'hémisphère inférieur (cosPhi: [-1.0, -0.25])
-                // => 100% de la sphère céleste 360° x 180° est couverte, sans aucun trou ni ligne de coupure.
                 let cosPhi;
                 if (Math.random() < 0.82) {
                     cosPhi = -0.25 + Math.random() * 1.25;
@@ -328,13 +605,20 @@ export class AmbiancePanel {
                 if (isProminent) {
                     brightness = 0.80 + Math.random() * 0.20;
                 } else {
-                    // Distribution réaliste de magnitudes (majorité d'étoiles fines et diffuses, quelques brillantes)
                     brightness = 0.35 + Math.pow(Math.random(), 2.0) * 0.65;
                 }
 
-                colors[i * 3] = col.r * brightness;
-                colors[i * 3 + 1] = col.g * brightness;
-                colors[i * 3 + 2] = col.b * brightness;
+                const r = col.r * brightness;
+                const g = col.g * brightness;
+                const b = col.b * brightness;
+
+                colors[i * 3] = r;
+                colors[i * 3 + 1] = g;
+                colors[i * 3 + 2] = b;
+
+                baseColorsArr[i * 3] = r;
+                baseColorsArr[i * 3 + 1] = g;
+                baseColorsArr[i * 3 + 2] = b;
             }
 
             geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
@@ -354,16 +638,22 @@ export class AmbiancePanel {
             const points = new THREE.Points(geometry, material);
             points.frustumCulled = false;
             points.renderOrder = -1;
-            return points;
+            return { points, baseColorsArr };
         };
 
-        // 1. Voûte d'étoiles dense et subtile (5200 étoiles de taille 1.9px)
-        const regularStars = generatePoints(5200, 1.9, 0.95, false);
-        group.add(regularStars);
+        const regData = buildPointsLayer(maxRegular, this.envState.starSize, 0.95, false);
+        this._starRegular = regData.points;
+        this._starBaseColorsReg = regData.baseColorsArr;
+        group.add(this._starRegular);
 
-        // 2. Étoiles repères majeures et scintillantes (600 étoiles de taille 3.2px)
-        const brightStars = generatePoints(600, 3.2, 1.0, true);
-        group.add(brightStars);
+        const brightData = buildPointsLayer(maxBright, this.envState.starSize * 1.65, 1.0, true);
+        this._starBright = brightData.points;
+        this._starBaseColorsBright = brightData.baseColorsArr;
+        group.add(this._starBright);
+
+        // Appliquer la configuration d'étoiles initiale
+        this.setStarCount(this.envState.starCount);
+        this.setStarBrightness(this.envState.starBrightness);
 
         if (this.camera) {
             group.position.copy(this.camera.position);
@@ -371,6 +661,52 @@ export class AmbiancePanel {
 
         this.scene.add(group);
         return group;
+    }
+
+    setStarCount(count) {
+        this.envState.starCount = count;
+        if (!this._starRegular || !this._starBright) return;
+        const regCount = Math.round(count * 0.88);
+        const brtCount = Math.round(count * 0.12);
+        this._starRegular.geometry.setDrawRange(0, regCount);
+        this._starBright.geometry.setDrawRange(0, brtCount);
+    }
+
+    setStarSize(size) {
+        this.envState.starSize = size;
+        if (this._starRegular) this._starRegular.material.size = size;
+        if (this._starBright) this._starBright.material.size = size * 1.65;
+    }
+
+    setStarBrightness(brightness) {
+        this.envState.starBrightness = brightness;
+        if (!this._starRegular || !this._starBright) return;
+
+        const opacityFactor = Math.min(1.0, brightness);
+        this._starRegular.material.opacity = 0.95 * opacityFactor;
+        this._starBright.material.opacity = 1.0 * opacityFactor;
+
+        const mult = Math.max(0.1, brightness);
+        this._applyColorBrightness(this._starRegular, this._starBaseColorsReg, mult);
+        this._applyColorBrightness(this._starBright, this._starBaseColorsBright, mult);
+    }
+
+    _applyColorBrightness(mesh, baseColors, mult) {
+        if (!mesh || !mesh.geometry || !baseColors) return;
+        const attr = mesh.geometry.attributes.color;
+        if (!attr || !attr.array) return;
+        const arr = attr.array;
+        const len = arr.length;
+        for (let i = 0; i < len; i++) {
+            arr[i] = Math.min(1.0, baseColors[i] * mult);
+        }
+        attr.needsUpdate = true;
+    }
+
+    _updateStarsVisibility() {
+        if (!this.starfield) return;
+        const preset = this.envPresets[this.envState.presetKey] || this.envPresets.day;
+        this.starfield.visible = Boolean(this.envState.stars && preset.hasStars);
     }
 
     setSkybox(skybox) {
@@ -408,10 +744,8 @@ export class AmbiancePanel {
             if (!preset) return;
 
             this.envState.presetKey = key;
-            this.envState.nightMode = (key === 'night');
 
-            // Synchroniser l'affichage des contrôleurs GUI sans déclencher onChange
-            if (this._cNight) this._cNight.updateDisplay();
+            // Synchroniser l'affichage du menu déroulant
             if (this._cPreset) this._cPreset.updateDisplay();
 
             // 1. Teinte de la Skybox
@@ -430,9 +764,7 @@ export class AmbiancePanel {
             }
 
             // 3. Affichage du ciel étoilé
-            if (this.starfield) {
-                this.starfield.visible = Boolean(this.envState.stars && (key === 'night' || key === 'sunset'));
-            }
+            this._updateStarsVisibility();
 
             // 4. Adaptation des lumières intégrées
             this._applyPresetToLights(preset);
@@ -1245,6 +1577,12 @@ export class AmbiancePanel {
         // Rétablir l'ambiance céleste par défaut (Plein Jour)
         this.envState.stageBoost = 1.0;
         this.envState.stars = true;
+        this.envState.starSize = 2.0;
+        this.envState.starCount = 6000;
+        this.envState.starBrightness = 1.0;
+        this.setStarSize(2.0);
+        this.setStarCount(6000);
+        this.setStarBrightness(1.0);
         this.applyEnvPreset('day', true);
 
         // Réinitialiser toutes les lumières de base
@@ -1700,25 +2038,44 @@ export class AmbiancePanel {
             titleEl.appendChild(resetBtn);
         }
 
-        // ── Dossier Ambiance Jour / Nuit ──
-        const fEnv = this.gui.addFolder('🌙 Ambiance Jour / Nuit');
+        // ── Dossier Ambiance Céleste ──
+        const fEnv = this.gui.addFolder('🌌 Ambiance & Ciel');
         fEnv.open();
 
-        // 1. Toggle direct Mode Nuit (ON / OFF)
-        this._cNight = fEnv.add(this.envState, 'nightMode').name('🌙 Mode Nuit');
-        this._cNight.onChange(val => {
-            this.applyEnvPreset(val ? 'night' : 'day');
-        });
-        this._setupController(this._cNight, () => false, (v) => {
-            this.applyEnvPreset(v ? 'night' : 'day');
-        });
-
-        // 2. Menu déroulant des presets
+        // 1. Menu déroulant des 23 ambiances classées
         const presetOptions = {
-            '☀️ Plein Jour': 'day',
-            '🌙 Mode Nuit': 'night',
-            '🌅 Crépuscule': 'sunset',
+            // ── ☀️ Plein Jour (6) ──
+            '☀️ Plein Jour (Standard)': 'day',
+            '☀️ Zénith Méditerranéen': 'day_zenith',
+            '🌴 Soleil Tropical Intense': 'day_tropical',
+            '☁️ Ciel Voilé Scandinave': 'day_overcast',
+            '🌸 Matinée Printanière': 'day_spring',
+            '🏜️ Mirage & Brume Déserte': 'day_desert_haze',
+
+            // ── 🌇 Fin de Journée (5) ──
+            '🌇 Golden Hour Californienne': 'golden_california',
+            '🥉 Couchant Cuivré Ocre': 'golden_copper',
+            '🍑 Horizon Pêche & Améthyste': 'golden_peach',
+            '🎞️ Rétro Vintage 70s': 'golden_vintage',
+            '🔥 Coucher Torride Festival': 'golden_festival',
+
+            // ── 🌅 Crépuscule (6) ──
+            '🌅 Crépuscule (Standard)': 'sunset',
+            '🌌 Heure Bleue Crépusculaire': 'sunset_blue_hour',
+            '🍷 Crépuscule Carmin Sanglant': 'sunset_carmine',
+            '🌴 Synthwave 80s Outrun': 'sunset_synthwave',
+            '🏜️ Crépuscule Saharien': 'sunset_sahara',
+            '🍂 Crépuscule d\'Automne': 'sunset_autumn',
+
+            // ── 🌙 Nuit Noire (6) ──
+            '🌙 Nuit (Standard)': 'night',
+            '🌌 Nuit Noire d\'Encre (Atacama)': 'night_deep',
+            '🌠 Nuit Polaire (Aurore Boréale)': 'night_aurora',
+            '🌕 Pleine Lune d\'Argent': 'night_moon',
+            '⚡ Nuit Cyberpunk Néon': 'night_cyber',
+            '🌩️ Nuit d\'Orage Électrique': 'night_storm',
         };
+
         this._cPreset = fEnv.add(this.envState, 'presetKey', presetOptions).name('Ambiance');
         this._cPreset.onChange(key => {
             this.applyEnvPreset(key);
@@ -1727,21 +2084,43 @@ export class AmbiancePanel {
             this.applyEnvPreset(key);
         });
 
-        // 3. Étoiles
-        const cStars = fEnv.add(this.envState, 'stars').name('✨ Étoiles');
-        cStars.onChange(val => {
-            if (this.starfield) {
-                this.starfield.visible = Boolean(val && (this.envState.presetKey === 'night' || this.envState.presetKey === 'sunset'));
-            }
+        // 2. Réglages des Étoiles
+        const fStars = fEnv.addFolder('✨ Voûte Étoilée');
+
+        const cStars = fStars.add(this.envState, 'stars').name('Afficher étoiles');
+        cStars.onChange(() => {
+            this._updateStarsVisibility();
         });
         this._setupController(cStars, () => true, (v) => {
             this.envState.stars = v;
-            if (this.starfield) {
-                this.starfield.visible = Boolean(v && (this.envState.presetKey === 'night' || this.envState.presetKey === 'sunset'));
-            }
+            this._updateStarsVisibility();
         });
 
-        // 4. Boost projecteurs scène
+        const cStarSize = fStars.add(this.envState, 'starSize', 0.5, 6.0, 0.1).name('Taille étoiles');
+        cStarSize.onChange(val => {
+            this.setStarSize(val);
+        });
+        this._setupController(cStarSize, () => 2.0, (val) => {
+            this.setStarSize(val);
+        });
+
+        const cStarCount = fStars.add(this.envState, 'starCount', 500, 12000, 100).name('Nombre d\'étoiles');
+        cStarCount.onChange(val => {
+            this.setStarCount(val);
+        });
+        this._setupController(cStarCount, () => 6000, (val) => {
+            this.setStarCount(val);
+        });
+
+        const cStarBright = fStars.add(this.envState, 'starBrightness', 0.1, 3.0, 0.05).name('Brillance');
+        cStarBright.onChange(val => {
+            this.setStarBrightness(val);
+        });
+        this._setupController(cStarBright, () => 1.0, (val) => {
+            this.setStarBrightness(val);
+        });
+
+        // 3. Boost projecteurs scène
         const cBoost = fEnv.add(this.envState, 'stageBoost', 0.2, 3.0, 0.1).name('⚡ Boost scène');
         cBoost.onChange(() => {
             this._updateStageBoost();
