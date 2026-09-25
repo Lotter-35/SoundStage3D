@@ -13,6 +13,8 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js';
 import { makeDraggable } from './draggable.js';
+import { globalLaserPostParams } from '../laser/LaserManager.js';
+import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js';
 
 export class AmbiancePanel {
     /**
@@ -101,6 +103,10 @@ export class AmbiancePanel {
         // Initialisation de l'ambiance céleste (Jour / Nuit / Crépuscule & Étoiles)
         this._initEnvironment();
 
+        // Référence au LaserManager (injectée via setLaserManager())
+        this.laserManager = null;
+        this._laserInspectorPanel = null;
+
         // Construction du GUI
         this._buildGui();
 
@@ -110,6 +116,21 @@ export class AmbiancePanel {
 
         // Événements boutons et clic raycast
         this._bindEvents();
+    }
+
+    /**
+     * Injecte le LaserManager et initialise le panneau d'inspection laser.
+     * @param {LaserManager} laserManager
+     */
+    setLaserManager(laserManager) {
+        this.laserManager = laserManager;
+        // Initialiser le panneau d'inspection laser
+        const panelEl = document.getElementById('laser-inspector-panel');
+        if (panelEl) {
+            this._laserInspectorPanel = new LaserInspectorPanel({ laserManager, panelEl });
+        }
+        // Reconstruire le GUI pour afficher la section Laser
+        this._buildGui();
     }
 
     // ─── 1. TransformControls (Gizmo 3D) ──────────────────────────────
@@ -1372,6 +1393,20 @@ export class AmbiancePanel {
 
         this.raycaster.setFromCamera(this.mouse, this.camera);
 
+        // ── Tester d'abord les lasers (avant les repères de lumière) ──
+        if (this.laserManager && this.laserManager.count > 0) {
+            const laserObjects = this.laserManager.getLaserObjects();
+            const laserIntersects = this.raycaster.intersectObjects(laserObjects, true);
+            if (laserIntersects.length > 0) {
+                const hitObj = laserIntersects[0].object;
+                const laser = this.laserManager.getLaserFromObject(hitObj);
+                if (laser && this._laserInspectorPanel) {
+                    this._laserInspectorPanel.openForLaser(laser.laserId, laser);
+                    return;
+                }
+            }
+        }
+
         // Tester l'intersection avec tous les repères de lumière
         const markerObjects = [];
         this.lights.forEach(e => {
@@ -1389,10 +1424,17 @@ export class AmbiancePanel {
         if (intersects.length > 0) {
             const hitEntry = intersects[0].object.userData.entry;
             if (hitEntry) {
+                // Si un panneau laser était ouvert, le fermer
+                if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) {
+                    this._laserInspectorPanel.close();
+                }
                 this.selectLight(hitEntry);
             }
         } else {
             // Clic dans le vide 3D : désélectionne la lumière et quitte le mode gizmo
+            if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) {
+                this._laserInspectorPanel.close();
+            }
             this.deselectLight();
         }
     }
@@ -1457,6 +1499,21 @@ export class AmbiancePanel {
                 light.position.copy(spawnPos);
                 light.lookAt(spawnPos.x, 0, spawnPos.z);
                 break;
+
+            case '🔴 LaserPod':
+                // Cas spécial : délégation au LaserManager
+                if (!this.laserManager) {
+                    console.warn('[AmbiancePanel] LaserManager non disponible. Appelez setLaserManager() depuis main.js.');
+                    return null;
+                }
+                {
+                    const { id, laserShow } = this.laserManager.addLaser(spawnPos.clone());
+                    // Ouvrir immédiatement le panneau d'inspection du laser
+                    if (this._laserInspectorPanel) {
+                        this._laserInspectorPanel.openForLaser(id, laserShow);
+                    }
+                    return null; // Pas d'entry lumière classique
+                }
 
             default:
                 light = new THREE.PointLight(color, intensity, 25);
@@ -2176,6 +2233,7 @@ export class AmbiancePanel {
             'AmbientLight',
             'HemisphereLight',
             'RectAreaLight',
+            '🔴 LaserPod',
         ]).name('Type');
 
         fAdd.addColor(this.creationParams, 'color').name('Couleur');
@@ -2192,6 +2250,49 @@ export class AmbiancePanel {
         this.fInspector = this.gui.addFolder('🎯 Lumière Sélectionnée');
         this.fInspector.open();
         this._rebuildInspectorGui();
+
+        // ── Dossier Post-traitement Laser (visible uniquement si LaserManager disponible) ──
+        if (this.laserManager) {
+            const fLaser = this.gui.addFolder('🔴 Post-traitement Laser');
+            fLaser.close();
+
+            fLaser.add(globalLaserPostParams, 'enabled').name('Activer').onChange(v => {
+                this.laserManager.setPostProcessingParam('enabled', v);
+            });
+
+            // Bloom
+            const fBloom = fLaser.addFolder('✨ Bloom (Glow Laser)');
+            fBloom.add(globalLaserPostParams, 'bloomStrength', 0, 2, 0.05).name('Intensité Bloom').onChange(v => {
+                this.laserManager.setPostProcessingParam('bloomStrength', v);
+            });
+            fBloom.add(globalLaserPostParams, 'bloomRadius', 0, 2, 0.05).name('Rayon Bloom').onChange(v => {
+                this.laserManager.setPostProcessingParam('bloomRadius', v);
+            });
+            fBloom.add(globalLaserPostParams, 'bloomThreshold', 0, 1, 0.01).name('Seuil Bloom').onChange(v => {
+                this.laserManager.setPostProcessingParam('bloomThreshold', v);
+            });
+
+            // Aberration chromatique
+            const fChroma = fLaser.addFolder('🌈 Aberration Chromatique');
+            fChroma.add(globalLaserPostParams, 'chroma', 0, 0.5, 0.01).name('Intensité').onChange(v => {
+                this.laserManager.setPostProcessingParam('chroma', v);
+            });
+            fChroma.add(globalLaserPostParams, 'antialiasing', ['FXAA', 'Aucun']).name('Antialiasing').onChange(v => {
+                this.laserManager.setPostProcessingParam('antialiasing', v);
+            });
+
+            // Fumée scénique
+            const fFog = fLaser.addFolder('💨 Fumée Scénique');
+            fFog.add(globalLaserPostParams, 'fogEnabled').name('Activer Fumée').onChange(v => {
+                this.laserManager.setPostProcessingParam('fogEnabled', v);
+            });
+            fFog.add(globalLaserPostParams, 'fogDensity', 0, 0.02, 0.0005).name('Densité').onChange(v => {
+                this.laserManager.setPostProcessingParam('fogDensity', v);
+            });
+            fFog.addColor(globalLaserPostParams, 'fogColor').name('Couleur Fumée').onChange(v => {
+                this.laserManager.setPostProcessingParam('fogColor', v);
+            });
+        }
 
         // Rendre le panneau déplaçable avec la souris sur le titre
         makeDraggable(this.panelWrap, titleEl, 'ambiance');

@@ -27,6 +27,7 @@ import { setupAudioDebugProbes } from './audio/debugProbes.js';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadTestSubwoofers } from './scene/testSubwoofers.js?v=175';
+import { LaserManager } from './laser/LaserManager.js?v=176';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -82,6 +83,10 @@ const ambiancePanel = new AmbiancePanel({
     initialLights: lights,
     skybox,
 });
+
+// ─── Laser System ─────────────────────────────────────────────────
+const laserManager = new LaserManager({ scene, renderer, camera });
+ambiancePanel.setLaserManager(laserManager);
 
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
@@ -2882,6 +2887,11 @@ function renderFrame() {
     // Update Ambiance light markers animation
     if (ambiancePanel) {
         ambiancePanel.update(dt);
+    }
+
+    // Update all active lasers
+    if (laserManager) {
+        laserManager.updateAll(dt, clock.getElapsedTime());
     }
 
     // Update Hitbox Visualizer (player position)
