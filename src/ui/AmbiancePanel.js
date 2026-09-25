@@ -1583,6 +1583,7 @@ export class AmbiancePanel {
         this.setStarSize(2.0);
         this.setStarCount(6000);
         this.setStarBrightness(1.0);
+        this.setMarkersVisible(true);
         this.applyEnvPreset('day', true);
 
         // Réinitialiser toutes les lumières de base
@@ -2135,10 +2136,19 @@ export class AmbiancePanel {
         fTools.open();
 
         const toolsState = {
+            showMarkers: this.markersVisible,
             showSpotCones: this.showSpotCones,
             gizmoMode: this.transformControls.getMode() || 'translate',
             exportLight: () => this.exportSelectedLight(),
         };
+
+        this._cShowMarkers = fTools.add(toolsState, 'showMarkers').name('💡 Lumières 3D');
+        this._cShowMarkers.onChange(val => {
+            this.setMarkersVisible(val);
+        });
+        this._setupController(this._cShowMarkers, () => true, (v) => {
+            this.setMarkersVisible(v);
+        });
 
         this._cShowSpotCones = fTools.add(toolsState, 'showSpotCones').name('🔦 Cônes SpotLights');
         this._cShowSpotCones.onChange(val => {
