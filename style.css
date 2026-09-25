@@ -1969,7 +1969,7 @@ body {
 #dsp-master-wrap .lil-gui.root,
 #env-panel-wrap .lil-gui.root,
 #user-panel-wrap .lil-gui.root,
-#ambiance-panel-wrap .lil-gui.root {
+#ambiance-panel-wrap .lil-gui.root,
 #laser-panel-wrap .lil-gui.root {
     position: static !important;
     width: 320px !important;
@@ -1981,7 +1981,7 @@ body {
 #dsp-master-wrap .lil-gui,
 #env-panel-wrap .lil-gui,
 #user-panel-wrap .lil-gui,
-#ambiance-panel-wrap .lil-gui {
+#ambiance-panel-wrap .lil-gui,
 #laser-panel-wrap .lil-gui {
     --width: 320px;
     --name-width: 86px;
@@ -2101,7 +2101,7 @@ body {
 .dsp-panel-slot .lil-gui .controller > .name,
 #env-panel-wrap .lil-gui .controller > .name,
 #user-panel-wrap .lil-gui .controller > .name,
-#ambiance-panel-wrap .lil-gui .controller > .name {
+#ambiance-panel-wrap .lil-gui .controller > .name,
 #laser-panel-wrap .lil-gui .controller > .name {
     flex: 0 0 86px !important;
     width: 86px !important;
@@ -2161,7 +2161,7 @@ body {
 .dsp-panel-slot .lil-gui .controller.number input,
 #env-panel-wrap .lil-gui .controller.number input,
 #user-panel-wrap .lil-gui .controller.number input,
-#ambiance-panel-wrap .lil-gui .controller.number input {
+#ambiance-panel-wrap .lil-gui .controller.number input,
 #laser-panel-wrap .lil-gui .controller.number input {
     flex: 0 0 38px !important;
     width: 38px !important;
