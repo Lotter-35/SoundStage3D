@@ -30,6 +30,7 @@ export class AmbiancePanel {
         this.listener = options.listener;
         this.initialLights = options.initialLights || [];
         this.skybox = options.skybox || null;
+        if (this.skybox) this.skybox.renderOrder = -2;
 
         // Initialisation de la librairie pour RectAreaLight
         try {
@@ -240,27 +241,27 @@ export class AmbiancePanel {
             },
             night: {
                 name: '🌙 Mode Nuit',
-                skyboxColor: '#0b1326',
-                fogColor: 0x060913,
+                skyboxColor: '#050814',
+                fogColor: 0x050814,
                 fogNear: 110,
-                fogFar: 380,
-                ambient: { color: '#162238', intensity: 0.2 },
-                hemi: { skyColor: '#121d30', groundColor: '#080c14', intensity: 0.15 },
-                dir: { color: '#88bbff', intensity: 0.38 },
-                stage1: { color: '#ff1166', intensity: 2.6, distance: 45 },
-                stage2: { color: '#00ccff', intensity: 2.6, distance: 45 },
+                fogFar: 360,
+                ambient: { color: '#141d2e', intensity: 0.25 },
+                hemi: { skyColor: '#0e1626', groundColor: '#070a10', intensity: 0.2 },
+                dir: { color: '#7ba7e8', intensity: 0.45 },
+                stage1: { color: '#ff1166', intensity: 2.8, distance: 45 },
+                stage2: { color: '#00ccff', intensity: 2.8, distance: 45 },
             },
             sunset: {
                 name: '🌅 Crépuscule',
                 skyboxColor: '#d9653b',
-                fogColor: 0x3d1d28,
+                fogColor: 0x4a2430,
                 fogNear: 125,
                 fogFar: 380,
-                ambient: { color: '#4a2b38', intensity: 0.45 },
-                hemi: { skyColor: '#b34d3d', groundColor: '#221318', intensity: 0.45 },
-                dir: { color: '#ff7733', intensity: 1.1 },
-                stage1: { color: '#ff2255', intensity: 1.4, distance: 35 },
-                stage2: { color: '#3355ee', intensity: 1.4, distance: 35 },
+                ambient: { color: '#4a2b38', intensity: 0.5 },
+                hemi: { skyColor: '#b34d3d', groundColor: '#221318', intensity: 0.5 },
+                dir: { color: '#ff7733', intensity: 1.2 },
+                stage1: { color: '#ff2255', intensity: 1.6, distance: 35 },
+                stage2: { color: '#3355ee', intensity: 1.6, distance: 35 },
             },
         };
 
@@ -271,11 +272,12 @@ export class AmbiancePanel {
             stageBoost: 1.0,
         };
 
+        this._isApplyingEnvPreset = false;
         this.starfield = this._createStarfield();
     }
 
     _createStarfield() {
-        const starCount = 2200;
+        const starCount = 1800;
         const geometry = new THREE.BufferGeometry();
         const positions = new Float32Array(starCount * 3);
         const colors = new Float32Array(starCount * 3);
@@ -288,16 +290,14 @@ export class AmbiancePanel {
             new THREE.Color('#ffd494'), // Étoile ambrée
         ];
 
-        const radius = 820; // Rayon légèrement inférieur à la skybox (900)
+        const radius = 860;
         for (let i = 0; i < starCount; i++) {
-            const u = Math.random();
-            const v = Math.random();
-            const theta = u * 2.0 * Math.PI;
-            // Dôme céleste vers le haut (phi entre 0 et 0.55 * PI)
-            const phi = Math.acos(2.0 * v - 1.0) * 0.55;
+            const theta = Math.random() * Math.PI * 2;
+            // Dôme céleste supérieur uniquement (phi entre 0.05 et 0.44 * PI)
+            const phi = 0.05 + Math.random() * 0.39 * Math.PI;
 
             const x = radius * Math.sin(phi) * Math.cos(theta);
-            const y = Math.max(15, radius * Math.cos(phi));
+            const y = Math.max(40, radius * Math.cos(phi));
             const z = radius * Math.sin(phi) * Math.sin(theta);
 
             positions[i * 3] = x;
@@ -315,13 +315,14 @@ export class AmbiancePanel {
         geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
 
         const material = new THREE.PointsMaterial({
-            size: 2.5,
+            size: 2.0,
             vertexColors: true,
             transparent: true,
-            opacity: 0.95,
+            opacity: 0.9,
             depthWrite: false,
+            depthTest: true,
             fog: false,
-            sizeAttenuation: false, // Étoiles nettes et scintillantes à toute distance
+            sizeAttenuation: false,
         });
 
         const points = new THREE.Points(geometry, material);
@@ -334,6 +335,9 @@ export class AmbiancePanel {
 
     setSkybox(skybox) {
         this.skybox = skybox;
+        if (this.skybox) {
+            this.skybox.renderOrder = -2;
+        }
         if (this.skybox && this.envState && this.envState.presetKey !== 'day') {
             const preset = this.envPresets[this.envState.presetKey];
             if (preset) this._tintSkybox(preset.skyboxColor);
@@ -355,45 +359,46 @@ export class AmbiancePanel {
         });
     }
 
-    applyEnvPreset(key, syncGui = true) {
-        const preset = this.envPresets[key];
-        if (!preset) return;
+    applyEnvPreset(key) {
+        if (this._isApplyingEnvPreset) return;
+        this._isApplyingEnvPreset = true;
 
-        this.envState.presetKey = key;
-        this.envState.nightMode = (key === 'night');
+        try {
+            const preset = this.envPresets[key];
+            if (!preset) return;
 
-        // Synchroniser les contrôleurs GUI s'ils existent
-        if (syncGui) {
-            if (this._cNight && this._cNight.getValue() !== this.envState.nightMode) {
-                this._cNight.setValue(this.envState.nightMode);
+            this.envState.presetKey = key;
+            this.envState.nightMode = (key === 'night');
+
+            // Synchroniser l'affichage des contrôleurs GUI sans déclencher onChange
+            if (this._cNight) this._cNight.updateDisplay();
+            if (this._cPreset) this._cPreset.updateDisplay();
+
+            // 1. Teinte de la Skybox
+            if (this.skybox) {
+                this._tintSkybox(preset.skyboxColor);
             }
-            if (this._cPreset && this._cPreset.getValue() !== key) {
-                this._cPreset.setValue(key);
+
+            // 2. Couleur du brouillard atmosphérique & fond de scène
+            if (this.scene.fog) {
+                this.scene.fog.color.set(preset.fogColor);
+                if (preset.fogNear) this.scene.fog.near = preset.fogNear;
+                if (preset.fogFar) this.scene.fog.far = preset.fogFar;
             }
-        }
+            if (this.scene.background && this.scene.background.isColor) {
+                this.scene.background.set(preset.fogColor);
+            }
 
-        // 1. Teinte de la Skybox
-        if (this.skybox) {
-            this._tintSkybox(preset.skyboxColor);
-        }
+            // 3. Affichage du ciel étoilé
+            if (this.starfield) {
+                this.starfield.visible = Boolean(this.envState.stars && (key === 'night' || key === 'sunset'));
+            }
 
-        // 2. Couleur du brouillard atmosphérique & fond de scène
-        if (this.scene.fog) {
-            this.scene.fog.color.set(preset.fogColor);
-            if (preset.fogNear) this.scene.fog.near = preset.fogNear;
-            if (preset.fogFar) this.scene.fog.far = preset.fogFar;
+            // 4. Adaptation des lumières intégrées
+            this._applyPresetToLights(preset);
+        } finally {
+            this._isApplyingEnvPreset = false;
         }
-        if (this.scene.background && this.scene.background.isColor) {
-            this.scene.background.set(preset.fogColor);
-        }
-
-        // 3. Affichage du ciel étoilé
-        if (this.starfield) {
-            this.starfield.visible = Boolean(this.envState.stars && (key === 'night' || key === 'sunset'));
-        }
-
-        // 4. Adaptation des lumières intégrées
-        this._applyPresetToLights(preset);
     }
 
     _updateStageBoost() {
@@ -407,9 +412,7 @@ export class AmbiancePanel {
                 entry.light.intensity = preset.stage2.intensity * this.envState.stageBoost;
             }
         });
-        if (this.selectedEntry && this.selectedEntry.isBuiltin) {
-            this._rebuildInspectorGui();
-        }
+        this._syncInspectorDisplays();
     }
 
     _applyPresetToLights(preset) {
@@ -450,9 +453,24 @@ export class AmbiancePanel {
             }
         });
 
-        if (this.selectedEntry && this.selectedEntry.isBuiltin) {
-            this._rebuildInspectorGui();
-        }
+        // Rafraîchir les valeurs des sliders de l'inspecteur sans reconstruire le DOM
+        this._syncInspectorDisplays();
+    }
+
+    _syncInspectorDisplays() {
+        if (!this.fInspector) return;
+        const updateFolder = (folder) => {
+            if (!folder) return;
+            if (folder.controllers) {
+                folder.controllers.forEach(c => {
+                    try { c.updateDisplay(); } catch (_) {}
+                });
+            }
+            if (folder.folders) {
+                folder.folders.forEach(f => updateFolder(f));
+            }
+        };
+        updateFolder(this.fInspector);
     }
 
     // ─── 2. Enregistrement des Lumières ──────────────────────────────
@@ -1649,13 +1667,10 @@ export class AmbiancePanel {
         // 1. Toggle direct Mode Nuit (ON / OFF)
         this._cNight = fEnv.add(this.envState, 'nightMode').name('🌙 Mode Nuit');
         this._cNight.onChange(val => {
-            this.applyEnvPreset(val ? 'night' : 'day', false);
-            if (this._cPreset) this._cPreset.setValue(val ? 'night' : 'day');
+            this.applyEnvPreset(val ? 'night' : 'day');
         });
         this._setupController(this._cNight, () => false, (v) => {
-            this.envState.nightMode = v;
-            this.applyEnvPreset(v ? 'night' : 'day', false);
-            if (this._cPreset) this._cPreset.setValue(v ? 'night' : 'day');
+            this.applyEnvPreset(v ? 'night' : 'day');
         });
 
         // 2. Menu déroulant des presets
@@ -1666,12 +1681,10 @@ export class AmbiancePanel {
         };
         this._cPreset = fEnv.add(this.envState, 'presetKey', presetOptions).name('Ambiance');
         this._cPreset.onChange(key => {
-            this.applyEnvPreset(key, false);
-            if (this._cNight) this._cNight.setValue(key === 'night');
+            this.applyEnvPreset(key);
         });
         this._setupController(this._cPreset, () => 'day', (key) => {
-            this.applyEnvPreset(key, false);
-            if (this._cNight) this._cNight.setValue(key === 'night');
+            this.applyEnvPreset(key);
         });
 
         // 3. Étoiles
@@ -2224,13 +2237,12 @@ export class AmbiancePanel {
             });
         }
 
-        // Mettre à jour la position et la rotation céleste des étoiles
+        // Mettre à jour la position et la rotation céleste lente des étoiles
         if (this.starfield && this.starfield.visible) {
             if (this.camera) {
                 this.starfield.position.copy(this.camera.position);
             }
-            this.starfield.rotation.y += dt * 0.003;
-            this.starfield.rotation.x += dt * 0.001;
+            this.starfield.rotation.y += dt * 0.0006;
         }
     }
 }
