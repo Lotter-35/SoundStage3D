@@ -1705,6 +1705,7 @@ export class AmbiancePanel {
         const toolsState = {
             showMarkers: this.markersVisible,
             showGizmo: this.gizmoVisible,
+            showSpotCones: this.showSpotCones,
             deselect: () => {
                 this.deselectLight();
             },
