@@ -3,7 +3,7 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js?v=158';
+import { createStage } from './scene/stage.js?v=180';
 import { Listener } from './scene/listener.js?v=154';
 import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
@@ -26,7 +26,7 @@ import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
 import { setupAudioDebugProbes } from './audio/debugProbes.js';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
 import { DanceManager } from './scene/DanceManager.js';
-import { loadTestSubwoofers } from './scene/testSubwoofers.js?v=175';
+import { loadStageSpeakers } from './scene/speakerModels.js?v=180';
 import { LaserManager } from './laser/LaserManager.js?v=179';
 
 // Nettoyage des clés orphelines / doublons du localStorage
@@ -68,8 +68,8 @@ await createVegetation(scene);
 // ─── Animations Catalog (chargement initial de dances.json) ─────
 await DanceManager.refreshCatalog(true);
 
-// ─── Test Subwoofers (Dev / test spawn) ─────────────────────────
-await loadTestSubwoofers(scene);
+// ─── Stage Speakers (Subwoofers GLB & Line Arrays GLB) ──────────
+await loadStageSpeakers(scene);
 
 // ─── Listener (FPS controls + 3D Animated Character) ─────────────
 const listener = new Listener(camera, document.body, scene);
