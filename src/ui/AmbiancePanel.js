@@ -103,6 +103,10 @@ export class AmbiancePanel {
         // Construction du GUI
         this._buildGui();
 
+        // Initialisation de la modal d'export de lampe
+        this._exportModalOpen = false;
+        this._createExportModalDOM();
+
         // Événements boutons et clic raycast
         this._bindEvents();
     }
@@ -121,6 +125,13 @@ export class AmbiancePanel {
             this.isDraggingGizmo = event.value;
             if (!event.value) {
                 this._dragEndTime = performance.now();
+                if (this.selectedEntry) {
+                    this._syncLightRotationFromTarget(this.selectedEntry);
+                }
+            } else {
+                if (this.selectedEntry && this.selectedEntry.light && this.selectedEntry.light.target) {
+                    this._currentLightDist = Math.max(1.0, this.selectedEntry.light.position.distanceTo(this.selectedEntry.light.target.position));
+                }
             }
             if (this.listener) {
                 if (event.value) {
@@ -132,21 +143,41 @@ export class AmbiancePanel {
             }
         });
 
-        // Quand le gizmo déplace la lumière ou sa cible, synchroniser les repères et l'UI
+        // Quand le gizmo déplace ou pivote la lumière ou sa cible, synchroniser les repères et l'UI
         this.transformControls.addEventListener('change', () => {
             if (this._isSwitchingLight || !this.selectedEntry) return;
 
             const entry = this.selectedEntry;
+            const mode = this.transformControls.getMode();
+
             if (this.transformControls.object === entry.light) {
                 if (entry.markerMesh) {
                     entry.markerMesh.position.copy(entry.light.position);
+                    entry.markerMesh.quaternion.copy(entry.light.quaternion);
                 }
+
+                if (mode === 'rotate') {
+                    // Si on pivote une lumière avec cible (SpotLight ou DirectionalLight),
+                    // orienter la cible pour qu'elle suive la rotation 3D de la lampe !
+                    if (entry.light.target) {
+                        const newDir = new THREE.Vector3(0, 0, -1).applyQuaternion(entry.light.quaternion).normalize();
+                        const dist = this._currentLightDist || Math.max(2.0, entry.light.position.distanceTo(entry.light.target.position));
+                        entry.light.target.position.copy(entry.light.position).addScaledVector(newDir, dist);
+                        entry.light.target.updateMatrixWorld();
+                        this._syncGuiTarget();
+                    }
+                } else {
+                    // En translation, maintenir le quaternion de la lampe aligné vers la cible
+                    this._syncLightRotationFromTarget(entry);
+                }
+
                 if (entry.helper && entry.helper.update) {
                     entry.helper.update();
                 }
                 this._syncGuiPosition();
             } else if (entry.light.target && this.transformControls.object === entry.light.target) {
                 entry.light.target.updateMatrixWorld();
+                this._syncLightRotationFromTarget(entry);
                 if (entry.helper && entry.helper.update) {
                     entry.helper.update();
                 }
@@ -158,6 +189,38 @@ export class AmbiancePanel {
         this.transformControls.enabled = false;
         this.transformControls.visible = false;
         this.scene.add(this.transformControls);
+    }
+
+    _syncLightRotationFromTarget(entry) {
+        if (!entry || !entry.light || !entry.light.target) return;
+        const origin = entry.light.position;
+        const targetPos = entry.light.target.position;
+        const dir = new THREE.Vector3().subVectors(targetPos, origin);
+        if (dir.length() > 0.001) {
+            dir.normalize();
+            entry.light.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, -1), dir);
+            if (entry.markerMesh) {
+                entry.markerMesh.quaternion.copy(entry.light.quaternion);
+            }
+        }
+    }
+
+    setGizmoMode(mode) {
+        if (mode !== 'translate' && mode !== 'rotate') return;
+        this.transformControls.setMode(mode);
+
+        if (this.selectedEntry) {
+            // Pour pivoter la visée d'un spot, le gizmo doit être attaché à la lampe
+            if (mode === 'rotate' && this._gizmoTargetMode === 'target') {
+                this._gizmoTargetMode = 'lamp';
+                this._attachGizmoToCurrentTarget();
+            }
+            this._syncLightRotationFromTarget(this.selectedEntry);
+        }
+
+        if (this._cGizmoMode && this._cGizmoMode.getValue() !== mode) {
+            this._cGizmoMode.setValue(mode);
+        }
     }
 
     // ─── 1b. Environnement Céleste (Jour / Nuit / Crépuscule & Étoiles) ─
@@ -819,7 +882,8 @@ export class AmbiancePanel {
             // 6. Reconstruire l'interface inspecteur AVANT d'attacher le Gizmo
             this._rebuildInspectorGui();
 
-            // 7. Attacher le Gizmo à la nouvelle lumière sélectionnée
+            // 7. Synchroniser la rotation et attacher le Gizmo à la nouvelle lumière
+            this._syncLightRotationFromTarget(entry);
             if (entry.type !== 'AmbientLight') {
                 this._attachGizmoToCurrentTarget();
             }
@@ -1137,6 +1201,418 @@ export class AmbiancePanel {
         this._buildGui();
     }
 
+    // ─── 5b. Export d'une Lampe (Code Three.js & Format JSON) ─────────
+    exportLightData(entry) {
+        if (!entry || !entry.light) return null;
+        const light = entry.light;
+        const type = entry.type;
+        const data = {
+            name: entry.name || 'Lampe',
+            type: type,
+            color: '#' + light.color.getHexString(),
+            colorHex: '0x' + light.color.getHexString(),
+            intensity: Number(light.intensity.toFixed(2)),
+            position: {
+                x: Number(light.position.x.toFixed(2)),
+                y: Number(light.position.y.toFixed(2)),
+                z: Number(light.position.z.toFixed(2)),
+            },
+            castShadow: Boolean(light.castShadow),
+        };
+
+        if (light.shadow) {
+            data.shadow = {
+                bias: light.shadow.bias || 0,
+                normalBias: light.shadow.normalBias || 0,
+                mapSize: light.shadow.mapSize ? {
+                    width: light.shadow.mapSize.width,
+                    height: light.shadow.mapSize.height,
+                } : { width: 1024, height: 1024 }
+            };
+        }
+
+        if (type === 'SpotLight') {
+            data.distance = Number(light.distance.toFixed(1));
+            data.angle = Number(light.angle.toFixed(4));
+            data.angleDeg = Number(THREE.MathUtils.radToDeg(light.angle).toFixed(1));
+            data.penumbra = Number(light.penumbra.toFixed(2));
+            data.decay = Number(light.decay.toFixed(2));
+            if (light.target) {
+                data.target = {
+                    x: Number(light.target.position.x.toFixed(2)),
+                    y: Number(light.target.position.y.toFixed(2)),
+                    z: Number(light.target.position.z.toFixed(2)),
+                };
+            }
+        } else if (type === 'PointLight') {
+            data.distance = Number(light.distance.toFixed(1));
+            data.decay = Number(light.decay.toFixed(2));
+        } else if (type === 'DirectionalLight') {
+            if (light.target) {
+                data.target = {
+                    x: Number(light.target.position.x.toFixed(2)),
+                    y: Number(light.target.position.y.toFixed(2)),
+                    z: Number(light.target.position.z.toFixed(2)),
+                };
+            }
+        } else if (type === 'HemisphereLight') {
+            data.groundColor = light.groundColor ? '#' + light.groundColor.getHexString() : '#444444';
+        } else if (type === 'RectAreaLight') {
+            data.width = Number(light.width.toFixed(2));
+            data.height = Number(light.height.toFixed(2));
+        }
+
+        return data;
+    }
+
+    generateLightCode(entry) {
+        if (!entry || !entry.light) return '';
+        const light = entry.light;
+        const type = entry.type;
+        const name = entry.name || 'Lampe';
+        const hex = '0x' + light.color.getHexString();
+        const intensity = Number(light.intensity.toFixed(2));
+        const px = Number(light.position.x.toFixed(2));
+        const py = Number(light.position.y.toFixed(2));
+        const pz = Number(light.position.z.toFixed(2));
+
+        // Nom de variable JS propre et sans caractères spéciaux
+        let varBase = name
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-zA-Z0-9]/g, '_')
+            .replace(/^_+|_+$/g, '')
+            .toLowerCase();
+        if (!varBase || /^[0-9]/.test(varBase)) varBase = 'lamp_' + (varBase || 'custom');
+
+        const lines = [];
+        lines.push(`// ==========================================`);
+        lines.push(`// Lampe exportée : ${name} (${type})`);
+        lines.push(`// ==========================================`);
+
+        switch (type) {
+            case 'SpotLight': {
+                const dist = Number(light.distance.toFixed(1));
+                const angleRad = Number(light.angle.toFixed(4));
+                const angleDeg = Number(THREE.MathUtils.radToDeg(light.angle).toFixed(1));
+                const pen = Number(light.penumbra.toFixed(2));
+                const decay = Number(light.decay.toFixed(2));
+                const tx = light.target ? Number(light.target.position.x.toFixed(2)) : 0;
+                const ty = light.target ? Number(light.target.position.y.toFixed(2)) : 0;
+                const tz = light.target ? Number(light.target.position.z.toFixed(2)) : 0;
+
+                lines.push(`const ${varBase} = new THREE.SpotLight(${hex}, ${intensity});`);
+                lines.push(`${varBase}.name = '${name.replace(/'/g, "\\'")}';`);
+                lines.push(`${varBase}.position.set(${px}, ${py}, ${pz});`);
+                lines.push(`${varBase}.distance = ${dist};`);
+                lines.push(`${varBase}.angle = ${angleRad}; // ${angleDeg}°`);
+                lines.push(`${varBase}.penumbra = ${pen};`);
+                lines.push(`${varBase}.decay = ${decay};`);
+                if (light.castShadow) {
+                    lines.push(`${varBase}.castShadow = true;`);
+                    if (light.shadow) {
+                        lines.push(`${varBase}.shadow.bias = ${light.shadow.bias || -0.0001};`);
+                        if (light.shadow.mapSize) {
+                            lines.push(`${varBase}.shadow.mapSize.set(${light.shadow.mapSize.width}, ${light.shadow.mapSize.height});`);
+                        }
+                    }
+                }
+                lines.push(`${varBase}.target.position.set(${tx}, ${ty}, ${tz});`);
+                lines.push(`scene.add(${varBase}.target);`);
+                lines.push(`scene.add(${varBase});`);
+                break;
+            }
+            case 'PointLight': {
+                const dist = Number(light.distance.toFixed(1));
+                const decay = Number(light.decay.toFixed(2));
+                lines.push(`const ${varBase} = new THREE.PointLight(${hex}, ${intensity}, ${dist}, ${decay});`);
+                lines.push(`${varBase}.name = '${name.replace(/'/g, "\\'")}';`);
+                lines.push(`${varBase}.position.set(${px}, ${py}, ${pz});`);
+                if (light.castShadow) {
+                    lines.push(`${varBase}.castShadow = true;`);
+                    if (light.shadow) lines.push(`${varBase}.shadow.bias = ${light.shadow.bias || -0.0001};`);
+                }
+                lines.push(`scene.add(${varBase});`);
+                break;
+            }
+            case 'DirectionalLight': {
+                const tx = light.target ? Number(light.target.position.x.toFixed(2)) : 0;
+                const ty = light.target ? Number(light.target.position.y.toFixed(2)) : 0;
+                const tz = light.target ? Number(light.target.position.z.toFixed(2)) : 0;
+                lines.push(`const ${varBase} = new THREE.DirectionalLight(${hex}, ${intensity});`);
+                lines.push(`${varBase}.name = '${name.replace(/'/g, "\\'")}';`);
+                lines.push(`${varBase}.position.set(${px}, ${py}, ${pz});`);
+                if (light.castShadow) {
+                    lines.push(`${varBase}.castShadow = true;`);
+                    if (light.shadow) lines.push(`${varBase}.shadow.bias = ${light.shadow.bias || -0.0001};`);
+                }
+                lines.push(`${varBase}.target.position.set(${tx}, ${ty}, ${tz});`);
+                lines.push(`scene.add(${varBase}.target);`);
+                lines.push(`scene.add(${varBase});`);
+                break;
+            }
+            case 'AmbientLight': {
+                lines.push(`const ${varBase} = new THREE.AmbientLight(${hex}, ${intensity});`);
+                lines.push(`${varBase}.name = '${name.replace(/'/g, "\\'")}';`);
+                lines.push(`scene.add(${varBase});`);
+                break;
+            }
+            case 'HemisphereLight': {
+                const groundHex = light.groundColor ? '0x' + light.groundColor.getHexString() : '0x444444';
+                lines.push(`const ${varBase} = new THREE.HemisphereLight(${hex}, ${groundHex}, ${intensity});`);
+                lines.push(`${varBase}.name = '${name.replace(/'/g, "\\'")}';`);
+                lines.push(`${varBase}.position.set(${px}, ${py}, ${pz});`);
+                lines.push(`scene.add(${varBase});`);
+                break;
+            }
+            case 'RectAreaLight': {
+                const w = Number(light.width.toFixed(2));
+                const h = Number(light.height.toFixed(2));
+                lines.push(`const ${varBase} = new THREE.RectAreaLight(${hex}, ${intensity}, ${w}, ${h});`);
+                lines.push(`${varBase}.name = '${name.replace(/'/g, "\\'")}';`);
+                lines.push(`${varBase}.position.set(${px}, ${py}, ${pz});`);
+                if (Math.abs(light.rotation.x) > 0.001 || Math.abs(light.rotation.y) > 0.001 || Math.abs(light.rotation.z) > 0.001) {
+                    lines.push(`${varBase}.rotation.set(${Number(light.rotation.x.toFixed(3))}, ${Number(light.rotation.y.toFixed(3))}, ${Number(light.rotation.z.toFixed(3))});`);
+                }
+                lines.push(`scene.add(${varBase});`);
+                break;
+            }
+            default: {
+                lines.push(`const ${varBase} = new THREE.${type}(${hex}, ${intensity});`);
+                lines.push(`${varBase}.name = '${name.replace(/'/g, "\\'")}';`);
+                lines.push(`${varBase}.position.set(${px}, ${py}, ${pz});`);
+                lines.push(`scene.add(${varBase});`);
+                break;
+            }
+        }
+        return lines.join('\n');
+    }
+
+    exportSelectedLight() {
+        let entry = this.selectedEntry;
+        if (!entry) {
+            if (this.lights.length > 0) {
+                entry = this.lights[0];
+                this.selectLight(entry);
+            } else {
+                alert('Aucune lumière à exporter.');
+                return;
+            }
+        }
+
+        const jsonStr = JSON.stringify(this.exportLightData(entry), null, 2);
+        const jsCode = this.generateLightCode(entry);
+
+        this._showExportModal(entry, jsCode, jsonStr);
+    }
+
+    _createExportModalDOM() {
+        if (document.getElementById('ambiance-export-overlay')) {
+            this.exportOverlay = document.getElementById('ambiance-export-overlay');
+            this.exportModal = document.getElementById('ambiance-export-modal');
+            this.exportCodeEl = document.getElementById('ambiance-export-code');
+            this.exportToastEl = document.getElementById('ambiance-export-toast');
+            this.exportTitleEl = document.getElementById('ambiance-export-title');
+            this.exportBadgeEl = document.getElementById('ambiance-export-type-badge');
+            this.exportStatusEl = document.getElementById('ambiance-export-status');
+            this.exportCopyBtn = document.getElementById('ambiance-export-copy-btn');
+            this.exportDownloadBtn = document.getElementById('ambiance-export-download-btn');
+            this.tabBtnJs = document.getElementById('ambiance-tab-btn-js');
+            this.tabBtnJson = document.getElementById('ambiance-tab-btn-json');
+            return;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'ambiance-export-overlay';
+        overlay.className = 'ambiance-export-overlay hidden';
+
+        overlay.innerHTML = `
+            <div id="ambiance-export-modal" class="ambiance-export-modal" role="dialog" aria-modal="true">
+                <div class="ambiance-export-header">
+                    <div class="ambiance-export-title-wrap">
+                        <span class="ambiance-export-title-icon">💾</span>
+                        <span class="ambiance-export-title-text" id="ambiance-export-title">Export Lampe</span>
+                        <span class="ambiance-export-badge" id="ambiance-export-type-badge">SpotLight</span>
+                    </div>
+                    <button class="ambiance-export-close-btn" id="ambiance-export-close-btn" title="Fermer (Échap)">✕</button>
+                </div>
+
+                <div class="ambiance-export-tabs">
+                    <button class="ambiance-export-tab active" id="ambiance-tab-btn-js">⚡ Code Three.js (JS)</button>
+                    <button class="ambiance-export-tab" id="ambiance-tab-btn-json">📋 Format JSON</button>
+                </div>
+
+                <div class="ambiance-export-content">
+                    <div class="ambiance-export-code-box">
+                        <pre id="ambiance-export-pre"><code id="ambiance-export-code"></code></pre>
+                        <div class="ambiance-export-toast hidden" id="ambiance-export-toast">✅ Copié !</div>
+                    </div>
+
+                    <div class="ambiance-export-callout">
+                        <span class="ambiance-callout-icon">💡</span>
+                        <div class="ambiance-callout-text">
+                            <strong>Prêt pour intégration :</strong> Transmettez ce code dans le chat en brut pour qu'il soit directement intégré et figé dans le code du projet.
+                        </div>
+                    </div>
+                </div>
+
+                <div class="ambiance-export-footer">
+                    <div class="ambiance-export-status" id="ambiance-export-status">📋 Prêt à copier</div>
+                    <div class="ambiance-export-footer-actions">
+                        <button class="ambiance-modal-btn secondary" id="ambiance-export-download-btn">📥 Télécharger (.js)</button>
+                        <button class="ambiance-modal-btn primary" id="ambiance-export-copy-btn">📋 Copier dans le presse-papier</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        this.exportOverlay = overlay;
+        this.exportModal = overlay.querySelector('#ambiance-export-modal');
+        this.exportCodeEl = overlay.querySelector('#ambiance-export-code');
+        this.exportToastEl = overlay.querySelector('#ambiance-export-toast');
+        this.exportTitleEl = overlay.querySelector('#ambiance-export-title');
+        this.exportBadgeEl = overlay.querySelector('#ambiance-export-type-badge');
+        this.exportStatusEl = overlay.querySelector('#ambiance-export-status');
+        this.exportCopyBtn = overlay.querySelector('#ambiance-export-copy-btn');
+        this.exportDownloadBtn = overlay.querySelector('#ambiance-export-download-btn');
+        this.tabBtnJs = overlay.querySelector('#ambiance-tab-btn-js');
+        this.tabBtnJson = overlay.querySelector('#ambiance-tab-btn-json');
+
+        const closeBtn = overlay.querySelector('#ambiance-export-close-btn');
+        closeBtn.addEventListener('click', () => this._hideExportModal());
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) {
+                this._hideExportModal();
+            }
+        });
+
+        this.tabBtnJs.addEventListener('click', () => this._switchExportTab('js'));
+        this.tabBtnJson.addEventListener('click', () => this._switchExportTab('json'));
+
+        this.exportCopyBtn.addEventListener('click', () => this._copyCurrentExport());
+        this.exportDownloadBtn.addEventListener('click', () => this._downloadCurrentExport());
+    }
+
+    _switchExportTab(tab) {
+        this._exportActiveTab = tab;
+        if (tab === 'js') {
+            this.tabBtnJs.classList.add('active');
+            this.tabBtnJson.classList.remove('active');
+            this.exportCodeEl.textContent = this._exportJsCode || '';
+            this.exportDownloadBtn.textContent = '📥 Télécharger (.js)';
+            this.exportStatusEl.textContent = '⚡ Code JavaScript Three.js sélectionné';
+        } else {
+            this.tabBtnJson.classList.add('active');
+            this.tabBtnJs.classList.remove('active');
+            this.exportCodeEl.textContent = this._exportJsonStr || '';
+            this.exportDownloadBtn.textContent = '📥 Télécharger (.json)';
+            this.exportStatusEl.textContent = '📋 Structure JSON sélectionnée';
+        }
+    }
+
+    async _copyCurrentExport() {
+        const text = (this._exportActiveTab === 'json') ? this._exportJsonStr : this._exportJsCode;
+        if (!text) return;
+
+        const ok = await this._copyToClipboard(text);
+        if (ok) {
+            this.exportToastEl.classList.remove('hidden');
+            this.exportCopyBtn.textContent = '✅ Copié !';
+            this.exportStatusEl.textContent = '✅ Texte copié dans le presse-papier !';
+            setTimeout(() => {
+                if (this.exportToastEl) this.exportToastEl.classList.add('hidden');
+                if (this.exportCopyBtn) this.exportCopyBtn.textContent = '📋 Copier dans le presse-papier';
+            }, 1800);
+        } else {
+            this.exportStatusEl.textContent = '⚠️ Erreur lors de la copie automatique.';
+        }
+    }
+
+    _downloadCurrentExport() {
+        const isJson = (this._exportActiveTab === 'json');
+        const text = isJson ? this._exportJsonStr : this._exportJsCode;
+        if (!text) return;
+
+        const ext = isJson ? 'json' : 'js';
+        const mime = isJson ? 'application/json' : 'text/javascript';
+        const safeName = (this._exportEntry && this._exportEntry.name)
+            ? this._exportEntry.name.replace(/[^a-zA-Z0-9_-]/g, '_').toLowerCase()
+            : 'lampe';
+        const filename = `light_${safeName}.${ext}`;
+
+        const blob = new Blob([text], { type: mime });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+
+        this.exportStatusEl.textContent = `💾 Fichier "${filename}" téléchargé !`;
+    }
+
+    _showExportModal(entry, jsCode, jsonStr) {
+        if (!this.exportOverlay) {
+            this._createExportModalDOM();
+        }
+
+        this._exportEntry = entry;
+        this._exportJsCode = jsCode;
+        this._exportJsonStr = jsonStr;
+        this._exportModalOpen = true;
+
+        if (this.exportTitleEl) {
+            this.exportTitleEl.textContent = `Exporter : ${entry.name || 'Lampe'}`;
+        }
+        if (this.exportBadgeEl) {
+            this.exportBadgeEl.textContent = entry.type || 'Light';
+        }
+
+        this._switchExportTab('js');
+
+        this.exportOverlay.classList.remove('hidden');
+
+        // Copie automatique immédiate dans le presse-papier
+        this._copyCurrentExport();
+    }
+
+    _hideExportModal() {
+        this._exportModalOpen = false;
+        if (this.exportOverlay) {
+            this.exportOverlay.classList.add('hidden');
+        }
+    }
+
+    async _copyToClipboard(text) {
+        try {
+            if (navigator.clipboard && navigator.clipboard.writeText) {
+                await navigator.clipboard.writeText(text);
+                return true;
+            }
+        } catch (_) {}
+
+        try {
+            const ta = document.createElement('textarea');
+            ta.value = text;
+            ta.style.position = 'fixed';
+            ta.style.left = '-9999px';
+            ta.style.top = '-9999px';
+            ta.style.opacity = '0';
+            document.body.appendChild(ta);
+            ta.focus();
+            ta.select();
+            const success = document.execCommand('copy');
+            document.body.removeChild(ta);
+            return success;
+        } catch (_) {
+            return false;
+        }
+    }
+
     // ─── 6. Interface lil-gui avec DA de DSP ─────────────────────────
     _buildGui() {
         if (this.gui) {
@@ -1262,11 +1738,20 @@ export class AmbiancePanel {
         fTools.add(toolsState, 'deselect').name('❌ Quitter Gizmo (Échap)');
         fTools.add(toolsState, 'toggleMarkers').name('💡 Afficher / Cacher lumières');
         fTools.add(toolsState, 'focusLight').name('🎯 Voir la lumière (Focus)');
+        toolsState.exportLight = () => this.exportSelectedLight();
+        fTools.add(toolsState, 'exportLight').name('💾 Exporter la lampe (Code)');
 
-        const cMode = fTools.add(toolsState, 'gizmoMode', ['translate', 'rotate']).name('Mode Gizmo');
-        cMode.onChange(mode => {
-            this.transformControls.setMode(mode);
+        this._cGizmoMode = fTools.add(toolsState, 'gizmoMode', ['translate', 'rotate']).name('Mode Gizmo');
+        this._cGizmoMode.onChange(mode => {
+            this.setGizmoMode(mode);
         });
+
+        const gizmoShortcuts = {
+            translate: () => this.setGizmoMode('translate'),
+            rotate: () => this.setGizmoMode('rotate'),
+        };
+        fTools.add(gizmoShortcuts, 'translate').name('📍 Déplacer (Touche G)');
+        fTools.add(gizmoShortcuts, 'rotate').name('🔄 Pivoter (Touche R)');
 
         // ── Dossier Ajouter une lumière ──
         const fAdd = this.gui.addFolder('➕ Poser une Lumière');
@@ -1346,6 +1831,9 @@ export class AmbiancePanel {
         // Boutons d'action pour la lumière
         const lightActions = {
             deselect: () => this.deselectLight(),
+            setTranslate: () => this.setGizmoMode('translate'),
+            setRotate: () => this.setGizmoMode('rotate'),
+            exportLight: () => this.exportSelectedLight(),
             reset: () => this.resetLight(entry),
             duplicate: () => this.duplicateSelectedLight(),
             delete: () => this.removeLight(entry),
@@ -1354,6 +1842,9 @@ export class AmbiancePanel {
         const fActions = this.fInspector.addFolder('⚡ Actions');
         fActions.open();
         fActions.add(lightActions, 'deselect').name('❌ Quitter Gizmo (Désél.)');
+        fActions.add(lightActions, 'setTranslate').name('📍 Déplacer (G)');
+        fActions.add(lightActions, 'setRotate').name('🔄 Pivoter (R)');
+        fActions.add(lightActions, 'exportLight').name('💾 Exporter cette lampe');
         fActions.add(lightActions, 'reset').name('↺ Reset cette lumière');
         fActions.add(lightActions, 'duplicate').name('📋 Dupliquer');
         if (light.target) {
@@ -1642,6 +2133,7 @@ export class AmbiancePanel {
             }
         } else {
             // Quitter le mode Gizmo & fermer : détachement et masquage complet
+            this._hideExportModal();
             this.transformControls.detach();
             this.transformControls.visible = false;
             this.transformControls.enabled = false;
@@ -1684,6 +2176,11 @@ export class AmbiancePanel {
         // Raccourcis clavier (Échap pour quitter le mode Gizmo ou fermer le panneau)
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Escape') {
+                if (this._exportModalOpen) {
+                    this._hideExportModal();
+                    e.stopPropagation();
+                    return;
+                }
                 if (this.isOpen) {
                     if (this.selectedEntry) {
                         // 1er Échap : désélectionne la lumière et quitte le mode Gizmo
@@ -1701,9 +2198,9 @@ export class AmbiancePanel {
             if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
 
             if (e.key === 'g' || e.key === 'G') {
-                this.transformControls.setMode('translate');
+                this.setGizmoMode('translate');
             } else if (e.key === 'r' || e.key === 'R') {
-                this.transformControls.setMode('rotate');
+                this.setGizmoMode('rotate');
             }
         });
     }
