@@ -2215,10 +2215,30 @@ export class AmbiancePanel {
             this.fInspector.folders[0].destroy();
         }
 
+        // Dropdown de sélection parmi toutes les lumières de la scène
+        const lightOptions = {};
+        if (!this.selectedEntry) {
+            lightOptions['— Choisir une lumière —'] = '';
+        } else {
+            lightOptions['— Aucune (Désélectionner) —'] = '';
+        }
+        this.lights.forEach(e => {
+            lightOptions[e.name] = e.id;
+        });
+
+        const selObj = { currentId: this.selectedEntry ? this.selectedEntry.id : '' };
+        const cSelector = this.fInspector.add(selObj, 'currentId', lightOptions).name('Sélection');
+        cSelector.onChange(id => {
+            if (!id) {
+                this.deselectLight();
+                return;
+            }
+            const target = this.lights.find(e => e.id === id);
+            if (target) this.selectLight(target);
+        });
+
         if (!this.selectedEntry) {
             this._currentInspectorEntry = null;
-            const noSel = { info: 'Aucune lumière sélectionnée' };
-            this.fInspector.add(noSel, 'info').name('Statut').disable();
             return;
         }
 
@@ -2226,19 +2246,6 @@ export class AmbiancePanel {
         const entry = this.selectedEntry;
         const light = entry.light;
         const def = entry.defaultConfig;
-
-        // Dropdown de sélection rapide parmi toutes les lumières
-        const lightOptions = {};
-        this.lights.forEach(e => {
-            lightOptions[e.name] = e.id;
-        });
-
-        const selObj = { currentId: entry.id };
-        const cSelector = this.fInspector.add(selObj, 'currentId', lightOptions).name('Sélection');
-        cSelector.onChange(id => {
-            const target = this.lights.find(e => e.id === id);
-            if (target) this.selectLight(target);
-        });
 
         // Boutons d'action pour la lumière
         const lightActions = {
