@@ -5,30 +5,34 @@
  */
 
 export const LASER_PARAMS_SCHEMA = {
-    // ── Style laser ────────────────────────────────────────────────────────
-    count:               { value: 8,         min: 1,    max: 32,   step: 1,     label: 'Nombre de traits',       group: 'laserStyle' },
-    beamWidth:           { value: 1.0,       min: 0,    max: 3,    step: 0.05,  label: 'Taille trait',           group: 'laserStyle' },
+    // ── Style laser (exactement comme dans le repo GitHub LaserSimulation) ──
+    count:               { value: 8,         min: 1,    max: 32,   step: 1,     label: 'Nombre Trait',           group: 'laserStyle' },
+    beamWidth:           { value: 1.0,       min: 0,    max: 3,    step: 0.05,  label: 'Taille Trait',           group: 'laserStyle' },
     spread:              { value: 50,        min: 0,    max: 110,  step: 0.1,   label: 'Écart laser',            group: 'laserStyle' },
     color:               { value: '#0055ff',                                     label: 'Couleur',                group: 'laserStyle', type: 'color' },
     laserPan:            { value: true,                                          label: 'Laser PAN',              group: 'laserStyle', type: 'bool' },
-    masterPower:         { value: 0.8,       min: 0,    max: 1.5,  step: 0.05,  label: 'Puissance générale',     group: 'laserStyle' },
-    beamPower:           { value: 0.8,       min: 0,    max: 1.5,  step: 0.05,  label: 'Puissance traits',       group: 'laserStyle' },
+    masterPower:         { value: 0.8,       min: 0,    max: 1.5,  step: 0.05,  label: 'Puissance Générale',     group: 'laserStyle' },
+    beamPower:           { value: 0.8,       min: 0,    max: 1.5,  step: 0.05,  label: 'Puissance Traits',       group: 'laserStyle' },
     panPower:            { value: 0.8,       min: 0,    max: 1.5,  step: 0.05,  label: 'Puissance PAN',          group: 'laserStyle' },
-    patternShape:        { value: 'Horizontal', options: ['Horizontal', 'Sinusoïde', 'Parabolique', 'Zigzag', 'Vague Double'],
-                                                                                 label: 'Forme tracé',           group: 'laserStyle', type: 'select' },
-    curveAmplitude:      { value: 0.30,      min: 0,    max: 1.5,  step: 0.01,  label: 'Amplitude courbe',       group: 'laserStyle' },
-    curveFrequency:      { value: 1.0,       min: 0.25, max: 6,    step: 0.25,  label: 'Fréquence courbe',       group: 'laserStyle' },
     strobe:              { value: false,                                         label: 'Clignotement',           group: 'laserStyle', type: 'bool' },
-    strobeSpeed:         { value: 12.0,      min: 0.5,  max: 30,   step: 0.5,   label: 'Vitesse cligno (Hz)',    group: 'laserStyle' },
-    angle:               { value: 0,         min: -180, max: 180,  step: 1,     label: 'Angle horizontal',       group: 'laserStyle' },
+    strobeSpeed:         { value: 12.0,      min: 0.5,  max: 30,   step: 0.5,   label: 'Vitesse Cligno (Hz)',    group: 'laserStyle' },
+    patternShape:        { value: 'Horizontal', options: ['Horizontal', 'Sinusoïde', 'Parabolique', 'Zigzag', 'Vague Double'],
+                                                                                 label: 'Forme Tracé',           group: 'laserStyle', type: 'select' },
+    curveAmplitude:      { value: 0.30,      min: 0,    max: 1.5,  step: 0.01,  label: 'Amplitude Courbe',       group: 'laserStyle' },
+    curveFrequency:      { value: 1.0,       min: 0.25, max: 6,    step: 0.25,  label: 'Fréquence Courbe',       group: 'laserStyle' },
+    pauseMotion:         { value: false,                                         label: 'Pause Balayage',         group: 'laserStyle', type: 'bool' },
 
-    // ── Tweaking visuel source ───────────────────────────────────────────
-    sourceEmissionPower: { value: 1.5,       min: 0,    max: 4,    step: 0.05,  label: 'Puissance buse',         group: 'sourceVisual' },
-    sourceGlowRadius:    { value: 0.7,       min: 0.2,  max: 3,    step: 0.1,   label: 'Rayon halo buse',        group: 'sourceVisual' },
-    giIntensity:         { value: 2.0,       min: 0,    max: 10,   step: 0.1,   label: 'Intensité éclairage',    group: 'sourceVisual' },
-    giDistance:          { value: 15.0,      min: 2,    max: 60,   step: 0.5,   label: 'Portée éclairage',       group: 'sourceVisual' },
-    giWallOffset:        { value: 0,         min: -5,   max: 10,   step: 0.1,   label: 'Recul lumière mur',      group: 'sourceVisual' },
+    // ── Tweeking visuel source (exactement comme dans le repo GitHub LaserSimulation) ──
+    sourceEmissionPower: { value: 1.5,       min: 0,    max: 4,    step: 0.05,  label: 'Puissance Buse',         group: 'sourceVisual' },
+    sourceGlowRadius:    { value: 0.7,       min: 0.2,  max: 3,    step: 0.1,   label: 'Rayon Halo Buse',        group: 'sourceVisual' },
+    giIntensity:         { value: 2.0,       min: 0,    max: 10,   step: 0.1,   label: 'Intensité Éclairage',    group: 'sourceVisual' },
+    giDistance:          { value: 15.0,      min: 2,    max: 60,   step: 0.5,   label: 'Portée Éclairage',       group: 'sourceVisual' },
+    giWallOffset:        { value: 5.8,       min: -5,   max: 10,   step: 0.1,   label: 'Recul Lumière Mur',      group: 'sourceVisual' },
+    enableImpactLights:  { value: false,                                         label: 'Lumières Impacts',       group: 'sourceVisual', type: 'bool' },
+    giImpactIntensity:   { value: 2.0,       min: 0,    max: 10,   step: 0.1,   label: 'Intensité Lumière',      group: 'sourceVisual' },
+    giImpactDistance:    { value: 16.0,      min: 2,    max: 40,   step: 0.5,   label: 'Portée Lumière',         group: 'sourceVisual' },
     giBounceColor:       { value: true,                                          label: 'Rebond couleur',         group: 'sourceVisual', type: 'bool' },
+    angle:               { value: 0,         min: -180, max: 180,  step: 1,     label: 'Angle horizontal',       group: 'sourceVisual' },
 
     // ── Glow & Fumée ─────────────────────────────────────────────────────
     glowIntensity:       { value: 1.0,       min: 0,    max: 3,    step: 0.05,  label: 'Intensité glow',         group: 'glow' },

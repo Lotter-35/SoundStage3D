@@ -73,6 +73,10 @@ export class LaserShow {
         this.pod.setBasePosition(position.x, position.y, position.z);
         this.pod.setVisible(true);
 
+        // Pause animation & temps local
+        this.isPaused = Boolean(this.params.pauseMotion);
+        this._animTime = 0;
+
         // Pool pré-alloué de vecteurs hit/normal (0 GC par frame)
         const totalSlots = MAX_BEAMS_PER_POD * ARC_SUBDIVISIONS;
         this._hitPool    = Array.from({ length: totalSlots }, () => new THREE.Vector3());
@@ -121,6 +125,8 @@ export class LaserShow {
     _onParamChanged(key, value) {
         if (key === 'color') {
             this._setColor(value);
+        } else if (key === 'pauseMotion') {
+            this.isPaused = Boolean(value);
         }
     }
 
@@ -194,6 +200,12 @@ export class LaserShow {
         const p = this.params;
         const nBeamsPerPod = p.spread > 0 ? Math.max(1, Math.round(p.count)) : 1;
 
+        // Si la pause de balayage n'est pas active, faire avancer le temps local
+        if (!this.isPaused && !p.pauseMotion) {
+            this._animTime += delta;
+        }
+        const effectiveAnimTime = this._animTime;
+
         // Stroboscope
         let strobeFactor = 1.0;
         if (p.strobe) {
@@ -238,9 +250,9 @@ export class LaserShow {
 
         const origin = this.pod.origin;
 
-        // Obtenir les faisceaux du motif
+        // Obtenir les faisceaux du motif avec le temps effectif
         const patternResult = this.pattern.getBeams(
-            origin, animTime, p, 0, this.pod.phase
+            origin, effectiveAnimTime, p, 0, this.pod.phase
         );
         const { beams, pitch, a1, a2 } = patternResult;
         const nBeams = patternResult.nBeams;

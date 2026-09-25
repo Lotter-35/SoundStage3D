@@ -19,7 +19,7 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=158';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=178';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=179';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
@@ -27,7 +27,7 @@ import { setupAudioDebugProbes } from './audio/debugProbes.js';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadTestSubwoofers } from './scene/testSubwoofers.js?v=175';
-import { LaserManager } from './laser/LaserManager.js?v=176';
+import { LaserManager } from './laser/LaserManager.js?v=179';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {

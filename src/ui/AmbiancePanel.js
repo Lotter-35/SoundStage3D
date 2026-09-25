@@ -103,8 +103,9 @@ export class AmbiancePanel {
         // Initialisation de l'ambiance céleste (Jour / Nuit / Crépuscule & Étoiles)
         this._initEnvironment();
 
-        // Référence au LaserManager (injectée via setLaserManager())
+        // Référence au LaserManager & Laser sélectionné
         this.laserManager = null;
+        this.selectedLaser = null;
         this._laserInspectorPanel = null;
 
         // Construction du GUI
@@ -125,10 +126,10 @@ export class AmbiancePanel {
     setLaserManager(laserManager) {
         this.laserManager = laserManager;
         // Initialiser le panneau d'inspection laser
-        const panelEl = document.getElementById('laser-inspector-panel');
-        if (panelEl) {
-            this._laserInspectorPanel = new LaserInspectorPanel({ laserManager, panelEl });
-        }
+        this._laserInspectorPanel = new LaserInspectorPanel({
+            laserManager,
+            ambiancePanel: this
+        });
         // Reconstruire le GUI pour afficher la section Laser
         this._buildGui();
     }
@@ -167,7 +168,30 @@ export class AmbiancePanel {
 
         // Quand le gizmo déplace ou pivote la lumière ou sa cible, synchroniser les repères et l'UI
         this.transformControls.addEventListener('change', () => {
-            if (this._isSwitchingLight || !this.selectedEntry) return;
+            if (this._isSwitchingLight) return;
+
+            // ── Cas 1 : Gizmo attaché à un Laser ──
+            if (this.selectedLaser && this.transformControls.object === this.selectedLaser.getHousingGroup()) {
+                const housing = this.selectedLaser.getHousingGroup();
+                const pos = housing.position;
+                this.selectedLaser.setPosition(pos.x, pos.y, pos.z);
+
+                const mode = this.transformControls.getMode();
+                if (mode === 'rotate') {
+                    let deg = THREE.MathUtils.radToDeg(housing.rotation.y) % 360;
+                    if (deg > 180) deg -= 360;
+                    if (deg < -180) deg += 360;
+                    this.selectedLaser.setParam('angle', deg);
+                }
+
+                if (this._laserInspectorPanel) {
+                    this._laserInspectorPanel.syncFromLaser();
+                }
+                return;
+            }
+
+            // ── Cas 2 : Lumière classique ──
+            if (!this.selectedEntry) return;
 
             const entry = this.selectedEntry;
             const mode = this.transformControls.getMode();
@@ -242,6 +266,12 @@ export class AmbiancePanel {
 
         if (this._cGizmoMode && this._cGizmoMode.getValue() !== mode) {
             this._cGizmoMode.setValue(mode);
+        }
+
+        if (this._laserInspectorPanel && this._laserInspectorPanel.controllers.gizmoMode) {
+            if (this._laserInspectorPanel.controllers.gizmoMode.getValue() !== mode) {
+                this._laserInspectorPanel.controllers.gizmoMode.setValue(mode);
+            }
         }
     }
 
@@ -1250,6 +1280,8 @@ export class AmbiancePanel {
             return;
         }
 
+        this.deselectLaser();
+
         // Si cette lumière est déjà sélectionnée et attachée, ne rien faire
         if (this.selectedEntry === entry && this.transformControls.object === entry.light) {
             return;
@@ -1308,6 +1340,7 @@ export class AmbiancePanel {
      */
     deselectLight() {
         this.selectedEntry = null;
+        this.deselectLaser();
         this.transformControls.detach();
         this.transformControls.visible = false;
         this.transformControls.enabled = false;
@@ -1325,6 +1358,62 @@ export class AmbiancePanel {
 
         this._updateAllHelpersVisibility();
         this._rebuildInspectorGui();
+    }
+
+    /**
+     * Sélectionne un laser 3D et attache le Gizmo à son boîtier
+     * @param {import('../laser/LaserShow.js').LaserShow} laser
+     */
+    selectLaser(laser) {
+        if (!laser) return;
+        this.selectedEntry = null;
+        this.selectedLaser = laser;
+
+        // Détacher gizmo de toute lumière précédente
+        this.transformControls.detach();
+
+        // Attacher le gizmo au groupe du boîtier 3D du laser
+        const housing = laser.getHousingGroup();
+        if (housing) {
+            this.transformControls.attach(housing);
+            this.transformControls.visible = true;
+            this.transformControls.enabled = true;
+        }
+
+        // Réinitialiser les repères de lumière
+        this.lights.forEach(e => {
+            if (e.markerMesh) {
+                const ring = e.markerMesh.children[1];
+                if (ring) {
+                    ring.scale.setScalar(1.0);
+                    ring.material.color.set(0xffffff);
+                    ring.material.opacity = 0.6;
+                }
+            }
+        });
+        this._updateAllHelpersVisibility();
+        this._rebuildInspectorGui();
+
+        if (this._laserInspectorPanel) {
+            this._laserInspectorPanel.openForLaser(laser.laserId, laser);
+        }
+    }
+
+    /**
+     * Désélectionne le laser actuel et détache le Gizmo
+     */
+    deselectLaser() {
+        if (this.selectedLaser) {
+            this.selectedLaser = null;
+            if (this.transformControls.object && !this.selectedEntry) {
+                this.transformControls.detach();
+                this.transformControls.visible = false;
+                this.transformControls.enabled = false;
+            }
+            if (this._laserInspectorPanel) {
+                this._laserInspectorPanel.close();
+            }
+        }
     }
 
     setGizmoVisible(val) {
@@ -1400,8 +1489,8 @@ export class AmbiancePanel {
             if (laserIntersects.length > 0) {
                 const hitObj = laserIntersects[0].object;
                 const laser = this.laserManager.getLaserFromObject(hitObj);
-                if (laser && this._laserInspectorPanel) {
-                    this._laserInspectorPanel.openForLaser(laser.laserId, laser);
+                if (laser) {
+                    this.selectLaser(laser);
                     return;
                 }
             }
@@ -1424,17 +1513,11 @@ export class AmbiancePanel {
         if (intersects.length > 0) {
             const hitEntry = intersects[0].object.userData.entry;
             if (hitEntry) {
-                // Si un panneau laser était ouvert, le fermer
-                if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) {
-                    this._laserInspectorPanel.close();
-                }
                 this.selectLight(hitEntry);
             }
         } else {
-            // Clic dans le vide 3D : désélectionne la lumière et quitte le mode gizmo
-            if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) {
-                this._laserInspectorPanel.close();
-            }
+            // Clic dans le vide 3D : désélectionne la lumière et le laser
+            this.deselectLaser();
             this.deselectLight();
         }
     }
@@ -1508,10 +1591,7 @@ export class AmbiancePanel {
                 }
                 {
                     const { id, laserShow } = this.laserManager.addLaser(spawnPos.clone());
-                    // Ouvrir immédiatement le panneau d'inspection du laser
-                    if (this._laserInspectorPanel) {
-                        this._laserInspectorPanel.openForLaser(id, laserShow);
-                    }
+                    this.selectLaser(laserShow);
                     return null; // Pas d'entry lumière classique
                 }
 
@@ -2685,6 +2765,7 @@ export class AmbiancePanel {
         } else {
             // Quitter le mode Gizmo & fermer : détachement et masquage complet
             this._hideExportModal();
+            this.deselectLaser();
             this.transformControls.detach();
             this.transformControls.visible = false;
             this.transformControls.enabled = false;
@@ -2716,10 +2797,10 @@ export class AmbiancePanel {
             });
         }
 
-        // Clic sur le canvas pour la sélection 3D de lumière
+        // Clic sur le canvas pour la sélection 3D de lumière et laser
         const dom = this.renderer.domElement;
         dom.addEventListener('pointerdown', (e) => {
-            if (this.isOpen) {
+            if (this.isOpen || (this._laserInspectorPanel && this._laserInspectorPanel.isOpen)) {
                 this.handleCanvasClick(e);
             }
         });
@@ -2729,6 +2810,11 @@ export class AmbiancePanel {
             if (e.code === 'Escape') {
                 if (this._exportModalOpen) {
                     this._hideExportModal();
+                    e.stopPropagation();
+                    return;
+                }
+                if (this.selectedLaser) {
+                    this.deselectLaser();
                     e.stopPropagation();
                     return;
                 }
