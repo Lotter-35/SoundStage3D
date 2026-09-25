@@ -287,7 +287,8 @@ export class LaserManager {
 
     /** Retourne un laser par son id */
     getLaser(id) {
-        return this._lasers.get(id);
+        const numId = typeof id === 'number' ? id : parseInt(id, 10);
+        return this._lasers.get(numId) || this._lasers.get(id);
     }
 
     /** Retourne tous les lasers */

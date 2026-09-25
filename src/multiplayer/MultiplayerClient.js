@@ -533,6 +533,7 @@ export class MultiplayerClient {
                 break;
 
             case 'LIGHTING_UPDATE':
+            case 'LIGHTING_CHANGE':
                 if (this._onLightingUpdate) {
                     this._onLightingUpdate(msg);
                 }

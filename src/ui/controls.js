@@ -195,6 +195,11 @@ export class Controls {
         this._updatePlayButtonState();
     }
 
+    setTrackName(name = '') {
+        const np = document.getElementById('now-playing');
+        if (np) np.textContent = name;
+    }
+
     setPlaybackLocked(locked, text = '') {
         this.playbackUI.setPlaybackLocked(locked, text);
         if (this.hudBar.changeMp3Btn) {

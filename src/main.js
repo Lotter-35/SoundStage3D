@@ -1403,7 +1403,8 @@ if (!_mpReady) {
     }
     controls.setPlayState(false);
     controls.setHasTrack(false);
-    controls.setTrackName('');
+    const np = document.getElementById('now-playing');
+    if (np) np.textContent = '';
 }
 
 // Si le salon multijoueur est actif : synchronisation stricte avec l'état de la salle

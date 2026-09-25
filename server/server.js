@@ -38,6 +38,13 @@ const PORT = process.env.PORT || 8068;
 const ROOT_DIR = path.resolve(__dirname, '..');
 
 let publicIp = null;
+
+process.on('uncaughtException', (err) => {
+    console.error('[UNCAUGHT EXCEPTION]', err);
+});
+process.on('unhandledRejection', (reason) => {
+    console.error('[UNHANDLED REJECTION]', reason);
+});
 https.get('https://api.ipify.org', (res) => {
     let data = '';
     res.on('data', chunk => data += chunk);
@@ -920,12 +927,13 @@ wss.on('connection', (ws) => {
                     room.lightingState = defaultLightingState();
                 }
 
+                console.log(`[Lighting] Change from ${clientId} in ${ws.roomId}: cat=${msg.category}, id=${msg.id}`);
                 applyLightingChange(room.lightingState, msg);
 
                 // Broadcast to everyone EXCEPT the sender (sender already applied locally)
                 broadcastRoom(room, {
-                    type: 'LIGHTING_UPDATE',
                     ...msg,
+                    type: 'LIGHTING_UPDATE',
                 }, clientId);
                 break;
             }
