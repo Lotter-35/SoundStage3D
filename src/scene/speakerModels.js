@@ -116,23 +116,24 @@ export async function loadStageSpeakers(scene) {
         const arrayScale = 1.35;
         arrayTemplate.scale.setScalar(arrayScale);
 
-        // Positions et orientations des 2 grappes suspendues
+        // Boîte englobante pour calculer l'élévation : le bas du line array doit arriver au niveau de l'émission sonore (y = 8.0)
+        const arrayBox = new THREE.Box3().setFromObject(arrayTemplate);
+        const soundEmitterY = 8.0;
+        const targetPosY = soundEmitterY - arrayBox.min.y; // le bas arrive exactement à y = 8.0
+
+        // Positions et orientations des 2 grappes suspendues (bien droites, pas de pivot vers le centre)
         const arrayConfigs = [
             {
                 name: 'line-array-left',
                 x: -12,
-                y: 8,
+                y: targetPosY,
                 z: 0,
-                yaw: 0.18,   // Légère rotation vers l'intérieur (centre du public)
-                tilt: -0.08, // Légère inclinaison vers le bas (arrosage de la fosse)
             },
             {
                 name: 'line-array-right',
                 x: 12,
-                y: 8,
+                y: targetPosY,
                 z: 0,
-                yaw: -0.18,  // Légère rotation vers l'intérieur (centre du public)
-                tilt: -0.08, // Légère inclinaison vers le bas (arrosage de la fosse)
             }
         ];
 
@@ -140,8 +141,8 @@ export async function loadStageSpeakers(scene) {
             const arrayClone = arrayTemplate.clone(true);
             arrayClone.name = config.name;
             arrayClone.position.set(config.x, config.y, config.z);
-            arrayClone.rotation.y = config.yaw;
-            arrayClone.rotation.x = config.tilt;
+            // Laisser bien droit : pas de rotation vers le centre ni d'inclinaison
+            arrayClone.rotation.set(0, 0, 0);
             stageSpeakersGroup.add(arrayClone);
         }
 
