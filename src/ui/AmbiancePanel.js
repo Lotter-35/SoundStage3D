@@ -187,6 +187,16 @@ export class AmbiancePanel {
                 if (this._laserInspectorPanel) {
                     this._laserInspectorPanel.syncFromLaser();
                 }
+                if (this._laserPosControllers) {
+                    this._laserPosControllers.posState.x = pos.x;
+                    this._laserPosControllers.posState.y = pos.y;
+                    this._laserPosControllers.posState.z = pos.z;
+                    try {
+                        this._laserPosControllers.posX.updateDisplay();
+                        this._laserPosControllers.posY.updateDisplay();
+                        this._laserPosControllers.posZ.updateDisplay();
+                    } catch (_) {}
+                }
                 return;
             }
 
@@ -1592,6 +1602,7 @@ export class AmbiancePanel {
                 {
                     const { id, laserShow } = this.laserManager.addLaser(spawnPos.clone());
                     this.selectLaser(laserShow);
+                    this._buildGui();
                     return null; // Pas d'entry lumière classique
                 }
 
@@ -2422,6 +2433,7 @@ export class AmbiancePanel {
         this.ctrlTargetX = null;
         this.ctrlTargetY = null;
         this.ctrlTargetZ = null;
+        this._laserPosControllers = null;
 
         while (this.fInspector.controllers.length > 0) {
             this.fInspector.controllers[0].destroy();
@@ -2430,27 +2442,112 @@ export class AmbiancePanel {
             this.fInspector.folders[0].destroy();
         }
 
-        // Dropdown de sélection parmi toutes les lumières de la scène
+        // Dropdown de sélection parmi toutes les lumières de la scène (Lumières Three.js + Lasers 3D)
         const lightOptions = {};
-        if (!this.selectedEntry) {
+        const isAnythingSelected = Boolean(this.selectedEntry || this.selectedLaser);
+        if (!isAnythingSelected) {
             lightOptions['— Choisir une lumière —'] = '';
         } else {
             lightOptions['— Aucune (Désélectionner) —'] = '';
         }
+
+        // 1. Lumières classiques Three.js
         this.lights.forEach(e => {
             lightOptions[e.name] = e.id;
         });
 
-        const selObj = { currentId: this.selectedEntry ? this.selectedEntry.id : '' };
+        // 2. Lasers 3D de la scène
+        if (this.laserManager) {
+            const allLasers = this.laserManager.getAllLasers();
+            allLasers.forEach(laser => {
+                lightOptions[`🔴 Laser #${laser.laserId}`] = `laser_${laser.laserId}`;
+            });
+        }
+
+        let currentSelectedId = '';
+        if (this.selectedEntry) {
+            currentSelectedId = this.selectedEntry.id;
+        } else if (this.selectedLaser) {
+            currentSelectedId = `laser_${this.selectedLaser.laserId}`;
+        }
+
+        const selObj = { currentId: currentSelectedId };
         const cSelector = this.fInspector.add(selObj, 'currentId', lightOptions).name('Sélection');
         cSelector.onChange(id => {
             if (!id) {
                 this.deselectLight();
                 return;
             }
+            if (typeof id === 'string' && id.startsWith('laser_')) {
+                const laserId = parseInt(id.replace('laser_', ''), 10);
+                const laser = this.laserManager ? this.laserManager.getLaser(laserId) : null;
+                if (laser) {
+                    this.selectLaser(laser);
+                }
+                return;
+            }
             const target = this.lights.find(e => e.id === id);
-            if (target) this.selectLight(target);
+            if (target) {
+                this.deselectLaser();
+                this.selectLight(target);
+            }
         });
+
+        // ── Cas Laser sélectionné dans l'inspecteur ──
+        if (this.selectedLaser) {
+            const laser = this.selectedLaser;
+            const housing = laser.getHousingGroup();
+            this._currentInspectorEntry = null;
+
+            const laserActions = {
+                deselect: () => this.deselectLight(),
+                openPanel: () => {
+                    if (this._laserInspectorPanel) {
+                        this._laserInspectorPanel.openForLaser(laser.laserId, laser);
+                    }
+                },
+                setTranslate: () => this.setGizmoMode('translate'),
+                setRotate: () => this.setGizmoMode('rotate'),
+                deleteLaser: () => {
+                    const id = laser.laserId;
+                    this.laserManager.removeLaser(id);
+                    this.deselectLaser();
+                    this._buildGui();
+                },
+            };
+
+            const fLaserActions = this.fInspector.addFolder(`🔴 Laser #${laser.laserId} - Actions`);
+            fLaserActions.open();
+            fLaserActions.add(laserActions, 'openPanel').name('🎛️ Ouvrir panneau Laser');
+            fLaserActions.add(laserActions, 'setTranslate').name('↔️ Mode Déplacement (Gizmo)');
+            fLaserActions.add(laserActions, 'setRotate').name('🔄 Mode Rotation (Gizmo)');
+            fLaserActions.add(laserActions, 'deleteLaser').name('🗑️ Supprimer ce laser');
+
+            // Position 3D du laser dans l'inspecteur
+            const fPos = this.fInspector.addFolder('📍 Position 3D Laser');
+            fPos.open();
+
+            const p = housing ? housing.position : laser.getPosition();
+            const posState = { x: p.x, y: p.y, z: p.z };
+
+            const onLaserPosChange = () => {
+                laser.setPosition(posState.x, posState.y, posState.z);
+                if (housing) housing.position.set(posState.x, posState.y, posState.z);
+                if (this.transformControls && this.transformControls.object === housing) {
+                    this.transformControls.updateMatrixWorld();
+                }
+                if (this._laserInspectorPanel) {
+                    this._laserInspectorPanel.syncFromLaser();
+                }
+            };
+
+            const ctrlX = fPos.add(posState, 'x', -100, 100, 0.1).name('Pos X').onChange(onLaserPosChange);
+            const ctrlY = fPos.add(posState, 'y', 0, 50, 0.1).name('Pos Y').onChange(onLaserPosChange);
+            const ctrlZ = fPos.add(posState, 'z', -100, 100, 0.1).name('Pos Z').onChange(onLaserPosChange);
+            this._laserPosControllers = { posX: ctrlX, posY: ctrlY, posZ: ctrlZ, posState };
+
+            return;
+        }
 
         if (!this.selectedEntry) {
             this._currentInspectorEntry = null;

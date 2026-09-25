@@ -3,7 +3,7 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js?v=180';
+import { createStage } from './scene/stage.js?v=181';
 import { Listener } from './scene/listener.js?v=154';
 import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
@@ -19,7 +19,7 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=158';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=179';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=181';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
@@ -27,7 +27,7 @@ import { setupAudioDebugProbes } from './audio/debugProbes.js';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=180';
-import { LaserManager } from './laser/LaserManager.js?v=179';
+import { LaserManager } from './laser/LaserManager.js?v=181';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {

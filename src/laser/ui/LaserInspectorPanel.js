@@ -74,6 +74,13 @@ export class LaserInspectorPanel {
      */
     syncFromLaser() {
         if (!this.gui || !this._currentLaser) return;
+        if (this._posState) {
+            const housing = this._currentLaser.getHousingGroup();
+            const p = housing ? housing.position : this._currentLaser.getPosition();
+            this._posState.x = p.x;
+            this._posState.y = p.y;
+            this._posState.z = p.z;
+        }
         for (const ctrl of Object.values(this.controllers)) {
             if (ctrl && typeof ctrl.updateDisplay === 'function') {
                 try { ctrl.updateDisplay(); } catch (_) {}
@@ -240,18 +247,20 @@ export class LaserInspectorPanel {
                 const res = this.laserManager.addLaser(pos, { ...laser.params });
                 if (this.ambiancePanel) {
                     this.ambiancePanel.selectLaser(res.laserShow);
+                    this.ambiancePanel._buildGui();
                 } else {
                     this.openForLaser(res.id, res.laserShow);
                 }
             },
             deleteLaser: () => {
                 const id = this._currentLaserId;
+                this.laserManager.removeLaser(id);
                 if (this.ambiancePanel) {
                     this.ambiancePanel.deselectLaser();
+                    this.ambiancePanel._buildGui();
                 } else {
                     this.close();
                 }
-                this.laserManager.removeLaser(id);
             }
         };
 
@@ -265,5 +274,38 @@ export class LaserInspectorPanel {
 
         fActions.add(actionsState, 'duplicate').name('📋 Dupliquer le laser');
         fActions.add(actionsState, 'deleteLaser').name('🗑️ Supprimer ce laser');
+
+        // ── Sliders Position 3D (X, Y, Z) pour déplacer le laser numériquement ──
+        const housing = laser.getHousingGroup();
+        const initialPos = housing ? housing.position : laser.getPosition();
+        this._posState = {
+            x: initialPos.x,
+            y: initialPos.y,
+            z: initialPos.z,
+        };
+
+        const onPosChange = () => {
+            laser.setPosition(this._posState.x, this._posState.y, this._posState.z);
+            if (housing) {
+                housing.position.set(this._posState.x, this._posState.y, this._posState.z);
+            }
+            if (this.ambiancePanel && this.ambiancePanel.transformControls) {
+                if (this.ambiancePanel.transformControls.object === housing) {
+                    this.ambiancePanel.transformControls.updateMatrixWorld();
+                }
+            }
+        };
+
+        this.controllers.posX = fActions.add(this._posState, 'x', -100, 100, 0.1)
+            .name('Position X')
+            .onChange(onPosChange);
+
+        this.controllers.posY = fActions.add(this._posState, 'y', 0, 50, 0.1)
+            .name('Position Y')
+            .onChange(onPosChange);
+
+        this.controllers.posZ = fActions.add(this._posState, 'z', -100, 100, 0.1)
+            .name('Position Z')
+            .onChange(onPosChange);
     }
 }

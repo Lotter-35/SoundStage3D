@@ -256,8 +256,27 @@ export function createStage(scene) {
         scene.add(truss);
     });
 
-    // Les cubes synthétiques et marqueurs de test sont remplacés par les vrais modèles 3D (speakerModels.js)
+    // --- Speaker markers (sphères colorées de position des haut-parleurs) ---
+    const markerGeoCache = {};
+    const markerMatCache = {};
 
+    for (const def of SPEAKER_DEFS) {
+        const vis = BUS_VISUAL[def.bus] || BUS_VISUAL.top;
+        const p = def.position;
+        const busKey = def.bus;
+
+        if (!markerGeoCache[busKey]) {
+            markerGeoCache[busKey] = new THREE.SphereGeometry(vis.markerSize, 12, 10);
+            markerMatCache[busKey] = new THREE.MeshBasicMaterial({
+                color: vis.color,
+                transparent: true,
+                opacity: 0.75,
+            });
+        }
+        const marker = new THREE.Mesh(markerGeoCache[busKey], markerMatCache[busKey]);
+        marker.position.set(p.x, p.y, p.z);
+        scene.add(marker);
+    }
 
     // --- FOH marker ---
     const fohGeo = new THREE.CylinderGeometry(0.3, 0.3, 0.05, 16);
