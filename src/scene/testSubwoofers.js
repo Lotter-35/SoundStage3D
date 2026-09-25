@@ -47,10 +47,44 @@ export async function loadTestSubwoofers(scene) {
     group.name = 'test-subwoofers-group';
     scene.add(group);
 
+    // Chargeur de textures avec espace colorimétrique sRGB pour un rendu fidèle
+    const textureLoader = new THREE.TextureLoader();
+    const speakerTexture = textureLoader.load('src/assets/models/O5X8J80.jpg');
+    speakerTexture.colorSpace = THREE.SRGBColorSpace;
+    speakerTexture.wrapS = THREE.RepeatWrapping;
+    speakerTexture.wrapT = THREE.RepeatWrapping;
+
     const fbxLoader = new FBXLoader();
 
     // Cache-busting timestamp pour s'assurer que le navigateur recharge les versions fraîches
     const cacheBust = Date.now();
+
+    // Fonction d'application du matériau texturé
+    const applySpeakerMaterial = (model) => {
+        model.traverse(child => {
+            if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+
+                // Si le matériau n'a pas déjà de texture valide chargée, appliquer la texture de grille
+                if (!child.material.map) {
+                    child.material.map = speakerTexture;
+                    child.material.needsUpdate = true;
+                } else {
+                    child.material.map.colorSpace = THREE.SRGBColorSpace;
+                    child.material.needsUpdate = true;
+                }
+
+                // Ajuster la rugosité / métallicité pour un aspect enceinte acoustique pro
+                if (child.material.roughness !== undefined) {
+                    child.material.roughness = 0.55;
+                }
+                if (child.material.metalness !== undefined) {
+                    child.material.metalness = 0.15;
+                }
+            }
+        });
+    };
 
     // 1. Charger subwoofer.fbx (à gauche du spawn : x = -1.35)
     try {
@@ -72,12 +106,7 @@ export async function loadTestSubwoofers(scene) {
         fbx.position.set(targetX, -fbxBox.min.y, targetZ);
         fbx.rotation.y = Math.PI;
 
-        fbx.traverse(child => {
-            if (child.isMesh) {
-                child.castShadow = true;
-                child.receiveShadow = true;
-            }
-        });
+        applySpeakerMaterial(fbx);
 
         group.add(fbx);
 
@@ -110,12 +139,7 @@ export async function loadTestSubwoofers(scene) {
         fbxTest.position.set(targetX, -testBox.min.y, targetZ);
         fbxTest.rotation.y = Math.PI;
 
-        fbxTest.traverse(child => {
-            if (child.isMesh) {
-                child.castShadow = true;
-                child.receiveShadow = true;
-            }
-        });
+        applySpeakerMaterial(fbxTest);
 
         group.add(fbxTest);
 
