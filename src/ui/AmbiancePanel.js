@@ -2226,7 +2226,7 @@ export class AmbiancePanel {
         const fAdd = this.gui.addFolder('➕ Poser une Lumière');
         fAdd.close();
 
-        fAdd.add(this.creationParams, 'type', [
+        const cAddType = fAdd.add(this.creationParams, 'type', [
             'PointLight',
             'SpotLight',
             'DirectionalLight',
@@ -2236,8 +2236,30 @@ export class AmbiancePanel {
             '🔴 LaserPod',
         ]).name('Type');
 
-        fAdd.addColor(this.creationParams, 'color').name('Couleur');
-        fAdd.add(this.creationParams, 'intensity', 0.1, 20.0, 0.1).name('Intensité');
+        const cAddColor = fAdd.addColor(this.creationParams, 'color').name('Couleur');
+        const cAddIntensity = fAdd.add(this.creationParams, 'intensity', 0.1, 20.0, 0.1).name('Intensité');
+
+        const updateAddInputsVisibility = (type) => {
+            const isLaser = type === '🔴 LaserPod';
+            if (isLaser) {
+                if (cAddColor.hide) cAddColor.hide();
+                if (cAddColor.domElement) cAddColor.domElement.style.display = 'none';
+                if (cAddIntensity.hide) cAddIntensity.hide();
+                if (cAddIntensity.domElement) cAddIntensity.domElement.style.display = 'none';
+            } else {
+                if (cAddColor.show) cAddColor.show();
+                if (cAddColor.domElement) cAddColor.domElement.style.display = '';
+                if (cAddIntensity.show) cAddIntensity.show();
+                if (cAddIntensity.domElement) cAddIntensity.domElement.style.display = '';
+            }
+        };
+
+        cAddType.onChange(val => {
+            updateAddInputsVisibility(val);
+        });
+
+        // Appliquer l'état initial
+        updateAddInputsVisibility(this.creationParams.type);
 
         const addActions = {
             spawn: () => {
