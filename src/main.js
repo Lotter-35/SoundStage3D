@@ -19,7 +19,7 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=158';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=160';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=161';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
@@ -77,6 +77,7 @@ const ambiancePanel = new AmbiancePanel({
     renderer,
     listener,
     initialLights: lights,
+    skybox,
 });
 
 // ─── Audio ───────────────────────────────────────────────────────
