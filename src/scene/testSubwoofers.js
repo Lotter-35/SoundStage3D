@@ -1,10 +1,9 @@
 /**
- * testSubwoofers.js — Charge et affiche les deux modèles de subwoofer (FBX et OBJ)
- * pour test visuel juste devant le spawn du joueur (FOH x=0, z=50).
+ * testSubwoofers.js — Charge et affiche le subwoofer FBX
+ * pour test visuel devant le spawn du joueur (FOH x=0, z=50).
  */
 import * as THREE from 'three';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 
 function createTextLabel(text, borderColor = '#38bdf8') {
     const canvas = document.createElement('canvas');
@@ -46,7 +45,7 @@ export async function loadTestSubwoofers(scene) {
     group.name = 'test-subwoofers-group';
     scene.add(group);
 
-    // 1. Charger subwoofer.fbx
+    // Charger subwoofer.fbx
     try {
         const fbxLoader = new FBXLoader();
         const fbx = await fbxLoader.loadAsync('src/assets/models/subwoofer.fbx');
@@ -62,8 +61,8 @@ export async function loadTestSubwoofers(scene) {
             fbxBox.getSize(fbxSize);
         }
 
-        // Poser au sol à gauche du spawn joueur (Spawn joueur à x=0, z=50)
-        const targetX = -1.35;
+        // Centré devant le spawn joueur (Spawn joueur à x=0, z=50)
+        const targetX = 0;
         const targetZ = 46.0;
         fbx.position.set(targetX, -fbxBox.min.y, targetZ);
 
@@ -87,59 +86,6 @@ export async function loadTestSubwoofers(scene) {
         console.log('[TestSubwoofers] subwoofer.fbx chargé avec succès, dimensions :', fbxSize);
     } catch (err) {
         console.warn('[TestSubwoofers] Erreur chargement subwoofer.fbx :', err);
-    }
-
-    // 2. Charger subwoofer.obj
-    try {
-        const objLoader = new OBJLoader();
-        const obj = await objLoader.loadAsync('src/assets/models/subwoofer.obj');
-        obj.name = 'test-subwoofer-obj';
-
-        // Auto-scale si nécessaire
-        const objBox = new THREE.Box3().setFromObject(obj);
-        const objSize = new THREE.Vector3();
-        objBox.getSize(objSize);
-        if (objSize.y > 10) {
-            obj.scale.setScalar(0.01);
-            objBox.setFromObject(obj);
-            objBox.getSize(objSize);
-        }
-
-        // Poser au sol à droite du spawn joueur
-        const targetX = 1.35;
-        const targetZ = 46.0;
-        obj.position.set(targetX, -objBox.min.y, targetZ);
-
-        // Orienter vers le joueur
-        obj.rotation.y = Math.PI;
-
-        // Matériau caisson sono sobre PBR noir pour le OBJ (qui n'a pas de fichier .mtl)
-        const speakerMat = new THREE.MeshStandardMaterial({
-            color: 0x1e1e24,
-            roughness: 0.65,
-            metalness: 0.12,
-        });
-
-        obj.traverse(child => {
-            if (child.isMesh) {
-                child.castShadow = true;
-                child.receiveShadow = true;
-                if (!child.material || child.material.name === 'default' || !child.material.map) {
-                    child.material = speakerMat;
-                }
-            }
-        });
-
-        group.add(obj);
-
-        // Label au-dessus du subwoofer OBJ
-        const objLabel = createTextLabel('🔊 Subwoofer (.obj)', '#a855f7');
-        objLabel.position.set(targetX, objSize.y + 0.35, targetZ);
-        group.add(objLabel);
-
-        console.log('[TestSubwoofers] subwoofer.obj chargé avec succès, dimensions :', objSize);
-    } catch (err) {
-        console.warn('[TestSubwoofers] Erreur chargement subwoofer.obj :', err);
     }
 
     return group;
