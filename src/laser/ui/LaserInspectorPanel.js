@@ -110,7 +110,7 @@ export class LaserInspectorPanel {
         if (!ctrl || !ctrl.domElement) return ctrl;
 
         const origOnChange = ctrl._onChange;
-        ctrl._onChange = (v) => {
+        ctrl.onChange((v) => {
             if (origOnChange) origOnChange.call(ctrl, v);
             if (this._currentLaser) {
                 this._emitSync({
@@ -120,7 +120,7 @@ export class LaserInspectorPanel {
                     value: v,
                 });
             }
-        };
+        });
 
         const resetBtn = document.createElement('button');
         resetBtn.type = 'button';

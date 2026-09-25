@@ -19,17 +19,17 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=159';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=183';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=184';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes } from './audio/debugProbes.js';
-import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=150';
+import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=151';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=1';
-import { LightingSync } from './multiplayer/LightingSync.js?v=1';
+import { LightingSync } from './multiplayer/LightingSync.js?v=2';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=183';
-import { LaserManager } from './laser/LaserManager.js?v=186';
+import { LaserManager } from './laser/LaserManager.js?v=187';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 

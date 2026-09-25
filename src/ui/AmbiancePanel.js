@@ -14,7 +14,7 @@ import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUnifo
 import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js';
 import { makeDraggable } from './draggable.js';
 import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js';
-import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js';
+import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=185';
 import { GI_PRESETS } from '../scene/staticGI.js';
 
 export class AmbiancePanel {
@@ -3278,10 +3278,10 @@ export class AmbiancePanel {
         if (!ctrl || !ctrl.domElement) return;
 
         const origOnChange = ctrl._onChange;
-        ctrl._onChange = (val) => {
+        ctrl.onChange((val) => {
             if (origOnChange) origOnChange.call(ctrl, val);
             this._handleControllerChange(ctrl, val);
-        };
+        });
 
         const resetBtn = document.createElement('button');
         resetBtn.className = 'lil-reset-btn';

@@ -213,7 +213,7 @@ export class LightingSync {
         if (data.presetKey !== undefined) {
             this.ambiancePanel.applyEnvPreset(data.presetKey);
             if (this.ambiancePanel._cPreset) {
-                try { this.ambiancePanel._cPreset.setValue(data.presetKey); } catch (_) {}
+                try { this.ambiancePanel._cPreset.updateDisplay(); } catch (_) {}
             }
         }
 
@@ -445,48 +445,61 @@ export class LightingSync {
             }
         }
 
+        const numId = typeof id === 'number' ? id : parseInt(id, 10);
         // ── Règle : mise à jour du panneau si le même laser est sélectionné ──
-        if (this.ambiancePanel && this.ambiancePanel.selectedLaser && this.ambiancePanel.selectedLaser.laserId === id) {
-            if (this.ambiancePanel._laserPosControllers && data.position) {
-                this.ambiancePanel._laserPosControllers.posState.x = data.position.x;
-                this.ambiancePanel._laserPosControllers.posState.y = data.position.y;
-                this.ambiancePanel._laserPosControllers.posState.z = data.position.z;
-                try {
-                    this.ambiancePanel._laserPosControllers.posX.updateDisplay();
-                    this.ambiancePanel._laserPosControllers.posY.updateDisplay();
-                    this.ambiancePanel._laserPosControllers.posZ.updateDisplay();
-                } catch (_) {}
-            }
-            if (this.ambiancePanel._laserRotControllers && data.rotation) {
-                this.ambiancePanel._laserRotControllers.rotState.angle = data.rotation.angle || 0;
-                this.ambiancePanel._laserRotControllers.rotState.tilt = data.rotation.tilt || 0;
-                this.ambiancePanel._laserRotControllers.rotState.roll = data.rotation.roll || 0;
-                try {
-                    this.ambiancePanel._laserRotControllers.ctrlAngle.updateDisplay();
-                    this.ambiancePanel._laserRotControllers.ctrlTilt.updateDisplay();
-                    if (this.ambiancePanel._laserRotControllers.ctrlRoll) {
-                        this.ambiancePanel._laserRotControllers.ctrlRoll.updateDisplay();
-                    }
-                } catch (_) {}
+        if (this.ambiancePanel && this.ambiancePanel.selectedLaser) {
+            const selId = this.ambiancePanel.selectedLaser.laserId;
+            const selNumId = typeof selId === 'number' ? selId : parseInt(selId, 10);
+            if (selId === id || selNumId === numId) {
+                if (this.ambiancePanel._laserPosControllers && data.position) {
+                    this.ambiancePanel._laserPosControllers.posState.x = data.position.x;
+                    this.ambiancePanel._laserPosControllers.posState.y = data.position.y;
+                    this.ambiancePanel._laserPosControllers.posState.z = data.position.z;
+                    try {
+                        this.ambiancePanel._laserPosControllers.posX.updateDisplay();
+                        this.ambiancePanel._laserPosControllers.posY.updateDisplay();
+                        this.ambiancePanel._laserPosControllers.posZ.updateDisplay();
+                    } catch (_) {}
+                }
+                if (this.ambiancePanel._laserRotControllers && data.rotation) {
+                    this.ambiancePanel._laserRotControllers.rotState.angle = data.rotation.angle || 0;
+                    this.ambiancePanel._laserRotControllers.rotState.tilt = data.rotation.tilt || 0;
+                    this.ambiancePanel._laserRotControllers.rotState.roll = data.rotation.roll || 0;
+                    try {
+                        this.ambiancePanel._laserRotControllers.ctrlAngle.updateDisplay();
+                        this.ambiancePanel._laserRotControllers.ctrlTilt.updateDisplay();
+                        if (this.ambiancePanel._laserRotControllers.ctrlRoll) {
+                            this.ambiancePanel._laserRotControllers.ctrlRoll.updateDisplay();
+                        }
+                    } catch (_) {}
+                }
             }
         }
 
         // ── Règle : synchroniser l'inspecteur laser individuel s'il est ouvert sur ce laser ──
-        if (this.ambiancePanel?._laserInspectorPanel?.isOpen && this.ambiancePanel._laserInspectorPanel._currentLaserId === id) {
+        const curInspId = this.ambiancePanel?._laserInspectorPanel?._currentLaserId;
+        const curInspNumId = typeof curInspId === 'number' ? curInspId : parseInt(curInspId, 10);
+        if (this.ambiancePanel?._laserInspectorPanel?.isOpen && (curInspId === id || curInspNumId === numId)) {
             this.ambiancePanel._laserInspectorPanel.syncFromLaser();
         }
     }
 
     _applyLaserParam(id, param, value) {
-        if (!this.laserManager || !id || param === undefined) return;
+        if (!this.laserManager || id === undefined || param === undefined) return;
 
-        const laser = this.laserManager.getLaser(id);
-        if (!laser) return;
+        const numId = typeof id === 'number' ? id : parseInt(id, 10);
+        const laser = this.laserManager.getLaser(numId) || this.laserManager.getLaser(id);
+        if (!laser) {
+            console.warn('[LightingSync] Laser introuvable pour param:', id, param, value);
+            return;
+        }
 
         laser.setParam(param, value);
 
         // ── Règle : synchroniser si le même menu de personnalisation laser est ouvert ──
-        if (this.ambiancePanel?._laserInspectorPanel?.isOpen && this.ambiancePanel._laserInspectorPanel._currentLaserId === id) {
+        const curInspId = this.ambiancePanel?._laserInspectorPanel?._currentLaserId;
+        const curInspNumId = typeof curInspId === 'number' ? curInspId : parseInt(curInspId, 10);
+        if (this.ambiancePanel?._laserInspectorPanel?.isOpen && (curInspId === id || curInspNumId === numId)) {
             this.ambiancePanel._laserInspectorPanel.syncFromLaser();
         }
     }

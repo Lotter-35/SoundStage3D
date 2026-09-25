@@ -320,8 +320,12 @@ function applyLightingChange(state, msg) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function send(ws, data) {
-    if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify(data));
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        try {
+            ws.send(typeof data === 'string' ? data : JSON.stringify(data));
+        } catch (err) {
+            console.warn('[Sync] ws.send error:', err.message);
+        }
     }
 }
 
@@ -765,7 +769,9 @@ wss.on('connection', (ws) => {
 
             for (const [peerId, peerWs] of room.clients) {
                 if (peerId !== clientId && peerWs.readyState === WebSocket.OPEN) {
-                    peerWs.send(raw, { binary: true });
+                    try {
+                        peerWs.send(raw, { binary: true });
+                    } catch (_) {}
                 }
             }
             return;
