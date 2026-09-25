@@ -256,7 +256,9 @@ export function createStage(scene) {
         scene.add(truss);
     });
 
-    // --- Speaker markers (sphères colorées de position des haut-parleurs) ---
+    // --- Speaker boxes & markers (generated from SPEAKER_DEFS) ---
+    const boxGeoCache = {};
+    const boxMatCache = {};
     const markerGeoCache = {};
     const markerMatCache = {};
 
@@ -265,6 +267,30 @@ export function createStage(scene) {
         const p = def.position;
         const busKey = def.bus;
 
+        // Visual box pour mids et fills (les subs et tops sont remplacés par les modèles 3D GLB)
+        if (def.bus === 'mid' || def.bus === 'fill') {
+            if (!boxGeoCache[busKey]) {
+                boxGeoCache[busKey] = new THREE.BoxGeometry(...vis.boxGeo);
+                boxMatCache[busKey] = new THREE.MeshStandardMaterial({
+                    color: vis.boxColor,
+                    roughness: 0.7,
+                    metalness: 0.2,
+                });
+            }
+            const box = new THREE.Mesh(boxGeoCache[busKey], boxMatCache[busKey]);
+            box.position.set(p.x, p.y, p.z);
+            if (def.orientation) {
+                box.rotation.y = Math.atan2(def.orientation.x, def.orientation.z);
+                box.rotation.x = Math.asin(-def.orientation.y / Math.sqrt(
+                    def.orientation.x ** 2 + def.orientation.y ** 2 + def.orientation.z ** 2
+                )) * 0.3;
+            }
+            box.castShadow = true;
+            box.receiveShadow = true;
+            scene.add(box);
+        }
+
+        // Bulles de couleurs au niveau des émetteurs son
         if (!markerGeoCache[busKey]) {
             markerGeoCache[busKey] = new THREE.SphereGeometry(vis.markerSize, 12, 10);
             markerMatCache[busKey] = new THREE.MeshBasicMaterial({

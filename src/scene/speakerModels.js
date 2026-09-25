@@ -68,8 +68,8 @@ export async function loadStageSpeakers(scene) {
         const subXPositions = [-9, -6, -3, 0, 3, 6, 9];
 
         for (const xPos of subXPositions) {
-            // Pile de 2 caissons superposés
-            for (let stackIndex = 0; stackIndex < 2; stackIndex++) {
+            // Pile de 3 caissons superposés
+            for (let stackIndex = 0; stackIndex < 3; stackIndex++) {
                 const subClone = subTemplate.clone(true);
                 const posY = groundOffsetY + stackIndex * subHeight;
                 subClone.position.set(xPos, posY, backAlignZ);
@@ -77,7 +77,7 @@ export async function loadStageSpeakers(scene) {
             }
         }
 
-        console.log(`[StageSpeakers] 7 piles de 2 subwoofers chargées (14 caissons), hauteur totale : ${(subHeight * 2).toFixed(2)}m`);
+        console.log(`[StageSpeakers] 7 piles de 3 subwoofers chargées (21 caissons), hauteur totale : ${(subHeight * 3).toFixed(2)}m`);
     } catch (err) {
         console.error('[StageSpeakers] Erreur lors du chargement de subwoofer.glb :', err);
     }
