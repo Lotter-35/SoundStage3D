@@ -2130,35 +2130,15 @@ export class AmbiancePanel {
             this._updateStageBoost();
         });
 
-        // ── Dossier Outils Généraux & Gizmo ──
-        const fTools = this.gui.addFolder('👁️ Outils 3D & Affichage');
+        // ── Dossier Outils 3D ──
+        const fTools = this.gui.addFolder('👁️ Outils 3D');
         fTools.open();
 
         const toolsState = {
-            showMarkers: this.markersVisible,
-            showGizmo: this.gizmoVisible,
             showSpotCones: this.showSpotCones,
-            deselect: () => {
-                this.deselectLight();
-            },
-            toggleMarkers: () => {
-                this.setMarkersVisible(!this.markersVisible);
-            },
-            focusLight: () => {
-                this.focusSelectedLight();
-            },
             gizmoMode: this.transformControls.getMode() || 'translate',
+            exportLight: () => this.exportSelectedLight(),
         };
-
-        this._cShowMarkers = fTools.add(toolsState, 'showMarkers').name('Repères 3D');
-        this._cShowMarkers.onChange(val => {
-            this.setMarkersVisible(val);
-        });
-
-        this._cShowGizmo = fTools.add(toolsState, 'showGizmo').name('Flèches Gizmo');
-        this._cShowGizmo.onChange(val => {
-            this.setGizmoVisible(val);
-        });
 
         this._cShowSpotCones = fTools.add(toolsState, 'showSpotCones').name('🔦 Cônes SpotLights');
         this._cShowSpotCones.onChange(val => {
@@ -2168,23 +2148,12 @@ export class AmbiancePanel {
             this.setShowSpotCones(v);
         });
 
-        fTools.add(toolsState, 'deselect').name('❌ Quitter Gizmo (Échap)');
-        fTools.add(toolsState, 'toggleMarkers').name('💡 Afficher / Cacher lumières');
-        fTools.add(toolsState, 'focusLight').name('🎯 Voir la lumière (Focus)');
-        toolsState.exportLight = () => this.exportSelectedLight();
-        fTools.add(toolsState, 'exportLight').name('💾 Exporter la lampe (Code)');
-
         this._cGizmoMode = fTools.add(toolsState, 'gizmoMode', ['translate', 'rotate']).name('Mode Gizmo');
         this._cGizmoMode.onChange(mode => {
             this.setGizmoMode(mode);
         });
 
-        const gizmoShortcuts = {
-            translate: () => this.setGizmoMode('translate'),
-            rotate: () => this.setGizmoMode('rotate'),
-        };
-        fTools.add(gizmoShortcuts, 'translate').name('📍 Déplacer (Touche G)');
-        fTools.add(gizmoShortcuts, 'rotate').name('🔄 Pivoter (Touche R)');
+        fTools.add(toolsState, 'exportLight').name('💾 Exporter la lampe');
 
         // ── Dossier Ajouter une lumière ──
         const fAdd = this.gui.addFolder('➕ Poser une Lumière');
@@ -2274,9 +2243,6 @@ export class AmbiancePanel {
 
         const fActions = this.fInspector.addFolder('⚡ Actions');
         fActions.open();
-        fActions.add(lightActions, 'deselect').name('❌ Quitter Gizmo (Désél.)');
-        fActions.add(lightActions, 'setTranslate').name('📍 Déplacer (G)');
-        fActions.add(lightActions, 'setRotate').name('🔄 Pivoter (R)');
         fActions.add(lightActions, 'exportLight').name('💾 Exporter cette lampe');
         fActions.add(lightActions, 'reset').name('↺ Reset cette lumière');
         fActions.add(lightActions, 'duplicate').name('📋 Dupliquer');

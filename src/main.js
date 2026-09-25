@@ -19,7 +19,7 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=158';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=168';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=169';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
