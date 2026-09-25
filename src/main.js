@@ -18,16 +18,20 @@ import { InputStage } from './audio/inputStage.js';
 import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
-import { Controls } from './ui/controls.js?v=158';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=181';
+import { Controls } from './ui/controls.js?v=159';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=183';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
-import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
+import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes } from './audio/debugProbes.js';
-import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
+import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=150';
+import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=1';
+import { LightingSync } from './multiplayer/LightingSync.js?v=1';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=183';
-import { LaserManager } from './laser/LaserManager.js?v=183';
+import { LaserManager } from './laser/LaserManager.js?v=186';
+import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
+import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -54,7 +58,7 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
 
 // Build 3D stage
-const { coneContainer, coneGroups, dirLight, lights } = createStage(scene);
+const { coneContainer, coneGroups, dirLight, lights, soundMarkersGroup } = createStage(scene);
 if (dirLight && dirLight.shadow) {
     const maxTex = renderer.capabilities.maxTextureSize || 4096;
     const shadowRes = Math.min(4096, maxTex);
@@ -79,6 +83,12 @@ await loadStageSpeakers(scene);
 // ─── Listener (FPS controls + 3D Animated Character) ─────────────
 const listener = new Listener(camera, document.body, scene);
 
+// ─── Drag & Drop 3D Model Loader (Debug) ─────────────────────────
+initModelDropLoader({ scene, camera });
+
+// ─── Static Global Illumination (0 lag) ──────────────────────────
+const staticGI = new StaticGlobalIllumination({ scene, renderer });
+
 // ─── Ambiance & Éclairage 3D ─────────────────────────────────────
 const ambiancePanel = new AmbiancePanel({
     scene,
@@ -87,11 +97,15 @@ const ambiancePanel = new AmbiancePanel({
     listener,
     initialLights: lights,
     skybox,
+    staticGI,
 });
 
 // ─── Laser System ─────────────────────────────────────────────────
 const laserManager = new LaserManager({ scene, renderer, camera });
 ambiancePanel.setLaserManager(laserManager);
+
+// Laser de base présent dès le spawn (au centre du pont scénique au-dessus de la régie DJ)
+laserManager.addLaser(new THREE.Vector3(0, 5.0, -4.0));
 
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
@@ -275,6 +289,74 @@ let _currentPrefetchItem = null;
 let _prefetchLoopRunning = false;
 let _prefetchWakeupResolver = null;
 
+function abortBackgroundPrefetch() {
+    if (_currentPrefetchAbortController) {
+        try {
+            _currentPrefetchAbortController.abort();
+        } catch (_) {}
+        _currentPrefetchAbortController = null;
+        _currentPrefetchItem = null;
+    }
+}
+
+async function ensureTrackLoadedAndDecoded(track) {
+    if (!track) return null;
+
+    // 1. Déjà décodé en mémoire ?
+    const key = track.id || track.name;
+    if (_decodedAudioBuffers.has(key)) {
+        return _decodedAudioBuffers.get(key);
+    }
+    if (track.name && _decodedAudioBuffers.has(track.name)) {
+        return _decodedAudioBuffers.get(track.name);
+    }
+
+    // 2. Annuler immédiatement tout pré-chargement en arrière-plan pour libérer le réseau
+    abortBackgroundPrefetch();
+
+    // 3. Fichier déjà présent dans le cache local ?
+    let file = track.file || (track.id && _localAudioFileCache.get(track.id)) || (track.name && _localAudioFileCache.get(track.name)) || null;
+
+    // 4. Téléchargement prioritaire depuis le serveur
+    if (!file) {
+        let trackUrl = track.url;
+        if (!trackUrl && track.id) {
+            trackUrl = `/audio/track/${track.id}`;
+        }
+        if (trackUrl) {
+            const baseUrl = (mp && mp.httpUrl) ? mp.httpUrl : `http://${window.location.hostname || 'localhost'}:8068`;
+            const fullUrl = trackUrl.startsWith('http') ? trackUrl : `${baseUrl}${trackUrl}`;
+            console.log(`[AudioPriority] ⚡ Téléchargement prioritaire du morceau à jouer : "${track.name}" (${fullUrl})`);
+            const resp = await fetch(fullUrl);
+            if (!resp.ok) throw new Error(`HTTP ${resp.status} - ${resp.statusText}`);
+            const blob = await resp.blob();
+            file = new File([blob], track.name, { type: blob.type || 'audio/mpeg' });
+            if (track.id) _localAudioFileCache.set(track.id, file);
+            if (track.name) _localAudioFileCache.set(track.name, file);
+            track.file = file;
+            if (_currentPlayingTrack && (_currentPlayingTrack.id === track.id || _currentPlayingTrack.name === track.name)) {
+                _currentPlayingTrack.file = file;
+            }
+        }
+    }
+
+    if (!file) {
+        throw new Error(`Fichier introuvable pour "${track.name}"`);
+    }
+
+    // 5. Initialisation du moteur audio si nécessaire
+    if (!audioReady) {
+        await initAudio(file, false);
+    }
+    if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+        await audioEngine.ctx.resume().catch(() => {});
+    }
+
+    // 6. Décodage immédiat en mémoire
+    const buf = await getOrDecodeAudioBuffer(file, track.id);
+    return buf;
+}
+
 function getUpcomingPlaybackQueue() {
     return [..._manualQueue, ..._contextQueue].filter(Boolean);
 }
@@ -334,6 +416,17 @@ async function _runPrefetchLoop() {
 
     try {
         while (true) {
+            // PRIORITÉ ABSOLUE : si le morceau actuel est en train de charger, suspendre tout pré-chargement
+            const curNotReady = _currentPlayingTrack && !(_decodedAudioBuffers.has(_currentPlayingTrack.id) || _decodedAudioBuffers.has(_currentPlayingTrack.name));
+            if (curNotReady || _isSwitchingTrack || _isNewTrackStarting) {
+                await new Promise(resolve => {
+                    _prefetchWakeupResolver = resolve;
+                    setTimeout(resolve, 350);
+                });
+                _prefetchWakeupResolver = null;
+                continue;
+            }
+
             const queue = getUpcomingPlaybackQueue();
 
             // Trouver le tout premier morceau dans l'ordre strict de lecture qui n'est pas encore décodé en mémoire
@@ -468,6 +561,65 @@ const mp = new MultiplayerClient(`${mpProto}://${mpHost}:${mpPort}`);
 let playerAvatars = null;
 let _mpPosAccum = 0;
 const MP_POS_INTERVAL = 1 / 20; // 20 fps position sync
+let _mpPlaybackSyncAccum = 0;
+const MP_PLAYBACK_SYNC_INTERVAL = 1.0; // 1 fps master playback sync heartbeat
+
+let _pendingPlaybackSync = null;
+
+function applyPendingPlaybackSync() {
+    if (!_pendingPlaybackSync || !audioReady || !audioEngine.buffer) return;
+    const { startTime, startOffset, trackName } = _pendingPlaybackSync;
+    _pendingPlaybackSync = null;
+
+    const now = Date.now();
+    const delayMs = startTime - now;
+
+    const isNewTrack = _isNewTrackStarting || _isSwitchingTrack;
+    _isSwitchingTrack = false;
+    _isNewTrackStarting = false;
+    audioEngine.isLocked = false;
+    controls.setPlaybackLocked(false);
+
+    if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+        audioEngine.ctx.resume().catch(() => {});
+    }
+
+    // Si startOffset non défini ou inférieur ou égal à 0 : démarrage d'un nouveau morceau à 0:00
+    if (!startOffset || startOffset <= 0) {
+        audioEngine.seek(0);
+        if (delayMs > 0) {
+            setTimeout(() => {
+                if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+                    audioEngine.ctx.resume().catch(() => {});
+                }
+                audioEngine.seek(0);
+                audioEngine.play(inputStage ? inputStage.input : crossover?.input);
+                controls.setPlayState(true);
+                const np = document.getElementById('now-playing');
+                if (np) np.textContent = trackName || _currentAudioFileName;
+            }, delayMs);
+        } else {
+            if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+                audioEngine.ctx.resume().catch(() => {});
+            }
+            audioEngine.seek(0);
+            audioEngine.play(inputStage ? inputStage.input : crossover?.input);
+            controls.setPlayState(true);
+            const np = document.getElementById('now-playing');
+            if (np) np.textContent = trackName || _currentAudioFileName;
+        }
+        return;
+    }
+
+    // Sinon (morceau déjà en cours chez les autres joueurs qu'on rejoint) : calage direct sur le timer réel
+    const elapsed = Math.max(0, -delayMs / 1000);
+    const targetTime = startOffset + elapsed;
+    audioEngine.seek(targetTime);
+    audioEngine.play(inputStage ? inputStage.input : crossover?.input);
+    controls.setPlayState(true);
+    const np = document.getElementById('now-playing');
+    if (np) np.textContent = trackName || _currentAudioFileName;
+}
 
 // Try to connect to the multiplayer server. Degrades gracefully if server is offline.
 let _mpReady = false;
@@ -489,8 +641,18 @@ try {
         controls.applyFullDspState(mp.dspState);
     }
 
+    // Synchronisation multijoueur de l'ambiance, de l'éclairage 3D, des lasers et des menus
+    const lightingSync = new LightingSync({
+        mp,
+        ambiancePanel,
+        laserManager,
+        staticGI,
+        scene,
+    });
+    lightingSync.init();
+
     // Show initial player count
-    controls.updateMpStatus(mp.players.length);
+    controls.setPlayerCount(mp.players.length);
 
     // Listen for DSP updates from server (applies to all peers)
     mp.onDspUpdate((bus, param, value) => {
@@ -499,7 +661,7 @@ try {
 
     // Listen for player position updates
     mp.onPlayersUpdate((players) => {
-        controls.updateMpStatus(players.length);
+        controls.setPlayerCount(players.length);
         if (voiceReceiver) {
             const currentIds = new Set(players.map(p => p.id));
             for (const peerId of voiceReceiver.peers.keys()) {
@@ -519,53 +681,6 @@ try {
     });
 
     _isNewTrackStarting = false;
-    let _pendingPlaybackSync = null;
-
-    function applyPendingPlaybackSync() {
-        if (!_pendingPlaybackSync || !audioReady || !audioEngine.buffer) return;
-        const { startTime, startOffset, trackName } = _pendingPlaybackSync;
-        _pendingPlaybackSync = null;
-
-        const now = Date.now();
-        const delayMs = startTime - now;
-
-        const isNewTrack = _isNewTrackStarting || _isSwitchingTrack;
-        _isSwitchingTrack = false;
-        _isNewTrackStarting = false;
-        audioEngine.isLocked = false;
-        controls.setPlaybackLocked(false);
-
-        // Si nouveau morceau ou startOffset non défini/inférieur ou égal à 0 : TOUJOURS démarrer à 0:00 !
-        if (isNewTrack || !startOffset || startOffset <= 0) {
-            audioEngine.seek(0);
-            if (delayMs > 0) {
-                setTimeout(() => {
-                    audioEngine.seek(0);
-                    audioEngine.play(inputStage ? inputStage.input : crossover.input);
-                    controls.setPlayState(true);
-                    const np = document.getElementById('now-playing');
-                    if (np) np.textContent = trackName || _currentAudioFileName;
-                }, delayMs);
-            } else {
-                audioEngine.seek(0);
-                audioEngine.play(inputStage ? inputStage.input : crossover.input);
-                controls.setPlayState(true);
-                const np = document.getElementById('now-playing');
-                if (np) np.textContent = trackName || _currentAudioFileName;
-            }
-            return;
-        }
-
-        // Sinon (morceau déjà en cours chez les autres joueurs qu'on rejoint) : calage direct sur le timer réel
-        const elapsed = Math.max(0, -delayMs / 1000);
-        const targetTime = startOffset + elapsed;
-        audioEngine.seek(targetTime);
-        audioEngine.play(inputStage ? inputStage.input : crossover.input);
-        controls.setPlayState(true);
-        const np = document.getElementById('now-playing');
-        if (np) np.textContent = trackName || _currentAudioFileName;
-    }
-
     _localQueueVersion = 0;
 
     // Listen for full two-tier queue state updates from server (shared between all players)
@@ -699,6 +814,9 @@ try {
     mp.onAudioTrackChanged(async (name, url, uploadedBy, trackId) => {
         console.log(`[MP] Track changed: "${name}" (${url}, id: ${trackId || 'none'})`);
 
+        // Priorité absolue : annuler immédiatement tout pré-chargement en arrière-plan
+        abortBackgroundPrefetch();
+
         if (controls.state.sine.active) {
             controls.setSineActive(false);
             if (sineGenerator) sineGenerator.stop();
@@ -717,53 +835,44 @@ try {
         const np = document.getElementById('now-playing');
         if (np) np.textContent = `⏳ Chargement : ${name}...`;
 
-        if (!_currentPlayingTrack || _currentPlayingTrack.name !== name) {
-            _currentPlayingTrack = {
-                id: trackId || ('t_' + Date.now()),
-                name: name,
-                url: url,
-                uploadedBy: uploadedBy,
-                file: (trackId && _localAudioFileCache.get(trackId)) || _localAudioFileCache.get(name) || null,
-                loading: true
-            };
-        } else {
-            _currentPlayingTrack.loading = true;
-        }
+        _currentPlayingTrack = {
+            id: trackId || ('t_' + Date.now()),
+            name: name,
+            url: url,
+            uploadedBy: uploadedBy,
+            file: (trackId && _localAudioFileCache.get(trackId)) || _localAudioFileCache.get(name) || null,
+            loading: true
+        };
         syncQueueToUI();
 
         try {
-            let file = (trackId && _localAudioFileCache.get(trackId)) || _localAudioFileCache.get(name);
-            if (!file && url) {
-                const fullUrl = url.startsWith('http') ? url : `${mp.httpUrl}${url}`;
-                const resp = await fetch(fullUrl);
-                const blob = await resp.blob();
-                file = new File([blob], name, { type: blob.type || 'audio/mpeg' });
-                if (trackId) _localAudioFileCache.set(trackId, file);
-                _localAudioFileCache.set(name, file);
-                if (_currentPlayingTrack) _currentPlayingTrack.file = file;
-            }
-
-            if (!audioReady && file) {
-                await initAudio(file, false);
-            }
-
-            const buf = await getOrDecodeAudioBuffer(file, trackId);
+            const buf = await ensureTrackLoadedAndDecoded(_currentPlayingTrack);
             if (buf) {
                 setBufferOnEngine(buf);
                 if (inputStage) inputStage.analyzeBuffer(buf);
                 controls.setHasTrack(true);
-            }
-            if (_currentPlayingTrack) _currentPlayingTrack.loading = false;
-            syncQueueToUI();
-            if (file) saveLastAudio(file);
+                if (_currentPlayingTrack) _currentPlayingTrack.loading = false;
+                syncQueueToUI();
+                if (_currentPlayingTrack?.file) saveLastAudio(_currentPlayingTrack.file);
 
-            // Si le signal de lecture est déjà arrivé pendant qu'on préparait, synchronisation immédiate
-            if (_pendingPlaybackSync) {
-                applyPendingPlaybackSync();
+                // Si le signal de lecture est déjà arrivé pendant qu'on préparait, synchronisation immédiate
+                if (_pendingPlaybackSync) {
+                    applyPendingPlaybackSync();
+                } else {
+                    if (np) np.textContent = `⏳ Prêt, synchronisation...`;
+                    controls.setPlaybackLocked(true, '⏳ Synchronisation...');
+                    mp.sendTrackBufferReady();
+                }
+                startBackgroundPrefetch();
             } else {
-                if (np) np.textContent = `⏳ Prêt, synchronisation...`;
-                controls.setPlaybackLocked(true, '⏳ Synchronisation...');
-                mp.sendTrackBufferReady();
+                console.warn('[MP] Audio buffer decoding failed or returned null for:', name);
+                _isSwitchingTrack = false;
+                _isNewTrackStarting = false;
+                audioEngine.isLocked = false;
+                controls.setPlaybackLocked(false);
+                if (_currentPlayingTrack) _currentPlayingTrack.loading = false;
+                syncQueueToUI();
+                return;
             }
         } catch (err) {
             console.error('[MP] Failed to prepare audio track:', err);
@@ -793,13 +902,15 @@ try {
 
     // Playback sync — drift correction between peers
     mp.onPlaybackSync((currentTime, isPlaying, serverTimestamp) => {
-        if (!audioReady || controls.state.sine.active || _isSwitchingTrack) return;
+        // Le master est l'horloge de référence et ne doit jamais être synchronisé par autrui
+        if (mp.role === 'master') return;
+        if (!audioReady || controls.state.sine.active || _isSwitchingTrack || _isNewTrackStarting) return;
         if (!audioEngine.buffer) return;
         const lagMs = serverTimestamp ? (Date.now() - serverTimestamp) : 0;
         const compensated = currentTime + (lagMs / 1000);
         if (isPlaying) {
-            // Only seek if drift exceeds 0.5s to prevent stuttering/audio cutting
-            if (Math.abs(audioEngine.getCurrentTime() - compensated) > 0.5) {
+            // Only seek if drift exceeds 0.75s to prevent stuttering/audio cutting
+            if (Math.abs(audioEngine.getCurrentTime() - compensated) > 0.75) {
                 audioEngine.seek(compensated);
             }
             if (!audioEngine.isPlaying) {
@@ -1267,6 +1378,32 @@ if (!_mpReady) {
             console.warn('Failed to load saved audio from IndexedDB:', err);
         }
     }
+} else {
+    // GUEST : Arrivée dans un lobby existant qui n'est pas le sien !
+    // Purger immédiatement le cache persistant IndexedDB et la mémoire locale pour éviter tout parasitage
+    console.log('[MP] Guest joined lobby. Purging local audio cache and resetting state...');
+    try {
+        await clearLastAudio();
+    } catch (err) {
+        console.warn('Failed to clear old audio from IndexedDB:', err);
+    }
+    _localAudioFileCache.clear();
+    _decodedAudioBuffers.clear();
+    _manualQueue = [];
+    _contextQueue = [];
+    _currentPlayingTrack = null;
+    _currentAudioFileName = '';
+    _contextPlaylistId = null;
+    _contextPlaylistName = null;
+    _contextPlaylistTracks = [];
+    if (audioEngine) {
+        audioEngine.stop();
+        audioEngine.seek(0);
+        setBufferOnEngine(null);
+    }
+    controls.setPlayState(false);
+    controls.setHasTrack(false);
+    controls.setTrackName('');
 }
 
 // Si le salon multijoueur est actif : synchronisation stricte avec l'état de la salle
@@ -1345,7 +1482,7 @@ if (_mpReady) {
                 if (resp.ok) {
                     const blob = await resp.blob();
                     savedAudioFile = new File([blob], activeItem.name || 'track.mp3', { type: blob.type || 'audio/mpeg' });
-                    saveLastAudio(savedAudioFile);
+                    if (isFirstInNewRoom) saveLastAudio(savedAudioFile);
                     if (activeItem.id) _localAudioFileCache.set(activeItem.id, savedAudioFile);
                     _localAudioFileCache.set(savedAudioFile.name, savedAudioFile);
                     activeItem.file = savedAudioFile;
@@ -1362,7 +1499,7 @@ if (_mpReady) {
             if (resp.ok) {
                 const blob = await resp.blob();
                 savedAudioFile = new File([blob], mp.trackName || 'track.mp3', { type: blob.type || 'audio/mpeg' });
-                saveLastAudio(savedAudioFile);
+                if (isFirstInNewRoom) saveLastAudio(savedAudioFile);
                 if (mp.trackId) _localAudioFileCache.set(mp.trackId, savedAudioFile);
                 _localAudioFileCache.set(savedAudioFile.name, savedAudioFile);
             }
@@ -1411,10 +1548,10 @@ try {
 
 // Synchronisation de l'état audio initial reçu du serveur multijoueur
 if (_mpReady) {
-    if (mp.trackName && _currentPlayingTrack && mp.playback?.isPlaying) {
-        _currentAudioFileName = mp.trackName;
+    if ((mp.trackName || _currentAudioFileName) && _currentPlayingTrack) {
+        _currentAudioFileName = mp.trackName || _currentPlayingTrack.name;
         const np = document.getElementById('now-playing');
-        if (np) np.textContent = mp.trackName;
+        if (np) np.textContent = _currentAudioFileName;
     }
 
     if (mp.sine && mp.sine.active && sineGenerator) {
@@ -1460,12 +1597,12 @@ const unlockAudioContext = () => {
                 audioEngine.play(inputStage ? inputStage.input : crossover.input);
                 controls.setPlayState(audioEngine.isPlaying);
             }
-        });
+        }).catch(() => {});
     }
 };
-window.addEventListener('keydown', unlockAudioContext);
-window.addEventListener('pointerdown', unlockAudioContext);
-window.addEventListener('click', unlockAudioContext);
+window.addEventListener('keydown', unlockAudioContext, { capture: true });
+window.addEventListener('pointerdown', unlockAudioContext, { capture: true });
+window.addEventListener('click', unlockAudioContext, { capture: true });
 
 // Synchronisation du mode caméra avec le HUD
 controls.onCameraToggle(() => {
@@ -1611,40 +1748,15 @@ async function playTrack(track, autoPlay = true) {
 
     syncQueueToUI();
 
+    abortBackgroundPrefetch();
+
     try {
-        let fromServer = false;
-        let file = _currentPlayingTrack.file || (track.id && _localAudioFileCache.get(track.id)) || _localAudioFileCache.get(track.name);
-        if (!file) {
-            let trackUrl = track.url;
-            if (!trackUrl && track.id) {
-                trackUrl = `/audio/track/${track.id}`;
-            }
-            if (trackUrl) {
-                const baseUrl = (mp && mp.httpUrl) ? mp.httpUrl : '';
-                const fullUrl = trackUrl.startsWith('http') ? trackUrl : `${baseUrl}${trackUrl}`;
-                const resp = await fetch(fullUrl);
-                if (resp.ok) {
-                    const blob = await resp.blob();
-                    file = new File([blob], track.name, { type: blob.type || 'audio/mpeg' });
-                    if (track.id) _localAudioFileCache.set(track.id, file);
-                    _localAudioFileCache.set(track.name, file);
-                    _currentPlayingTrack.file = file;
-                    _currentPlayingTrack.url = trackUrl;
-                    fromServer = true;
-                }
-            }
-        }
-
-        if (!audioReady && file) {
-            await initAudio(file, false);
-        }
-
-        const buf = await getOrDecodeAudioBuffer(file, track.id);
+        const buf = await ensureTrackLoadedAndDecoded(track);
         if (buf) {
             setBufferOnEngine(buf);
             if (inputStage) inputStage.analyzeBuffer(buf);
             controls.setHasTrack(true);
-            if (file) saveLastAudio(file);
+            if (_currentPlayingTrack?.file) saveLastAudio(_currentPlayingTrack.file);
             _currentPlayingTrack.loading = false;
         }
 
@@ -1856,6 +1968,15 @@ controls.onShuffleToggle((isShuffle) => {
 
 // 2. Clic sur un morceau dans la vue Playlist -> lecture immédiate + génération de "À suivre"
 controls.onPlaylistTrackPlay(async (playlistId, trackIndex, track) => {
+    if (!audioReady) {
+        await initAudio(null, false);
+    }
+    if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+        await audioEngine.ctx.resume().catch(() => {});
+    }
+
+    abortBackgroundPrefetch();
+
     let pl = null;
     if (mp && mp.playlists) {
         pl = mp.playlists.find(p => p.id === playlistId);
@@ -1912,10 +2033,30 @@ controls.onPlaylistTrackPlay(async (playlistId, trackIndex, track) => {
         };
         syncQueueToUI();
         mp.sendPlaylistLoad(playlistId, trackIndex, _isShuffle);
+        ensureTrackLoadedAndDecoded(track).then(buf => {
+            if (buf) {
+                setBufferOnEngine(buf);
+                if (inputStage) inputStage.analyzeBuffer(buf);
+                controls.setHasTrack(true);
+                if (_currentPlayingTrack) _currentPlayingTrack.loading = false;
+                syncQueueToUI();
+                if (_pendingPlaybackSync) {
+                    applyPendingPlaybackSync();
+                } else {
+                    const np = document.getElementById('now-playing');
+                    if (np) np.textContent = `⏳ Prêt, synchronisation...`;
+                    controls.setPlaybackLocked(true, '⏳ Synchronisation...');
+                    mp.sendTrackBufferReady();
+                }
+                startBackgroundPrefetch();
+            }
+        }).catch(err => {
+            console.warn('[PlaylistTrackPlay] Erreur chargement prioritaire :', err);
+        });
     } else {
         await playTrack(track, true);
+        startBackgroundPrefetch();
     }
-    startBackgroundPrefetch();
 });
 
 // 3. Bouton ➕ sur un morceau de playlist -> ajout UNIQUEMENT de ce morceau à la file manuelle prioritaire
@@ -2102,6 +2243,15 @@ controls.onNext(async () => {
 
 // 8. Gestion des playlists sur le serveur
 controls.onPlaylistLoad(async (playlistId) => {
+    if (!audioReady) {
+        await initAudio(null, false);
+    }
+    if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
+        await audioEngine.ctx.resume().catch(() => {});
+    }
+
+    abortBackgroundPrefetch();
+
     let pl = null;
     if (mp && mp.playlists) {
         pl = mp.playlists.find(p => p.id === playlistId);
@@ -2113,16 +2263,10 @@ controls.onPlaylistLoad(async (playlistId) => {
         pl = controls.getPlaylist(playlistId);
     }
 
-    // Déterminer l'index de départ : si shuffle activé et playlist > 1 morceau, commencer par un morceau aléatoire
     const trackCount = (pl && Array.isArray(pl.tracks)) ? pl.tracks.length : (pl && typeof pl.trackCount === 'number' ? pl.trackCount : 0);
     const startIndex = (_isShuffle && trackCount > 1) ? Math.floor(Math.random() * trackCount) : 0;
 
-    if (_mpReady && mp && mp.roomId) {
-        mp.sendPlaylistLoad(playlistId, startIndex, _isShuffle);
-        return;
-    }
-
-    // Solo mode: couper immédiatement l'ancien audio, réinitialiser à 0:00 et verrouiller
+    // Couper immédiatement l'ancien audio, réinitialiser à 0:00 et verrouiller
     _isSwitchingTrack = true;
     _isNewTrackStarting = true;
     audioEngine.stop();
@@ -2130,19 +2274,64 @@ controls.onPlaylistLoad(async (playlistId) => {
     controls.setPlayState(false);
     audioEngine.isLocked = true;
     controls.setPlaybackLocked(true, '⏳ Chargement...');
+    if (_mpReady && mp) mp.sendAction('seek', { currentTime: 0 });
 
     if (pl && Array.isArray(pl.tracks) && pl.tracks.length > 0) {
         _contextPlaylistId = pl.id;
         _contextPlaylistName = pl.name || 'Playlist';
         _contextPlaylistTracks = [...pl.tracks];
         const chosenTrack = pl.tracks[startIndex];
+
         if (_isShuffle) {
             const others = pl.tracks.filter((_, idx) => idx !== startIndex).map(formatPlaylistTrackForQueue);
             _contextQueue = shuffleArray(others);
         } else {
             _contextQueue = pl.tracks.slice(startIndex + 1).map(formatPlaylistTrackForQueue);
         }
-        await playTrack(chosenTrack, true);
+
+        _currentPlayingTrack = {
+            id: chosenTrack.id,
+            name: chosenTrack.name,
+            url: chosenTrack.url || (chosenTrack.id ? `/audio/track/${chosenTrack.id}` : null),
+            uploadedBy: chosenTrack.uploadedBy,
+            file: _localAudioFileCache.get(chosenTrack.id) || _localAudioFileCache.get(chosenTrack.name) || null,
+            loading: true
+        };
+        _currentAudioFileName = chosenTrack.name;
+        const np = document.getElementById('now-playing');
+        if (np) np.textContent = `⏳ Chargement : ${chosenTrack.name}...`;
+
+        syncQueueToUI();
+
+        if (_mpReady && mp && mp.roomId) {
+            mp.sendPlaylistLoad(playlistId, startIndex, _isShuffle);
+            ensureTrackLoadedAndDecoded(chosenTrack).then(buf => {
+                if (buf) {
+                    setBufferOnEngine(buf);
+                    if (inputStage) inputStage.analyzeBuffer(buf);
+                    controls.setHasTrack(true);
+                    if (_currentPlayingTrack) _currentPlayingTrack.loading = false;
+                    syncQueueToUI();
+                    if (_pendingPlaybackSync) {
+                        applyPendingPlaybackSync();
+                    } else {
+                        if (np) np.textContent = `⏳ Prêt, synchronisation...`;
+                        controls.setPlaybackLocked(true, '⏳ Synchronisation...');
+                        mp.sendTrackBufferReady();
+                    }
+                    startBackgroundPrefetch();
+                }
+            }).catch(err => {
+                console.warn('[PlaylistLoad] Erreur chargement prioritaire :', err);
+            });
+        } else {
+            await playTrack(chosenTrack, true);
+            startBackgroundPrefetch();
+        }
+    } else {
+        if (_mpReady && mp && mp.roomId) {
+            mp.sendPlaylistLoad(playlistId, startIndex, _isShuffle);
+        }
     }
 });
 
@@ -2599,6 +2788,7 @@ window.addEventListener('resize', () => {
     camera.aspect = window.innerWidth / window.innerHeight;
     camera.updateProjectionMatrix();
     renderer.setSize(window.innerWidth, window.innerHeight);
+    if (laserManager) laserManager.resize(window.innerWidth, window.innerHeight);
 });
 
 // ─── Render loop ─────────────────────────────────────────────────
@@ -2644,6 +2834,62 @@ if (hitboxBtn) {
 if (listener) {
     listener.onToggleHitbox = toggleHitboxes;
 }
+
+// ─── Mode Cinéma (F1) : Masquage total des interfaces et éléments de debug ───
+let _isCinematicMode = false;
+const _savedCinematicState = {
+    cones: false,
+    hitboxes: false,
+    soundMarkers: true,
+    ambianceOpen: false,
+};
+
+function toggleCinematicMode() {
+    _isCinematicMode = !_isCinematicMode;
+
+    if (_isCinematicMode) {
+        // Sauvegarder les états actuels avant masquage
+        _savedCinematicState.cones = Boolean(coneContainer && coneContainer.visible);
+        _savedCinematicState.hitboxes = Boolean(hitboxVisualizer && hitboxVisualizer.isVisible);
+        _savedCinematicState.soundMarkers = soundMarkersGroup ? soundMarkersGroup.visible : true;
+        _savedCinematicState.ambianceOpen = Boolean(ambiancePanel && ambiancePanel.isOpen);
+
+        // 1. Masquer absolument toutes les interfaces HTML
+        document.body.classList.add('cinematic-mode');
+
+        // 2. Fermer / masquer les menus et fenêtres ouvertes
+        if (listener && listener.emoteMenu) listener.emoteMenu.close();
+        if (ambiancePanel && ambiancePanel.isOpen) ambiancePanel.toggle(false);
+
+        // 3. Masquer tous les éléments 3D de debug / repères
+        if (soundMarkersGroup) soundMarkersGroup.visible = false;
+        if (coneContainer) coneContainer.visible = false;
+        if (hitboxVisualizer && hitboxVisualizer.isVisible) hitboxVisualizer.toggle(false);
+    } else {
+        // 1. Restaurer les interfaces HTML
+        document.body.classList.remove('cinematic-mode');
+
+        // 2. Restaurer les éléments 3D de debug selon leur état précédent
+        if (soundMarkersGroup) soundMarkersGroup.visible = _savedCinematicState.soundMarkers;
+        if (coneContainer) coneContainer.visible = _savedCinematicState.cones;
+        if (hitboxVisualizer && _savedCinematicState.hitboxes && !hitboxVisualizer.isVisible) {
+            hitboxVisualizer.toggle(true);
+        }
+        if (_savedCinematicState.ambianceOpen && ambiancePanel && !ambiancePanel.isOpen) {
+            ambiancePanel.toggle(true);
+        }
+    }
+}
+
+// Intercepter la touche F1 en phase de capture (pour court-circuiter l'Aide de Google Chrome)
+window.addEventListener('keydown', (e) => {
+    if (e.code === 'F1' || e.key === 'F1') {
+        e.preventDefault();
+        e.stopPropagation();
+        toggleCinematicMode();
+    }
+}, true);
+
 
 // FPS & render performance tracking
 let _debugAccum = 0;
@@ -2809,11 +3055,16 @@ function renderFrame() {
             mp.sendPosition(pos.x, pos.y, pos.z, heading, anim, onGround, listener.isFlying);
 
             // Broadcast playback position so all players stay in sync
-            if (audioReady && !_isSwitchingTrack && !_isNewTrackStarting && !audioEngine.isLocked && audioEngine.isPlaying) {
-                mp.sendPlaybackSync(
-                    audioEngine.getCurrentTime(),
-                    audioEngine.isPlaying
-                );
+            // SEUL le master diffuse la position de lecture, throttlé à 1 Hz pour éviter tout recul ou désynchronisation
+            if (mp.role === 'master' && audioReady && !_isSwitchingTrack && !_isNewTrackStarting && !audioEngine.isLocked && audioEngine.isPlaying) {
+                _mpPlaybackSyncAccum += MP_POS_INTERVAL;
+                if (_mpPlaybackSyncAccum >= MP_PLAYBACK_SYNC_INTERVAL) {
+                    _mpPlaybackSyncAccum = 0;
+                    mp.sendPlaybackSync(
+                        audioEngine.getCurrentTime(),
+                        audioEngine.isPlaying
+                    );
+                }
             }
         }
 

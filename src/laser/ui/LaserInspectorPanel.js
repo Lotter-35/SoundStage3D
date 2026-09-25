@@ -13,6 +13,7 @@
 
 import GUI from 'lil-gui';
 import { makeDraggable } from '../../ui/draggable.js';
+import { LASER_PARAMS_SCHEMA } from '../config/laserParams.js';
 
 export class LaserInspectorPanel {
     /**
@@ -88,6 +89,83 @@ export class LaserInspectorPanel {
         }
     }
 
+    onSync(cb) {
+        if (!this._syncCallbacks) this._syncCallbacks = [];
+        this._syncCallbacks.push(cb);
+    }
+
+    _emitSync(payload) {
+        if (this._isRemoteUpdate) return;
+        if (this._syncCallbacks) {
+            for (const cb of this._syncCallbacks) {
+                try { cb(payload); } catch (e) { console.error('[LaserInspectorSync] emit error:', e); }
+            }
+        }
+    }
+
+    /**
+     * Injecte le bouton de reset individuel (↺) à droite de chaque option lil-gui du laser
+     */
+    _setupController(ctrl, key) {
+        if (!ctrl || !ctrl.domElement) return ctrl;
+
+        const origOnChange = ctrl._onChange;
+        ctrl._onChange = (v) => {
+            if (origOnChange) origOnChange.call(ctrl, v);
+            if (this._currentLaser) {
+                this._emitSync({
+                    category: 'laser_param',
+                    id: this._currentLaserId,
+                    param: key,
+                    value: v,
+                });
+            }
+        };
+
+        const resetBtn = document.createElement('button');
+        resetBtn.type = 'button';
+        resetBtn.className = 'lil-reset-btn';
+        resetBtn.title = 'Réinitialiser ce paramètre (↺)';
+        resetBtn.innerHTML = '↺';
+
+        resetBtn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const schema = LASER_PARAMS_SCHEMA[key];
+            if (!schema) return;
+            const defVal = schema.value;
+            if (this._currentLaser) {
+                this._currentLaser.setParam(key, defVal);
+            }
+            ctrl.setValue(defVal);
+        });
+
+        const widgetEl = ctrl.domElement.querySelector('.widget');
+        if (widgetEl) {
+            widgetEl.appendChild(resetBtn);
+        } else {
+            ctrl.domElement.appendChild(resetBtn);
+        }
+        return ctrl;
+    }
+
+    /**
+     * Réinitialise tous les paramètres du laser sélectionné à leurs valeurs par défaut
+     */
+    resetAllLaserParams() {
+        if (!this._currentLaser) return;
+        for (const [key, schema] of Object.entries(LASER_PARAMS_SCHEMA)) {
+            this._currentLaser.setParam(key, schema.value);
+            if (this.controllers[key] && typeof this.controllers[key].setValue === 'function') {
+                try { this.controllers[key].setValue(schema.value); } catch (_) {}
+            }
+        }
+        this._emitSync({
+            category: 'laser_reset_all',
+            id: this._currentLaserId,
+        });
+        this.syncFromLaser();
+    }
+
     _buildGui() {
         if (this.gui) {
             this.gui.destroy();
@@ -106,9 +184,20 @@ export class LaserInspectorPanel {
             width: 300,
         });
 
-        // Bouton de fermeture (✕) dans le titre du lil-gui
+        // Boutons dans le titre du lil-gui : Reset Tout (↺) et Fermer (✕)
         const titleEl = this.gui.domElement.querySelector('.title');
         if (titleEl) {
+            const resetAllBtn = document.createElement('button');
+            resetAllBtn.className = 'lil-panel-reset-btn';
+            resetAllBtn.title = 'Réinitialiser tous les paramètres du laser (↺)';
+            resetAllBtn.innerHTML = '↺ Tout reset';
+            resetAllBtn.style.marginRight = '6px';
+            resetAllBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                this.resetAllLaserParams();
+            });
+            titleEl.appendChild(resetAllBtn);
+
             const closeBtn = document.createElement('button');
             closeBtn.className = 'lil-panel-reset-btn';
             closeBtn.title = 'Fermer l\'inspecteur laser (Échap)';
@@ -134,178 +223,191 @@ export class LaserInspectorPanel {
         const fStyle = this.gui.addFolder('Style laser');
         fStyle.open();
 
-        this.controllers.count = fStyle.add(p, 'count', 1, 32, 1)
-            .name('Nombre Trait')
-            .onChange(v => laser.setParam('count', v));
+        this.controllers.count = this._setupController(
+            fStyle.add(p, 'count', 1, 32, 1).name('Nombre Trait').onChange(v => laser.setParam('count', v)),
+            'count'
+        );
 
-        this.controllers.beamWidth = fStyle.add(p, 'beamWidth', 0, 3, 0.05)
-            .name('Taille Trait')
-            .onChange(v => laser.setParam('beamWidth', v));
+        this.controllers.beamWidth = this._setupController(
+            fStyle.add(p, 'beamWidth', 0, 5, 0.05).name('Taille Trait').onChange(v => laser.setParam('beamWidth', v)),
+            'beamWidth'
+        );
 
-        this.controllers.spread = fStyle.add(p, 'spread', 0, 110, 0.1)
-            .name('Écart laser')
-            .onChange(v => laser.setParam('spread', v));
+        this.controllers.spread = this._setupController(
+            fStyle.add(p, 'spread', 0, 110, 0.1).name('Écart laser').onChange(v => laser.setParam('spread', v)),
+            'spread'
+        );
 
-        this.controllers.color = fStyle.addColor(p, 'color')
-            .name('Couleur')
-            .onChange(v => laser.setParam('color', v));
+        this.controllers.color = this._setupController(
+            fStyle.addColor(p, 'color').name('Couleur').onChange(v => laser.setParam('color', v)),
+            'color'
+        );
 
-        this.controllers.laserPan = fStyle.add(p, 'laserPan')
-            .name('Laser PAN')
-            .onChange(v => laser.setParam('laserPan', v));
+        this.controllers.laserPan = this._setupController(
+            fStyle.add(p, 'laserPan').name('Laser PAN').onChange(v => laser.setParam('laserPan', v)),
+            'laserPan'
+        );
 
-        this.controllers.masterPower = fStyle.add(p, 'masterPower', 0, 1.5, 0.05)
-            .name('Puissance Générale')
-            .onChange(v => laser.setParam('masterPower', v));
+        this.controllers.masterPower = this._setupController(
+            fStyle.add(p, 'masterPower', 0, 1.5, 0.05).name('Puissance Générale').onChange(v => laser.setParam('masterPower', v)),
+            'masterPower'
+        );
 
-        this.controllers.beamPower = fStyle.add(p, 'beamPower', 0, 1.5, 0.05)
-            .name('Puissance Traits')
-            .onChange(v => laser.setParam('beamPower', v));
+        this.controllers.beamPower = this._setupController(
+            fStyle.add(p, 'beamPower', 0, 1.5, 0.05).name('Puissance Traits').onChange(v => laser.setParam('beamPower', v)),
+            'beamPower'
+        );
 
-        this.controllers.panPower = fStyle.add(p, 'panPower', 0, 1.5, 0.05)
-            .name('Puissance PAN')
-            .onChange(v => laser.setParam('panPower', v));
+        this.controllers.panPower = this._setupController(
+            fStyle.add(p, 'panPower', 0, 1.5, 0.05).name('Puissance PAN').onChange(v => laser.setParam('panPower', v)),
+            'panPower'
+        );
 
-        this.controllers.strobe = fStyle.add(p, 'strobe')
-            .name('Clignotement')
-            .onChange(v => laser.setParam('strobe', v));
+        this.controllers.glowScattering = this._setupController(
+            fStyle.add(p, 'glowScattering', 0, 3, 0.05).name('Diffusion Faisceau').onChange(v => laser.setParam('glowScattering', v)),
+            'glowScattering'
+        );
 
-        this.controllers.strobeSpeed = fStyle.add(p, 'strobeSpeed', 0.5, 30, 0.5)
-            .name('Vitesse Cligno (Hz)')
-            .onChange(v => laser.setParam('strobeSpeed', v));
+        this.controllers.strobe = this._setupController(
+            fStyle.add(p, 'strobe').name('Clignotement').onChange(v => laser.setParam('strobe', v)),
+            'strobe'
+        );
 
-        this.controllers.patternShape = fStyle.add(p, 'patternShape', ['Horizontal', 'Sinusoïde', 'Parabolique', 'Zigzag', 'Vague Double'])
-            .name('Forme Tracé')
-            .onChange(v => laser.setParam('patternShape', v));
+        this.controllers.strobeSpeed = this._setupController(
+            fStyle.add(p, 'strobeSpeed', 0.5, 30, 0.5).name('Vitesse Cligno (Hz)').onChange(v => laser.setParam('strobeSpeed', v)),
+            'strobeSpeed'
+        );
 
-        this.controllers.curveAmplitude = fStyle.add(p, 'curveAmplitude', 0, 1.5, 0.01)
-            .name('Amplitude Courbe')
-            .onChange(v => laser.setParam('curveAmplitude', v));
+        this.controllers.patternShape = this._setupController(
+            fStyle.add(p, 'patternShape', ['Horizontal', 'Sinusoïde', 'Parabolique', 'Zigzag', 'Vague Double']).name('Forme Tracé').onChange(v => laser.setParam('patternShape', v)),
+            'patternShape'
+        );
 
-        this.controllers.curveFrequency = fStyle.add(p, 'curveFrequency', 0.25, 6, 0.25)
-            .name('Fréquence Courbe')
-            .onChange(v => laser.setParam('curveFrequency', v));
+        this.controllers.curveAmplitude = this._setupController(
+            fStyle.add(p, 'curveAmplitude', 0, 1.5, 0.01).name('Amplitude Courbe').onChange(v => laser.setParam('curveAmplitude', v)),
+            'curveAmplitude'
+        );
 
-        // Option demandée par l'utilisateur : Pause sur le déplacement / balayage
-        this.controllers.pauseMotion = fStyle.add(p, 'pauseMotion')
-            .name('⏸️ Pause Balayage')
-            .onChange(v => laser.setParam('pauseMotion', v));
+        this.controllers.curveFrequency = this._setupController(
+            fStyle.add(p, 'curveFrequency', 0.25, 6, 0.25).name('Fréquence Courbe').onChange(v => laser.setParam('curveFrequency', v)),
+            'curveFrequency'
+        );
+
+        this.controllers.pauseMotion = this._setupController(
+            fStyle.add(p, 'pauseMotion').name('⏸️ Pause Balayage').onChange(v => laser.setParam('pauseMotion', v)),
+            'pauseMotion'
+        );
 
         // ══════════════════════════════════════════════════════════════════
-        // 2. Tweeking visuel source (Fidèle au GitHub Laser)
+        // 2. Fumée Laser PAN (SimonDev Shader - Nouvelle catégorie)
+        // ══════════════════════════════════════════════════════════════════
+        const fSmoke = this.gui.addFolder('💨 Fumée Laser PAN');
+        fSmoke.open();
+
+        this.controllers.panSmokeEnabled = this._setupController(
+            fSmoke.add(p, 'panSmokeEnabled').name('Activer Fumée').onChange(v => laser.setParam('panSmokeEnabled', v)),
+            'panSmokeEnabled'
+        );
+
+        this.controllers.panSmokeSpeed = this._setupController(
+            fSmoke.add(p, 'panSmokeSpeed', 0.05, 3.0, 0.05).name('Vitesse Fumée').onChange(v => laser.setParam('panSmokeSpeed', v)),
+            'panSmokeSpeed'
+        );
+
+        this.controllers.panSmokeScale = this._setupController(
+            fSmoke.add(p, 'panSmokeScale', 0.10, 1.0, 0.01).name('Échelle Volutes').onChange(v => laser.setParam('panSmokeScale', v)),
+            'panSmokeScale'
+        );
+
+        this.controllers.panSmokeContrast = this._setupController(
+            fSmoke.add(p, 'panSmokeContrast', 0.0, 1.0, 0.05).name('Contraste Turbulence').onChange(v => laser.setParam('panSmokeContrast', v)),
+            'panSmokeContrast'
+        );
+
+        this.controllers.panSmokeBrightness = this._setupController(
+            fSmoke.add(p, 'panSmokeBrightness', 0.0, 2.0, 0.05).name('Brillance Fumée').onChange(v => laser.setParam('panSmokeBrightness', v)),
+            'panSmokeBrightness'
+        );
+
+        this.controllers.panSmokeWindChange = this._setupController(
+            fSmoke.add(p, 'panSmokeWindChange', 0.0, 3.0, 0.05).name('Variation Vent').onChange(v => laser.setParam('panSmokeWindChange', v)),
+            'panSmokeWindChange'
+        );
+
+        this.controllers.panSmokeSpeedVariation = this._setupController(
+            fSmoke.add(p, 'panSmokeSpeedVariation', 0.0, 2.0, 0.05).name('Accélération Rafales').onChange(v => laser.setParam('panSmokeSpeedVariation', v)),
+            'panSmokeSpeedVariation'
+        );
+
+        // ── Surcouche Poches / Amas Hétérogènes ──
+        const fPatches = fSmoke.addFolder('☁️ Poches & Amas (Surcouche)');
+        fPatches.open();
+
+        this.controllers.panSmokePatchContrast = this._setupController(
+            fPatches.add(p, 'panSmokePatchContrast', 0.0, 1.5, 0.05).name('Contraste Poches').onChange(v => laser.setParam('panSmokePatchContrast', v)),
+            'panSmokePatchContrast'
+        );
+
+        this.controllers.panSmokePatchScale = this._setupController(
+            fPatches.add(p, 'panSmokePatchScale', 0.01, 0.30, 0.01).name('Taille Poches').onChange(v => laser.setParam('panSmokePatchScale', v)),
+            'panSmokePatchScale'
+        );
+
+        this.controllers.panSmokePatchDensity = this._setupController(
+            fPatches.add(p, 'panSmokePatchDensity', 0.0, 1.0, 0.05).name('Densité Poches').onChange(v => laser.setParam('panSmokePatchDensity', v)),
+            'panSmokePatchDensity'
+        );
+
+        this.controllers.panSmokePatchSpeed = this._setupController(
+            fPatches.add(p, 'panSmokePatchSpeed', 0.0, 1.0, 0.02).name('Vitesse Dérive Poches').onChange(v => laser.setParam('panSmokePatchSpeed', v)),
+            'panSmokePatchSpeed'
+        );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 4. Tweeking visuel source (Fidèle au GitHub Laser)
         // ══════════════════════════════════════════════════════════════════
         const fVisual = this.gui.addFolder('Tweeking visuel source');
         fVisual.open();
 
-        this.controllers.sourceEmissionPower = fVisual.add(p, 'sourceEmissionPower', 0, 4, 0.05)
-            .name('Puissance Buse')
-            .onChange(v => laser.setParam('sourceEmissionPower', v));
+        this.controllers.sourceEmissionPower = this._setupController(
+            fVisual.add(p, 'sourceEmissionPower', 0, 4, 0.05).name('Puissance Buse').onChange(v => laser.setParam('sourceEmissionPower', v)),
+            'sourceEmissionPower'
+        );
 
-        this.controllers.sourceGlowRadius = fVisual.add(p, 'sourceGlowRadius', 0.2, 3, 0.1)
-            .name('Rayon Halo Buse')
-            .onChange(v => laser.setParam('sourceGlowRadius', v));
+        this.controllers.sourceGlowRadius = this._setupController(
+            fVisual.add(p, 'sourceGlowRadius', 0.2, 3, 0.1).name('Rayon Halo Buse').onChange(v => laser.setParam('sourceGlowRadius', v)),
+            'sourceGlowRadius'
+        );
 
-        this.controllers.giIntensity = fVisual.add(p, 'giIntensity', 0, 10, 0.1)
-            .name('Intensité Éclairage')
-            .onChange(v => laser.setParam('giIntensity', v));
+        this.controllers.giIntensity = this._setupController(
+            fVisual.add(p, 'giIntensity', 0, 10, 0.1).name('Intensité Éclairage').onChange(v => laser.setParam('giIntensity', v)),
+            'giIntensity'
+        );
 
-        this.controllers.giDistance = fVisual.add(p, 'giDistance', 2, 60, 0.5)
-            .name('Portée Éclairage')
-            .onChange(v => laser.setParam('giDistance', v));
+        this.controllers.giDistance = this._setupController(
+            fVisual.add(p, 'giDistance', 2, 60, 0.5).name('Portée Éclairage').onChange(v => laser.setParam('giDistance', v)),
+            'giDistance'
+        );
 
-        this.controllers.giWallOffset = fVisual.add(p, 'giWallOffset', -5, 10, 0.1)
-            .name('Recul Lumière Mur')
-            .onChange(v => laser.setParam('giWallOffset', v));
+        this.controllers.giWallOffset = this._setupController(
+            fVisual.add(p, 'giWallOffset', -5, 10, 0.1).name('Recul Lumière Mur').onChange(v => laser.setParam('giWallOffset', v)),
+            'giWallOffset'
+        );
 
-        this.controllers.enableImpactLights = fVisual.add(p, 'enableImpactLights')
-            .name('Lumières Impacts')
-            .onChange(v => laser.setParam('enableImpactLights', v));
+        this.controllers.enableImpactLights = this._setupController(
+            fVisual.add(p, 'enableImpactLights').name('Lumières Impacts').onChange(v => laser.setParam('enableImpactLights', v)),
+            'enableImpactLights'
+        );
 
-        this.controllers.giImpactIntensity = fVisual.add(p, 'giImpactIntensity', 0, 10, 0.1)
-            .name('Intensité Lumière')
-            .onChange(v => laser.setParam('giImpactIntensity', v));
+        this.controllers.giImpactIntensity = this._setupController(
+            fVisual.add(p, 'giImpactIntensity', 0, 10, 0.1).name('Intensité Lumière').onChange(v => laser.setParam('giImpactIntensity', v)),
+            'giImpactIntensity'
+        );
 
-        this.controllers.giImpactDistance = fVisual.add(p, 'giImpactDistance', 2, 40, 0.5)
-            .name('Portée Lumière')
-            .onChange(v => laser.setParam('giImpactDistance', v));
-
-        // ══════════════════════════════════════════════════════════════════
-        // 3. Actions & Gizmo (Positionnement 3D & gestion)
-        // ══════════════════════════════════════════════════════════════════
-        const fActions = this.gui.addFolder('🕹️ Gizmo & Actions');
-        fActions.open();
-
-        const currentMode = (this.ambiancePanel && this.ambiancePanel.transformControls)
-            ? this.ambiancePanel.transformControls.getMode()
-            : 'translate';
-
-        const actionsState = {
-            gizmoMode: currentMode,
-            duplicate: () => {
-                const pos = laser.getPosition().clone();
-                pos.x += 1.5;
-                const res = this.laserManager.addLaser(pos, { ...laser.params });
-                if (this.ambiancePanel) {
-                    this.ambiancePanel.selectLaser(res.laserShow);
-                    this.ambiancePanel._buildGui();
-                } else {
-                    this.openForLaser(res.id, res.laserShow);
-                }
-            },
-            deleteLaser: () => {
-                const id = this._currentLaserId;
-                this.laserManager.removeLaser(id);
-                if (this.ambiancePanel) {
-                    this.ambiancePanel.deselectLaser();
-                    this.ambiancePanel._buildGui();
-                } else {
-                    this.close();
-                }
-            }
-        };
-
-        this.controllers.gizmoMode = fActions.add(actionsState, 'gizmoMode', ['translate', 'rotate'])
-            .name('Mode Gizmo')
-            .onChange(m => {
-                if (this.ambiancePanel) {
-                    this.ambiancePanel.setGizmoMode(m);
-                }
-            });
-
-        fActions.add(actionsState, 'duplicate').name('📋 Dupliquer le laser');
-        fActions.add(actionsState, 'deleteLaser').name('🗑️ Supprimer ce laser');
-
-        // ── Sliders Position 3D (X, Y, Z) pour déplacer le laser numériquement ──
-        const housing = laser.getHousingGroup();
-        const initialPos = housing ? housing.position : laser.getPosition();
-        this._posState = {
-            x: initialPos.x,
-            y: initialPos.y,
-            z: initialPos.z,
-        };
-
-        const onPosChange = () => {
-            laser.setPosition(this._posState.x, this._posState.y, this._posState.z);
-            if (housing) {
-                housing.position.set(this._posState.x, this._posState.y, this._posState.z);
-            }
-            if (this.ambiancePanel && this.ambiancePanel.transformControls) {
-                if (this.ambiancePanel.transformControls.object === housing) {
-                    this.ambiancePanel.transformControls.updateMatrixWorld();
-                }
-            }
-        };
-
-        this.controllers.posX = fActions.add(this._posState, 'x', -100, 100, 0.1)
-            .name('Position X')
-            .onChange(onPosChange);
-
-        this.controllers.posY = fActions.add(this._posState, 'y', 0, 50, 0.1)
-            .name('Position Y')
-            .onChange(onPosChange);
-
-        this.controllers.posZ = fActions.add(this._posState, 'z', -100, 100, 0.1)
-            .name('Position Z')
-            .onChange(onPosChange);
+        this.controllers.giImpactDistance = this._setupController(
+            fVisual.add(p, 'giImpactDistance', 2, 40, 0.5).name('Portée Lumière').onChange(v => laser.setParam('giImpactDistance', v)),
+            'giImpactDistance'
+        );
     }
 }
+

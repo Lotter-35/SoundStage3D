@@ -5,6 +5,7 @@
  */
 import * as THREE from 'three';
 import { SPEAKER_DEFS } from '../audio/speakers.js';
+import { enableBloom } from '../laser/LaserManager.js';
 
 // Visual config per bus type
 const BUS_VISUAL = {
@@ -207,10 +208,12 @@ export function createStage(scene) {
     const djLedMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
     const djLedLeft = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 16), djLedMat);
     djLedLeft.position.set(-1.0, 3.0 + 0.95 + 0.09, -5.0);
+    enableBloom(djLedLeft);
     djGroup.add(djLedLeft);
 
     const djLedRight = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 16), djLedMat);
     djLedRight.position.set(1.0, 3.0 + 0.95 + 0.09, -5.0);
+    enableBloom(djLedRight);
     djGroup.add(djLedRight);
 
     scene.add(djGroup);
@@ -262,6 +265,11 @@ export function createStage(scene) {
     const markerGeoCache = {};
     const markerMatCache = {};
 
+    // Groupe dédié aux bulles / ronds d'émission sonore et marqueur FOH (masquable en mode F1)
+    const soundMarkersGroup = new THREE.Group();
+    soundMarkersGroup.name = 'sound-markers-group';
+    scene.add(soundMarkersGroup);
+
     for (const def of SPEAKER_DEFS) {
         const vis = BUS_VISUAL[def.bus] || BUS_VISUAL.top;
         const p = def.position;
@@ -301,7 +309,7 @@ export function createStage(scene) {
         }
         const marker = new THREE.Mesh(markerGeoCache[busKey], markerMatCache[busKey]);
         marker.position.set(p.x, p.y, p.z);
-        scene.add(marker);
+        soundMarkersGroup.add(marker);
     }
 
     // --- FOH marker ---
@@ -313,7 +321,7 @@ export function createStage(scene) {
     });
     const fohMarker = new THREE.Mesh(fohGeo, fohMat);
     fohMarker.position.set(0, 0.03, 50);
-    scene.add(fohMarker);
+    soundMarkersGroup.add(fohMarker);
 
     // --- Lighting ---
     const ambientLight = new THREE.AmbientLight(0x99bbdd, 1.0);
@@ -350,10 +358,27 @@ export function createStage(scene) {
     stageLight1.position.set(-8, 18, -2);
     scene.add(stageLight1);
 
+    const bulbGeo = new THREE.SphereGeometry(0.35, 16, 16);
+    const bulb1Mat = new THREE.MeshBasicMaterial({ color: 0xff3366 });
+    const bulb1 = new THREE.Mesh(bulbGeo, bulb1Mat);
+    bulb1.position.set(-8, 18, -2);
+    bulb1.name = 'Bulb Projecteur Gauche';
+    enableBloom(bulb1);
+    scene.add(bulb1);
+    stageLight1.userData.bulbMesh = bulb1;
+
     const stageLight2 = new THREE.PointLight(0x3366ff, 0.5, 30);
     stageLight2.name = 'Projecteur Scène Droit';
     stageLight2.position.set(8, 18, -2);
     scene.add(stageLight2);
+
+    const bulb2Mat = new THREE.MeshBasicMaterial({ color: 0x3366ff });
+    const bulb2 = new THREE.Mesh(bulbGeo, bulb2Mat);
+    bulb2.position.set(8, 18, -2);
+    bulb2.name = 'Bulb Projecteur Droit';
+    enableBloom(bulb2);
+    scene.add(bulb2);
+    stageLight2.userData.bulbMesh = bulb2;
 
     // --- Sky ---
     scene.background = new THREE.Color(0x87ceeb);
@@ -424,5 +449,5 @@ export function createStage(scene) {
     }
 
     const initialLights = [ambientLight, hemiLight, dirLight, stageLight1, stageLight2];
-    return { coneContainer, coneGroups, dirLight, lights: initialLights };
+    return { coneContainer, coneGroups, dirLight, lights: initialLights, soundMarkersGroup, fohMarker };
 }

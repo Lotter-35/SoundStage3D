@@ -3268,3 +3268,25 @@ body {
     );
     will-change: opacity;
 }
+
+#ambiance-panel-wrap .lil-gui .lil-reset-btn:hover, #laser-panel-wrap .lil-gui .lil-reset-btn:hover { color: #fff !important; border-color: rgba(255, 255, 255, 0.5) !important; background: rgba(255, 255, 255, 0.15) !important; }
+
+/* ─── Mode Cinéma (Touche F1) : Immersion 3D totale, 0 interface, 0 texte ─── */
+body.cinematic-mode > *:not(#canvas):not(#dazzle-overlay):not(#afterimage-overlay),
+body.cinematic-mode #hud,
+body.cinematic-mode #now-playing,
+body.cinematic-mode #fps-counter,
+body.cinematic-mode #laser-panel-wrap,
+body.cinematic-mode #ambiance-panel-wrap,
+body.cinematic-mode .lil-gui,
+body.cinematic-mode .dsp-window,
+body.cinematic-mode .playback-panel,
+body.cinematic-mode #playback-panel,
+body.cinematic-mode .remote-invite-modal,
+body.cinematic-mode .toast,
+body.cinematic-mode #emote-menu,
+body.cinematic-mode .emote-menu,
+body.cinematic-mode #debug-container {
+    display: none !important;
+}
+

@@ -11,6 +11,7 @@
  * - Room.js remplacé par LaserSceneIntersector.js (festival en plein air)
  * - Shaders sous forme de factories (pas de singleton global)
  * - Params individuels par instance (createLaserParams())
+ * - Fumée SimonDev appliquée synchroniquement sur les faisceaux et le plan laser
  * ─────────────────────────────────────────────────────────────
  * OPTIMISÉ : 0 allocation GC par frame (pool de vecteurs pré-alloués)
  */
@@ -34,6 +35,7 @@ import { LaserPod } from './LaserPod.js';
 import { LaserRenderer } from './LaserRenderer.js';
 import { PatternHorizontalSweep } from './patterns/PatternHorizontalSweep.js';
 import { getSceneHit } from './LaserSceneIntersector.js';
+import { enableBloom } from './LaserManager.js';
 
 export class LaserShow {
     /**
@@ -73,9 +75,17 @@ export class LaserShow {
         this.pod.setBasePosition(position.x, position.y, position.z);
         this.pod.setVisible(true);
 
+        // Activer le layer de bloom et d'aberration chromatique sélective sur les éléments émissifs
+        enableBloom(this.renderer.beamsMesh);
+        enableBloom(this.renderer.impactMesh);
+        enableBloom(this.renderer.panImpactMesh);
+        enableBloom(this.pod.fanMesh);
+        enableBloom(this.pod.glowMesh);
+
         // Pause animation & temps local
         this.isPaused = Boolean(this.params.pauseMotion);
         this._animTime = 0;
+        this._smokeTime = 0;
 
         // Pool pré-alloué de vecteurs hit/normal (0 GC par frame)
         const totalSlots = MAX_BEAMS_PER_POD * ARC_SUBDIVISIONS;
@@ -86,6 +96,7 @@ export class LaserShow {
         // Listes réutilisables pour les hits de ce pod
         this._podHitPts  = [];
         this._podHitNrms = [];
+        this._podHitReal = []; // true = surface réelle, false = ciel/vide
 
         // Couleurs pré-allouées
         this._baseColor  = new THREE.Color(this.params.color);
@@ -94,6 +105,26 @@ export class LaserShow {
 
         // Vecteur de direction pour les sub-rayons PAN
         this._subDir = new THREE.Vector3();
+
+        // Repères réutilisables d'orientation laser 3D (0 GC)
+        this._rotEuler   = new THREE.Euler(0, 0, 0, 'YXZ');
+        this._rotQuat    = new THREE.Quaternion();
+        this._smokeFwd   = new THREE.Vector3();
+        this._smokeRight = new THREE.Vector3();
+        this._smokeUp    = new THREE.Vector3();
+
+        // Initialisation spatiale immédiate du boîtier 3D avec l'orientation des paramètres
+        this.pod.updateSource(
+            this.params.sourceDistanceOffset || 0,
+            this.params.giWallOffset || 0,
+            this._giColor,
+            0,
+            this.params.giDistance || 15,
+            1.0,
+            this.params.angle || 0,
+            this.params.tilt || 0,
+            this.params.roll || 0
+        );
     }
 
     /** Retourne le THREE.Group racine (pour raycasting, gizmo, etc.) */
@@ -141,7 +172,7 @@ export class LaserShow {
     }
 
     /** Met à jour les uniforms des shaders pour la frame courante */
-    _updateUniforms(effectiveBeamPower, effectivePanPower, nBeamsPerPod) {
+    _updateUniforms(effectiveBeamPower, effectivePanPower, nBeamsPerPod, animTime = 0, smokeTime = 0) {
         const p = this.params;
         const beamPanAttenuation = (p.laserPan && p.spread > 0 && nBeamsPerPod > 1) ? 0.70 : 1.0;
 
@@ -156,6 +187,50 @@ export class LaserShow {
         lsm.uniforms.uFogGlowCoupling.value = p.fogGlowCoupling;
 
         const fsm = this.materials.fanShaderMaterial;
+
+        // ── Calcul CPU du vent et des rafales (1 seule fois par frame pour tout le laser, 0% GPU !) ──
+        if (fsm.uniforms.uWind) {
+            const speedVar = p.panSmokeSpeedVariation !== undefined ? p.panSmokeSpeedVariation : 0.7;
+            const smokeSpeed = p.panSmokeSpeed !== undefined ? p.panSmokeSpeed : 0.8;
+            const gustPhase = smokeTime * 0.25;
+            const gustWave = Math.sin(gustPhase) * 0.62 + Math.sin(gustPhase * 0.47 + 1.3) * 0.38;
+            const effectiveTime = (smokeTime + gustWave * (speedVar * 2.5)) * smokeSpeed;
+
+            const windChange = p.panSmokeWindChange !== undefined ? p.panSmokeWindChange : 0.8;
+            const windRate = 0.06 * (1.0 + windChange * 0.45);
+            const slowT = effectiveTime * windRate;
+            const meanderAmp = 1.0 + windChange * 1.8;
+
+            const mx = (Math.sin(slowT * 0.72) * 4.2 + Math.sin(slowT * 0.26 + 0.8) * 2.8) * meanderAmp;
+            const my = (Math.sin(slowT * 0.40 + 1.2) * 1.8 + Math.cos(slowT * 0.18) * 1.0) * meanderAmp;
+            const mz = (Math.cos(slowT * 0.58) * 3.8 + Math.cos(slowT * 0.31 + 2.1) * 2.5) * meanderAmp;
+
+            const lx = effectiveTime * 0.18;
+            const ly = effectiveTime * 0.04;
+            const lz = effectiveTime * 0.13;
+
+            const meanderWeight = Math.min(1.0, Math.max(0.0, windChange / 1.2));
+            const wx = mx * meanderWeight + lx * (1.0 - meanderWeight) + lx;
+            const wy = my * meanderWeight + ly * (1.0 - meanderWeight) + ly;
+            const wz = mz * meanderWeight + lz * (1.0 - meanderWeight) + lz;
+
+            fsm.uniforms.uWind.value.set(wx, wy, wz);
+        }
+
+        // Synchronisation des uniforms de fumée pour le plan (fsm)
+        if (fsm.uniforms.uOrigin) fsm.uniforms.uOrigin.value.copy(this.pod.origin);
+        if (fsm.uniforms.uTime) fsm.uniforms.uTime.value = smokeTime;
+        if (fsm.uniforms.uSmokeEnabled) fsm.uniforms.uSmokeEnabled.value = (p.panSmokeEnabled !== false) ? 1.0 : 0.0;
+        if (fsm.uniforms.uSmokeSpeed) fsm.uniforms.uSmokeSpeed.value = p.panSmokeSpeed !== undefined ? p.panSmokeSpeed : 0.8;
+        if (fsm.uniforms.uSmokeScale) fsm.uniforms.uSmokeScale.value = p.panSmokeScale !== undefined ? p.panSmokeScale : 0.08;
+        if (fsm.uniforms.uSmokeContrast) fsm.uniforms.uSmokeContrast.value = p.panSmokeContrast !== undefined ? p.panSmokeContrast : 0.65;
+        if (fsm.uniforms.uSmokeBrightness) fsm.uniforms.uSmokeBrightness.value = p.panSmokeBrightness !== undefined ? p.panSmokeBrightness : 0.75;
+        if (fsm.uniforms.uSmokeWindChange) fsm.uniforms.uSmokeWindChange.value = p.panSmokeWindChange !== undefined ? p.panSmokeWindChange : 0.8;
+        if (fsm.uniforms.uSmokeSpeedVariation) fsm.uniforms.uSmokeSpeedVariation.value = p.panSmokeSpeedVariation !== undefined ? p.panSmokeSpeedVariation : 0.7;
+        if (fsm.uniforms.uSmokePatchDensity) fsm.uniforms.uSmokePatchDensity.value = p.panSmokePatchDensity !== undefined ? p.panSmokePatchDensity : 0.35;
+        if (fsm.uniforms.uSmokePatchScale) fsm.uniforms.uSmokePatchScale.value = p.panSmokePatchScale !== undefined ? p.panSmokePatchScale : 0.03;
+        if (fsm.uniforms.uSmokePatchContrast) fsm.uniforms.uSmokePatchContrast.value = p.panSmokePatchContrast !== undefined ? p.panSmokePatchContrast : 0.45;
+        if (fsm.uniforms.uSmokePatchSpeed) fsm.uniforms.uSmokePatchSpeed.value = p.panSmokePatchSpeed !== undefined ? p.panSmokePatchSpeed : 0.02;
         fsm.uniforms.uPanPower.value        = effectivePanPower;
         fsm.uniforms.uBeamPower.value       = effectiveBeamPower;
         fsm.uniforms.uBeamWidth.value       = p.beamWidth;
@@ -196,15 +271,18 @@ export class LaserShow {
      * @param {number} delta Temps depuis dernière frame (secondes)
      * @param {number} animTime Temps global (secondes)
      */
-    update(delta, animTime) {
+    update(delta, animTime, cameraPos = null) {
         const p = this.params;
         const nBeamsPerPod = p.spread > 0 ? Math.max(1, Math.round(p.count)) : 1;
 
-        // Si la pause de balayage n'est pas active, faire avancer le temps local
+        // Si la pause de balayage n'est pas active, faire avancer le temps de mouvement local
         if (!this.isPaused && !p.pauseMotion) {
             this._animTime += delta;
         }
         const effectiveAnimTime = this._animTime;
+
+        // La simulation de fumée (SimonDev noise) continue TOUJOURS d'évoluer de façon fluide dans toutes les directions
+        this._smokeTime += (delta > 0 && delta < 0.5) ? delta : 0.016;
 
         // Stroboscope
         let strobeFactor = 1.0;
@@ -220,7 +298,9 @@ export class LaserShow {
         this._effectiveBeamPower = effectiveBeamPower;
         this._effectivePanPower  = effectivePanPower;
 
-        const computedSourceGlow = this._updateUniforms(effectiveBeamPower, effectivePanPower, nBeamsPerPod);
+        const computedSourceGlow = this._updateUniforms(
+            effectiveBeamPower, effectivePanPower, nBeamsPerPod, effectiveAnimTime, this._smokeTime
+        );
 
         // Couleur GI
         this._baseColor.set(p.color);
@@ -242,7 +322,9 @@ export class LaserShow {
             totalLightPower,
             p.giDistance,
             strobeFactor,
-            p.angle
+            p.angle,
+            p.tilt || 0,
+            p.roll || 0
         );
 
         let globalBeamIdx = 0;
@@ -251,6 +333,7 @@ export class LaserShow {
 
         this._podHitPts.length  = 0;
         this._podHitNrms.length = 0;
+        this._podHitReal.length = 0;
 
         const origin = this.pod.origin;
 
@@ -260,6 +343,26 @@ export class LaserShow {
         );
         const { beams, pitch, a1, a2 } = patternResult;
         const nBeams = patternResult.nBeams;
+
+        // Synchronisation de la base orthonormée 3D du laser pour la fumée PAN et des faisceaux
+        const fsm = this.materials.fanShaderMaterial;
+        const lsm = this.materials.laserShaderMaterial;
+        if (fsm && fsm.uniforms.uLaserForward) {
+            const yawRad   = (p.angle || 0) * (Math.PI / 180);
+            const pitchRad = pitch || 0;
+            const rollRad  = (p.roll  || 0) * (Math.PI / 180);
+
+            this._rotEuler.set(-pitchRad, yawRad, rollRad, 'YXZ');
+            this._rotQuat.setFromEuler(this._rotEuler);
+
+            this._smokeFwd.set(0, 0, 1).applyQuaternion(this._rotQuat);
+            this._smokeRight.set(1, 0, 0).applyQuaternion(this._rotQuat);
+            this._smokeUp.set(0, 1, 0).applyQuaternion(this._rotQuat);
+
+            fsm.uniforms.uLaserForward.value.copy(this._smokeFwd);
+            fsm.uniforms.uLaserRight.value.copy(this._smokeRight);
+            fsm.uniforms.uLaserUp.value.copy(this._smokeUp);
+        }
 
         // Lancer les rayons vers l'environnement
         for (let i = 0; i < nBeams; i++) {
@@ -280,9 +383,13 @@ export class LaserShow {
 
             this._podHitPts.push(poolHit);
             this._podHitNrms.push(poolNorm);
+            this._podHitReal.push(hitObj.isRealSurface);
 
             this.renderer.writeBeam(globalBeamIdx, origin, poolHit);
-            this.renderer.writePointImpact(globalBeamIdx, origin, poolHit, poolNorm, p.beamWidth);
+            // N'afficher le halo d'impact que si le laser touche une surface réelle (sol / mur latéral en descente)
+            if (hitObj.isRealSurface) {
+                this.renderer.writePointImpact(globalBeamIdx, origin, poolHit, poolNorm, p.beamWidth);
+            }
             globalBeamIdx++;
         }
 
@@ -335,14 +442,16 @@ export class LaserShow {
                 let arcHit0   = this._podHitPts[i];
                 let arcNorm0  = this._podHitNrms[i];
                 let arcAngle0 = angleStart;
+                let arcReal0  = this._podHitReal[i];
 
                 for (let k = 0; k < effectiveSubs; k++) {
-                    let arcHit1, arcNorm1, arcAngle1;
+                    let arcHit1, arcNorm1, arcAngle1, arcReal1;
 
                     if (k === effectiveSubs - 1) {
                         arcHit1   = this._podHitPts[i + 1];
                         arcNorm1  = this._podHitNrms[i + 1];
                         arcAngle1 = angleEnd;
+                        arcReal1  = this._podHitReal[i + 1];
                     } else {
                         const t1 = (k + 1) / effectiveSubs;
                         arcAngle1 = angleStart + (angleEnd - angleStart) * t1;
@@ -363,6 +472,7 @@ export class LaserShow {
                         subPoolNorm.copy(hitObj1.normal);
                         arcHit1  = subPoolHit;
                         arcNorm1 = subPoolNorm;
+                        arcReal1 = hitObj1.isRealSurface;
                     }
 
                     const sameWall = arcNorm0.dot(arcNorm1) > 0.999;
@@ -398,22 +508,27 @@ export class LaserShow {
                         emitFanTri(cornerHit, arcHit1, 0.5, 1.0);
                     }
 
-                    if (sameWall) {
-                        if (this.renderer.writePanImpactQuad(globalFanSegmentIdx, origin, arcHit0, arcNorm0, arcHit1, lineHalfWidth)) {
-                            globalFanSegmentIdx++;
-                        }
-                    } else {
-                        if (this.renderer.writePanImpactQuad(globalFanSegmentIdx, origin, arcHit0, arcNorm0, cornerHit, lineHalfWidth)) {
-                            globalFanSegmentIdx++;
-                        }
-                        if (this.renderer.writePanImpactQuad(globalFanSegmentIdx, origin, cornerHit, arcNorm1, arcHit1, lineHalfWidth)) {
-                            globalFanSegmentIdx++;
+                    // N'afficher la ligne d'impact PAN que si le segment touche une surface réelle
+                    const segmentIsReal = arcReal0 || arcReal1;
+                    if (segmentIsReal) {
+                        if (sameWall) {
+                            if (this.renderer.writePanImpactQuad(globalFanSegmentIdx, origin, arcHit0, arcNorm0, arcHit1, lineHalfWidth)) {
+                                globalFanSegmentIdx++;
+                            }
+                        } else {
+                            if (this.renderer.writePanImpactQuad(globalFanSegmentIdx, origin, arcHit0, arcNorm0, cornerHit, lineHalfWidth)) {
+                                globalFanSegmentIdx++;
+                            }
+                            if (this.renderer.writePanImpactQuad(globalFanSegmentIdx, origin, cornerHit, arcNorm1, arcHit1, lineHalfWidth)) {
+                                globalFanSegmentIdx++;
+                            }
                         }
                     }
 
                     arcHit0   = arcHit1;
                     arcNorm0  = arcNorm1;
                     arcAngle0 = arcAngle1;
+                    arcReal0  = arcReal1;
                 }
             }
 

@@ -86,3 +86,25 @@ export async function loadLastAudio() {
         return null;
     }
 }
+
+/**
+ * Delete the last uploaded audio file from IndexedDB.
+ * @returns {Promise<boolean>}
+ */
+export async function clearLastAudio() {
+    try {
+        const db = await openDB();
+        return new Promise((resolve, reject) => {
+            const tx = db.transaction(STORE_NAME, 'readwrite');
+            const store = tx.objectStore(STORE_NAME);
+            const req = store.delete(KEY_LAST_TRACK);
+            req.onsuccess = () => resolve(true);
+            req.onerror = () => reject(req.error);
+            tx.oncomplete = () => resolve(true);
+        });
+    } catch (err) {
+        console.warn('Failed to clear audio file from IndexedDB:', err);
+        return false;
+    }
+}
+

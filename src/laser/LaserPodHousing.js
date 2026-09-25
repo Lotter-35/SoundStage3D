@@ -382,12 +382,18 @@ export class LaserPodHousing {
      * Met à jour la position, l'orientation, le clignotement et la teinte optique du boîtier.
      * @param {THREE.Vector3} origin Position de la source laser
      * @param {number} angleDeg Angle horizontal de visée (degrés)
+     * @param {number} tiltDeg Inclinaison verticale de visée (degrés, > 0 vers le haut)
      * @param {number} strobeFactor Multiplicateur de clignotement [0, 1]
      * @param {THREE.Color|string} [colorHex] Couleur actuelle de l'émission laser
      */
-    update(origin, angleDeg = 0, strobeFactor = 1.0, colorHex = null) {
+    update(origin, angleDeg = 0, tiltDeg = 0, rollDeg = 0, strobeFactor = 1.0, colorHex = null) {
         this.group.position.copy(origin);
-        this.group.rotation.y = angleDeg * (Math.PI / 180);
+        this.group.rotation.set(
+            -tiltDeg * (Math.PI / 180),
+            angleDeg * (Math.PI / 180),
+            rollDeg * (Math.PI / 180),
+            'YXZ'
+        );
 
         if (this.emissionLed && this.emissionLed.material) {
             this.emissionLed.material.emissiveIntensity = strobeFactor > 0.01 ? 2.2 : 0.08;

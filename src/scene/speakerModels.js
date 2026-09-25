@@ -51,8 +51,11 @@ export async function loadStageSpeakers(scene) {
         const subScale = 1.35;
         subTemplate.scale.setScalar(subScale);
 
-        // Rotation de 90° sur X pour orienter la face avec les haut-parleurs vers le public (+Z)
-        subTemplate.rotation.x = Math.PI / 2;
+        // Rotation demandée : 90° sur l'axe X (grille dressée face aux spectateurs, haut vers le ciel)
+        subTemplate.rotation.x = Math.PI;
+        subTemplate.rotation.y = Math.PI;
+        subTemplate.rotation.z = Math.PI;
+        subTemplate.updateMatrixWorld(true);
 
         // Calcul précis de la boîte englobante après rotation et échelle
         const subBox = new THREE.Box3().setFromObject(subTemplate);
@@ -141,8 +144,8 @@ export async function loadStageSpeakers(scene) {
             const arrayClone = arrayTemplate.clone(true);
             arrayClone.name = config.name;
             arrayClone.position.set(config.x, config.y, config.z);
-            // Laisser bien droit : pas de rotation vers le centre ni d'inclinaison
-            arrayClone.rotation.set(0, 0, 0);
+            // Rotation de 180° sur l'axe Y pour faire face au public
+            arrayClone.rotation.set(0, Math.PI, 0);
             stageSpeakersGroup.add(arrayClone);
         }
 

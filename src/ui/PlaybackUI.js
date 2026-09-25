@@ -191,8 +191,19 @@ export class PlaybackUI {
         if (this.pbPlLoadBtn) {
             this.pbPlLoadBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (this._selectedPlaylistId && this.callbacks.onPlaylistLoad) {
-                    this.callbacks.onPlaylistLoad(this._selectedPlaylistId);
+                try {
+                    if (window.__DEBUG?.audioEngine?.ctx?.state === 'suspended') {
+                        window.__DEBUG.audioEngine.ctx.resume().catch(() => {});
+                    }
+                } catch (_) {}
+                const targetId = this._selectedPlaylistId || (this.pbPlaylistSelect ? this.pbPlaylistSelect.value : '') || (this._playlists.length > 0 ? this._playlists[0].id : null);
+                if (targetId) {
+                    this._selectedPlaylistId = targetId;
+                    if (this.pbPlaylistSelect) this.pbPlaylistSelect.value = targetId;
+                    this._renderPlaylistTracks();
+                    if (this.callbacks.onPlaylistLoad) {
+                        this.callbacks.onPlaylistLoad(targetId);
+                    }
                 }
             });
         }
@@ -200,8 +211,9 @@ export class PlaybackUI {
         if (this.pbPlQueueAllBtn) {
             this.pbPlQueueAllBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
-                if (this._selectedPlaylistId && this.callbacks.onPlaylistQueueAll) {
-                    this.callbacks.onPlaylistQueueAll(this._selectedPlaylistId);
+                const targetId = this._selectedPlaylistId || (this.pbPlaylistSelect ? this.pbPlaylistSelect.value : '') || (this._playlists.length > 0 ? this._playlists[0].id : null);
+                if (targetId && this.callbacks.onPlaylistQueueAll) {
+                    this.callbacks.onPlaylistQueueAll(targetId);
                 }
             });
         }
@@ -707,10 +719,12 @@ export class PlaybackUI {
             }
         }
 
-        if (activeId !== null && activeId !== undefined) {
+        if (activeId !== null && activeId !== undefined && activeId !== '') {
             this._selectedPlaylistId = activeId;
         } else if (this._selectedPlaylistId && !this._playlists.some(p => p.id === this._selectedPlaylistId)) {
-            this._selectedPlaylistId = '';
+            this._selectedPlaylistId = this._playlists.length > 0 ? this._playlists[0].id : '';
+        } else if (!this._selectedPlaylistId && this._playlists.length > 0) {
+            this._selectedPlaylistId = this._playlists[0].id;
         }
 
         if (!this.pbPlaylistSelect) return;
@@ -894,6 +908,11 @@ export class PlaybackUI {
 
             el.addEventListener('click', (e) => {
                 if (e.target.closest('button')) return;
+                try {
+                    if (window.__DEBUG?.audioEngine?.ctx?.state === 'suspended') {
+                        window.__DEBUG.audioEngine.ctx.resume().catch(() => {});
+                    }
+                } catch (_) {}
                 if (this.callbacks.onPlaylistTrackPlay) {
                     this.callbacks.onPlaylistTrackPlay(this._selectedPlaylistId, index, track);
                 }

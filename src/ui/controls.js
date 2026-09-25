@@ -136,6 +136,8 @@ export class Controls {
         this.changeMp3Btn = this.hudBar.changeMp3Btn;
         this.micBtn = this.hudBar.micBtn;
         this.dspBtn = this.hudBar.dspBtn;
+        this.inviteBtn = this.hudBar.inviteBtn;
+        this.mpStatusEl = this.hudBar.mpStatusEl;
         this.envBtn = null;
         this.positionDisplay = this.hudBar.positionDisplay;
 
@@ -305,6 +307,10 @@ export class Controls {
 
     setPlayerCount(count) {
         this.hudBar.setPlayerCount(count);
+    }
+
+    updateMpStatus(count) {
+        this.setPlayerCount(count);
     }
 
     showHUD() {

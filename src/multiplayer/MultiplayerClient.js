@@ -37,10 +37,12 @@ export class MultiplayerClient {
         this.queueVersion = 0;
         this.playlists = [];     // saved playlists on server [{ id, name, trackCount, updatedAt }]
         this.players = [];       // current players list
+        this.lightingState = null; // full Lighting & Ambiance snapshot from server
         this.connected = false;
 
         // Callbacks
         this._onDspUpdate = null;
+        this._onLightingUpdate = null;
         this._onPlayersUpdate = null;
         this._onAudioTrackChanged = null;
         this._onQueueSync = null;
@@ -130,6 +132,11 @@ export class MultiplayerClient {
         this._send({ type: 'DSP_CHANGE', bus, param, value });
     }
 
+    /** Send a lighting or ambiance change to sync with others */
+    sendLighting(data) {
+        this._send({ type: 'LIGHTING_CHANGE', ...data });
+    }
+
     /** Send current player position and animation state (throttled by caller) */
     sendPosition(x, y, z, rotY = 0, anim = 'idle', onGround = true, isFlying = false) {
         this._send({ type: 'PLAYER_POS', x, y, z, rotY, anim, onGround, isFlying });
@@ -138,6 +145,11 @@ export class MultiplayerClient {
     /** Register callback for DSP updates received from server */
     onDspUpdate(cb) {
         this._onDspUpdate = cb;
+    }
+
+    /** Register callback for lighting/ambiance updates */
+    onLightingUpdate(cb) {
+        this._onLightingUpdate = cb;
     }
 
     /** Register callback for player list updates */
@@ -430,6 +442,7 @@ export class MultiplayerClient {
                 this.webPort = msg.webPort || 8067;
                 this.audioPort = msg.audioPort || 8068;
                 this.dspState = msg.dspState;
+                this.lightingState = msg.lightingState || null;
                 this.playback = msg.playback;
                 this.sine = msg.sine;
                 this.trackName = msg.trackName;
@@ -471,6 +484,7 @@ export class MultiplayerClient {
                 this.webPort = msg.webPort || 8067;
                 this.audioPort = msg.audioPort || 8068;
                 this.dspState = msg.dspState;
+                this.lightingState = msg.lightingState || null;
                 this.playback = msg.playback;
                 this.sine = msg.sine;
                 this.trackName = msg.trackName;
@@ -518,8 +532,20 @@ export class MultiplayerClient {
                 }
                 break;
 
+            case 'LIGHTING_UPDATE':
+                if (this._onLightingUpdate) {
+                    this._onLightingUpdate(msg);
+                }
+                break;
+
             case 'PLAYERS_UPDATE':
                 this.players = msg.players;
+                if (Array.isArray(msg.players)) {
+                    const me = msg.players.find(p => p.id === this.clientId);
+                    if (me && me.role) {
+                        this.role = me.role;
+                    }
+                }
                 if (this._onPlayersUpdate) {
                     this._onPlayersUpdate(msg.players);
                 }

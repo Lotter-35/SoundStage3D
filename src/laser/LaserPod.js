@@ -26,6 +26,7 @@ export class LaserPod {
     constructor(scene, index, materials) {
         this.scene = scene;
         this.index = index;
+        this.materials = materials;
         this.phase = index * 0.6;
 
         this.origin = new THREE.Vector3();
@@ -71,9 +72,13 @@ export class LaserPod {
      * Met à jour la position réelle de la source (avec offset d'avancement)
      * et synchronise le mesh glow, le boîtier 3D et la pointLight.
      */
-    updateSource(sourceDistanceOffset, giWallOffset, giColor, totalLightPower, giDistance, strobeFactor = 1.0, angle = 0) {
+    updateSource(sourceDistanceOffset, giWallOffset, giColor, totalLightPower, giDistance, strobeFactor = 1.0, angle = 0, tilt = 0, roll = 0) {
         this.origin.copy(this.baseOrigin);
         this.origin.z += sourceDistanceOffset;
+
+        if (this.materials?.fanShaderMaterial?.uniforms?.uOrigin) {
+            this.materials.fanShaderMaterial.uniforms.uOrigin.value.copy(this.origin);
+        }
 
         this.glowMesh.position.copy(this.origin);
 
@@ -87,8 +92,7 @@ export class LaserPod {
         this.pointLight.distance = giDistance;
 
         // Mise à jour spatiale du modèle 3D du boîtier (avec synchronisation de couleur laser)
-        // Note: we can't get default angle from params anymore since params was removed, we fall back to 0 if angle is undefined
-        this.housing.update(this.origin, angle !== undefined ? angle : 0, strobeFactor, giColor);
+        this.housing.update(this.origin, angle !== undefined ? angle : 0, tilt !== undefined ? tilt : 0, roll !== undefined ? roll : 0, strobeFactor, giColor);
     }
 
     setVisible(visible) {

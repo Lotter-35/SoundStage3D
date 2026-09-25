@@ -30,8 +30,12 @@ export class PatternHorizontalSweep extends PatternBase {
             'Éventail horizontal de faisceaux avec courbe verticale paramétrable'
         );
 
-        // ── Vecteur de direction réutilisable (0 GC) ──────────────────────────
-        this._dir = new THREE.Vector3();
+        // ── Vecteur de direction et repère de rotation réutilisables (0 GC) ──
+        this._dir       = new THREE.Vector3();
+        this._rotEuler  = new THREE.Euler(0, 0, 0, 'YXZ');
+        this._rotQuat   = new THREE.Quaternion();
+        this._localDir  = new THREE.Vector3();
+        this._basePitch = 0;
 
         // ── Pool de structures de faisceaux pré-alloués ───────────────────────
         this._beamPool = [];
@@ -48,10 +52,13 @@ export class PatternHorizontalSweep extends PatternBase {
     }
 
     /**
-     * Pitch de base oscillant du pod (animation globale).
+     * Pitch de base oscillant du pod (animation globale + inclinaison verticale de visée).
      */
     getPitch(animTime, podPhase) {
-        return Math.sin(animTime * 0.8 + podPhase) * 0.25;
+        const baseTilt = (this._params && this._params.tilt !== undefined)
+            ? this._params.tilt * _PI_OVER_180
+            : 0;
+        return baseTilt + Math.sin(animTime * 0.8 + podPhase) * 0.25;
     }
 
     /**
@@ -115,29 +122,36 @@ export class PatternHorizontalSweep extends PatternBase {
     }
 
     /**
-     * Calcule la direction normalisée d'un faisceau et l'écrit dans `out`.
-     * Compatible avec l'appel direct depuis LaserShow (sub-rayons PAN).
+     * Met à jour le repère d'orientation 3D (Yaw, Pitch, Roll) du laser.
+     */
+    _updateRotation(pitch) {
+        const p = this._params;
+        const yawRad   = (p && p.angle !== undefined ? p.angle : 0) * _PI_OVER_180;
+        const pitchRad = pitch !== undefined ? pitch : 0;
+        const rollRad  = (p && p.roll  !== undefined ? p.roll  : 0) * _PI_OVER_180;
+        this._rotEuler.set(-pitchRad, yawRad, rollRad, 'YXZ');
+        this._rotQuat.setFromEuler(this._rotEuler);
+    }
+
+    /**
+     * Calcule la direction normalisée d'un faisceau dans l'espace monde en intégrant le Roll.
      *
      * @param {number}         angleDeg Angle horizontal (degrés)
      * @param {number}         pitch    Pitch TOTAL (base + courbe déjà calculée)
      * @param {THREE.Vector3}  out      Vecteur de sortie pré-alloué
      */
     getDirection(angleDeg, pitch, out) {
-        const rad  = angleDeg * _PI_OVER_180;
-        const sinP = Math.sin(pitch);
-        out.set(Math.sin(rad), sinP, Math.cos(rad)).normalize();
+        const centerAngle = (this._params && this._params.angle !== undefined) ? this._params.angle : 0;
+        const relAngleRad = (angleDeg - centerAngle) * _PI_OVER_180;
+        const curveOffset = (this._params && pitch !== undefined) ? (pitch - this._basePitch) : 0;
+
+        this._localDir.set(Math.sin(relAngleRad), Math.sin(curveOffset), Math.cos(relAngleRad)).normalize();
+        out.copy(this._localDir).applyQuaternion(this._rotQuat);
         return out;
     }
 
     /**
      * Calcule la direction avec courbe intégrée (pour les sous-rayons du plan PAN).
-     * Remplace l'appel nu `getDirection(angleDeg, basePitch, out)` quand a1/a2 sont connus.
-     *
-     * @param {number}         angleDeg  Angle horizontal (degrés)
-     * @param {number}         basePitch Pitch de base (oscillation pod)
-     * @param {number}         a1        Angle gauche de l'éventail (degrés)
-     * @param {number}         a2        Angle droit de l'éventail (degrés)
-     * @param {THREE.Vector3}  out       Vecteur de sortie pré-alloué
      */
     getDirectionCurved(angleDeg, basePitch, a1, a2, out) {
         const pitch = this.getCurvedPitch(angleDeg, a1, a2, basePitch);
@@ -154,6 +168,9 @@ export class PatternHorizontalSweep extends PatternBase {
         const a1      = params_arg.angle - params_arg.spread * 0.5;
         const a2      = params_arg.angle + params_arg.spread * 0.5;
         const pitch   = this.getPitch(animTime, podPhase);
+        this._basePitch = pitch;
+        this._updateRotation(pitch);
+
         const invNm1  = nBeams > 1 ? 1.0 / (nBeams - 1) : 0;
 
         for (let i = 0; i < nBeams; i++) {

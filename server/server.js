@@ -221,6 +221,96 @@ function defaultDspState() {
     };
 }
 
+// ─── Default Lighting & Environment State ─────────────────────────────────────
+function defaultLightingState() {
+    return {
+        env: {
+            presetKey: 'day',
+            stageBoost: 1.0,
+            stars: true,
+            starSize: 0.5,
+            starCount: 6000,
+            starBrightness: 3.0,
+        },
+        gi: {
+            enabled: false,
+            intensity: 0.85,
+            stageBounceIntensity: 0.90,
+            roofBounceIntensity: 0.65,
+            subwooferBounceIntensity: 0.70,
+            skyColor: '#5a78a6',
+            groundBounceColor: '#1c2e18',
+            stageBounceColor: '#44556a',
+            subwooferBounceColor: '#2b3626',
+        },
+        laserPost: {
+            enabled: true,
+            bloomStrength: 0.15,
+            bloomRadius: 0.5,
+            bloomThreshold: 0.0,
+            chroma: 0.25,
+            antialiasing: 'Aucun',
+            fogEnabled: false,
+            fogDensity: 0.005,
+            fogColor: '#111122',
+        },
+        lights: {},
+        lasers: {},
+    };
+}
+
+function applyLightingChange(state, msg) {
+    if (!state) return;
+    const { category, data, id } = msg;
+    if (category === 'env') {
+        if (!state.env) state.env = {};
+        if (data) Object.assign(state.env, data);
+    } else if (category === 'gi') {
+        if (!state.gi) state.gi = {};
+        if (data) Object.assign(state.gi, data);
+    } else if (category === 'laser_post') {
+        if (!state.laserPost) state.laserPost = {};
+        if (data) Object.assign(state.laserPost, data);
+    } else if (category === 'light_update') {
+        if (!state.lights) state.lights = {};
+        if (!state.lights[id]) state.lights[id] = { id };
+        if (data) Object.assign(state.lights[id], data);
+    } else if (category === 'light_add') {
+        if (!state.lights) state.lights = {};
+        if (data && data.id) state.lights[data.id] = data;
+    } else if (category === 'light_remove') {
+        if (state.lights) delete state.lights[id];
+    } else if (category === 'light_reset') {
+        if (state.lights) delete state.lights[id];
+    } else if (category === 'laser_transform') {
+        if (!state.lasers) state.lasers = {};
+        if (!state.lasers[id]) state.lasers[id] = { id, params: {} };
+        if (data) {
+            if (data.position) state.lasers[id].position = data.position;
+            if (data.rotation) state.lasers[id].rotation = data.rotation;
+        }
+    } else if (category === 'laser_param') {
+        if (!state.lasers) state.lasers = {};
+        if (!state.lasers[id]) state.lasers[id] = { id, params: {} };
+        if (!state.lasers[id].params) state.lasers[id].params = {};
+        if (msg.param !== undefined) state.lasers[id].params[msg.param] = msg.value;
+    } else if (category === 'laser_add') {
+        if (!state.lasers) state.lasers = {};
+        if (data && data.id) state.lasers[data.id] = data;
+    } else if (category === 'laser_remove') {
+        if (state.lasers) delete state.lasers[id];
+    } else if (category === 'laser_reset_all') {
+        if (state.lasers && state.lasers[id]) state.lasers[id].params = {};
+    } else if (category === 'reset_all') {
+        const fresh = defaultLightingState();
+        state.env = fresh.env;
+        state.gi = fresh.gi;
+        state.laserPost = fresh.laserPost;
+        state.lights = {};
+        state.lasers = {};
+    }
+}
+
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 function send(ws, data) {
     if (ws.readyState === WebSocket.OPEN) {
@@ -688,8 +778,10 @@ wss.on('connection', (ws) => {
             case 'CREATE_ROOM': {
                 const roomId = generateRoomId();
                 const room = {
+                    masterId: clientId,
                     clients: new Map([[clientId, ws]]),
                     dspState: defaultDspState(),
+                    lightingState: defaultLightingState(),
                     playback: { currentTime: 0, isPlaying: false, timestamp: Date.now() },
                     sine: { active: false, frequency: 440, volume: 50 },
                     trackName: '',
@@ -726,6 +818,7 @@ wss.on('connection', (ws) => {
                     webPort: 8067,
                     audioPort: PORT,
                     dspState: room.dspState,
+                    lightingState: room.lightingState,
                     playback: room.playback,
                     sine: room.sine,
                     trackName: room.trackName,
@@ -770,6 +863,7 @@ wss.on('connection', (ws) => {
                     webPort: 8067,
                     audioPort: PORT,
                     dspState: room.dspState,
+                    lightingState: room.lightingState || defaultLightingState(),
                     playback: room.playback,
                     sine: room.sine,
                     trackName: room.trackName,
@@ -813,6 +907,26 @@ wss.on('connection', (ws) => {
 
                 // Broadcast to everyone EXCEPT the sender (sender already applied locally)
                 broadcastRoom(room, { type: 'DSP_UPDATE', bus, param, value }, clientId);
+                break;
+            }
+
+            // ─── LIGHTING_CHANGE ──────────────────────────────────────────
+            case 'LIGHTING_CHANGE': {
+                if (!ws.roomId) return;
+                const room = rooms.get(ws.roomId);
+                if (!room) return;
+
+                if (!room.lightingState) {
+                    room.lightingState = defaultLightingState();
+                }
+
+                applyLightingChange(room.lightingState, msg);
+
+                // Broadcast to everyone EXCEPT the sender (sender already applied locally)
+                broadcastRoom(room, {
+                    type: 'LIGHTING_UPDATE',
+                    ...msg,
+                }, clientId);
                 break;
             }
 
@@ -946,6 +1060,9 @@ wss.on('connection', (ws) => {
 
                 // While awaiting ready for a new track, drop any lingering sync heartbeats from old track
                 if (room.isAwaitingReady) return;
+
+                // ONLY master can dictate playback time
+                if (room.masterId && clientId !== room.masterId) return;
 
                 if (room.playback) {
                     room.playback.currentTime = msg.currentTime;
@@ -1596,6 +1713,12 @@ wss.on('connection', (ws) => {
             rooms.delete(ws.roomId);
             console.log(`[Room] Destroyed: ${ws.roomId} (empty)`);
         } else {
+            // Reassign master if master left
+            if (clientId === room.masterId && room.clients.size > 0) {
+                room.masterId = room.clients.keys().next().value;
+                console.log(`[Room] Master transferred to ${room.masterId} in ${ws.roomId}`);
+            }
+
             // Someone left — notify remaining peers and update player list
             broadcastRoom(room, { type: 'PEER_LEFT', peerId: clientId });
             broadcastRoomAll(room, {

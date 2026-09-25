@@ -13,8 +13,9 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js';
 import { makeDraggable } from './draggable.js';
-import { globalLaserPostParams } from '../laser/LaserManager.js';
+import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js';
 import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js';
+import { GI_PRESETS } from '../scene/staticGI.js';
 
 export class AmbiancePanel {
     /**
@@ -33,6 +34,7 @@ export class AmbiancePanel {
         this.initialLights = options.initialLights || [];
         this.skybox = options.skybox || null;
         if (this.skybox) this.skybox.renderOrder = -2;
+        this.staticGI = options.staticGI || null;
 
         // Initialisation de la librairie pour RectAreaLight
         try {
@@ -134,6 +136,15 @@ export class AmbiancePanel {
         this._buildGui();
     }
 
+    /**
+     * Injecte le système d'Illumination Globale Statique
+     * @param {object} staticGI
+     */
+    setStaticGI(staticGI) {
+        this.staticGI = staticGI;
+        this._buildGui();
+    }
+
     // ─── 1. TransformControls (Gizmo 3D) ──────────────────────────────
     _initTransformControls() {
         this.transformControls = new TransformControls(this.camera, this.renderer.domElement);
@@ -172,16 +183,32 @@ export class AmbiancePanel {
 
             // ── Cas 1 : Gizmo attaché à un Laser ──
             if (this.selectedLaser && this.transformControls.object === this.selectedLaser.getHousingGroup()) {
+                if (!this.isDraggingGizmo) return;
                 const housing = this.selectedLaser.getHousingGroup();
                 const pos = housing.position;
                 this.selectedLaser.setPosition(pos.x, pos.y, pos.z);
 
                 const mode = this.transformControls.getMode();
                 if (mode === 'rotate') {
-                    let deg = THREE.MathUtils.radToDeg(housing.rotation.y) % 360;
-                    if (deg > 180) deg -= 360;
-                    if (deg < -180) deg += 360;
-                    this.selectedLaser.setParam('angle', deg);
+                    const euler = new THREE.Euler().setFromQuaternion(housing.quaternion, 'YXZ');
+                    const yaw = Math.round(THREE.MathUtils.radToDeg(euler.y));
+                    const pitchDeg = Math.round(THREE.MathUtils.radToDeg(-euler.x));
+                    const rollDeg = Math.round(THREE.MathUtils.radToDeg(euler.z));
+
+                    this.selectedLaser.setParam('angle', yaw);
+                    this.selectedLaser.setParam('tilt', pitchDeg);
+                    this.selectedLaser.setParam('roll', rollDeg);
+
+                    if (this._laserRotControllers) {
+                        this._laserRotControllers.rotState.angle = yaw;
+                        this._laserRotControllers.rotState.tilt = pitchDeg;
+                        this._laserRotControllers.rotState.roll = rollDeg;
+                        try {
+                            this._laserRotControllers.ctrlAngle.updateDisplay();
+                            this._laserRotControllers.ctrlTilt.updateDisplay();
+                            if (this._laserRotControllers.ctrlRoll) this._laserRotControllers.ctrlRoll.updateDisplay();
+                        } catch (_) {}
+                    }
                 }
 
                 if (this._laserInspectorPanel) {
@@ -197,6 +224,22 @@ export class AmbiancePanel {
                         this._laserPosControllers.posZ.updateDisplay();
                     } catch (_) {}
                 }
+                this._emitSync({
+                    category: 'laser_transform',
+                    id: this.selectedLaser.laserId,
+                    data: {
+                        position: { x: pos.x, y: pos.y, z: pos.z },
+                        rotation: this._laserRotControllers ? {
+                            angle: this._laserRotControllers.rotState.angle,
+                            tilt: this._laserRotControllers.rotState.tilt,
+                            roll: this._laserRotControllers.rotState.roll
+                        } : {
+                            angle: this.selectedLaser.params.angle || 0,
+                            tilt: this.selectedLaser.params.tilt || 0,
+                            roll: this.selectedLaser.params.roll || 0
+                        }
+                    }
+                });
                 return;
             }
 
@@ -239,6 +282,15 @@ export class AmbiancePanel {
                 }
                 this._syncGuiTarget();
             }
+
+            this._emitSync({
+                category: 'light_update',
+                id: entry.id,
+                data: {
+                    position: { x: entry.light.position.x, y: entry.light.position.y, z: entry.light.position.z },
+                    target: entry.light.target ? { x: entry.light.target.position.x, y: entry.light.target.position.y, z: entry.light.target.position.z } : null
+                }
+            });
         });
 
         // Cacher le gizmo par défaut
@@ -605,16 +657,17 @@ export class AmbiancePanel {
         };
 
         this.envState = {
-            presetKey: 'day',
+            presetKey: 'night_aurora',
             stars: true,
-            starSize: 2.0,
+            starSize: 0.5,
             starCount: 6000,
-            starBrightness: 1.0,
+            starBrightness: 3.0,
             stageBoost: 1.0,
         };
 
         this._isApplyingEnvPreset = false;
         this.starfield = this._createStarfield();
+        this.applyEnvPreset('night_aurora');
     }
 
     _createStarfield() {
@@ -796,7 +849,7 @@ export class AmbiancePanel {
         });
     }
 
-    applyEnvPreset(key) {
+    applyEnvPreset(key, isReset = false) {
         if (this._isApplyingEnvPreset) return;
         this._isApplyingEnvPreset = true;
 
@@ -829,6 +882,25 @@ export class AmbiancePanel {
 
             // 4. Adaptation des lumières intégrées
             this._applyPresetToLights(preset);
+
+            // 5. Synchronisation de la GI Statique (0 lag) adaptée à l'ambiance
+            if (this.staticGI && typeof this.staticGI.syncWithEnvPreset === 'function') {
+                this.staticGI.syncWithEnvPreset(preset, key);
+            }
+
+            // 6. Rafraîchir l'affichage des contrôleurs du dossier GI
+            if (this.fGI && this.fGI.controllers) {
+                this.fGI.controllers.forEach(c => {
+                    try { c.updateDisplay(); } catch (_) {}
+                });
+            }
+
+            if (!isReset) {
+                this._emitSync({
+                    category: 'env',
+                    data: { presetKey: key }
+                });
+            }
         } finally {
             this._isApplyingEnvPreset = false;
         }
@@ -881,6 +953,11 @@ export class AmbiancePanel {
                     core.material.color.copy(light.color);
                 }
             }
+            if (light.userData && light.userData.bulbMesh && light.userData.bulbMesh.material) {
+                light.userData.bulbMesh.material.color.copy(light.color);
+                light.userData.bulbMesh.position.copy(light.position);
+                light.userData.bulbMesh.visible = light.visible;
+            }
             if (entry.helper && entry.helper.update) {
                 entry.helper.update();
             }
@@ -904,6 +981,14 @@ export class AmbiancePanel {
             }
         };
         updateFolder(this.fInspector);
+    }
+
+    _getGIDefault(paramKey) {
+        if (paramKey === 'enabled') return false;
+        const key = this.envState?.presetKey || 'night_aurora';
+        const p = GI_PRESETS[key] || GI_PRESETS.night_aurora;
+        if (p && p[paramKey] !== undefined) return p[paramKey];
+        return this.staticGI?.params?.[paramKey];
     }
 
     // ─── 2. Enregistrement des Lumières ──────────────────────────────
@@ -937,7 +1022,7 @@ export class AmbiancePanel {
      * @param {boolean} [isBuiltin=false]
      * @param {string} [customName]
      */
-    registerLight(light, isBuiltin = false, customName = null) {
+    registerLight(light, isBuiltin = false, customName = null, customId = null) {
         if (!light || this.lights.some(e => e.light === light)) return;
 
         let type = 'PointLight';
@@ -947,7 +1032,11 @@ export class AmbiancePanel {
         else if (light.isHemisphereLight) type = 'HemisphereLight';
         else if (light.isRectAreaLight) type = 'RectAreaLight';
 
-        const id = 'light_' + (this._nextId++);
+        const id = customId || ('light_' + (this._nextId++));
+        if (typeof customId === 'string' && customId.startsWith('light_')) {
+            const num = parseInt(customId.replace('light_', ''), 10);
+            if (!isNaN(num) && this._nextId <= num) this._nextId = num + 1;
+        }
         const name = customName || light.name || `${type} #${this.lights.length + 1}`;
         light.name = name;
 
@@ -1034,6 +1123,7 @@ export class AmbiancePanel {
         });
         const coreMesh = new THREE.Mesh(coreGeo, coreMat);
         coreMesh.renderOrder = 9998;
+        enableBloom(coreMesh);
         group.add(coreMesh);
 
         // Anneau externe pour un repère technologique précis
@@ -1047,6 +1137,7 @@ export class AmbiancePanel {
         const ringMesh = new THREE.Mesh(ringGeo, ringMat);
         ringMesh.renderOrder = 9999;
         ringMesh.rotation.x = Math.PI / 2;
+        enableBloom(ringMesh);
         group.add(ringMesh);
 
         // Sphère invisible large pour faciliter grandement le clic souris (Hit Target)
@@ -1107,6 +1198,7 @@ export class AmbiancePanel {
             blending: THREE.AdditiveBlending,
         });
         const coneMesh = new THREE.Mesh(coneGeo, coneMat);
+        enableBloom(coneMesh);
         helperGroup.add(coneMesh);
 
         // 2. Lignes d'arêtes longitudinales (wireframe)
@@ -1385,9 +1477,11 @@ export class AmbiancePanel {
         // Attacher le gizmo au groupe du boîtier 3D du laser
         const housing = laser.getHousingGroup();
         if (housing) {
+            housing.updateMatrixWorld(true);
             this.transformControls.attach(housing);
             this.transformControls.visible = true;
             this.transformControls.enabled = true;
+            this.transformControls.updateMatrixWorld(true);
         }
 
         // Réinitialiser les repères de lumière
@@ -1603,6 +1697,14 @@ export class AmbiancePanel {
                     const { id, laserShow } = this.laserManager.addLaser(spawnPos.clone());
                     this.selectLaser(laserShow);
                     this._buildGui();
+                    this._emitSync({
+                        category: 'laser_add',
+                        data: {
+                            id,
+                            position: { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z },
+                            params: { ...laserShow.params }
+                        }
+                    });
                     return null; // Pas d'entry lumière classique
                 }
 
@@ -1618,6 +1720,16 @@ export class AmbiancePanel {
 
         // Reconstruire le GUI pour mettre à jour la liste
         this._buildGui();
+        this._emitSync({
+            category: 'light_add',
+            data: {
+                id: entry.id,
+                name: entry.name,
+                type: entry.type,
+                isBuiltin: false,
+                ...this._captureLightState(light, entry.type)
+            }
+        });
         return entry;
     }
 
@@ -1646,6 +1758,7 @@ export class AmbiancePanel {
         }
 
         this._buildGui();
+        this._emitSync({ category: 'light_remove', id: entry.id });
     }
 
     duplicateSelectedLight() {
@@ -1669,6 +1782,16 @@ export class AmbiancePanel {
             if (entry.markerMesh) entry.markerMesh.position.copy(entry.light.position);
             if (entry.helper && entry.helper.update) entry.helper.update();
             this.selectLight(entry);
+            this._emitSync({
+                category: 'light_add',
+                data: {
+                    id: entry.id,
+                    name: entry.name,
+                    type: entry.type,
+                    isBuiltin: false,
+                    ...this._captureLightState(entry.light, entry.type)
+                }
+            });
         }
     }
 
@@ -1709,12 +1832,18 @@ export class AmbiancePanel {
             const core = entry.markerMesh.children[0];
             if (core) core.material.color.copy(light.color);
         }
+        if (light.userData && light.userData.bulbMesh && light.userData.bulbMesh.material) {
+            light.userData.bulbMesh.material.color.copy(light.color);
+            light.userData.bulbMesh.position.copy(light.position);
+            light.userData.bulbMesh.visible = light.visible;
+        }
 
         if (entry.helper && entry.helper.update) {
             entry.helper.update();
         }
 
         this._rebuildInspectorGui();
+        this._emitSync({ category: 'light_reset', id: entry.id });
     }
 
     resetAll() {
@@ -1725,25 +1854,41 @@ export class AmbiancePanel {
         // Rétablir l'ambiance céleste par défaut (Plein Jour)
         this.envState.stageBoost = 1.0;
         this.envState.stars = true;
-        this.envState.starSize = 2.0;
+        this.envState.starSize = 0.5;
         this.envState.starCount = 6000;
-        this.envState.starBrightness = 1.0;
-        this.setStarSize(2.0);
+        this.envState.starBrightness = 3.0;
+        this.setStarSize(0.5);
         this.setStarCount(6000);
-        this.setStarBrightness(1.0);
+        this.setStarBrightness(3.0);
         this.setMarkersVisible(true);
-        this.applyEnvPreset('day', true);
+        this.applyEnvPreset('night_aurora', true);
 
         // Réinitialiser toutes les lumières de base
         this.lights.forEach(e => {
             if (e.isBuiltin) this.resetLight(e);
         });
 
+        // Réinitialiser l'Illumination Globale Statique
+        if (this.staticGI) {
+            this.staticGI.params.enabled = false;
+            this.staticGI.params.intensity = 0.85;
+            this.staticGI.params.stageBounceIntensity = 0.90;
+            this.staticGI.params.roofBounceIntensity = 0.65;
+            this.staticGI.params.subwooferBounceIntensity = 0.70;
+            this.staticGI.params.skyColor = '#5a78a6';
+            this.staticGI.params.groundBounceColor = '#1c2e18';
+            this.staticGI.params.stageBounceColor = '#44556a';
+            this.staticGI.params.subwooferBounceColor = '#2b3626';
+            this.staticGI.update();
+            this.staticGI.generateStaticEnvMap();
+        }
+
         // Remettre la première en sélection
         if (this.lights.length > 0) {
             this.selectLight(this.lights[0]);
         }
         this._buildGui();
+        this._emitSync({ category: 'reset_all' });
     }
 
     // ─── 5b. Export d'une Lampe (Code Three.js & Format JSON) ─────────
@@ -2249,7 +2394,7 @@ export class AmbiancePanel {
         cStarSize.onChange(val => {
             this.setStarSize(val);
         });
-        this._setupController(cStarSize, () => 2.0, (val) => {
+        this._setupController(cStarSize, () => 0.5, (val) => {
             this.setStarSize(val);
         });
 
@@ -2265,7 +2410,7 @@ export class AmbiancePanel {
         cStarBright.onChange(val => {
             this.setStarBrightness(val);
         });
-        this._setupController(cStarBright, () => 1.0, (val) => {
+        this._setupController(cStarBright, () => 3.0, (val) => {
             this.setStarBrightness(val);
         });
 
@@ -2278,6 +2423,109 @@ export class AmbiancePanel {
             this.envState.stageBoost = v;
             this._updateStageBoost();
         });
+
+        // ── Dossier Illumination Globale Statique (GI 0 lag) ──
+        if (this.staticGI) {
+            const fGI = this.gui.addFolder('💡 Illumination Globale Statique (GI)');
+            fGI.close();
+            this.fGI = fGI;
+
+            const p = this.staticGI.params;
+
+            const cEnabled = fGI.add(p, 'enabled').name('Activer GI');
+            cEnabled.onChange(() => {
+                this.staticGI.update();
+            });
+            this._setupController(cEnabled, () => this._getGIDefault('enabled'), (v) => {
+                p.enabled = v;
+                cEnabled.setValue(v);
+                this.staticGI.update();
+            });
+
+            const cInt = fGI.add(p, 'intensity', 0, 3.0, 0.05).name('Intensité Globale');
+            cInt.onChange(() => {
+                this.staticGI.update();
+            });
+            this._setupController(cInt, () => this._getGIDefault('intensity'), (v) => {
+                p.intensity = v;
+                cInt.setValue(v);
+                this.staticGI.update();
+            });
+
+            const cStage = fGI.add(p, 'stageBounceIntensity', 0, 3.0, 0.05).name('Rebond Scène');
+            cStage.onChange(() => {
+                this.staticGI.update();
+            });
+            this._setupController(cStage, () => this._getGIDefault('stageBounceIntensity'), (v) => {
+                p.stageBounceIntensity = v;
+                cStage.setValue(v);
+                this.staticGI.update();
+            });
+
+            const cRoof = fGI.add(p, 'roofBounceIntensity', 0, 3.0, 0.05).name('Rebond Toit & Truss');
+            cRoof.onChange(() => {
+                this.staticGI.update();
+            });
+            this._setupController(cRoof, () => this._getGIDefault('roofBounceIntensity'), (v) => {
+                p.roofBounceIntensity = v;
+                cRoof.setValue(v);
+                this.staticGI.update();
+            });
+
+            const cSubs = fGI.add(p, 'subwooferBounceIntensity', 0, 3.0, 0.05).name('Rebond Subwoofers');
+            cSubs.onChange(() => {
+                this.staticGI.update();
+            });
+            this._setupController(cSubs, () => this._getGIDefault('subwooferBounceIntensity'), (v) => {
+                p.subwooferBounceIntensity = v;
+                cSubs.setValue(v);
+                this.staticGI.update();
+            });
+
+            const cSkyCol = fGI.addColor(p, 'skyColor').name('Teinte Ciel (Diffus)');
+            cSkyCol.onChange(() => {
+                this.staticGI.update();
+                this.staticGI.generateStaticEnvMap();
+            });
+            this._setupController(cSkyCol, () => this._getGIDefault('skyColor'), (v) => {
+                p.skyColor = v;
+                cSkyCol.setValue(v);
+                this.staticGI.update();
+                this.staticGI.generateStaticEnvMap();
+            });
+
+            const cGndCol = fGI.addColor(p, 'groundBounceColor').name('Teinte Sol (Herbe)');
+            cGndCol.onChange(() => {
+                this.staticGI.update();
+                this.staticGI.generateStaticEnvMap();
+            });
+            this._setupController(cGndCol, () => this._getGIDefault('groundBounceColor'), (v) => {
+                p.groundBounceColor = v;
+                cGndCol.setValue(v);
+                this.staticGI.update();
+                this.staticGI.generateStaticEnvMap();
+            });
+
+            const cStageCol = fGI.addColor(p, 'stageBounceColor').name('Teinte Intérieur Scène');
+            cStageCol.onChange(() => {
+                this.staticGI.update();
+            });
+            this._setupController(cStageCol, () => this._getGIDefault('stageBounceColor'), (v) => {
+                p.stageBounceColor = v;
+                cStageCol.setValue(v);
+                this.staticGI.update();
+            });
+
+            const cSubsCol = fGI.addColor(p, 'subwooferBounceColor').name('Teinte Subwoofers');
+            cSubsCol.onChange(() => {
+                this.staticGI.update();
+            });
+            this._setupController(cSubsCol, () => this._getGIDefault('subwooferBounceColor'), (v) => {
+                p.subwooferBounceColor = v;
+                cSubsCol.setValue(v);
+                this.staticGI.update();
+            });
+        }
 
         // ── Dossier Outils 3D ──
         const fTools = this.gui.addFolder('👁️ Outils 3D');
@@ -2381,42 +2629,56 @@ export class AmbiancePanel {
             const fLaser = this.gui.addFolder('🔴 Post-traitement Laser');
             fLaser.close();
 
-            fLaser.add(globalLaserPostParams, 'enabled').name('Activer').onChange(v => {
+            const cEnabled = fLaser.add(globalLaserPostParams, 'enabled').name('Activer').onChange(v => {
                 this.laserManager.setPostProcessingParam('enabled', v);
             });
+            this._setupController(cEnabled, () => true, v => this.laserManager.setPostProcessingParam('enabled', v));
 
             // Bloom
             const fBloom = fLaser.addFolder('✨ Bloom (Glow Laser)');
-            fBloom.add(globalLaserPostParams, 'bloomStrength', 0, 2, 0.05).name('Intensité Bloom').onChange(v => {
+            const cBloomStr = fBloom.add(globalLaserPostParams, 'bloomStrength', 0, 2, 0.05).name('Intensité Bloom').onChange(v => {
                 this.laserManager.setPostProcessingParam('bloomStrength', v);
             });
-            fBloom.add(globalLaserPostParams, 'bloomRadius', 0, 2, 0.05).name('Rayon Bloom').onChange(v => {
+            this._setupController(cBloomStr, () => 0.15, v => this.laserManager.setPostProcessingParam('bloomStrength', v));
+
+            const cBloomRad = fBloom.add(globalLaserPostParams, 'bloomRadius', 0, 2, 0.05).name('Rayon Bloom').onChange(v => {
                 this.laserManager.setPostProcessingParam('bloomRadius', v);
             });
-            fBloom.add(globalLaserPostParams, 'bloomThreshold', 0, 1, 0.01).name('Seuil Bloom').onChange(v => {
+            this._setupController(cBloomRad, () => 0.5, v => this.laserManager.setPostProcessingParam('bloomRadius', v));
+
+            const cBloomThresh = fBloom.add(globalLaserPostParams, 'bloomThreshold', 0, 1, 0.01).name('Seuil Bloom').onChange(v => {
                 this.laserManager.setPostProcessingParam('bloomThreshold', v);
             });
+            this._setupController(cBloomThresh, () => 0.0, v => this.laserManager.setPostProcessingParam('bloomThreshold', v));
 
             // Aberration chromatique
             const fChroma = fLaser.addFolder('🌈 Aberration Chromatique');
-            fChroma.add(globalLaserPostParams, 'chroma', 0, 0.5, 0.01).name('Intensité').onChange(v => {
+            const cChroma = fChroma.add(globalLaserPostParams, 'chroma', 0, 0.5, 0.01).name('Intensité').onChange(v => {
                 this.laserManager.setPostProcessingParam('chroma', v);
             });
-            fChroma.add(globalLaserPostParams, 'antialiasing', ['FXAA', 'Aucun']).name('Antialiasing').onChange(v => {
+            this._setupController(cChroma, () => 0.25, v => this.laserManager.setPostProcessingParam('chroma', v));
+
+            const cAA = fChroma.add(globalLaserPostParams, 'antialiasing', ['FXAA', 'Aucun']).name('Antialiasing').onChange(v => {
                 this.laserManager.setPostProcessingParam('antialiasing', v);
             });
+            this._setupController(cAA, () => 'Aucun', v => this.laserManager.setPostProcessingParam('antialiasing', v));
 
             // Fumée scénique
             const fFog = fLaser.addFolder('💨 Fumée Scénique');
-            fFog.add(globalLaserPostParams, 'fogEnabled').name('Activer Fumée').onChange(v => {
+            const cFogEn = fFog.add(globalLaserPostParams, 'fogEnabled').name('Activer Fumée').onChange(v => {
                 this.laserManager.setPostProcessingParam('fogEnabled', v);
             });
-            fFog.add(globalLaserPostParams, 'fogDensity', 0, 0.02, 0.0005).name('Densité').onChange(v => {
+            this._setupController(cFogEn, () => false, v => this.laserManager.setPostProcessingParam('fogEnabled', v));
+
+            const cFogDens = fFog.add(globalLaserPostParams, 'fogDensity', 0, 0.02, 0.0005).name('Densité').onChange(v => {
                 this.laserManager.setPostProcessingParam('fogDensity', v);
             });
-            fFog.addColor(globalLaserPostParams, 'fogColor').name('Couleur Fumée').onChange(v => {
+            this._setupController(cFogDens, () => 0.005, v => this.laserManager.setPostProcessingParam('fogDensity', v));
+
+            const cFogCol = fFog.addColor(globalLaserPostParams, 'fogColor').name('Couleur Fumée').onChange(v => {
                 this.laserManager.setPostProcessingParam('fogColor', v);
             });
+            this._setupController(cFogCol, () => '#111122', v => this.laserManager.setPostProcessingParam('fogColor', v));
         }
 
         // Rendre le panneau déplaçable avec la souris sur le titre
@@ -2500,27 +2762,74 @@ export class AmbiancePanel {
             this._currentInspectorEntry = null;
 
             const laserActions = {
-                deselect: () => this.deselectLight(),
-                openPanel: () => {
-                    if (this._laserInspectorPanel) {
-                        this._laserInspectorPanel.openForLaser(laser.laserId, laser);
+                duplicateLaser: () => {
+                    // Copier les paramètres du laser sélectionné (deep copy des valeurs scalaires)
+                    const srcParams = laser.params;
+                    const paramsCopy = {};
+                    for (const key in srcParams) {
+                        const v = srcParams[key];
+                        if (v && typeof v === 'object' && typeof v.clone === 'function') {
+                            paramsCopy[key] = v.clone();
+                        } else {
+                            paramsCopy[key] = v;
+                        }
                     }
+                    // S'assurer que l'orientation exacte est bien copiée
+                    paramsCopy.angle = laser.params.angle !== undefined ? laser.params.angle : 0;
+                    paramsCopy.tilt = laser.params.tilt !== undefined ? laser.params.tilt : 0;
+
+                    // Position décalée de 1.5m sur X pour ne pas superposer
+                    const srcPos = laser.getPosition ? laser.getPosition() : laser.getHousingGroup().position;
+                    const newPos = srcPos.clone();
+                    newPos.x += 1.5;
+                    const { laserShow: newLaser } = this.laserManager.addLaser(newPos, paramsCopy);
+
+                    // Copier l'orientation 3D exacte du boîtier et du groupe racine
+                    const srcHousing = laser.getHousingGroup();
+                    const dstHousing = newLaser.getHousingGroup();
+                    if (srcHousing && dstHousing) {
+                        dstHousing.rotation.copy(srcHousing.rotation);
+                        dstHousing.quaternion.copy(srcHousing.quaternion);
+                        dstHousing.updateMatrixWorld(true);
+                    }
+                    if (laser.group && newLaser.group) {
+                        newLaser.group.rotation.copy(laser.group.rotation);
+                        newLaser.group.quaternion.copy(laser.group.quaternion);
+                        newLaser.group.updateMatrixWorld(true);
+                    }
+                    newLaser._animTime = laser._animTime;
+                    newLaser.isPaused = laser.isPaused;
+
+                    this.selectLaser(newLaser);
+                    this._buildGui();
+                    const housingRot = dstHousing ? {
+                        angle: Math.round(THREE.MathUtils.radToDeg(dstHousing.rotation.y)),
+                        tilt: Math.round(THREE.MathUtils.radToDeg(-dstHousing.rotation.x)),
+                        roll: Math.round(THREE.MathUtils.radToDeg(dstHousing.rotation.z))
+                    } : { angle: paramsCopy.angle || 0, tilt: paramsCopy.tilt || 0, roll: paramsCopy.roll || 0 };
+
+                    this._emitSync({
+                        category: 'laser_add',
+                        data: {
+                            id: newLaser.laserId,
+                            position: { x: newPos.x, y: newPos.y, z: newPos.z },
+                            rotation: housingRot,
+                            params: paramsCopy
+                        }
+                    });
                 },
-                setTranslate: () => this.setGizmoMode('translate'),
-                setRotate: () => this.setGizmoMode('rotate'),
                 deleteLaser: () => {
                     const id = laser.laserId;
                     this.laserManager.removeLaser(id);
                     this.deselectLaser();
                     this._buildGui();
+                    this._emitSync({ category: 'laser_remove', id });
                 },
             };
 
             const fLaserActions = this.fInspector.addFolder(`🔴 Laser #${laser.laserId} - Actions`);
             fLaserActions.open();
-            fLaserActions.add(laserActions, 'openPanel').name('🎛️ Ouvrir panneau Laser');
-            fLaserActions.add(laserActions, 'setTranslate').name('↔️ Mode Déplacement (Gizmo)');
-            fLaserActions.add(laserActions, 'setRotate').name('🔄 Mode Rotation (Gizmo)');
+            fLaserActions.add(laserActions, 'duplicateLaser').name('⧉ Dupliquer ce laser');
             fLaserActions.add(laserActions, 'deleteLaser').name('🗑️ Supprimer ce laser');
 
             // Position 3D du laser dans l'inspecteur
@@ -2539,12 +2848,63 @@ export class AmbiancePanel {
                 if (this._laserInspectorPanel) {
                     this._laserInspectorPanel.syncFromLaser();
                 }
+                this._emitSync({
+                    category: 'laser_transform',
+                    id: laser.laserId,
+                    data: { position: { x: posState.x, y: posState.y, z: posState.z } }
+                });
             };
 
             const ctrlX = fPos.add(posState, 'x', -100, 100, 0.1).name('Pos X').onChange(onLaserPosChange);
             const ctrlY = fPos.add(posState, 'y', 0, 50, 0.1).name('Pos Y').onChange(onLaserPosChange);
             const ctrlZ = fPos.add(posState, 'z', -100, 100, 0.1).name('Pos Z').onChange(onLaserPosChange);
             this._laserPosControllers = { posX: ctrlX, posY: ctrlY, posZ: ctrlZ, posState };
+
+            // Orientation 3D du laser dans l'inspecteur (Angle horizontal & Inclinaison verticale)
+            const fRot = this.fInspector.addFolder('🔄 Orientation Laser');
+            fRot.open();
+
+            const rotState = {
+                angle: Math.round(laser.params.angle || 0),
+                tilt: Math.round(laser.params.tilt || 0),
+                roll: Math.round(laser.params.roll || 0),
+            };
+
+            const onLaserRotChange = () => {
+                laser.setParam('angle', rotState.angle);
+                laser.setParam('tilt', rotState.tilt);
+                laser.setParam('roll', rotState.roll);
+                if (housing) {
+                    housing.rotation.set(
+                        -rotState.tilt * (Math.PI / 180),
+                        rotState.angle * (Math.PI / 180),
+                        rotState.roll * (Math.PI / 180),
+                        'YXZ'
+                    );
+                    housing.updateMatrixWorld();
+                }
+                if (this.transformControls && this.transformControls.object === housing) {
+                    this.transformControls.updateMatrixWorld();
+                }
+                if (this._laserInspectorPanel) {
+                    this._laserInspectorPanel.syncFromLaser();
+                }
+                this._emitSync({
+                    category: 'laser_transform',
+                    id: laser.laserId,
+                    data: { rotation: { angle: rotState.angle, tilt: rotState.tilt, roll: rotState.roll } }
+                });
+            };
+
+            const ctrlAngle = fRot.add(rotState, 'angle', -180, 180, 1).name('Angle Horiz. (°)').onChange(onLaserRotChange);
+            const ctrlTilt = fRot.add(rotState, 'tilt', -90, 90, 1).name('Inclinaison (°)').onChange(onLaserRotChange);
+            const ctrlRoll = fRot.add(rotState, 'roll', -180, 180, 1).name('Rotation Axiale (°)').onChange(onLaserRotChange);
+            this._setupController(ctrlAngle, () => 0, (v) => { rotState.angle = v; ctrlAngle.setValue(v); onLaserRotChange(); });
+            this._setupController(ctrlTilt, () => 0, (v) => { rotState.tilt = v; ctrlTilt.setValue(v); onLaserRotChange(); });
+            this._setupController(ctrlRoll, () => 0, (v) => { rotState.roll = v; ctrlRoll.setValue(v); onLaserRotChange(); });
+            fLaserActions.add({ openFull: () => {
+                if (this._laserInspectorPanel) this._laserInspectorPanel.openForLaser(laser.laserId, laser);
+            }}, 'openFull').name('🎛️ Ouvrir Paramètres Laser');
 
             return;
         }
@@ -2599,6 +2959,9 @@ export class AmbiancePanel {
             if (entry.markerMesh) {
                 const core = entry.markerMesh.children[0];
                 if (core) core.material.color.set(hex);
+            }
+            if (light.userData && light.userData.bulbMesh && light.userData.bulbMesh.material) {
+                light.userData.bulbMesh.material.color.set(hex);
             }
         });
         this._setupController(cColor, () => def.color, (v) => {
@@ -2700,8 +3063,55 @@ export class AmbiancePanel {
 
             const cW = fRect.add(light, 'width', 0.2, 20, 0.2).name('Largeur');
             const cH = fRect.add(light, 'height', 0.2, 20, 0.2).name('Hauteur');
-            this._setupController(cW, () => def.width, (v) => { light.width = v; });
-            this._setupController(cH, () => def.height, (v) => { light.height = v; });
+            this._setupController(cW, () => def.width,  (v) => { light.width  = v; if (entry.helper && entry.helper.update) entry.helper.update(); });
+            this._setupController(cH, () => def.height, (v) => { light.height = v; if (entry.helper && entry.helper.update) entry.helper.update(); });
+
+            // ── Atténuation ──
+            const fAtten = this.fInspector.addFolder('💡 Atténuation');
+            fAtten.open();
+
+            // RectAreaLight n'a pas de .distance natif — on approche via intensity scale
+            const attenProxy = {
+                distance: light.userData._rectDistance || 0,
+                decay:    light.userData._rectDecay    || 0,
+            };
+            const cDist = fAtten.add(attenProxy, 'distance', 0, 150, 1).name('Distance max (m)');
+            const cDec  = fAtten.add(attenProxy, 'decay', 0, 2, 0.1).name('Décroissance');
+            cDist.onChange(v => { light.userData._rectDistance = v; });
+            cDec.onChange( v => { light.userData._rectDecay    = v; });
+            this._setupController(cDist, () => 0,   (v) => { attenProxy.distance = v; cDist.setValue(v); });
+            this._setupController(cDec,  () => 0,   (v) => { attenProxy.decay    = v; cDec.setValue(v);  });
+
+            // ── Orientation ──
+            const fRectTarget = this.fInspector.addFolder('🎯 Orientation (Cible)');
+            fRectTarget.close();
+
+            const rtProxy = {
+                tx: light.userData._targetX !== undefined ? light.userData._targetX : light.position.x,
+                ty: light.userData._targetY !== undefined ? light.userData._targetY : 0,
+                tz: light.userData._targetZ !== undefined ? light.userData._targetZ : light.position.z,
+            };
+            const onRectLookAt = () => {
+                light.lookAt(rtProxy.tx, rtProxy.ty, rtProxy.tz);
+                light.userData._targetX = rtProxy.tx;
+                light.userData._targetY = rtProxy.ty;
+                light.userData._targetZ = rtProxy.tz;
+                if (entry.helper && entry.helper.update) entry.helper.update();
+            };
+            const cRTx = fRectTarget.add(rtProxy, 'tx', -100, 100, 0.5).name('Cible X').onChange(onRectLookAt);
+            const cRTy = fRectTarget.add(rtProxy, 'ty', -10,  50,  0.5).name('Cible Y').onChange(onRectLookAt);
+            const cRTz = fRectTarget.add(rtProxy, 'tz', -100, 100, 0.5).name('Cible Z').onChange(onRectLookAt);
+            this._setupController(cRTx, () => light.position.x, (v) => { rtProxy.tx = v; cRTx.setValue(v); onRectLookAt(); });
+            this._setupController(cRTy, () => 0,                (v) => { rtProxy.ty = v; cRTy.setValue(v); onRectLookAt(); });
+            this._setupController(cRTz, () => light.position.z, (v) => { rtProxy.tz = v; cRTz.setValue(v); onRectLookAt(); });
+
+            // ── Info ombres ──
+            const fRectShadow = this.fInspector.addFolder('🌑 Ombres Portées');
+            fRectShadow.close();
+            // Three.js ne supporte pas castShadow sur RectAreaLight nativement.
+            // Workaround : ajouter une SpotLight invisible couplée si nécessaire.
+            const infoProxy = { info: '⚠️ Non supporté par Three.js' };
+            fRectShadow.add(infoProxy, 'info').name('Statut').disable();
         }
 
         // ── Ombres Portées ──
@@ -2764,11 +3174,114 @@ export class AmbiancePanel {
         }
     }
 
+    onSync(cb) {
+        if (!this._syncCallbacks) this._syncCallbacks = [];
+        this._syncCallbacks.push(cb);
+    }
+
+    _emitSync(payload) {
+        if (this._isRemoteUpdate) return;
+        if (this._syncCallbacks) {
+            for (const cb of this._syncCallbacks) {
+                try { cb(payload); } catch (e) { console.error('[AmbiancePanelSync] error:', e); }
+            }
+        }
+    }
+
+    _handleControllerChange(ctrl, val) {
+        if (this._isRemoteUpdate) return;
+        const obj = ctrl.object;
+        const prop = ctrl.property;
+
+        // Outils 3D locaux & Création locale -> pas de synchronisation réseau
+        if (obj === this.creationParams || prop === 'showMarkers' || prop === 'showSpotCones' || prop === 'gizmoMode' || prop === 'currentId') {
+            return;
+        }
+
+        // 1. Ambiance & Ciel
+        if (obj === this.envState) {
+            this._emitSync({
+                category: 'env',
+                data: { [prop]: val }
+            });
+            return;
+        }
+
+        // 2. GI Statique
+        if (this.staticGI && obj === this.staticGI.params) {
+            this._emitSync({
+                category: 'gi',
+                data: { [prop]: val }
+            });
+            return;
+        }
+
+        // 3. Post-traitement Laser
+        if (obj === globalLaserPostParams) {
+            this._emitSync({
+                category: 'laser_post',
+                data: { [prop]: val }
+            });
+            return;
+        }
+
+        // 4. Laser sélectionné
+        if (this.selectedLaser) {
+            const laser = this.selectedLaser;
+            if (this._laserPosControllers && obj === this._laserPosControllers.posState) {
+                this._emitSync({
+                    category: 'laser_transform',
+                    id: laser.laserId,
+                    data: { position: { x: obj.x, y: obj.y, z: obj.z } }
+                });
+                return;
+            }
+            if (this._laserRotControllers && obj === this._laserRotControllers.rotState) {
+                this._emitSync({
+                    category: 'laser_transform',
+                    id: laser.laserId,
+                    data: { rotation: { angle: obj.angle, tilt: obj.tilt, roll: obj.roll } }
+                });
+                return;
+            }
+        }
+
+        // 5. Lumière sélectionnée
+        if (this.selectedEntry) {
+            const entry = this.selectedEntry;
+            const changes = {};
+            if (prop === 'col') {
+                changes.color = val;
+            } else if (prop === 'x' || prop === 'y' || prop === 'z') {
+                if (obj === entry.light.position) {
+                    changes.position = { x: entry.light.position.x, y: entry.light.position.y, z: entry.light.position.z };
+                } else if (entry.light.target && obj === entry.light.target.position) {
+                    changes.target = { x: entry.light.target.position.x, y: entry.light.target.position.y, z: entry.light.target.position.z };
+                }
+            } else if (prop === 'angle') {
+                changes.angle = THREE.MathUtils.radToDeg(entry.light.angle);
+            } else {
+                changes[prop] = val;
+            }
+            this._emitSync({
+                category: 'light_update',
+                id: entry.id,
+                data: changes
+            });
+        }
+    }
+
     /**
      * Injecte le bouton de reset individuel (↺) dans chaque ligne de contrôleur lil-gui
      */
     _setupController(ctrl, getDefaultVal, applyVal) {
         if (!ctrl || !ctrl.domElement) return;
+
+        const origOnChange = ctrl._onChange;
+        ctrl._onChange = (val) => {
+            if (origOnChange) origOnChange.call(ctrl, val);
+            this._handleControllerChange(ctrl, val);
+        };
 
         const resetBtn = document.createElement('button');
         resetBtn.className = 'lil-reset-btn';
@@ -2780,6 +3293,7 @@ export class AmbiancePanel {
             const defVal = getDefaultVal();
             applyVal(defVal);
             ctrl.setValue(defVal);
+            this._handleControllerChange(ctrl, defVal);
         });
 
         const widgetEl = ctrl.domElement.querySelector('.widget');
