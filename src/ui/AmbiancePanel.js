@@ -277,60 +277,100 @@ export class AmbiancePanel {
     }
 
     _createStarfield() {
-        const starCount = 1800;
-        const geometry = new THREE.BufferGeometry();
-        const positions = new Float32Array(starCount * 3);
-        const colors = new Float32Array(starCount * 3);
+        const group = new THREE.Group();
+        group.name = 'ambiance-starfield';
+        group.renderOrder = -1;
+        group.visible = false;
+        group.frustumCulled = false;
 
         const baseColors = [
             new THREE.Color('#ffffff'), // Blanc pur
-            new THREE.Color('#d4e8ff'), // Blanc bleuté
-            new THREE.Color('#fff0d4'), // Blanc chaud / doré
-            new THREE.Color('#94c4ff'), // Étoile bleue vive
-            new THREE.Color('#ffd494'), // Étoile ambrée
+            new THREE.Color('#e0ecff'), // Blanc bleuté éclatant
+            new THREE.Color('#fff4e0'), // Blanc chaud / doré
+            new THREE.Color('#8ac5ff'), // Étoile bleue vive
+            new THREE.Color('#ffd28a'), // Étoile ambrée
+            new THREE.Color('#cce4ff'), // Blanc arctique
         ];
 
         const radius = 860;
-        for (let i = 0; i < starCount; i++) {
-            const theta = Math.random() * Math.PI * 2;
-            // Dôme céleste supérieur uniquement (phi entre 0.05 et 0.44 * PI)
-            const phi = 0.05 + Math.random() * 0.39 * Math.PI;
 
-            const x = radius * Math.sin(phi) * Math.cos(theta);
-            const y = Math.max(40, radius * Math.cos(phi));
-            const z = radius * Math.sin(phi) * Math.sin(theta);
+        // Générateur de points pour la voûte céleste couvrant 100% de la sphère à 360°
+        const generatePoints = (count, size, opacity, isProminent = false) => {
+            const geometry = new THREE.BufferGeometry();
+            const positions = new Float32Array(count * 3);
+            const colors = new Float32Array(count * 3);
 
-            positions[i * 3] = x;
-            positions[i * 3 + 1] = y;
-            positions[i * 3 + 2] = z;
+            for (let i = 0; i < count; i++) {
+                const theta = Math.random() * Math.PI * 2;
 
-            const col = baseColors[Math.floor(Math.random() * baseColors.length)];
-            const brightness = 0.5 + Math.random() * 0.5;
-            colors[i * 3] = col.r * brightness;
-            colors[i * 3 + 1] = col.g * brightness;
-            colors[i * 3 + 2] = col.b * brightness;
+                // Répartition uniforme sphérique sans pincement aux pôles :
+                // 82% des étoiles dans l'hémisphère supérieur et la bande de transition sous l'horizon (cosPhi: [-0.25, 1.0])
+                // 18% des étoiles dans l'hémisphère inférieur (cosPhi: [-1.0, -0.25])
+                // => 100% de la sphère céleste 360° x 180° est couverte, sans aucun trou ni ligne de coupure.
+                let cosPhi;
+                if (Math.random() < 0.82) {
+                    cosPhi = -0.25 + Math.random() * 1.25;
+                } else {
+                    cosPhi = -1.0 + Math.random() * 0.75;
+                }
+
+                const sinPhi = Math.sqrt(Math.max(0, 1 - cosPhi * cosPhi));
+                const x = radius * sinPhi * Math.cos(theta);
+                const y = radius * cosPhi;
+                const z = radius * sinPhi * Math.sin(theta);
+
+                positions[i * 3] = x;
+                positions[i * 3 + 1] = y;
+                positions[i * 3 + 2] = z;
+
+                const col = baseColors[Math.floor(Math.random() * baseColors.length)];
+                let brightness;
+                if (isProminent) {
+                    brightness = 0.80 + Math.random() * 0.20;
+                } else {
+                    // Distribution réaliste de magnitudes (majorité d'étoiles fines et diffuses, quelques brillantes)
+                    brightness = 0.35 + Math.pow(Math.random(), 2.0) * 0.65;
+                }
+
+                colors[i * 3] = col.r * brightness;
+                colors[i * 3 + 1] = col.g * brightness;
+                colors[i * 3 + 2] = col.b * brightness;
+            }
+
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+            const material = new THREE.PointsMaterial({
+                size,
+                vertexColors: true,
+                transparent: true,
+                opacity,
+                depthWrite: false,
+                depthTest: true,
+                fog: false,
+                sizeAttenuation: false,
+            });
+
+            const points = new THREE.Points(geometry, material);
+            points.frustumCulled = false;
+            points.renderOrder = -1;
+            return points;
+        };
+
+        // 1. Voûte d'étoiles dense et subtile (5200 étoiles de taille 1.9px)
+        const regularStars = generatePoints(5200, 1.9, 0.95, false);
+        group.add(regularStars);
+
+        // 2. Étoiles repères majeures et scintillantes (600 étoiles de taille 3.2px)
+        const brightStars = generatePoints(600, 3.2, 1.0, true);
+        group.add(brightStars);
+
+        if (this.camera) {
+            group.position.copy(this.camera.position);
         }
 
-        geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-        geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-        const material = new THREE.PointsMaterial({
-            size: 2.0,
-            vertexColors: true,
-            transparent: true,
-            opacity: 0.9,
-            depthWrite: false,
-            depthTest: true,
-            fog: false,
-            sizeAttenuation: false,
-        });
-
-        const points = new THREE.Points(geometry, material);
-        points.name = 'ambiance-starfield';
-        points.renderOrder = -1;
-        points.visible = false;
-        this.scene.add(points);
-        return points;
+        this.scene.add(group);
+        return group;
     }
 
     setSkybox(skybox) {

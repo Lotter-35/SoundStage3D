@@ -70,7 +70,7 @@ export async function createSkybox(scene) {
                     fog: false,
                 });
                 const skyMesh = new THREE.Mesh(geo, mat);
-                skyMesh.renderOrder = -1;
+                skyMesh.renderOrder = -2;
                 skyMesh.frustumCulled = false;
 
                 // Rotation Y calée visuellement pour aligner le soleil avec la lumière directionnelle
