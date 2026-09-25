@@ -19,14 +19,16 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { LaserShow } from './LaserShow.js';
+import { DazzleEffect } from './effects/DazzleEffect.js';
 
 // Paramètres globaux post-traitement (partagés entre tous les lasers)
+// Valeurs calées sur le projet de référence LaserSimulation
 export const globalLaserPostParams = {
-    bloomStrength:  0.4,
-    bloomRadius:    0.5,
-    bloomThreshold: 0.0,
-    chroma:         0.15,
-    antialiasing:   'FXAA',
+    bloomStrength:  0.1,    // bloomIntensity dans LaserSimulation (ref: 0.1)
+    bloomRadius:    0.5,    // identique au projet de référence
+    bloomThreshold: 0.0,    // seuil 0 = tout brille (ref: 0.0)
+    chroma:         0.25,   // aberration chromatique (ref: 0.25)
+    antialiasing:   'Aucun', // pas d'AA supplémentaire par défaut (ref: 'Aucun')
     fogEnabled:     false,
     fogDensity:     0.005,
     fogColor:       '#111122',
@@ -53,13 +55,19 @@ export class LaserManager {
         this._bloomPass = null;
         this._chromaPass = null;
         this._fxaaPass = null;
-        this._useComposer = false;
+        this._useComposer = false; // sera mis à true dès que le composer est prêt
 
         this._initPostProcessing();
+        // Le composer est toujours actif dès l'init (tone mapping, aberration chromatique, OutputPass)
+        this._useComposer = !!this._composer;
 
         // Fog (fumée scénique)
         this._originalFog = scene.fog;
         this._laserFog = null;
+
+        // Éblouissement physiologique (Dazzle) — activé dès l'init
+        // Passe `this` comme postProcessing : le DazzleEffect accède à _bloomPass et _chromaPass
+        this._dazzle = new DazzleEffect(camera, this, globalLaserPostParams);
     }
 
     /** Crée et configure l'EffectComposer */
@@ -83,7 +91,7 @@ export class LaserManager {
                 uniforms: {
                     tDiffuse: { value: null },
                     uChroma:  { value: globalLaserPostParams.chroma },
-                    uEnabled: { value: 0.0 }
+                    uEnabled: { value: 1.0 }  // activée par défaut (comme le projet de référence)
                 },
                 vertexShader: `
                     varying vec2 vUv;
@@ -176,17 +184,37 @@ export class LaserManager {
         if (!this._bloomPass) return;
         const hasLasers = this._lasers.size > 0 && globalLaserPostParams.enabled;
         this._bloomPass.enabled = hasLasers;
-        this._useComposer = hasLasers && !!this._composer;
+        // Le composer est toujours utilisé (comme dans le projet de référence LaserSimulation)
+        // — seul le bloom pass est toggle. Cela garantit que l'aberration chromatique
+        // et l'OutputPass (tone mapping) s'appliquent en permanence.
+        this._useComposer = !!this._composer;
+        console.log(`[LaserManager] Bloom ${hasLasers ? 'ON' : 'OFF'}, composer: ${this._useComposer}`);
     }
 
     /** Mise à jour de tous les lasers — appeler dans la boucle d'animation */
     updateAll(delta, animTime) {
+        // 1. Mettre à jour chaque laser (calcule hitPts + effectivePowers)
         for (const laser of this._lasers.values()) {
             laser.update(delta, animTime);
         }
+
+        // 2. Éblouissement physiologique — collecte les données de chaque laser
+        if (this._dazzle) {
+            const laserData = [];
+            for (const laser of this._lasers.values()) {
+                laserData.push({
+                    pod:               laser.pod,
+                    hitPts:            laser._podHitPts,
+                    params:            laser.params,
+                    effectiveBeamPower: laser._effectiveBeamPower || 0,
+                    effectivePanPower:  laser._effectivePanPower  || 0,
+                });
+            }
+            this._dazzle.update(delta, laserData);
+        }
     }
 
-    /** Render — utilise l'EffectComposer si des lasers sont actifs */
+    /** Render — utilise toujours l'EffectComposer pour le tone mapping et les passes post-processing */
     render() {
         if (this._useComposer && this._composer) {
             this._composer.render();

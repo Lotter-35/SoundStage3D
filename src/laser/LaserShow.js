@@ -216,6 +216,10 @@ export class LaserShow {
         const effectiveBeamPower = p.beamPower * p.masterPower * strobeFactor;
         const effectivePanPower  = p.panPower  * p.masterPower * strobeFactor;
 
+        // Exposés pour le DazzleEffect (lus par LaserManager chaque frame)
+        this._effectiveBeamPower = effectiveBeamPower;
+        this._effectivePanPower  = effectivePanPower;
+
         const computedSourceGlow = this._updateUniforms(effectiveBeamPower, effectivePanPower, nBeamsPerPod);
 
         // Couleur GI

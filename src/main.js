@@ -27,7 +27,7 @@ import { setupAudioDebugProbes } from './audio/debugProbes.js';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=183';
-import { LaserManager } from './laser/LaserManager.js?v=181';
+import { LaserManager } from './laser/LaserManager.js?v=183';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -44,6 +44,11 @@ renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = true;
+// Tone mapping nécessaire pour que l'OutputPass du post-processing produise
+// un résultat correct (bloom laser visible, éblouissement physiologique)
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.0;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
@@ -2899,9 +2904,11 @@ function renderFrame() {
         hitboxVisualizer.update(listener.feetPosition);
     }
 
-    // Render with CPU time benchmark
+    // Render via l'EffectComposer (bloom laser, aberration chromatique, FXAA)
+    // LaserManager.render() bascule automatiquement sur le composer quand des lasers
+    // sont actifs, sinon fait un rendu direct renderer.render() comme fallback.
     const t0 = performance.now();
-    renderer.render(scene, camera);
+    laserManager.render();
     const renderTime = performance.now() - t0;
 
     // Debug overlay (throttled internally)
