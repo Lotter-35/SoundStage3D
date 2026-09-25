@@ -25,8 +25,8 @@ import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
 import { setupAudioDebugProbes } from './audio/debugProbes.js';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
-import { PlayerAvatars } from './multiplayer/PlayerAvatars.js';
 import { DanceManager } from './scene/DanceManager.js';
+import { loadTestSubwoofers } from './scene/testSubwoofers.js?v=166';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -66,6 +66,9 @@ await createVegetation(scene);
 
 // ─── Animations Catalog (chargement initial de dances.json) ─────
 await DanceManager.refreshCatalog(true);
+
+// ─── Test Subwoofers (Dev / test spawn) ─────────────────────────
+await loadTestSubwoofers(scene);
 
 // ─── Listener (FPS controls + 3D Animated Character) ─────────────
 const listener = new Listener(camera, document.body, scene);
