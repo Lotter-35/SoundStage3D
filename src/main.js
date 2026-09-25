@@ -26,7 +26,7 @@ import { saveLastAudio, loadLastAudio } from './audio/audioStorage.js';
 import { setupAudioDebugProbes } from './audio/debugProbes.js';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=148';
 import { DanceManager } from './scene/DanceManager.js';
-import { loadTestSubwoofers } from './scene/testSubwoofers.js?v=172';
+import { loadTestSubwoofers } from './scene/testSubwoofers.js?v=173';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
