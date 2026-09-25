@@ -60,7 +60,16 @@ export class AmbiancePanel {
 
         this.markersVisible = true;
         this.gizmoVisible = true;
+        this.showSpotCones = true;
+        this._gizmoTargetMode = 'lamp';
         this.isDraggingGizmo = false;
+
+        this.ctrlPosX = null;
+        this.ctrlPosY = null;
+        this.ctrlPosZ = null;
+        this.ctrlTargetX = null;
+        this.ctrlTargetY = null;
+        this.ctrlTargetZ = null;
 
         // Raycaster pour sélection au clic
         this.raycaster = new THREE.Raycaster();
@@ -123,20 +132,26 @@ export class AmbiancePanel {
             }
         });
 
-        // Quand le gizmo déplace la lumière, synchroniser les repères et l'UI
+        // Quand le gizmo déplace la lumière ou sa cible, synchroniser les repères et l'UI
         this.transformControls.addEventListener('change', () => {
-            // Ignorer strictement tout événement déclenché pendant la sélection d'une autre lumière
             if (this._isSwitchingLight || !this.selectedEntry) return;
-            if (this.transformControls.object !== this.selectedEntry.light) return;
 
             const entry = this.selectedEntry;
-            if (entry.markerMesh) {
-                entry.markerMesh.position.copy(entry.light.position);
+            if (this.transformControls.object === entry.light) {
+                if (entry.markerMesh) {
+                    entry.markerMesh.position.copy(entry.light.position);
+                }
+                if (entry.helper && entry.helper.update) {
+                    entry.helper.update();
+                }
+                this._syncGuiPosition();
+            } else if (entry.light.target && this.transformControls.object === entry.light.target) {
+                entry.light.target.updateMatrixWorld();
+                if (entry.helper && entry.helper.update) {
+                    entry.helper.update();
+                }
+                this._syncGuiTarget();
             }
-            if (entry.helper && entry.helper.update) {
-                entry.helper.update();
-            }
-            this._syncGuiPosition();
         });
 
         // Cacher le gizmo par défaut
@@ -537,10 +552,7 @@ export class AmbiancePanel {
     _createLightHelper(light, type) {
         try {
             if (type === 'SpotLight') {
-                const helper = new THREE.SpotLightHelper(light);
-                helper.visible = false;
-                helper.userData.isAmbianceInternal = true;
-                return helper;
+                return this._createSpotLightHelper(light);
             } else if (type === 'DirectionalLight') {
                 const helper = new THREE.DirectionalLightHelper(light, 2.5);
                 helper.visible = false;
@@ -559,6 +571,202 @@ export class AmbiancePanel {
             }
         } catch (_) {}
         return null;
+    }
+
+    _createSpotLightHelper(light) {
+        const helperGroup = new THREE.Group();
+        helperGroup.name = `spot-cone-helper-${light.id || Math.random()}`;
+        helperGroup.userData.isAmbianceInternal = true;
+        helperGroup.userData.light = light;
+
+        // 1. Cône volumétrique translucide (faisceau lumineux 3D avec blend additif)
+        // Cône unitaire : apex à (0, 0, 0), base à (0, -1, 0)
+        const coneGeo = new THREE.ConeGeometry(1, 1, 32, 1, true);
+        coneGeo.translate(0, -0.5, 0);
+
+        const coneMat = new THREE.MeshBasicMaterial({
+            color: light.color,
+            transparent: true,
+            opacity: 0.22,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+            blending: THREE.AdditiveBlending,
+        });
+        const coneMesh = new THREE.Mesh(coneGeo, coneMat);
+        helperGroup.add(coneMesh);
+
+        // 2. Lignes d'arêtes longitudinales (wireframe)
+        const wireGeo = new THREE.ConeGeometry(1, 1, 8, 1, true);
+        wireGeo.translate(0, -0.5, 0);
+        const wireMat = new THREE.MeshBasicMaterial({
+            color: light.color,
+            wireframe: true,
+            transparent: true,
+            opacity: 0.45,
+            depthWrite: false,
+        });
+        const wireMesh = new THREE.Mesh(wireGeo, wireMat);
+        helperGroup.add(wireMesh);
+
+        // 3. Anneau circulaire à la base (délimite le halo au sol/portée)
+        const baseSegments = 48;
+        const basePositions = new Float32Array((baseSegments + 1) * 3);
+        for (let i = 0; i <= baseSegments; i++) {
+            const theta = (i / baseSegments) * Math.PI * 2;
+            basePositions[i * 3] = Math.cos(theta);
+            basePositions[i * 3 + 1] = -1.0;
+            basePositions[i * 3 + 2] = Math.sin(theta);
+        }
+        const baseRingGeo = new THREE.BufferGeometry();
+        baseRingGeo.setAttribute('position', new THREE.BufferAttribute(basePositions, 3));
+        const baseRingMat = new THREE.LineBasicMaterial({
+            color: light.color,
+            transparent: true,
+            opacity: 0.75,
+            depthWrite: false,
+        });
+        const baseRing = new THREE.Line(baseRingGeo, baseRingMat);
+        helperGroup.add(baseRing);
+
+        // 4. Rayon central direct vers la cible (ligne d'axe)
+        const rayGeo = new THREE.BufferGeometry();
+        rayGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(6), 3));
+        const rayMat = new THREE.LineBasicMaterial({
+            color: light.color,
+            transparent: true,
+            opacity: 0.8,
+            depthWrite: false,
+        });
+        const rayLine = new THREE.Line(rayGeo, rayMat);
+        helperGroup.add(rayLine);
+
+        // 5. Réticule / Cible au point d'impact
+        const reticleGroup = new THREE.Group();
+        const reticleRingGeo = new THREE.RingGeometry(0.4, 0.55, 32);
+        reticleRingGeo.rotateX(-Math.PI / 2);
+        const reticleMat = new THREE.MeshBasicMaterial({
+            color: light.color,
+            transparent: true,
+            opacity: 0.85,
+            side: THREE.DoubleSide,
+            depthWrite: false,
+        });
+        const reticleRing = new THREE.Mesh(reticleRingGeo, reticleMat);
+        reticleGroup.add(reticleRing);
+
+        // Croix de visée au centre du réticule
+        const crossGeo = new THREE.BufferGeometry();
+        const crossVerts = new Float32Array([
+            -0.7, 0, 0,   0.7, 0, 0,
+            0, 0, -0.7,   0, 0, 0.7
+        ]);
+        crossGeo.setAttribute('position', new THREE.BufferAttribute(crossVerts, 3));
+        const crossLine = new THREE.LineSegments(crossGeo, new THREE.LineBasicMaterial({
+            color: light.color,
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+        }));
+        reticleGroup.add(crossLine);
+        helperGroup.add(reticleGroup);
+
+        helperGroup.coneMesh = coneMesh;
+        helperGroup.wireMesh = wireMesh;
+        helperGroup.baseRing = baseRing;
+        helperGroup.rayLine = rayLine;
+        helperGroup.reticleGroup = reticleGroup;
+
+        helperGroup.update = () => {
+            this._updateSpotLightHelper(helperGroup, light);
+        };
+
+        helperGroup.update();
+        return helperGroup;
+    }
+
+    _updateSpotLightHelper(helperGroup, light) {
+        if (!light || !helperGroup || !helperGroup.coneMesh) return;
+
+        light.updateMatrixWorld();
+        if (light.target) light.target.updateMatrixWorld();
+
+        const origin = light.position;
+        const targetPos = light.target ? light.target.position : new THREE.Vector3(origin.x, origin.y - 10, origin.z);
+
+        const dir = new THREE.Vector3().subVectors(targetPos, origin);
+        const distToTarget = dir.length();
+        if (distToTarget < 0.001) {
+            dir.set(0, -1, 0);
+        } else {
+            dir.normalize();
+        }
+
+        // Longueur du cône : distance si fixée > 0, sinon distance à la cible (min 15)
+        const coneLen = (light.distance > 0) ? light.distance : Math.max(15, distToTarget);
+        const angle = (light.angle !== undefined) ? light.angle : Math.PI / 4;
+        const radius = Math.max(0.1, Math.tan(angle) * coneLen);
+
+        const quat = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, -1, 0), dir);
+
+        helperGroup.coneMesh.position.copy(origin);
+        helperGroup.coneMesh.quaternion.copy(quat);
+        helperGroup.coneMesh.scale.set(radius, coneLen, radius);
+
+        helperGroup.wireMesh.position.copy(origin);
+        helperGroup.wireMesh.quaternion.copy(quat);
+        helperGroup.wireMesh.scale.set(radius, coneLen, radius);
+
+        helperGroup.baseRing.position.copy(origin);
+        helperGroup.baseRing.quaternion.copy(quat);
+        helperGroup.baseRing.scale.set(radius, coneLen, radius);
+
+        // Mise à jour de la couleur
+        helperGroup.coneMesh.material.color.copy(light.color);
+        helperGroup.wireMesh.material.color.copy(light.color);
+        helperGroup.baseRing.material.color.copy(light.color);
+
+        // Rayon central direct vers la cible
+        const rayPos = helperGroup.rayLine.geometry.attributes.position.array;
+        rayPos[0] = origin.x;
+        rayPos[1] = origin.y;
+        rayPos[2] = origin.z;
+        rayPos[3] = targetPos.x;
+        rayPos[4] = targetPos.y;
+        rayPos[5] = targetPos.z;
+        helperGroup.rayLine.geometry.attributes.position.needsUpdate = true;
+        helperGroup.rayLine.material.color.copy(light.color);
+
+        // Réticule orienté au point d'impact
+        helperGroup.reticleGroup.position.copy(targetPos);
+        helperGroup.reticleGroup.quaternion.copy(quat);
+        helperGroup.reticleGroup.children.forEach(c => {
+            if (c.material) c.material.color.copy(light.color);
+        });
+    }
+
+    _updateAllHelpersVisibility() {
+        const canShow = this.isOpen && this.markersVisible;
+        this.helpersGroup.visible = canShow;
+
+        this.lights.forEach(e => {
+            if (!e.helper) return;
+            const isSel = (e === this.selectedEntry);
+
+            if (e.type === 'SpotLight') {
+                e.helper.visible = canShow && (isSel || this.showSpotCones);
+                if (e.helper.coneMesh) {
+                    e.helper.coneMesh.material.opacity = isSel ? 0.28 : 0.12;
+                    e.helper.wireMesh.material.opacity = isSel ? 0.55 : 0.22;
+                    e.helper.baseRing.material.opacity = isSel ? 0.85 : 0.35;
+                    e.helper.rayLine.material.opacity = isSel ? 0.85 : 0.35;
+                    e.helper.reticleGroup.visible = isSel || this.showSpotCones;
+                }
+                if (e.helper.update && e.helper.visible) e.helper.update();
+            } else {
+                e.helper.visible = canShow && isSel;
+                if (e.helper.update && e.helper.visible) e.helper.update();
+            }
+        });
     }
 
     // ─── 3. Sélection & Clic 3D ──────────────────────────────────────
@@ -590,6 +798,8 @@ export class AmbiancePanel {
             this.selectedEntry = entry;
             this._currentInspectorEntry = entry;
 
+            this._gizmoTargetMode = 'lamp';
+
             // 4. Mettre en valeur visuelle le repère 3D correspondant
             this.lights.forEach(e => {
                 if (e.markerMesh) {
@@ -601,20 +811,17 @@ export class AmbiancePanel {
                         ring.material.opacity = isSel ? 1.0 : 0.6;
                     }
                 }
-                if (e.helper) {
-                    e.helper.visible = (e === entry) && this.markersVisible && this.isOpen;
-                    if (e.helper.update) e.helper.update();
-                }
             });
 
-            // 5. Reconstruire l'interface inspecteur AVANT d'attacher le Gizmo
+            // 5. Mettre à jour l'affichage de tous les helpers et cônes de spot
+            this._updateAllHelpersVisibility();
+
+            // 6. Reconstruire l'interface inspecteur AVANT d'attacher le Gizmo
             this._rebuildInspectorGui();
 
-            // 6. Attacher le Gizmo à la nouvelle lumière sélectionnée
+            // 7. Attacher le Gizmo à la nouvelle lumière sélectionnée
             if (entry.type !== 'AmbientLight') {
-                this.transformControls.attach(entry.light);
-                this.transformControls.visible = this.isOpen && this.gizmoVisible;
-                this.transformControls.enabled = this.isOpen && this.gizmoVisible;
+                this._attachGizmoToCurrentTarget();
             }
         } finally {
             this._isSwitchingLight = false;
@@ -639,11 +846,9 @@ export class AmbiancePanel {
                     ring.material.opacity = 0.6;
                 }
             }
-            if (e.helper) {
-                e.helper.visible = false;
-            }
         });
 
+        this._updateAllHelpersVisibility();
         this._rebuildInspectorGui();
     }
 
@@ -661,12 +866,18 @@ export class AmbiancePanel {
         }
     }
 
+    setShowSpotCones(val) {
+        this.showSpotCones = Boolean(val);
+        this._updateAllHelpersVisibility();
+        if (this._cShowSpotCones && this._cShowSpotCones.getValue() !== this.showSpotCones) {
+            this._cShowSpotCones.setValue(this.showSpotCones);
+        }
+    }
+
     setMarkersVisible(val) {
         this.markersVisible = Boolean(val);
         this.markersGroup.visible = this.markersVisible;
-        if (this.helpersGroup) {
-            this.helpersGroup.visible = this.markersVisible && this.isOpen;
-        }
+        this._updateAllHelpersVisibility();
         if (this._cShowMarkers && this._cShowMarkers.getValue() !== this.markersVisible) {
             this._cShowMarkers.setValue(this.markersVisible);
         }
@@ -758,11 +969,16 @@ export class AmbiancePanel {
             case 'SpotLight':
                 light = new THREE.SpotLight(color, intensity);
                 light.position.copy(spawnPos);
-                light.distance = this.creationParams.distance;
-                light.angle = THREE.MathUtils.degToRad(this.creationParams.angle);
-                light.penumbra = this.creationParams.penumbra;
+                light.distance = this.creationParams.distance || 30.0;
+                light.angle = THREE.MathUtils.degToRad(this.creationParams.angle || 35);
+                light.penumbra = this.creationParams.penumbra || 0.4;
                 light.castShadow = true;
-                light.target.position.set(spawnPos.x, Math.max(0, spawnPos.y - 4), spawnPos.z);
+                // Viser en avant et vers le sol pour créer un faisceau visible naturel
+                const forwardDir = new THREE.Vector3(0, 0, -1);
+                if (this.camera) this.camera.getWorldDirection(forwardDir);
+                const targetPos = spawnPos.clone().addScaledVector(forwardDir, 7.0);
+                targetPos.y = Math.max(0, spawnPos.y - 3.5);
+                light.target.position.copy(targetPos);
                 this.scene.add(light.target);
                 break;
 
@@ -838,7 +1054,18 @@ export class AmbiancePanel {
             entry.light.color.copy(src.light.color);
             entry.light.intensity = src.light.intensity;
             entry.light.position.copy(src.light.position).add(new THREE.Vector3(1.0, 0, 1.0));
+
+            if (src.type === 'SpotLight' && src.light.target && entry.light.target) {
+                entry.light.distance = src.light.distance;
+                entry.light.angle = src.light.angle;
+                entry.light.penumbra = src.light.penumbra;
+                entry.light.decay = src.light.decay;
+                entry.light.target.position.copy(src.light.target.position).add(new THREE.Vector3(1.0, 0, 1.0));
+                entry.light.target.updateMatrixWorld();
+            }
+
             if (entry.markerMesh) entry.markerMesh.position.copy(entry.light.position);
+            if (entry.helper && entry.helper.update) entry.helper.update();
             this.selectLight(entry);
         }
     }
@@ -1024,6 +1251,14 @@ export class AmbiancePanel {
             this.setGizmoVisible(val);
         });
 
+        this._cShowSpotCones = fTools.add(toolsState, 'showSpotCones').name('🔦 Cônes SpotLights');
+        this._cShowSpotCones.onChange(val => {
+            this.setShowSpotCones(val);
+        });
+        this._setupController(this._cShowSpotCones, () => true, (v) => {
+            this.setShowSpotCones(v);
+        });
+
         fTools.add(toolsState, 'deselect').name('❌ Quitter Gizmo (Échap)');
         fTools.add(toolsState, 'toggleMarkers').name('💡 Afficher / Cacher lumières');
         fTools.add(toolsState, 'focusLight').name('🎯 Voir la lumière (Focus)');
@@ -1072,6 +1307,9 @@ export class AmbiancePanel {
         this.ctrlPosX = null;
         this.ctrlPosY = null;
         this.ctrlPosZ = null;
+        this.ctrlTargetX = null;
+        this.ctrlTargetY = null;
+        this.ctrlTargetZ = null;
 
         while (this.fInspector.controllers.length > 0) {
             this.fInspector.controllers[0].destroy();
@@ -1181,22 +1419,39 @@ export class AmbiancePanel {
             const fSpot = this.fInspector.addFolder('🔦 Cône de Spot');
             fSpot.open();
 
-            const cDist = fSpot.add(light, 'distance', 0, 150, 1).name('Distance');
-            this._setupController(cDist, () => def.distance, (v) => { light.distance = v; });
+            // Choix du mode Gizmo : Contrôler la position de la lampe OU de la cible
+            const gizmoModeObj = {
+                target: (this._gizmoTargetMode === 'target') ? '🎯 Cible' : '📍 Lampe'
+            };
+            const cGizmoTarget = fSpot.add(gizmoModeObj, 'target', ['📍 Lampe', '🎯 Cible']).name('Gizmo déplace');
+            cGizmoTarget.onChange(choice => {
+                this._gizmoTargetMode = (choice === '🎯 Cible') ? 'target' : 'lamp';
+                this._attachGizmoToCurrentTarget();
+            });
+
+            const onSpotChange = () => {
+                if (entry.helper && entry.helper.update) entry.helper.update();
+            };
+
+            const cDist = fSpot.add(light, 'distance', 0, 150, 1).name('Portée (dist)');
+            cDist.onChange(onSpotChange);
+            this._setupController(cDist, () => def.distance, (v) => { light.distance = v; onSpotChange(); });
 
             const angleProxy = { deg: THREE.MathUtils.radToDeg(light.angle) };
-            const cAngle = fSpot.add(angleProxy, 'deg', 5, 90, 1).name('Angle (°)');
+            const cAngle = fSpot.add(angleProxy, 'deg', 5, 90, 1).name('Ouverture (°)');
             cAngle.onChange(deg => {
                 light.angle = THREE.MathUtils.degToRad(deg);
-                if (entry.helper && entry.helper.update) entry.helper.update();
+                onSpotChange();
             });
             this._setupController(cAngle, () => def.angle, (v) => {
                 angleProxy.deg = v;
                 cAngle.setValue(v);
+                onSpotChange();
             });
 
             const cPen = fSpot.add(light, 'penumbra', 0, 1, 0.05).name('Pénombre');
-            this._setupController(cPen, () => def.penumbra, (v) => { light.penumbra = v; });
+            cPen.onChange(onSpotChange);
+            this._setupController(cPen, () => def.penumbra, (v) => { light.penumbra = v; onSpotChange(); });
 
             const cDec = fSpot.add(light, 'decay', 0, 2, 0.1).name('Décroissance');
             this._setupController(cDec, () => def.decay, (v) => { light.decay = v; });
@@ -1266,7 +1521,7 @@ export class AmbiancePanel {
         // ── Orientation de la Cible (pour SpotLight et DirectionalLight) ──
         if (light.target) {
             const fTarget = this.fInspector.addFolder('🎯 Orientation & Cible');
-            fTarget.close();
+            if (entry.type === 'SpotLight') fTarget.open(); else fTarget.close();
 
             const targetPos = light.target.position;
             const defTarget = def.target || { x: targetPos.x, y: targetPos.y, z: targetPos.z };
@@ -1276,17 +1531,17 @@ export class AmbiancePanel {
                 if (entry.helper && entry.helper.update) entry.helper.update();
             };
 
-            const cTx = fTarget.add(targetPos, 'x', -100, 100, 0.1).name('Cible X');
-            const cTy = fTarget.add(targetPos, 'y', -10, 50, 0.1).name('Cible Y');
-            const cTz = fTarget.add(targetPos, 'z', -100, 100, 0.1).name('Cible Z');
+            this.ctrlTargetX = fTarget.add(targetPos, 'x', -100, 100, 0.1).name('Cible X');
+            this.ctrlTargetY = fTarget.add(targetPos, 'y', -10, 50, 0.1).name('Cible Y');
+            this.ctrlTargetZ = fTarget.add(targetPos, 'z', -100, 100, 0.1).name('Cible Z');
 
-            cTx.onChange(onTargetChange);
-            cTy.onChange(onTargetChange);
-            cTz.onChange(onTargetChange);
+            this.ctrlTargetX.onChange(onTargetChange);
+            this.ctrlTargetY.onChange(onTargetChange);
+            this.ctrlTargetZ.onChange(onTargetChange);
 
-            this._setupController(cTx, () => defTarget.x, (v) => { targetPos.x = v; onTargetChange(); });
-            this._setupController(cTy, () => defTarget.y, (v) => { targetPos.y = v; onTargetChange(); });
-            this._setupController(cTz, () => defTarget.z, (v) => { targetPos.z = v; onTargetChange(); });
+            this._setupController(this.ctrlTargetX, () => defTarget.x, (v) => { targetPos.x = v; onTargetChange(); });
+            this._setupController(this.ctrlTargetY, () => defTarget.y, (v) => { targetPos.y = v; onTargetChange(); });
+            this._setupController(this.ctrlTargetZ, () => defTarget.z, (v) => { targetPos.z = v; onTargetChange(); });
         }
     }
 
@@ -1332,6 +1587,36 @@ export class AmbiancePanel {
         }
     }
 
+    _syncGuiTarget() {
+        if (this._isSwitchingLight || !this.selectedEntry) return;
+        if (this._currentInspectorEntry !== this.selectedEntry) return;
+        if (!this.selectedEntry.light || !this.selectedEntry.light.target) return;
+
+        const tp = this.selectedEntry.light.target.position;
+        if (this.ctrlTargetX && typeof this.ctrlTargetX.setValue === 'function') {
+            this.ctrlTargetX.setValue(tp.x);
+        }
+        if (this.ctrlTargetY && typeof this.ctrlTargetY.setValue === 'function') {
+            this.ctrlTargetY.setValue(tp.y);
+        }
+        if (this.ctrlTargetZ && typeof this.ctrlTargetZ.setValue === 'function') {
+            this.ctrlTargetZ.setValue(tp.z);
+        }
+    }
+
+    _attachGizmoToCurrentTarget() {
+        if (!this.selectedEntry || this.selectedEntry.type === 'AmbientLight') return;
+        const entry = this.selectedEntry;
+        const targetObj = (this._gizmoTargetMode === 'target' && entry.light.target)
+            ? entry.light.target
+            : entry.light;
+
+        this.transformControls.detach();
+        this.transformControls.attach(targetObj);
+        this.transformControls.visible = this.isOpen && this.gizmoVisible;
+        this.transformControls.enabled = this.isOpen && this.gizmoVisible;
+    }
+
     // ─── 7. Toggle & Événements ──────────────────────────────────────
     toggle(forceState) {
         this.isOpen = (forceState !== undefined) ? forceState : !this.isOpen;
@@ -1347,13 +1632,9 @@ export class AmbiancePanel {
             // Ouvrir : afficher les repères et attacher le gizmo si une lumière est sélectionnée
             this.markersGroup.visible = this.markersVisible;
             if (this.selectedEntry && this.selectedEntry.type !== 'AmbientLight') {
-                this.transformControls.attach(this.selectedEntry.light);
-                this.transformControls.visible = this.gizmoVisible;
-                this.transformControls.enabled = this.gizmoVisible;
+                this._attachGizmoToCurrentTarget();
             }
-            if (this.selectedEntry && this.selectedEntry.helper) {
-                this.selectedEntry.helper.visible = this.markersVisible;
-            }
+            this._updateAllHelpersVisibility();
 
             // Déverrouiller le pointeur souris pour permettre l'interaction fluide
             if (this.listener && this.listener.controls.isLocked) {
@@ -1437,6 +1718,10 @@ export class AmbiancePanel {
                     if (ring) {
                         ring.rotation.z += dt * 0.8;
                     }
+                }
+                // Maintenir la visée et la forme des cônes de SpotLight synchronisées
+                if (entry.type === 'SpotLight' && entry.helper && entry.helper.visible && entry.helper.update) {
+                    entry.helper.update();
                 }
             });
         }
