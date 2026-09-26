@@ -337,8 +337,8 @@ export function createStage(scene) {
     dirLight.name = 'Soleil Principal';
     dirLight.position.set(30, 60, 40);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 4096;
-    dirLight.shadow.mapSize.height = 4096;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.camera.near = 1;
     dirLight.shadow.camera.far = 300;
     dirLight.shadow.camera.left = -60;

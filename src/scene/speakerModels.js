@@ -69,18 +69,50 @@ export async function loadStageSpeakers(scene) {
 
         // 7 positions de subwoofers au sol (identiques à SUB_DEFS dans speakers.js : -9, -6, -3, 0, 3, 6, 9)
         const subXPositions = [-9, -6, -3, 0, 3, 6, 9];
+        const totalInstances = subXPositions.length * 3; // 21 caissons (7 x 3)
 
-        for (const xPos of subXPositions) {
-            // Pile de 3 caissons superposés
-            for (let stackIndex = 0; stackIndex < 3; stackIndex++) {
-                const subClone = subTemplate.clone(true);
-                const posY = groundOffsetY + stackIndex * subHeight;
-                subClone.position.set(xPos, posY, backAlignZ);
-                stageSpeakersGroup.add(subClone);
+        // Récupération de tous les meshs du modèle (ex: corps du caisson et grille avant)
+        const subMeshes = [];
+        subTemplate.traverse(child => {
+            if (child.isMesh) {
+                subMeshes.push(child);
             }
+        });
+
+        const dummy = new THREE.Object3D();
+
+        for (const mesh of subMeshes) {
+            const instancedMesh = new THREE.InstancedMesh(
+                mesh.geometry,
+                mesh.material,
+                totalInstances
+            );
+            instancedMesh.name = `instanced-subwoofer-${mesh.name || 'mesh'}`;
+            instancedMesh.castShadow = true;
+            instancedMesh.receiveShadow = true;
+
+            let instanceIdx = 0;
+            for (const xPos of subXPositions) {
+                // Pile de 3 caissons superposés
+                for (let stackIndex = 0; stackIndex < 3; stackIndex++) {
+                    const posY = groundOffsetY + stackIndex * subHeight;
+                    dummy.position.set(xPos, posY, backAlignZ);
+                    dummy.rotation.set(Math.PI, Math.PI, Math.PI);
+                    dummy.scale.setScalar(subScale);
+                    dummy.updateMatrix();
+
+                    instancedMesh.setMatrixAt(instanceIdx++, dummy.matrix);
+                }
+            }
+
+            instancedMesh.instanceMatrix.needsUpdate = true;
+            if (instancedMesh.computeBoundingBox) instancedMesh.computeBoundingBox();
+            if (instancedMesh.computeBoundingSphere) instancedMesh.computeBoundingSphere();
+
+            stageSpeakersGroup.add(instancedMesh);
         }
 
-        console.log(`[StageSpeakers] 7 piles de 3 subwoofers chargées (21 caissons), hauteur totale : ${(subHeight * 3).toFixed(2)}m`);
+        console.log(`[StageSpeakers] 7 piles de 3 subwoofers instanciées via InstancedMesh (21 caissons, ${subMeshes.length} draw calls au lieu de ${totalInstances * subMeshes.length}), hauteur totale : ${(subHeight * 3).toFixed(2)}m`);
     } catch (err) {
         console.error('[StageSpeakers] Erreur lors du chargement de subwoofer.glb :', err);
     }

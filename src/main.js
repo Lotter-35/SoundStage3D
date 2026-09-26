@@ -3,7 +3,7 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js?v=182';
+import { createStage } from './scene/stage.js?v=183';
 import { Listener } from './scene/listener.js?v=154';
 import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
@@ -28,7 +28,7 @@ import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=155';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=1';
 import { LightingSync } from './multiplayer/LightingSync.js?v=9';
 import { DanceManager } from './scene/DanceManager.js';
-import { loadStageSpeakers } from './scene/speakerModels.js?v=183';
+import { loadStageSpeakers } from './scene/speakerModels.js?v=184';
 import { LaserManager } from './laser/LaserManager.js?v=196';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
@@ -61,8 +61,8 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 // Build 3D stage
 const { coneContainer, coneGroups, dirLight, lights, soundMarkersGroup } = createStage(scene);
 if (dirLight && dirLight.shadow) {
-    const maxTex = renderer.capabilities.maxTextureSize || 4096;
-    const shadowRes = Math.min(4096, maxTex);
+    const maxTex = renderer.capabilities.maxTextureSize || 2048;
+    const shadowRes = Math.min(2048, maxTex);
     dirLight.shadow.mapSize.set(shadowRes, shadowRes);
 }
 
