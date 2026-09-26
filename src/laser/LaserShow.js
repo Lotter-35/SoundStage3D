@@ -23,7 +23,7 @@ import {
     BEAM_DIVERGENCE,
     clamp
 } from './config/laserConstants.js';
-import { createLaserParams } from './config/laserParams.js';
+import { createLaserParams } from './config/laserParams.js?v=2';
 import {
     createLaserShaderMaterial,
     createFanShaderMaterial,
@@ -34,7 +34,7 @@ import {
 import { LaserPod } from './LaserPod.js';
 import { LaserRenderer } from './LaserRenderer.js';
 import { PatternHorizontalSweep } from './patterns/PatternHorizontalSweep.js';
-import { getSceneHit } from './LaserSceneIntersector.js';
+import { getSceneHit } from './LaserSceneIntersector.js?v=3';
 import { enableBloom } from './LaserManager.js';
 
 export class LaserShow {
@@ -82,10 +82,13 @@ export class LaserShow {
         enableBloom(this.pod.fanMesh);
         enableBloom(this.pod.glowMesh);
 
-        // Pause animation & temps local
+        // Pause animation & temps local synchronisé
         this.isPaused = Boolean(this.params.pauseMotion);
         this._animTime = 0;
         this._smokeTime = 0;
+        this._pausedOffset = 0;
+        this._frozenAnimTime = null;
+        this._lastSharedTime = 0;
 
         // Pool pré-alloué de vecteurs hit/normal (0 GC par frame)
         const totalSlots = MAX_BEAMS_PER_POD * ARC_SUBDIVISIONS;
@@ -266,20 +269,56 @@ export class LaserShow {
         return computedSourceGlow;
     }
 
+    /** Définit directement le temps d'animation accumulé (pour synchronisation réseau) */
+    setAnimTime(t) {
+        if (typeof t === 'number' && !isNaN(t)) {
+            this._animTime = t;
+        }
+    }
+
+    /** Définit l'offset de pause accumulé (synchronisation réseau sans téléportation) */
+    setPausedOffset(offset) {
+        if (typeof offset === 'number' && !isNaN(offset)) {
+            this._pausedOffset = offset;
+        }
+    }
+
     /**
      * Boucle principale de mise à jour.
      * @param {number} delta Temps depuis dernière frame (secondes)
-     * @param {number} animTime Temps global (secondes)
+     * @param {number} animTime Temps global partagé (secondes)
+     * @param {THREE.Vector3|null} cameraPos Position de la caméra
      */
     update(delta, animTime, cameraPos = null) {
         const p = this.params;
         const nBeamsPerPod = p.spread > 0 ? Math.max(1, Math.round(p.count)) : 1;
+        const isPaused = this.isPaused || Boolean(p.pauseMotion);
 
-        // Si la pause de balayage n'est pas active, faire avancer le temps de mouvement local
-        if (!this.isPaused && !p.pauseMotion) {
-            this._animTime += delta;
+        if (typeof animTime === 'number' && !isNaN(animTime)) {
+            this._lastSharedTime = animTime;
+
+            if (isPaused) {
+                if (this._frozenAnimTime === null) {
+                    this._frozenAnimTime = this._animTime;
+                }
+            } else {
+                if (this._frozenAnimTime !== null) {
+                    this._pausedOffset = animTime - this._frozenAnimTime;
+                    this._frozenAnimTime = null;
+                }
+                this._animTime = animTime - (this._pausedOffset || 0);
+            }
+        } else {
+            // Mode hors-ligne sans horloge partagée
+            if (!isPaused) {
+                const dt = (delta > 0 && delta < 0.5) ? delta : 0.016;
+                this._animTime += dt;
+            }
         }
-        const effectiveAnimTime = this._animTime;
+
+        const effectiveAnimTime = isPaused
+            ? (this._frozenAnimTime !== null ? this._frozenAnimTime : this._animTime)
+            : this._animTime;
 
         // La simulation de fumée (SimonDev noise) continue TOUJOURS d'évoluer de façon fluide dans toutes les directions
         this._smokeTime += (delta > 0 && delta < 0.5) ? delta : 0.016;
@@ -287,7 +326,7 @@ export class LaserShow {
         // Stroboscope
         let strobeFactor = 1.0;
         if (p.strobe) {
-            const t = animTime * p.strobeSpeed;
+            const t = effectiveAnimTime * p.strobeSpeed;
             strobeFactor = (t - Math.floor(t)) < 0.5 ? 1.0 : 0.0;
         }
 
@@ -475,7 +514,7 @@ export class LaserShow {
                         arcReal1 = hitObj1.isRealSurface;
                     }
 
-                    const sameWall = arcNorm0.dot(arcNorm1) > 0.999;
+                    const sameWall = (!arcReal0 && !arcReal1) || (arcNorm0.dot(arcNorm1) > 0.999);
                     let cornerHit = null;
 
                     if (!sameWall) {

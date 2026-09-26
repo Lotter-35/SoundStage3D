@@ -20,7 +20,7 @@ export const LASER_PARAMS_SCHEMA = {
                                                                                  label: 'Forme Tracé',           group: 'laserStyle', type: 'select' },
     curveAmplitude:      { value: 0.30,      min: 0,    max: 1.5,  step: 0.01,  label: 'Amplitude Courbe',       group: 'laserStyle' },
     curveFrequency:      { value: 1.0,       min: 0.25, max: 6,    step: 0.25,  label: 'Fréquence Courbe',       group: 'laserStyle' },
-    pauseMotion:         { value: false,                                         label: 'Pause Balayage',         group: 'laserStyle', type: 'bool' },
+    pauseMotion:         { value: true,                                          label: 'Pause Balayage',         group: 'laserStyle', type: 'bool' },
 
     // ── Fumée Laser PAN (SimonDev Noise & Turbulence) ────────────────────
     panSmokeEnabled:     { value: true,                                          label: 'Activer Fumée',          group: 'panSmoke', type: 'bool' },

@@ -25,9 +25,12 @@ export class AudioEngine {
             if (this.ctx.state === 'suspended') this.ctx.resume();
             return this.ctx;
         }
-        // 'playback' hint ensures a larger hardware buffer to resist 3D lagspikes without dropouts
+        // 'playback' (~100-150ms buffer) : immunité totale contre les spikes GPU (rendu 3D, ombres, lasers).
+        // Élimine définitivement tout grésillement/craquement matériel dans le casque.
+        const urlParams = new URLSearchParams(window.location.search);
+        const requestedLatency = urlParams.get('latency') || 'playback';
         const AudioCtx = window.AudioContext || window.webkitAudioContext;
-        this.ctx = new AudioCtx({ latencyHint: 'playback' });
+        this.ctx = new AudioCtx({ latencyHint: requestedLatency });
         if (this.ctx.state === 'suspended') {
             this.ctx.resume();
         }
@@ -196,10 +199,19 @@ export class AudioEngine {
         this.startOffset = targetTime;
         if (this.isLocked) return;
 
-        if (this.isPlaying && this.outputGain) {
-            // Kill existing sources immediately
-            this._killAllSources();
+        if (this.isPlaying && this.outputGain && this.ctx) {
+            const now = this.ctx.currentTime;
 
+            // ── Fade-out ultra-rapide (12ms) pour éviter tout clic brutal ──
+            this.outputGain.gain.cancelScheduledValues(now);
+            this.outputGain.gain.setValueAtTime(this.outputGain.gain.value, now);
+            this.outputGain.gain.linearRampToValueAtTime(0, now + 0.012);
+
+            // Conserver les références pour le timer
+            const oldSources = [...this._activeSources];
+            const oldSourceNode = this.sourceNode;
+
+            // Préparer le nouveau source AVANT de supprimer l'ancien
             const src = this.ctx.createBufferSource();
             src.buffer = this.buffer;
             src.loop = true;
@@ -213,11 +225,38 @@ export class AudioEngine {
                 }
             };
 
+            // Démarrer le nouveau source après le fade-out (12ms)
+            const startAt = now + 0.013;
+            src.start(startAt, this.startOffset);
+            this.startTime = startAt;
             this.sourceNode = src;
             this._activeSources.add(src);
 
-            src.start(0, this.startOffset);
-            this.startTime = this.ctx.currentTime;
+            // Fade-in immédiat sur le nouveau source
+            this.outputGain.gain.setValueAtTime(0, startAt);
+            this.outputGain.gain.setTargetAtTime(1.0, startAt, 0.004);
+
+            // Couper les anciennes sources après le fade-out
+            this._clearPendingStops();
+            const stopTimer = setTimeout(() => {
+                if (oldSourceNode && oldSourceNode !== src) {
+                    oldSourceNode.onended = null;
+                    try { oldSourceNode.stop(); } catch (_) {}
+                    try { oldSourceNode.disconnect(); } catch (_) {}
+                    this._activeSources.delete(oldSourceNode);
+                }
+                for (const s of oldSources) {
+                    if (s !== src) {
+                        s.onended = null;
+                        try { s.stop(); } catch (_) {}
+                        try { s.disconnect(); } catch (_) {}
+                        this._activeSources.delete(s);
+                    }
+                }
+                this._stopTimers.delete(stopTimer);
+            }, 20);
+            this._stopTimers.add(stopTimer);
+
             this.isPlaying = true;
         }
     }

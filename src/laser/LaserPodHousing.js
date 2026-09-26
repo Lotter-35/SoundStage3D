@@ -387,13 +387,15 @@ export class LaserPodHousing {
      * @param {THREE.Color|string} [colorHex] Couleur actuelle de l'émission laser
      */
     update(origin, angleDeg = 0, tiltDeg = 0, rollDeg = 0, strobeFactor = 1.0, colorHex = null) {
-        this.group.position.copy(origin);
-        this.group.rotation.set(
-            -tiltDeg * (Math.PI / 180),
-            angleDeg * (Math.PI / 180),
-            rollDeg * (Math.PI / 180),
-            'YXZ'
-        );
+        if (!this.isBeingDragged) {
+            this.group.position.copy(origin);
+            this.group.rotation.set(
+                -tiltDeg * (Math.PI / 180),
+                angleDeg * (Math.PI / 180),
+                rollDeg * (Math.PI / 180),
+                'YXZ'
+            );
+        }
 
         if (this.emissionLed && this.emissionLed.material) {
             this.emissionLed.material.emissiveIntensity = strobeFactor > 0.01 ? 2.2 : 0.08;

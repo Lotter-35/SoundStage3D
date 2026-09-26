@@ -38,11 +38,16 @@ export class MultiplayerClient {
         this.playlists = [];     // saved playlists on server [{ id, name, trackCount, updatedAt }]
         this.players = [];       // current players list
         this.lightingState = null; // full Lighting & Ambiance snapshot from server
+        this.lightingVersion = 1;
         this.connected = false;
 
         // Callbacks
         this._onDspUpdate = null;
         this._onLightingUpdate = null;
+        this._lightingUpdateListeners = [];
+        this._onHeartbeatSync = null;
+        this._heartbeatListeners = [];
+        this._lightingFullSyncListeners = [];
         this._onPlayersUpdate = null;
         this._onAudioTrackChanged = null;
         this._onQueueSync = null;
@@ -149,7 +154,27 @@ export class MultiplayerClient {
 
     /** Register callback for lighting/ambiance updates */
     onLightingUpdate(cb) {
+        if (!this._lightingUpdateListeners) this._lightingUpdateListeners = [];
+        this._lightingUpdateListeners.push(cb);
         this._onLightingUpdate = cb;
+    }
+
+    /** Register callback for 2-second periodic server heartbeat sync (audio + sweep + lighting) */
+    onHeartbeatSync(cb) {
+        if (!this._heartbeatListeners) this._heartbeatListeners = [];
+        this._heartbeatListeners.push(cb);
+        this._onHeartbeatSync = cb;
+    }
+
+    /** Register callback for full lighting state synchronization */
+    onLightingFullSync(cb) {
+        if (!this._lightingFullSyncListeners) this._lightingFullSyncListeners = [];
+        this._lightingFullSyncListeners.push(cb);
+    }
+
+    /** Request full lighting state from server */
+    requestLightingState() {
+        this._send({ type: 'GET_LIGHTING_STATE' });
     }
 
     /** Register callback for player list updates */
@@ -443,6 +468,7 @@ export class MultiplayerClient {
                 this.audioPort = msg.audioPort || 8068;
                 this.dspState = msg.dspState;
                 this.lightingState = msg.lightingState || null;
+                this.lightingVersion = msg.lightingVersion || 1;
                 this.playback = msg.playback;
                 this.sine = msg.sine;
                 this.trackName = msg.trackName;
@@ -458,7 +484,16 @@ export class MultiplayerClient {
                 this.loadedPlaylistName = msg.loadedPlaylistName || null;
                 this.playlists = msg.playlists || [];
                 this.players = msg.players;
+                this.serverTime = msg.serverTime || Date.now();
+                this.sweepTime = msg.sweepTime || 0;
                 console.log(`[MP] Room created: ${this.roomId} (id: ${this.clientId}, color: ${this.color}, public IP: ${this.publicIp || 'unknown'})`);
+                try {
+                    const u = new URL(window.location.href);
+                    if (u.searchParams.get('room') !== this.roomId) {
+                        u.searchParams.set('room', this.roomId);
+                        window.history.replaceState({}, '', u.toString());
+                    }
+                } catch (_) {}
                 if (this._onPlaylistsSync && this.playlists.length > 0) this._onPlaylistsSync(this.playlists);
                 if (this._onQueueStateSync) {
                     this._onQueueStateSync({
@@ -485,6 +520,7 @@ export class MultiplayerClient {
                 this.audioPort = msg.audioPort || 8068;
                 this.dspState = msg.dspState;
                 this.lightingState = msg.lightingState || null;
+                this.lightingVersion = msg.lightingVersion || 1;
                 this.playback = msg.playback;
                 this.sine = msg.sine;
                 this.trackName = msg.trackName;
@@ -500,7 +536,16 @@ export class MultiplayerClient {
                 this.loadedPlaylistName = msg.loadedPlaylistName || null;
                 this.playlists = msg.playlists || [];
                 this.players = msg.players;
+                this.serverTime = msg.serverTime || Date.now();
+                this.sweepTime = msg.sweepTime || 0;
                 console.log(`[MP] Joined room: ${this.roomId} (id: ${this.clientId}, color: ${this.color}, public IP: ${this.publicIp || 'unknown'})`);
+                try {
+                    const u = new URL(window.location.href);
+                    if (u.searchParams.get('room') !== this.roomId) {
+                        u.searchParams.set('room', this.roomId);
+                        window.history.replaceState({}, '', u.toString());
+                    }
+                } catch (_) {}
                 if (this._onPlaylistsSync && this.playlists.length > 0) this._onPlaylistsSync(this.playlists);
                 if (this._onQueueStateSync) {
                     this._onQueueStateSync({
@@ -534,8 +579,28 @@ export class MultiplayerClient {
 
             case 'LIGHTING_UPDATE':
             case 'LIGHTING_CHANGE':
-                if (this._onLightingUpdate) {
+                if (msg.version) this.lightingVersion = msg.version;
+                if (this._lightingUpdateListeners && this._lightingUpdateListeners.length > 0) {
+                    for (const cb of this._lightingUpdateListeners) cb(msg);
+                } else if (this._onLightingUpdate) {
                     this._onLightingUpdate(msg);
+                }
+                break;
+
+            case 'LIGHTING_FULL_SYNC':
+                this.lightingState = msg.lightingState || null;
+                this.lightingVersion = msg.version || this.lightingVersion;
+                if (this._lightingFullSyncListeners) {
+                    for (const cb of this._lightingFullSyncListeners) cb(msg);
+                }
+                break;
+
+            case 'HEARTBEAT_SYNC':
+                if (msg.lightingVersion) this.lightingVersion = Math.max(this.lightingVersion || 1, msg.lightingVersion);
+                if (this._heartbeatListeners && this._heartbeatListeners.length > 0) {
+                    for (const cb of this._heartbeatListeners) cb(msg);
+                } else if (this._onHeartbeatSync) {
+                    this._onHeartbeatSync(msg);
                 }
                 break;
 

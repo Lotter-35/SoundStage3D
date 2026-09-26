@@ -9,7 +9,7 @@ import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
 
-import { AudioEngine } from './audio/audioEngine.js?v=96';
+import { AudioEngine } from './audio/audioEngine.js?v=101';
 import { Crossover } from './audio/crossover.js';
 import { SpeakerSystem } from './audio/speakers.js';
 import { createSaturation, createCompressor } from './audio/effects.js';
@@ -19,17 +19,17 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=159';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=184';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=190';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
-import { setupAudioDebugProbes } from './audio/debugProbes.js';
-import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=151';
+import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
+import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=155';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=1';
-import { LightingSync } from './multiplayer/LightingSync.js?v=2';
+import { LightingSync } from './multiplayer/LightingSync.js?v=9';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=183';
-import { LaserManager } from './laser/LaserManager.js?v=187';
+import { LaserManager } from './laser/LaserManager.js?v=196';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 
@@ -42,7 +42,8 @@ try {
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
+// antialias:false car le FXAA dans l'EffectComposer le gère → économie GPU ~3-5ms/frame
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
@@ -105,7 +106,7 @@ const laserManager = new LaserManager({ scene, renderer, camera });
 ambiancePanel.setLaserManager(laserManager);
 
 // Laser de base présent dès le spawn (au centre du pont scénique au-dessus de la régie DJ)
-laserManager.addLaser(new THREE.Vector3(0, 5.0, -4.0));
+laserManager.addLaser(new THREE.Vector3(0, 5.0, -4.0), {}, 0);
 
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
@@ -563,6 +564,8 @@ let _mpPosAccum = 0;
 const MP_POS_INTERVAL = 1 / 20; // 20 fps position sync
 let _mpPlaybackSyncAccum = 0;
 const MP_PLAYBACK_SYNC_INTERVAL = 1.0; // 1 fps master playback sync heartbeat
+let _sharedSweepTime = 0;
+let _hasServerSweepTime = false;
 
 let _pendingPlaybackSync = null;
 
@@ -634,6 +637,13 @@ try {
     // Apply synchronized random player color to local character
     if (mp.color && listener?._character3D) {
         listener._character3D.setColor(mp.color);
+    }
+
+    // Synchronisation immédiate de l'horloge globale de balayage des lasers
+    if (mp.sweepTime !== undefined) {
+        const lagSec = mp.serverTime ? (Date.now() - mp.serverTime) / 1000 : 0;
+        _sharedSweepTime = mp.sweepTime + lagSec;
+        _hasServerSweepTime = true;
     }
 
     // Apply full DSP state from server (sliders sync to server state)
@@ -928,6 +938,74 @@ try {
         }
     });
 
+    // ─── Heartbeat périodique serveur (toutes les 2s) : recale musique et balayage ───
+    mp.onHeartbeatSync((data) => {
+        const { serverTime, musicTime, isPlaying, sweepTime } = data;
+
+        // 1. Resynchronisation fluide de la lecture audio (GUESTS uniquement)
+        // Le master est la source de vérité locale — il ne se recale jamais sur le serveur
+        if (mp.role !== 'master' && audioReady && audioEngine.buffer && !controls.state.sine.active && !_isSwitchingTrack && !_isNewTrackStarting) {
+            const lagSec = serverTime ? (Date.now() - serverTime) / 1000 : 0;
+            const targetAudioTime = musicTime + (isPlaying ? lagSec : 0);
+
+            // ── Protection anti-lagspike : si un freeze s'est produit dans les 3 dernières secondes,
+            // le désync apparent est causé par le freeze lui-même, pas une vraie désync réseau.
+            // On n'applique pas de correction pour ne pas créer un clic de seek inutile.
+            const msSinceLagSpike = Date.now() - _lastLagSpikeAt;
+            const isPostLagSpike = _lastLagSpikeAt > 0 && msSinceLagSpike < 3000;
+
+            if (isPlaying) {
+                if (!audioEngine.isPlaying) {
+                    audioEngine.seek(targetAudioTime);
+                    audioEngine.play(inputStage ? inputStage.input : crossover?.input);
+                    controls.setPlayState(true);
+                } else if (!isPostLagSpike) {
+                    // Seuil relevé à 0.5s : corrections trop fréquentes causent des clics
+                    const drift = Math.abs(audioEngine.getCurrentTime() - targetAudioTime);
+                    if (drift > 0.5) {
+                        probeHeartbeatSeek(drift, 'Désynchronisation guest > 0.5s');
+                        audioEngine.seek(targetAudioTime);
+                    }
+                }
+            } else {
+                if (audioEngine.isPlaying) {
+                    audioEngine.pause();
+                    controls.setPlayState(false);
+                }
+                if (!isPostLagSpike) {
+                    const drift = Math.abs(audioEngine.getCurrentTime() - targetAudioTime);
+                    if (drift > 0.3) {
+                        probeHeartbeatSeek(drift, 'Désynchronisation pause > 0.3s');
+                        audioEngine.seek(targetAudioTime);
+                    }
+                }
+            }
+        }
+
+        // Master : recaler le serveur toutes les ~10s pour compenser la dérive horloge serveur/client
+        // On utilise sendAction 'seek' pour mettre à jour room.playback.currentTime sur le serveur
+        // sans que cela ne déclenche un seek chez les guests (ils le reçoivent mais audioReady && isPlaying le gère)
+        if (mp.role === 'master' && audioReady && audioEngine.isPlaying && !_isSwitchingTrack && !_isNewTrackStarting) {
+            const now2 = Date.now();
+            if (!mp._lastMasterClockSync || now2 - mp._lastMasterClockSync > 10000) {
+                mp._lastMasterClockSync = now2;
+                // Met à jour l'horloge serveur silencieusement (les guests qui reçoivent ce seek
+                // ne jouent pas de son si isPlaying est déjà true et le drift est < 0.5s)
+                mp.sendAction('seek', { currentTime: audioEngine.getCurrentTime(), silent: true });
+            }
+        }
+
+        // 2. Synchronisation de la phase de balayage des lasers et lumières (indépendante de la musique)
+        if (sweepTime !== undefined) {
+            const lagSec = serverTime ? (Date.now() - serverTime) / 1000 : 0;
+            const targetSweep = sweepTime + lagSec;
+            if (!_hasServerSweepTime || Math.abs(_sharedSweepTime - targetSweep) > 0.04) {
+                _sharedSweepTime = targetSweep;
+                _hasServerSweepTime = true;
+            }
+        }
+    });
+
     // ─── SYNC_ACTION — apply one-shot actions from other players ─────────────
     mp.onAction((action, data) => {
         // Immediate notification that someone is uploading/changing a track: stop old audio instantly!
@@ -993,6 +1071,12 @@ try {
             // ── Seek ───────────────────────────────────────────────────────
             case 'seek': {
                 if (!audioReady) break;
+                // Seek silencieux de recalage (master → serveur toutes les 10s) :
+                // ignorer si le drift est faible pour ne pas créer de micro-clic
+                if (data.silent && audioEngine.isPlaying) {
+                    const drift = Math.abs(audioEngine.getCurrentTime() - data.currentTime);
+                    if (drift <= 0.5) break; // drift acceptabe — pas besoin de recaler
+                }
                 audioEngine.seek(data.currentTime);
                 break;
             }
@@ -3005,12 +3089,20 @@ ${memLines}`;
 }
 
 let _lastFrameTime = performance.now();
+let _lastRealFrameMs = 16; // suivi du dernier frame time (pour détection lagspike dans heartbeat)
+let _lastLagSpikeAt = 0;   // timestamp du dernier lagspike détecté (cooldown correction audio)
 const _dirLightOffset = new THREE.Vector3(30, 60, 40);
 
 function renderFrame() {
     const now = performance.now();
     const realFrameMs = now - _lastFrameTime;
     _lastFrameTime = now;
+    _lastRealFrameMs = realFrameMs;
+
+    // Enregistrer le moment du dernier lagspike pour cooldown de correction audio
+    if (realFrameMs > 80) {
+        _lastLagSpikeAt = Date.now();
+    }
 
     const dt = Math.min(clock.getDelta(), 0.1);
 
@@ -3018,15 +3110,22 @@ function renderFrame() {
     listener.update(dt);
 
     if (audioReady) {
+        const ctx = audioEngine.context;
+        probeAudioClock(ctx, audioEngine.isPlaying);
+
         // Protection anti-microcoupure : si l'onglet est en arrière-plan (Alt+Tab) ou si un lagspike 3D survient (> 45ms),
         // on ne surcharge pas Web Audio avec des calculs spatiaux afin de garantir un flux audio continu sans saccade.
         const isTabHidden = document.hidden;
         const isLagSpike = realFrameMs > 45;
         if (!isTabHidden && !isLagSpike) {
-            const ctx = audioEngine.context;
             listener._audioCtxTime = ctx.currentTime;
+            const tAudio0 = performance.now();
             listener.syncAudioListener(ctx.listener, ctx);
             speakerSystem.update(listener.position);
+            const tAudio = performance.now() - tAudio0;
+            probeSpatialAudio(tAudio, false, realFrameMs);
+        } else if (isLagSpike && !isTabHidden) {
+            probeSpatialAudio(0, true, realFrameMs);
         }
     }
 
@@ -3055,18 +3154,10 @@ function renderFrame() {
             const heading = listener.heading;
             mp.sendPosition(pos.x, pos.y, pos.z, heading, anim, onGround, listener.isFlying);
 
-            // Broadcast playback position so all players stay in sync
-            // SEUL le master diffuse la position de lecture, throttlé à 1 Hz pour éviter tout recul ou désynchronisation
-            if (mp.role === 'master' && audioReady && !_isSwitchingTrack && !_isNewTrackStarting && !audioEngine.isLocked && audioEngine.isPlaying) {
-                _mpPlaybackSyncAccum += MP_POS_INTERVAL;
-                if (_mpPlaybackSyncAccum >= MP_PLAYBACK_SYNC_INTERVAL) {
-                    _mpPlaybackSyncAccum = 0;
-                    mp.sendPlaybackSync(
-                        audioEngine.getCurrentTime(),
-                        audioEngine.isPlaying
-                    );
-                }
-            }
+            // NOTE: Le master ne diffuse plus PLAYBACK_SYNC périodiquement.
+            // Le serveur calcule musicTime depuis room.playback (mis à jour par play_pause/seek).
+            // Le HEARTBEAT_SYNC (toutes les 2s) recale les guests. Le master n'est jamais recalé.
+
         }
 
         // Update remote player avatars every frame with real dt
@@ -3082,8 +3173,11 @@ function renderFrame() {
         _meterAccum += dt;
         if (_meterAccum >= METER_INTERVAL) {
             _meterAccum = 0;
+            const t0Meters = performance.now();
             const levels = speakerSystem.getLevels();
             controls.updateMeters(levels);
+            const tMeters = performance.now() - t0Meters;
+            probeMetersTime(tMeters);
         }
     }
 
@@ -3146,9 +3240,12 @@ function renderFrame() {
         ambiancePanel.update(dt);
     }
 
-    // Update all active lasers
+    // Avancer l'horloge partagée du balayage laser avec le delta temps réel
+    _sharedSweepTime += dt;
+
+    // Update all active lasers (balayage fluide 100% synchrone entre tous les joueurs, indépendant de la musique)
     if (laserManager) {
-        laserManager.updateAll(dt, clock.getElapsedTime());
+        laserManager.updateAll(dt, _sharedSweepTime);
     }
 
     // Update Hitbox Visualizer (player position)
@@ -3162,6 +3259,9 @@ function renderFrame() {
     const t0 = performance.now();
     laserManager.render();
     const renderTime = performance.now() - t0;
+
+    // SONDE 1 : Détection des frames lentes (Three.js / Lasers / Ombres / Objets)
+    probeFrameSpike(realFrameMs, renderTime, scene, renderer, laserManager);
 
     // Debug overlay (throttled internally)
     updateFpsCounter(dt, renderTime);

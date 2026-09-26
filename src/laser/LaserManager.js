@@ -18,7 +18,7 @@ import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js'
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { LaserShow } from './LaserShow.js';
+import { LaserShow } from './LaserShow.js?v=5';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 
 // Layer réservé au bloom et à l'aberration chromatique sélective (lasers et lumières)
@@ -95,6 +95,9 @@ export class LaserManager {
         this._initPostProcessing();
         this._useComposer = !!(this._finalComposer && this._bloomComposer);
 
+        // Préalloué pour éviter new THREE.Color() à chaque frame dans render()
+        this._origClearColor = new THREE.Color();
+
         // Fog (fumée scénique)
         this._originalFog = scene.fog;
         this._laserFog = null;
@@ -114,7 +117,8 @@ export class LaserManager {
             this._darkMaterial = new THREE.MeshBasicMaterial({
                 color: 0x000000,
                 depthWrite: true,
-                depthTest: true
+                depthTest: true,
+                side: THREE.DoubleSide
             });
             this._materialsMap = new Map();
             this._visibilityMap = new Map();
@@ -146,6 +150,7 @@ export class LaserManager {
             const renderScene = new RenderPass(this.scene, this.camera);
 
             // ── 1. Bloom Composer (Rendu isolé des lasers et lumières pour calcul du glow + chroma) ──
+            this._bloomRenderPass = renderScene;
             this._bloomComposer = new EffectComposer(this.renderer);
             this._bloomComposer.renderToScreen = false;
             this._bloomComposer.addPass(renderScene);
@@ -199,8 +204,9 @@ export class LaserManager {
             this._bloomComposer.addPass(this._chromaPass);
 
             // ── 2. Final Composer (Scène complète normale nette + mélange additif du calque bloom/chroma) ──
+            const renderFinalScene = new RenderPass(this.scene, this.camera);
             this._finalComposer = new EffectComposer(this.renderer);
-            this._finalComposer.addPass(renderScene);
+            this._finalComposer.addPass(renderFinalScene);
 
             // Pass de mixage additif
             const mixShader = {
@@ -261,7 +267,7 @@ export class LaserManager {
     }
 
     /** Ajoute un nouveau laser dans la scène */
-    addLaser(position = new THREE.Vector3(0, 5, 0), paramOverrides = {}, customId = null) {
+    addLaser(position = new THREE.Vector3(0, 12, -4), paramOverrides = {}, customId = null) {
         const id = (customId !== null && customId !== undefined) ? customId : this._nextId++;
         if (this._nextId <= id) this._nextId = id + 1;
         const laserShow = new LaserShow(this.scene, position.clone(), paramOverrides);
@@ -337,26 +343,25 @@ export class LaserManager {
     /**
      * Rendu sélectif :
      * - Bloom et aberration chromatique appliqués UNIQUEMENT sur les objets du layer BLOOM_SCENE_LAYER (lasers et lumières).
-     * - La scène normale (sol, scène, enceintes, festivaliers, ciel) reste parfaitement nette et intacte.
+     * - Les obstacles du décor (scène, sol, piliers) masquent les lasers de manière naturelle via le depth buffer sans artefacts.
+     * - Les deux faces du plan laser (fanMesh) sont rendues de façon parfaitement identique et symétrique.
      */
     render() {
         if (this._useComposer && this._finalComposer && this._bloomComposer) {
             // 1. Sauvegarder fond, fog et clear color
-            const origBg = this.scene.background;
+            const origBg  = this.scene.background;
             const origFog = this.scene.fog;
             this.scene.background = null;
             this.scene.fog = null;
 
-            const origClearColor = new THREE.Color();
-            this.renderer.getClearColor(origClearColor);
+            this.renderer.getClearColor(this._origClearColor);
             const origClearAlpha = this.renderer.getClearAlpha();
-
             this.renderer.setClearColor(0x000000, 0);
 
-            // 2. Assombrir les objets hors layer bloom pour masquer le décor
+            // 2. Assombrir les objets hors layer bloom pour masquer le décor tout en gardant l'occlusion de profondeur
             this.scene.traverse(this._darkenNonBloomed);
 
-            // 3. Calculer le bloom et l'aberration chromatique uniquement sur les lasers & lumières
+            // 3. Calculer le bloom et l'aberration chromatique uniquement sur les lasers & lumières visibles
             this._bloomComposer.render();
 
             // 4. Restaurer les matériaux d'origine
@@ -365,9 +370,9 @@ export class LaserManager {
             // 5. Restaurer le fond, le fog et le clear color
             this.scene.background = origBg;
             this.scene.fog = origFog;
-            this.renderer.setClearColor(origClearColor, origClearAlpha);
+            this.renderer.setClearColor(this._origClearColor, origClearAlpha);
 
-            // 6. Connecter la texture bloom/chroma calculée au pass de mixage
+            // 6. Connecter la texture bloom calculée au pass de mixage
             this._mixPass.material.uniforms.bloomTexture.value = this._bloomComposer.readBuffer.texture;
 
             // 7. Rendu final de la scène normale + bloom additif + tone mapping

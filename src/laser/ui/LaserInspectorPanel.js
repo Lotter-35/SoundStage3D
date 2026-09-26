@@ -113,12 +113,28 @@ export class LaserInspectorPanel {
         ctrl.onChange((v) => {
             if (origOnChange) origOnChange.call(ctrl, v);
             if (this._currentLaser) {
-                this._emitSync({
+                const payload = {
                     category: 'laser_param',
                     id: this._currentLaserId,
                     param: key,
                     value: v,
-                });
+                };
+                if (key === 'pauseMotion') {
+                    if (v === true) {
+                        this._currentLaser.isPaused = true;
+                        this._currentLaser._frozenAnimTime = this._currentLaser._animTime;
+                        payload.animTime = this._currentLaser._frozenAnimTime;
+                    } else {
+                        this._currentLaser.isPaused = false;
+                        if (this._currentLaser._frozenAnimTime !== null && this._currentLaser._lastSharedTime !== undefined) {
+                            this._currentLaser._pausedOffset = this._currentLaser._lastSharedTime - this._currentLaser._frozenAnimTime;
+                            this._currentLaser._frozenAnimTime = null;
+                        }
+                        payload.pausedOffset = this._currentLaser._pausedOffset || 0;
+                        payload.animTime = this._currentLaser._animTime;
+                    }
+                }
+                this._emitSync(payload);
             }
         });
 
@@ -135,6 +151,28 @@ export class LaserInspectorPanel {
             const defVal = schema.value;
             if (this._currentLaser) {
                 this._currentLaser.setParam(key, defVal);
+                const payload = {
+                    category: 'laser_param',
+                    id: this._currentLaserId,
+                    param: key,
+                    value: defVal,
+                };
+                if (key === 'pauseMotion') {
+                    if (defVal === true) {
+                        this._currentLaser.isPaused = true;
+                        this._currentLaser._frozenAnimTime = this._currentLaser._animTime;
+                        payload.animTime = this._currentLaser._frozenAnimTime;
+                    } else {
+                        this._currentLaser.isPaused = false;
+                        if (this._currentLaser._frozenAnimTime !== null && this._currentLaser._lastSharedTime !== undefined) {
+                            this._currentLaser._pausedOffset = this._currentLaser._lastSharedTime - this._currentLaser._frozenAnimTime;
+                            this._currentLaser._frozenAnimTime = null;
+                        }
+                        payload.pausedOffset = this._currentLaser._pausedOffset || 0;
+                        payload.animTime = this._currentLaser._animTime;
+                    }
+                }
+                this._emitSync(payload);
             }
             ctrl.setValue(defVal);
         });
@@ -367,7 +405,7 @@ export class LaserInspectorPanel {
         // 4. Tweeking visuel source (Fidèle au GitHub Laser)
         // ══════════════════════════════════════════════════════════════════
         const fVisual = this.gui.addFolder('Tweeking visuel source');
-        fVisual.open();
+        fVisual.close();
 
         this.controllers.sourceEmissionPower = this._setupController(
             fVisual.add(p, 'sourceEmissionPower', 0, 4, 0.05).name('Puissance Buse').onChange(v => laser.setParam('sourceEmissionPower', v)),

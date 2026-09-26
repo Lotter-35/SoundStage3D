@@ -13,9 +13,10 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js';
 import { makeDraggable } from './draggable.js';
-import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js';
-import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=185';
+import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js?v=195';
+import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=188';
 import { GI_PRESETS } from '../scene/staticGI.js';
+import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
 
 export class AmbiancePanel {
     /**
@@ -157,10 +158,46 @@ export class AmbiancePanel {
         // Éviter tout conflit avec la caméra / listener pendant le glissement du gizmo
         this.transformControls.addEventListener('dragging-changed', (event) => {
             this.isDraggingGizmo = event.value;
+
+            // Indiquer au boîtier laser qu'il est en cours de manipulation (pour ne pas écraser sa rotation dans la render loop)
+            if (this.selectedLaser && this.selectedLaser.pod && this.selectedLaser.pod.housing) {
+                this.selectedLaser.pod.housing.isBeingDragged = Boolean(event.value);
+            }
+
             if (!event.value) {
                 this._dragEndTime = performance.now();
                 if (this.selectedEntry) {
                     this._syncLightRotationFromTarget(this.selectedEntry);
+                    const entry = this.selectedEntry;
+                    const finalData = {
+                        position: { x: entry.light.position.x, y: entry.light.position.y, z: entry.light.position.z },
+                        rotation: { x: entry.light.rotation.x, y: entry.light.rotation.y, z: entry.light.rotation.z },
+                    };
+                    if (entry.light.target) {
+                        finalData.target = { x: entry.light.target.position.x, y: entry.light.target.position.y, z: entry.light.target.position.z };
+                    }
+                    this._emitSync({
+                        category: 'light_update',
+                        id: entry.id,
+                        data: finalData,
+                        immediate: true,
+                    });
+                } else if (this.selectedLaser) {
+                    const housing = this.selectedLaser.getHousingGroup();
+                    const pos = housing ? housing.position : this.selectedLaser.getPosition();
+                    this._emitSync({
+                        category: 'laser_transform',
+                        id: this.selectedLaser.laserId,
+                        data: {
+                            position: { x: pos.x, y: pos.y, z: pos.z },
+                            rotation: {
+                                angle: this.selectedLaser.params.angle || 0,
+                                tilt: this.selectedLaser.params.tilt || 0,
+                                roll: this.selectedLaser.params.roll || 0,
+                            }
+                        },
+                        immediate: true,
+                    });
                 }
             } else {
                 if (this.selectedEntry && this.selectedEntry.light && this.selectedEntry.light.target) {
@@ -185,11 +222,22 @@ export class AmbiancePanel {
             if (this.selectedLaser && this.transformControls.object === this.selectedLaser.getHousingGroup()) {
                 if (!this.isDraggingGizmo) return;
                 const housing = this.selectedLaser.getHousingGroup();
-                const pos = housing.position;
-                this.selectedLaser.setPosition(pos.x, pos.y, pos.z);
-
                 const mode = this.transformControls.getMode();
-                if (mode === 'rotate') {
+
+                if (mode === 'translate') {
+                    const pos = housing.position;
+                    this.selectedLaser.setPosition(pos.x, pos.y, pos.z);
+                    if (this._laserPosControllers) {
+                        this._laserPosControllers.posState.x = pos.x;
+                        this._laserPosControllers.posState.y = pos.y;
+                        this._laserPosControllers.posState.z = pos.z;
+                        try {
+                            this._laserPosControllers.posX.updateDisplay();
+                            this._laserPosControllers.posY.updateDisplay();
+                            this._laserPosControllers.posZ.updateDisplay();
+                        } catch (_) {}
+                    }
+                } else if (mode === 'rotate') {
                     const euler = new THREE.Euler().setFromQuaternion(housing.quaternion, 'YXZ');
                     const yaw = Math.round(THREE.MathUtils.radToDeg(euler.y));
                     const pitchDeg = Math.round(THREE.MathUtils.radToDeg(-euler.x));
@@ -214,26 +262,14 @@ export class AmbiancePanel {
                 if (this._laserInspectorPanel) {
                     this._laserInspectorPanel.syncFromLaser();
                 }
-                if (this._laserPosControllers) {
-                    this._laserPosControllers.posState.x = pos.x;
-                    this._laserPosControllers.posState.y = pos.y;
-                    this._laserPosControllers.posState.z = pos.z;
-                    try {
-                        this._laserPosControllers.posX.updateDisplay();
-                        this._laserPosControllers.posY.updateDisplay();
-                        this._laserPosControllers.posZ.updateDisplay();
-                    } catch (_) {}
-                }
+
+                const pos = housing.position;
                 this._emitSync({
                     category: 'laser_transform',
                     id: this.selectedLaser.laserId,
                     data: {
                         position: { x: pos.x, y: pos.y, z: pos.z },
-                        rotation: this._laserRotControllers ? {
-                            angle: this._laserRotControllers.rotState.angle,
-                            tilt: this._laserRotControllers.rotState.tilt,
-                            roll: this._laserRotControllers.rotState.roll
-                        } : {
+                        rotation: {
                             angle: this.selectedLaser.params.angle || 0,
                             tilt: this.selectedLaser.params.tilt || 0,
                             roll: this.selectedLaser.params.roll || 0
@@ -288,7 +324,8 @@ export class AmbiancePanel {
                 id: entry.id,
                 data: {
                     position: { x: entry.light.position.x, y: entry.light.position.y, z: entry.light.position.z },
-                    target: entry.light.target ? { x: entry.light.target.position.x, y: entry.light.target.position.y, z: entry.light.target.position.z } : null
+                    target: entry.light.target ? { x: entry.light.target.position.x, y: entry.light.target.position.y, z: entry.light.target.position.z } : null,
+                    rotation: { x: entry.light.rotation.x, y: entry.light.rotation.y, z: entry.light.rotation.z }
                 }
             });
         });
@@ -969,6 +1006,18 @@ export class AmbiancePanel {
 
     _syncInspectorDisplays() {
         if (!this.fInspector) return;
+        if (this.selectedEntry && this.selectedEntry.light && this._inspectorProxies) {
+            const light = this.selectedEntry.light;
+            if (this._inspectorProxies.colorProxy && light.color) {
+                this._inspectorProxies.colorProxy.col = '#' + light.color.getHexString();
+            }
+            if (this._inspectorProxies.groundProxy && light.groundColor) {
+                this._inspectorProxies.groundProxy.groundCol = '#' + light.groundColor.getHexString();
+            }
+            if (this._inspectorProxies.angleProxy && light.angle !== undefined) {
+                this._inspectorProxies.angleProxy.deg = THREE.MathUtils.radToDeg(light.angle);
+            }
+        }
         const updateFolder = (folder) => {
             if (!folder) return;
             if (folder.controllers) {
@@ -1694,17 +1743,21 @@ export class AmbiancePanel {
                     return null;
                 }
                 {
-                    const { id, laserShow } = this.laserManager.addLaser(spawnPos.clone());
+                    // Placer le laser en hauteur sur la structure/pont de scène (y=12m au lieu de juste au-dessus du DJ booth)
+                    const laserSpawnPos = spawnPos.clone();
+                    laserSpawnPos.y = Math.max(12.0, laserSpawnPos.y);
+                    const { id, laserShow } = this.laserManager.addLaser(laserSpawnPos);
                     this.selectLaser(laserShow);
                     this._buildGui();
                     this._emitSync({
                         category: 'laser_add',
                         data: {
                             id,
-                            position: { x: spawnPos.x, y: spawnPos.y, z: spawnPos.z },
+                            position: { x: laserSpawnPos.x, y: laserSpawnPos.y, z: laserSpawnPos.z },
                             params: { ...laserShow.params }
                         }
                     });
+                    this._logSceneProbe('🔴 LaserPod');
                     return null; // Pas d'entry lumière classique
                 }
 
@@ -1730,7 +1783,23 @@ export class AmbiancePanel {
                 ...this._captureLightState(light, entry.type)
             }
         });
+        this._logSceneProbe(entry.type);
         return entry;
+    }
+
+    _logSceneProbe(type) {
+        let lightsCount = 0, shadowsCount = 0, meshesCount = 0;
+        if (this.scene) {
+            this.scene.traverse((o) => {
+                if (o.isMesh) meshesCount++;
+                if (o.isLight) {
+                    lightsCount++;
+                    if (o.castShadow) shadowsCount++;
+                }
+            });
+        }
+        const laserCount = this.laserManager?.getLaserObjects?.().length ?? 0;
+        probeObjectAdded(type, lightsCount, shadowsCount, laserCount, meshesCount);
     }
 
     removeLight(entry) {
@@ -2374,7 +2443,7 @@ export class AmbiancePanel {
         this._cPreset.onChange(key => {
             this.applyEnvPreset(key);
         });
-        this._setupController(this._cPreset, () => 'day', (key) => {
+        this._setupController(this._cPreset, () => 'night_aurora', (key) => {
             this.applyEnvPreset(key);
         });
 
@@ -2696,6 +2765,7 @@ export class AmbiancePanel {
         this.ctrlTargetY = null;
         this.ctrlTargetZ = null;
         this._laserPosControllers = null;
+        this._laserRotControllers = null;
 
         while (this.fInspector.controllers.length > 0) {
             this.fInspector.controllers[0].destroy();
@@ -2817,6 +2887,7 @@ export class AmbiancePanel {
                             params: paramsCopy
                         }
                     });
+                    this._logSceneProbe('🔴 LaserPod (Duplication)');
                 },
                 deleteLaser: () => {
                     const id = laser.laserId;
@@ -2825,10 +2896,14 @@ export class AmbiancePanel {
                     this._buildGui();
                     this._emitSync({ category: 'laser_remove', id });
                 },
+                setTranslate: () => this.setGizmoMode('translate'),
+                setRotate: () => this.setGizmoMode('rotate'),
             };
 
             const fLaserActions = this.fInspector.addFolder(`🔴 Laser #${laser.laserId} - Actions`);
             fLaserActions.open();
+            fLaserActions.add(laserActions, 'setTranslate').name('↔ Gizmo Déplacement');
+            fLaserActions.add(laserActions, 'setRotate').name('🔄 Gizmo Rotation');
             fLaserActions.add(laserActions, 'duplicateLaser').name('⧉ Dupliquer ce laser');
             fLaserActions.add(laserActions, 'deleteLaser').name('🗑️ Supprimer ce laser');
 
@@ -2899,6 +2974,7 @@ export class AmbiancePanel {
             const ctrlAngle = fRot.add(rotState, 'angle', -180, 180, 1).name('Angle Horiz. (°)').onChange(onLaserRotChange);
             const ctrlTilt = fRot.add(rotState, 'tilt', -90, 90, 1).name('Inclinaison (°)').onChange(onLaserRotChange);
             const ctrlRoll = fRot.add(rotState, 'roll', -180, 180, 1).name('Rotation Axiale (°)').onChange(onLaserRotChange);
+            this._laserRotControllers = { ctrlAngle, ctrlTilt, ctrlRoll, rotState };
             this._setupController(ctrlAngle, () => 0, (v) => { rotState.angle = v; ctrlAngle.setValue(v); onLaserRotChange(); });
             this._setupController(ctrlTilt, () => 0, (v) => { rotState.tilt = v; ctrlTilt.setValue(v); onLaserRotChange(); });
             this._setupController(ctrlRoll, () => 0, (v) => { rotState.roll = v; ctrlRoll.setValue(v); onLaserRotChange(); });
@@ -2953,6 +3029,7 @@ export class AmbiancePanel {
 
         // Couleur
         const colorProxy = { col: '#' + light.color.getHexString() };
+        this._inspectorProxies = { colorProxy, angleProxy: null, groundProxy: null };
         const cColor = fProps.addColor(colorProxy, 'col').name('Couleur');
         cColor.onChange(hex => {
             light.color.set(hex);
@@ -3020,6 +3097,7 @@ export class AmbiancePanel {
             this._setupController(cDist, () => def.distance, (v) => { light.distance = v; onSpotChange(); });
 
             const angleProxy = { deg: THREE.MathUtils.radToDeg(light.angle) };
+            if (this._inspectorProxies) this._inspectorProxies.angleProxy = angleProxy;
             const cAngle = fSpot.add(angleProxy, 'deg', 5, 90, 1).name('Ouverture (°)');
             cAngle.onChange(deg => {
                 light.angle = THREE.MathUtils.degToRad(deg);
@@ -3050,11 +3128,12 @@ export class AmbiancePanel {
             const fHemi = this.fInspector.addFolder('🌱 Couleur Sol');
             fHemi.open();
 
-            const groundProxy = { col: '#' + light.groundColor.getHexString() };
-            const cGround = fHemi.addColor(groundProxy, 'col').name('Sol');
+            const groundProxy = { groundCol: '#' + light.groundColor.getHexString() };
+            if (this._inspectorProxies) this._inspectorProxies.groundProxy = groundProxy;
+            const cGround = fHemi.addColor(groundProxy, 'groundCol').name('Sol');
             cGround.onChange(hex => light.groundColor.set(hex));
             this._setupController(cGround, () => def.groundColor, (v) => {
-                groundProxy.col = v;
+                groundProxy.groundCol = v;
                 cGround.setValue(v);
             });
         } else if (entry.type === 'RectAreaLight') {
@@ -3156,8 +3235,17 @@ export class AmbiancePanel {
             const defTarget = def.target || { x: targetPos.x, y: targetPos.y, z: targetPos.z };
 
             const onTargetChange = () => {
-                light.target.updateMatrixWorld();
+                light.target.updateMatrixWorld(true);
+                this._syncLightRotationFromTarget(entry);
                 if (entry.helper && entry.helper.update) entry.helper.update();
+                this._emitSync({
+                    category: 'light_update',
+                    id: entry.id,
+                    data: {
+                        target: { x: targetPos.x, y: targetPos.y, z: targetPos.z },
+                        rotation: { x: entry.light.rotation.x, y: entry.light.rotation.y, z: entry.light.rotation.z }
+                    }
+                });
             };
 
             this.ctrlTargetX = fTarget.add(targetPos, 'x', -100, 100, 0.1).name('Cible X');
@@ -3252,14 +3340,16 @@ export class AmbiancePanel {
             const changes = {};
             if (prop === 'col') {
                 changes.color = val;
+            } else if (prop === 'groundCol' || prop === 'groundColor') {
+                changes.groundColor = val;
+            } else if (prop === 'deg' || prop === 'angle') {
+                changes.angle = typeof val === 'number' ? val : THREE.MathUtils.radToDeg(entry.light.angle);
             } else if (prop === 'x' || prop === 'y' || prop === 'z') {
                 if (obj === entry.light.position) {
                     changes.position = { x: entry.light.position.x, y: entry.light.position.y, z: entry.light.position.z };
                 } else if (entry.light.target && obj === entry.light.target.position) {
                     changes.target = { x: entry.light.target.position.x, y: entry.light.target.position.y, z: entry.light.target.position.z };
                 }
-            } else if (prop === 'angle') {
-                changes.angle = THREE.MathUtils.radToDeg(entry.light.angle);
             } else {
                 changes[prop] = val;
             }

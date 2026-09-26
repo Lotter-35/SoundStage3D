@@ -232,7 +232,7 @@ function defaultDspState() {
 function defaultLightingState() {
     return {
         env: {
-            presetKey: 'day',
+            presetKey: 'night_aurora',
             stageBoost: 1.0,
             stars: true,
             starSize: 0.5,
@@ -262,7 +262,15 @@ function defaultLightingState() {
             fogColor: '#111122',
         },
         lights: {},
-        lasers: {},
+        lasers: {
+            0: {
+                id: 0,
+                position: { x: 0, y: 5.0, z: -4.0 },
+                rotation: { angle: 0, tilt: 0, roll: 0 },
+                params: {},
+                pausedOffset: 0,
+            }
+        },
     };
 }
 
@@ -301,6 +309,8 @@ function applyLightingChange(state, msg) {
         if (!state.lasers[id]) state.lasers[id] = { id, params: {} };
         if (!state.lasers[id].params) state.lasers[id].params = {};
         if (msg.param !== undefined) state.lasers[id].params[msg.param] = msg.value;
+        if (msg.animTime !== undefined) state.lasers[id].animTime = msg.animTime;
+        if (msg.pausedOffset !== undefined) state.lasers[id].pausedOffset = msg.pausedOffset;
     } else if (category === 'laser_add') {
         if (!state.lasers) state.lasers = {};
         if (data && data.id) state.lasers[data.id] = data;
@@ -807,12 +817,14 @@ wss.on('connection', (ws) => {
                     contextQueue: [],
                     isShuffle: false,
                     queueVersion: 1,
+                    lightingVersion: 1,
                     loadedPlaylistId: null,
                     loadedPlaylistName: null,
                     lastAdvanceTime: 0,
                     audioTracks: new Map(),
                     players: {},
                     readyClients: new Set(),
+                    createdAt: Date.now(),
                     isPlayingTriggered: false,
                     isAwaitingReady: false,
                     readyTimeout: null,
@@ -832,6 +844,7 @@ wss.on('connection', (ws) => {
                     audioPort: PORT,
                     dspState: room.dspState,
                     lightingState: room.lightingState,
+                    lightingVersion: room.lightingVersion || 1,
                     playback: room.playback,
                     sine: room.sine,
                     trackName: room.trackName,
@@ -847,6 +860,8 @@ wss.on('connection', (ws) => {
                     loadedPlaylistName: room.loadedPlaylistName || null,
                     playlists: getPlaylistsList(),
                     players: getPlayersSnapshot(room),
+                    serverTime: Date.now(),
+                    sweepTime: 0,
                 });
                 break;
             }
@@ -877,6 +892,7 @@ wss.on('connection', (ws) => {
                     audioPort: PORT,
                     dspState: room.dspState,
                     lightingState: room.lightingState || defaultLightingState(),
+                    lightingVersion: room.lightingVersion || 1,
                     playback: room.playback,
                     sine: room.sine,
                     trackName: room.trackName,
@@ -892,6 +908,8 @@ wss.on('connection', (ws) => {
                     loadedPlaylistName: room.loadedPlaylistName || null,
                     playlists: getPlaylistsList(),
                     players: getPlayersSnapshot(room),
+                    serverTime: Date.now(),
+                    sweepTime: Math.max(0, (Date.now() - (room.createdAt || Date.now())) / 1000),
                 });
 
                 // Notify existing clients
@@ -933,14 +951,29 @@ wss.on('connection', (ws) => {
                     room.lightingState = defaultLightingState();
                 }
 
-                console.log(`[Lighting] Change from ${clientId} in ${ws.roomId}: cat=${msg.category}, id=${msg.id}`);
+                room.lightingVersion = (room.lightingVersion || 1) + 1;
+                console.log(`[Lighting] Change from ${clientId} in ${ws.roomId} (v${room.lightingVersion}): cat=${msg.category}, id=${msg.id}`);
                 applyLightingChange(room.lightingState, msg);
 
                 // Broadcast to everyone EXCEPT the sender (sender already applied locally)
                 broadcastRoom(room, {
                     ...msg,
                     type: 'LIGHTING_UPDATE',
+                    version: room.lightingVersion,
                 }, clientId);
+                break;
+            }
+
+            // ─── GET_LIGHTING_STATE ────────────────────────────────────────
+            case 'GET_LIGHTING_STATE': {
+                if (!ws.roomId) return;
+                const room = rooms.get(ws.roomId);
+                if (!room) return;
+                send(ws, {
+                    type: 'LIGHTING_FULL_SYNC',
+                    lightingState: room.lightingState || defaultLightingState(),
+                    version: room.lightingVersion || 1,
+                });
                 break;
             }
 
@@ -1067,32 +1100,16 @@ wss.on('connection', (ws) => {
                 break;
             }
 
+            // NOTE: PLAYBACK_SYNC (master → server → guests) est supprimé.
+            // Le serveur est la source de vérité du temps musical via room.playback,
+            // mis à jour par les actions play_pause / seek / skip. Le heartbeat
+            // HEARTBEAT_SYNC (toutes les 2s) diffuse musicTime calculé par le serveur
+            // à tous les clients. Cela évite la boucle drift : master envoie son temps
+            // → serveur le reçoit avec latence → heartbeat le renvoie → master se corrige
+            // sur lui-même avec un décalage → drift en boucle.
             case 'PLAYBACK_SYNC': {
-                if (!ws.roomId) return;
-                const room = rooms.get(ws.roomId);
-                if (!room) return;
-
-                // While awaiting ready for a new track, drop any lingering sync heartbeats from old track
-                if (room.isAwaitingReady) return;
-
-                // ONLY master can dictate playback time
-                if (room.masterId && clientId !== room.masterId) return;
-
-                if (room.playback) {
-                    room.playback.currentTime = msg.currentTime;
-                    room.playback.isPlaying = msg.isPlaying;
-                    room.playback.timestamp = Date.now();
-                }
-                if (msg.isPlaying) {
-                    room.isPlayingTriggered = true;
-                }
-
-                broadcastRoom(room, {
-                    type: 'PLAYBACK_SYNC',
-                    currentTime: msg.currentTime,
-                    isPlaying: msg.isPlaying,
-                    serverTimestamp: Date.now(),
-                }, clientId);
+                // Ignoré — le master ne doit plus envoyer sa position audio périodiquement
+                // Le serveur calcule musicTime lui-même dans le heartbeat
                 break;
             }
 
@@ -1756,3 +1773,33 @@ wss.on('connection', (ws) => {
 wss.on('error', (err) => {
     console.error('[!] WebSocket server error:', err.message);
 });
+
+// ─── 2-Second Periodic Room Heartbeat Sync (Playback & Laser/Light Sweep) ────
+setInterval(() => {
+    const now = Date.now();
+    for (const [roomId, room] of rooms) {
+        if (!room || !room.clients || room.clients.size === 0) continue;
+
+        let musicTime = 0;
+        let isPlaying = false;
+        if (room.playback) {
+            isPlaying = Boolean(room.playback.isPlaying);
+            const elapsed = isPlaying ? Math.max(0, (now - (room.playback.timestamp || now)) / 1000) : 0;
+            musicTime = (room.playback.currentTime || 0) + elapsed;
+        }
+
+        const roomStart = room.createdAt || now;
+        // Le sweepTime est continu et 100% indépendant de la musique (déplacement/seek/pause du son n'affecte pas le balayage)
+        const sweepTime = Math.max(0, (now - roomStart) / 1000);
+
+        broadcastRoomAll(room, {
+            type: 'HEARTBEAT_SYNC',
+            serverTime: now,
+            musicTime,
+            isPlaying,
+            sweepTime,
+            lightingVersion: room.lightingVersion || 1,
+            lightingState: room.lightingState || defaultLightingState(),
+        });
+    }
+}, 2000);
