@@ -336,6 +336,8 @@ export class Character3D {
      */
     _onWheel(e) {
         if (!this.isThirdPerson || !this.enabled) return;
+        // En mode vol libre, la molette contrôle la vitesse de vol dans Listener, pas le zoom de caméra
+        if (this.isFlying) return;
         // Désactiver le zoom caméra si la molette est utilisée sur une interface ou une liste
         if (e.target && (
             e.target.closest('#playback-bar-wrap, #pb-queue-container, .emote-window, #emote-window, .lil-gui, #hud, #overlay, #chat-container') ||

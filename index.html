@@ -4,7 +4,7 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Festival Sound System Simulator</title>
-    <link rel="stylesheet" href="style.css?v=48">
+    <link rel="stylesheet" href="style.css?v=56">
     <script type="importmap">
     {
         "imports": {
@@ -291,12 +291,17 @@
         <div id="laser-panel"></div>
     </div>
 
+    <!-- ─── Panneau Stroboscope (flottant, même DA que Laser & Ambiance) ─── -->
+    <div id="strobe-panel-wrap" class="hidden">
+        <div id="strobe-panel"></div>
+    </div>
+
     <canvas id="canvas"></canvas>
 
     <!-- ─── Laser Dazzle Overlays (éblouissement physiologique) ─────────────── -->
     <div id="dazzle-overlay"    style="display:none"></div>
     <div id="afterimage-overlay" style="display:none"></div>
 
-    <script type="module" src="src/main.js?v=268"></script>
+    <script type="module" src="src/main.js?v=327"></script>
 </body>
 </html>

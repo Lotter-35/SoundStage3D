@@ -13,7 +13,7 @@
 import * as THREE from 'three';
 
 
-import { MAX_BEAMS_PER_POD, ARC_SUBDIVISIONS } from './config/laserConstants.js';
+import { MAX_BEAMS_PER_POD, ARC_SUBDIVISIONS } from './config/laserConstants.js?v=2';
 import { podGlowGeo } from './LaserShaders.js';
 import { LaserPodHousing } from './LaserPodHousing.js?v=2';
 

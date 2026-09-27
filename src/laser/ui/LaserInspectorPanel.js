@@ -78,9 +78,15 @@ export class LaserInspectorPanel {
         if (this._posState) {
             const housing = this._currentLaser.getHousingGroup();
             const p = housing ? housing.position : this._currentLaser.getPosition();
-            this._posState.x = p.x;
-            this._posState.y = p.y;
-            this._posState.z = p.z;
+            this._posState.x = Math.round(p.x * 100) / 100;
+            this._posState.y = Math.round(p.y * 100) / 100;
+            this._posState.z = Math.round(p.z * 100) / 100;
+        }
+        if (this._rotState) {
+            const p = this._currentLaser.params;
+            this._rotState.angle = Math.round((p.angle || 0) * 10) / 10;
+            this._rotState.tilt = Math.round((p.tilt || 0) * 10) / 10;
+            this._rotState.roll = Math.round((p.roll || 0) * 10) / 10;
         }
         for (const ctrl of Object.values(this.controllers)) {
             if (ctrl && typeof ctrl.updateDisplay === 'function') {
@@ -219,35 +225,62 @@ export class LaserInspectorPanel {
             container: this.panelContainer,
             title: `🔴 Laser #${this._currentLaserId}`,
             autoPlace: false,
-            width: 300,
+            width: 340,
         });
 
         // Boutons dans le titre du lil-gui : Reset Tout (↺) et Fermer (✕)
         const titleEl = this.gui.domElement.querySelector('.title');
         if (titleEl) {
-            const resetAllBtn = document.createElement('button');
+            const rawTitle = `🔴 Laser #${this._currentLaserId}`;
+            titleEl.textContent = ''; // Vider le texte brut injecté par lil-gui pour éviter les retours à la ligne flex
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'lil-panel-title-text';
+            textSpan.textContent = rawTitle;
+            titleEl.appendChild(textSpan);
+
+            const resetAllBtn = document.createElement('span');
+            resetAllBtn.setAttribute('role', 'button');
+            resetAllBtn.setAttribute('tabindex', '0');
             resetAllBtn.className = 'lil-panel-reset-btn';
             resetAllBtn.title = 'Réinitialiser tous les paramètres du laser (↺)';
-            resetAllBtn.innerHTML = '↺ Tout reset';
-            resetAllBtn.style.marginRight = '6px';
-            resetAllBtn.addEventListener('click', (e) => {
+            resetAllBtn.textContent = '↺ Tout reset';
+            const triggerReset = (e) => {
                 e.stopPropagation();
+                e.preventDefault();
                 this.resetAllLaserParams();
+            };
+            resetAllBtn.addEventListener('click', triggerReset);
+            resetAllBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            resetAllBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+            resetAllBtn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') triggerReset(e);
             });
             titleEl.appendChild(resetAllBtn);
 
-            const closeBtn = document.createElement('button');
-            closeBtn.className = 'lil-panel-reset-btn';
+            const closeBtn = document.createElement('span');
+            closeBtn.setAttribute('role', 'button');
+            closeBtn.setAttribute('tabindex', '0');
+            closeBtn.className = 'lil-panel-close-btn';
             closeBtn.title = 'Fermer l\'inspecteur laser (Échap)';
-            closeBtn.innerHTML = '✕';
-            closeBtn.style.marginRight = '4px';
-            closeBtn.addEventListener('click', (e) => {
-                e.stopPropagation();
+            closeBtn.textContent = '✕';
+            const triggerClose = (e) => {
+                if (e) {
+                    e.stopPropagation();
+                    e.preventDefault();
+                }
+                this.close();
                 if (this.ambiancePanel) {
                     this.ambiancePanel.deselectLaser();
-                } else {
-                    this.close();
                 }
+            };
+            closeBtn.addEventListener('click', triggerClose);
+            closeBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            closeBtn.addEventListener('mouseup', (e) => e.stopPropagation());
+            closeBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+            closeBtn.addEventListener('pointerup', (e) => e.stopPropagation());
+            closeBtn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') triggerClose(e);
             });
             titleEl.appendChild(closeBtn);
 
@@ -256,25 +289,10 @@ export class LaserInspectorPanel {
         }
 
         // ══════════════════════════════════════════════════════════════════
-        // 1. Style laser (Toujours ouvert en haut — fidèle au GitHub Laser)
+        // 1. Style
         // ══════════════════════════════════════════════════════════════════
-        const fStyle = this.gui.addFolder('Style laser');
+        const fStyle = this.gui.addFolder('Style');
         fStyle.open();
-
-        this.controllers.count = this._setupController(
-            fStyle.add(p, 'count', 1, 32, 1).name('Nombre Trait').onChange(v => laser.setParam('count', v)),
-            'count'
-        );
-
-        this.controllers.beamWidth = this._setupController(
-            fStyle.add(p, 'beamWidth', 0, 5, 0.05).name('Taille Trait').onChange(v => laser.setParam('beamWidth', v)),
-            'beamWidth'
-        );
-
-        this.controllers.spread = this._setupController(
-            fStyle.add(p, 'spread', 0, 110, 0.1).name('Écart laser').onChange(v => laser.setParam('spread', v)),
-            'spread'
-        );
 
         this.controllers.color = this._setupController(
             fStyle.addColor(p, 'color').name('Couleur').onChange(v => laser.setParam('color', v)),
@@ -286,166 +304,476 @@ export class LaserInspectorPanel {
             'laserPan'
         );
 
+        this.controllers.count = this._setupController(
+            fStyle.add(p, 'count', 1, 32, 1).name('Nombre faisceaux').onChange(v => laser.setParam('count', v)),
+            'count'
+        );
+
+        this.controllers.beamWidth = this._setupController(
+            fStyle.add(p, 'beamWidth', 0, 5, 0.05).name('Taille faisceaux').onChange(v => laser.setParam('beamWidth', v)),
+            'beamWidth'
+        );
+
+        this.controllers.spread = this._setupController(
+            fStyle.add(p, 'spread', 0, 110, 0.1).name('Écart faisceaux').onChange(v => laser.setParam('spread', v)),
+            'spread'
+        );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 2. Puissance
+        // ══════════════════════════════════════════════════════════════════
+        const fPower = this.gui.addFolder('⚡ Puissance');
+        fPower.open();
+        if (fPower.domElement) fPower.domElement.classList.add('power-folder');
+
         this.controllers.masterPower = this._setupController(
-            fStyle.add(p, 'masterPower', 0, 1.5, 0.05).name('Puissance Générale').onChange(v => laser.setParam('masterPower', v)),
+            fPower.add(p, 'masterPower', 0, 1.5, 0.05).name('Puissance Générale').onChange(v => laser.setParam('masterPower', v)),
             'masterPower'
         );
 
         this.controllers.beamPower = this._setupController(
-            fStyle.add(p, 'beamPower', 0, 1.5, 0.05).name('Puissance Traits').onChange(v => laser.setParam('beamPower', v)),
+            fPower.add(p, 'beamPower', 0, 1.5, 0.05).name('Puissance Traits').onChange(v => laser.setParam('beamPower', v)),
             'beamPower'
         );
 
         this.controllers.panPower = this._setupController(
-            fStyle.add(p, 'panPower', 0, 1.5, 0.05).name('Puissance PAN').onChange(v => laser.setParam('panPower', v)),
+            fPower.add(p, 'panPower', 0, 1.5, 0.05).name('Puissance PAN').onChange(v => laser.setParam('panPower', v)),
             'panPower'
         );
 
+        // ══════════════════════════════════════════════════════════════════
+        // 3. Diffusion
+        // ══════════════════════════════════════════════════════════════════
+        const fDiffusion = this.gui.addFolder('✨ Diffusion');
+        fDiffusion.open();
+
         this.controllers.glowScattering = this._setupController(
-            fStyle.add(p, 'glowScattering', 0, 3, 0.05).name('Diffusion Faisceau').onChange(v => laser.setParam('glowScattering', v)),
+            fDiffusion.add(p, 'glowScattering', 0, 3, 0.05).name('Faisceaux').onChange(v => laser.setParam('glowScattering', v)),
             'glowScattering'
         );
 
-        this.controllers.strobe = this._setupController(
-            fStyle.add(p, 'strobe').name('Clignotement').onChange(v => laser.setParam('strobe', v)),
-            'strobe'
+        this.controllers.sourceWhitePower = this._setupController(
+            fDiffusion.add(p, 'sourceWhitePower', 0, 2.0, 0.05).name('Blanc sortie').onChange(v => laser.setParam('sourceWhitePower', v)),
+            'sourceWhitePower'
         );
 
-        this.controllers.strobeSpeed = this._setupController(
-            fStyle.add(p, 'strobeSpeed', 0.5, 30, 0.5).name('Vitesse Cligno (Hz)').onChange(v => laser.setParam('strobeSpeed', v)),
-            'strobeSpeed'
+        // ══════════════════════════════════════════════════════════════════
+        // 4. Balayage Automatique (3 axes buse fixe)
+        // ══════════════════════════════════════════════════════════════════
+        const fMotion = this.gui.addFolder('🌊 Balayage Automatique');
+        fMotion.open();
+
+        this.controllers.pauseMotion = this._setupController(
+            fMotion.add(p, 'pauseMotion').name('Pause balayage').onChange(v => laser.setParam('pauseMotion', v)),
+            'pauseMotion'
         );
+
+        // Sous-catégorie 1 : Axe Haut / Bas (Pitch)
+        const subPitch = fMotion.addFolder('↕️ Axe Haut / Bas (Pitch)');
+        subPitch.open();
+
+        this.controllers.pitchSweepAmp = this._setupController(
+            subPitch.add(p, 'pitchSweepAmp', 0, 60, 0.5).name('Amplitude (°)').onChange(v => {
+                laser.setParam('pitchSweepAmp', v);
+                if (v > 0) {
+                    if (laser.params.pitchSweepSpeed === 0) {
+                        laser.setParam('pitchSweepSpeed', 1.0);
+                        if (this.controllers.pitchSweepSpeed) this.controllers.pitchSweepSpeed.setValue(1.0);
+                    }
+                    if (laser.params.pauseMotion) {
+                        laser.setParam('pauseMotion', false);
+                        if (this.controllers.pauseMotion) this.controllers.pauseMotion.setValue(false);
+                    }
+                }
+            }),
+            'pitchSweepAmp'
+        );
+
+        this.controllers.pitchSweepSpeed = this._setupController(
+            subPitch.add(p, 'pitchSweepSpeed', 0.0, 30.0, 0.1).name('Vitesse').onChange(v => laser.setParam('pitchSweepSpeed', v)),
+            'pitchSweepSpeed'
+        );
+
+        // Sous-catégorie 2 : Axe Gauche / Droite (Yaw)
+        const subYaw = fMotion.addFolder('↔️ Axe Gauche / Droite (Yaw)');
+        subYaw.open();
+
+        this.controllers.yawSweepAmp = this._setupController(
+            subYaw.add(p, 'yawSweepAmp', 0, 60, 0.5).name('Amplitude (°)').onChange(v => {
+                laser.setParam('yawSweepAmp', v);
+                if (v > 0) {
+                    if (laser.params.yawSweepSpeed === 0) {
+                        laser.setParam('yawSweepSpeed', 1.0);
+                        if (this.controllers.yawSweepSpeed) this.controllers.yawSweepSpeed.setValue(1.0);
+                    }
+                    if (laser.params.pauseMotion) {
+                        laser.setParam('pauseMotion', false);
+                        if (this.controllers.pauseMotion) this.controllers.pauseMotion.setValue(false);
+                    }
+                }
+            }),
+            'yawSweepAmp'
+        );
+
+        this.controllers.yawSweepSpeed = this._setupController(
+            subYaw.add(p, 'yawSweepSpeed', 0.0, 30.0, 0.1).name('Vitesse').onChange(v => laser.setParam('yawSweepSpeed', v)),
+            'yawSweepSpeed'
+        );
+
+        // Sous-catégorie 3 : Axe Rotation (Roll)
+        const subRoll = fMotion.addFolder('🔄 Axe Rotation (Roll)');
+        subRoll.open();
+
+        this.controllers.rollContinuous = this._setupController(
+            subRoll.add(p, 'rollContinuous').name('Rotation continue (360°)').onChange(v => {
+                laser.setParam('rollContinuous', v);
+                if (v) {
+                    if (laser.params.rollSweepSpeed === 0) {
+                        laser.setParam('rollSweepSpeed', 1.0);
+                        if (this.controllers.rollSweepSpeed) this.controllers.rollSweepSpeed.setValue(1.0);
+                    }
+                    if (laser.params.pauseMotion) {
+                        laser.setParam('pauseMotion', false);
+                        if (this.controllers.pauseMotion) this.controllers.pauseMotion.setValue(false);
+                    }
+                }
+            }),
+            'rollContinuous'
+        );
+
+        this.controllers.rollSweepAmp = this._setupController(
+            subRoll.add(p, 'rollSweepAmp', 0, 360, 1).name('Amplitude (°)').onChange(v => {
+                laser.setParam('rollSweepAmp', v);
+                if (v > 0) {
+                    if (laser.params.rollSweepSpeed === 0) {
+                        laser.setParam('rollSweepSpeed', 1.0);
+                        if (this.controllers.rollSweepSpeed) this.controllers.rollSweepSpeed.setValue(1.0);
+                    }
+                    if (laser.params.pauseMotion) {
+                        laser.setParam('pauseMotion', false);
+                        if (this.controllers.pauseMotion) this.controllers.pauseMotion.setValue(false);
+                    }
+                }
+            }),
+            'rollSweepAmp'
+        );
+
+        this.controllers.rollSweepSpeed = this._setupController(
+            subRoll.add(p, 'rollSweepSpeed', 0.0, 10.0, 0.1).name('Vitesse').onChange(v => laser.setParam('rollSweepSpeed', v)),
+            'rollSweepSpeed'
+        );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 5. Forme du laser
+        // ══════════════════════════════════════════════════════════════════
+        const fShape = this.gui.addFolder('📐 Forme du laser');
+        fShape.open();
 
         this.controllers.patternShape = this._setupController(
-            fStyle.add(p, 'patternShape', ['Horizontal', 'Sinusoïde', 'Parabolique', 'Zigzag', 'Vague Double']).name('Forme Tracé').onChange(v => laser.setParam('patternShape', v)),
+            fShape.add(p, 'patternShape', ['Horizontal', 'Sinusoïde', 'Parabolique', 'Zigzag', 'Vague Double']).name('Forme tracé').onChange(v => laser.setParam('patternShape', v)),
             'patternShape'
         );
 
         this.controllers.curveAmplitude = this._setupController(
-            fStyle.add(p, 'curveAmplitude', 0, 1.5, 0.01).name('Amplitude Courbe').onChange(v => laser.setParam('curveAmplitude', v)),
+            fShape.add(p, 'curveAmplitude', 0, 1.5, 0.01).name('Amplitude').onChange(v => laser.setParam('curveAmplitude', v)),
             'curveAmplitude'
         );
 
         this.controllers.curveFrequency = this._setupController(
-            fStyle.add(p, 'curveFrequency', 0.25, 6, 0.25).name('Fréquence Courbe').onChange(v => laser.setParam('curveFrequency', v)),
+            fShape.add(p, 'curveFrequency', 0.25, 6, 0.25).name('Fréquence').onChange(v => laser.setParam('curveFrequency', v)),
             'curveFrequency'
         );
 
-        this.controllers.pauseMotion = this._setupController(
-            fStyle.add(p, 'pauseMotion').name('⏸️ Pause Balayage').onChange(v => laser.setParam('pauseMotion', v)),
-            'pauseMotion'
+        // ══════════════════════════════════════════════════════════════════
+        // 6. Déviation Faisceau (Buse fixe — le boîtier reste statique)
+        // ══════════════════════════════════════════════════════════════════
+        const fBeamAim = this.gui.addFolder('🎯 Déviation Faisceau (Buse fixe)');
+        fBeamAim.open();
+
+        this.controllers.beamPitchOffset = this._setupController(
+            fBeamAim.add(p, 'beamPitchOffset', -60, 60, 1).name('Haut / Bas (°)').onChange(v => laser.setParam('beamPitchOffset', v)),
+            'beamPitchOffset'
+        );
+
+        this.controllers.beamYawOffset = this._setupController(
+            fBeamAim.add(p, 'beamYawOffset', -60, 60, 1).name('Gauche / Droite (°)').onChange(v => laser.setParam('beamYawOffset', v)),
+            'beamYawOffset'
+        );
+
+        this.controllers.beamRollOffset = this._setupController(
+            fBeamAim.add(p, 'beamRollOffset', 0, 360, 1).name('Rotation Faisceau (°)').onChange(v => laser.setParam('beamRollOffset', v)),
+            'beamRollOffset'
         );
 
         // ══════════════════════════════════════════════════════════════════
-        // 2. Fumée Laser PAN (SimonDev Shader - Nouvelle catégorie)
+        // 7. Clignotement (Stroboscope)
+        // ══════════════════════════════════════════════════════════════════
+        const fStrobe = this.gui.addFolder('⚡ Clignotement (Stroboscope)');
+        fStrobe.close();
+
+        this.controllers.strobe = this._setupController(
+            fStrobe.add(p, 'strobe').name('Clignotement').onChange(v => laser.setParam('strobe', v)),
+            'strobe'
+        );
+
+        this.controllers.strobeSpeed = this._setupController(
+            fStrobe.add(p, 'strobeSpeed', 0.5, 30, 0.5).name('Vitesse clignotement').onChange(v => laser.setParam('strobeSpeed', v)),
+            'strobeSpeed'
+        );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 8. Fumée Laser PAN (fermée par défaut)
         // ══════════════════════════════════════════════════════════════════
         const fSmoke = this.gui.addFolder('💨 Fumée Laser PAN');
-        fSmoke.open();
+        fSmoke.close();
 
         this.controllers.panSmokeEnabled = this._setupController(
-            fSmoke.add(p, 'panSmokeEnabled').name('Activer Fumée').onChange(v => laser.setParam('panSmokeEnabled', v)),
+            fSmoke.add(p, 'panSmokeEnabled').name('Activer fumée').onChange(v => laser.setParam('panSmokeEnabled', v)),
             'panSmokeEnabled'
         );
 
         this.controllers.panSmokeSpeed = this._setupController(
-            fSmoke.add(p, 'panSmokeSpeed', 0.05, 3.0, 0.05).name('Vitesse Fumée').onChange(v => laser.setParam('panSmokeSpeed', v)),
+            fSmoke.add(p, 'panSmokeSpeed', 0.05, 3.0, 0.05).name('Vitesse fumée').onChange(v => laser.setParam('panSmokeSpeed', v)),
             'panSmokeSpeed'
         );
 
         this.controllers.panSmokeScale = this._setupController(
-            fSmoke.add(p, 'panSmokeScale', 0.10, 1.0, 0.01).name('Échelle Volutes').onChange(v => laser.setParam('panSmokeScale', v)),
+            fSmoke.add(p, 'panSmokeScale', 0.10, 1.0, 0.01).name('Échelle volutes').onChange(v => laser.setParam('panSmokeScale', v)),
             'panSmokeScale'
         );
 
         this.controllers.panSmokeContrast = this._setupController(
-            fSmoke.add(p, 'panSmokeContrast', 0.0, 1.0, 0.05).name('Contraste Turbulence').onChange(v => laser.setParam('panSmokeContrast', v)),
+            fSmoke.add(p, 'panSmokeContrast', 0.0, 1.0, 0.05).name('Contraste').onChange(v => laser.setParam('panSmokeContrast', v)),
             'panSmokeContrast'
         );
 
         this.controllers.panSmokeBrightness = this._setupController(
-            fSmoke.add(p, 'panSmokeBrightness', 0.0, 2.0, 0.05).name('Brillance Fumée').onChange(v => laser.setParam('panSmokeBrightness', v)),
+            fSmoke.add(p, 'panSmokeBrightness', 0.0, 3.0, 0.05).name('Brillance').onChange(v => laser.setParam('panSmokeBrightness', v)),
             'panSmokeBrightness'
         );
 
         this.controllers.panSmokeWindChange = this._setupController(
-            fSmoke.add(p, 'panSmokeWindChange', 0.0, 3.0, 0.05).name('Variation Vent').onChange(v => laser.setParam('panSmokeWindChange', v)),
+            fSmoke.add(p, 'panSmokeWindChange', 0.0, 3.0, 0.05).name('Variation vent').onChange(v => laser.setParam('panSmokeWindChange', v)),
             'panSmokeWindChange'
         );
 
         this.controllers.panSmokeSpeedVariation = this._setupController(
-            fSmoke.add(p, 'panSmokeSpeedVariation', 0.0, 2.0, 0.05).name('Accélération Rafales').onChange(v => laser.setParam('panSmokeSpeedVariation', v)),
+            fSmoke.add(p, 'panSmokeSpeedVariation', 0.0, 2.0, 0.05).name('Rafales').onChange(v => laser.setParam('panSmokeSpeedVariation', v)),
             'panSmokeSpeedVariation'
         );
 
+        this.controllers.panSmokePerpSpeed = this._setupController(
+            fSmoke.add(p, 'panSmokePerpSpeed', 0.01, 1.0, 0.01).name('Vitesse perp.').onChange(v => laser.setParam('panSmokePerpSpeed', v)),
+            'panSmokePerpSpeed'
+        );
+
         // ── Surcouche Poches / Amas Hétérogènes ──
-        const fPatches = fSmoke.addFolder('☁️ Poches & Amas (Surcouche)');
-        fPatches.open();
+        const fPatches = fSmoke.addFolder('☁️ Poches & Amas');
+        fPatches.close();
 
         this.controllers.panSmokePatchContrast = this._setupController(
-            fPatches.add(p, 'panSmokePatchContrast', 0.0, 1.5, 0.05).name('Contraste Poches').onChange(v => laser.setParam('panSmokePatchContrast', v)),
+            fPatches.add(p, 'panSmokePatchContrast', 0.0, 1.5, 0.05).name('Contraste').onChange(v => laser.setParam('panSmokePatchContrast', v)),
             'panSmokePatchContrast'
         );
 
         this.controllers.panSmokePatchScale = this._setupController(
-            fPatches.add(p, 'panSmokePatchScale', 0.01, 0.30, 0.01).name('Taille Poches').onChange(v => laser.setParam('panSmokePatchScale', v)),
+            fPatches.add(p, 'panSmokePatchScale', 0.01, 0.30, 0.01).name('Taille').onChange(v => laser.setParam('panSmokePatchScale', v)),
             'panSmokePatchScale'
         );
 
         this.controllers.panSmokePatchDensity = this._setupController(
-            fPatches.add(p, 'panSmokePatchDensity', 0.0, 1.0, 0.05).name('Densité Poches').onChange(v => laser.setParam('panSmokePatchDensity', v)),
+            fPatches.add(p, 'panSmokePatchDensity', 0.0, 1.0, 0.05).name('Densité').onChange(v => laser.setParam('panSmokePatchDensity', v)),
             'panSmokePatchDensity'
         );
 
         this.controllers.panSmokePatchSpeed = this._setupController(
-            fPatches.add(p, 'panSmokePatchSpeed', 0.0, 1.0, 0.02).name('Vitesse Dérive Poches').onChange(v => laser.setParam('panSmokePatchSpeed', v)),
+            fPatches.add(p, 'panSmokePatchSpeed', 0.0, 1.0, 0.02).name('Dérive').onChange(v => laser.setParam('panSmokePatchSpeed', v)),
             'panSmokePatchSpeed'
         );
 
         // ══════════════════════════════════════════════════════════════════
-        // 4. Tweeking visuel source (Fidèle au GitHub Laser)
+        // 7. Visuel source (fermée par défaut)
         // ══════════════════════════════════════════════════════════════════
-        const fVisual = this.gui.addFolder('Tweeking visuel source');
+        const fVisual = this.gui.addFolder('Visuel source');
         fVisual.close();
 
         this.controllers.sourceEmissionPower = this._setupController(
-            fVisual.add(p, 'sourceEmissionPower', 0, 4, 0.05).name('Puissance Buse').onChange(v => laser.setParam('sourceEmissionPower', v)),
+            fVisual.add(p, 'sourceEmissionPower', 0, 4, 0.05).name('Puissance buse').onChange(v => laser.setParam('sourceEmissionPower', v)),
             'sourceEmissionPower'
         );
 
         this.controllers.sourceGlowRadius = this._setupController(
-            fVisual.add(p, 'sourceGlowRadius', 0.2, 3, 0.1).name('Rayon Halo Buse').onChange(v => laser.setParam('sourceGlowRadius', v)),
+            fVisual.add(p, 'sourceGlowRadius', 0.2, 3, 0.1).name('Rayon buse').onChange(v => laser.setParam('sourceGlowRadius', v)),
             'sourceGlowRadius'
         );
 
         this.controllers.giIntensity = this._setupController(
-            fVisual.add(p, 'giIntensity', 0, 10, 0.1).name('Intensité Éclairage').onChange(v => laser.setParam('giIntensity', v)),
+            fVisual.add(p, 'giIntensity', 0, 10, 0.1).name('Intensité GI').onChange(v => laser.setParam('giIntensity', v)),
             'giIntensity'
         );
 
         this.controllers.giDistance = this._setupController(
-            fVisual.add(p, 'giDistance', 2, 60, 0.5).name('Portée Éclairage').onChange(v => laser.setParam('giDistance', v)),
+            fVisual.add(p, 'giDistance', 2, 60, 0.5).name('Portée GI').onChange(v => laser.setParam('giDistance', v)),
             'giDistance'
         );
 
         this.controllers.giWallOffset = this._setupController(
-            fVisual.add(p, 'giWallOffset', -5, 10, 0.1).name('Recul Lumière Mur').onChange(v => laser.setParam('giWallOffset', v)),
+            fVisual.add(p, 'giWallOffset', -5, 10, 0.1).name('Recul mur').onChange(v => laser.setParam('giWallOffset', v)),
             'giWallOffset'
         );
 
         this.controllers.enableImpactLights = this._setupController(
-            fVisual.add(p, 'enableImpactLights').name('Lumières Impacts').onChange(v => laser.setParam('enableImpactLights', v)),
+            fVisual.add(p, 'enableImpactLights').name('Lumières impacts').onChange(v => laser.setParam('enableImpactLights', v)),
             'enableImpactLights'
         );
 
         this.controllers.giImpactIntensity = this._setupController(
-            fVisual.add(p, 'giImpactIntensity', 0, 10, 0.1).name('Intensité Lumière').onChange(v => laser.setParam('giImpactIntensity', v)),
+            fVisual.add(p, 'giImpactIntensity', 0, 10, 0.1).name('Intensité impact').onChange(v => laser.setParam('giImpactIntensity', v)),
             'giImpactIntensity'
         );
 
         this.controllers.giImpactDistance = this._setupController(
-            fVisual.add(p, 'giImpactDistance', 2, 40, 0.5).name('Portée Lumière').onChange(v => laser.setParam('giImpactDistance', v)),
+            fVisual.add(p, 'giImpactDistance', 2, 40, 0.5).name('Portée impact').onChange(v => laser.setParam('giImpactDistance', v)),
             'giImpactDistance'
         );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 9. Position & Orientation 3D (Déplace TOUT : Boîtier + Faisceau)
+        // ══════════════════════════════════════════════════════════════════
+        const fTransform = this.gui.addFolder('🧭 Position & Orientation');
+        fTransform.open();
+
+        // Mode Gizmo
+        const currentGizmoMode = (this.ambiancePanel && this.ambiancePanel.transformControls)
+            ? (this.ambiancePanel.transformControls.getMode() || 'translate')
+            : (this._gizmoMode || 'translate');
+        const gizmoModes = { mode: currentGizmoMode === 'rotate' ? 'Rotation' : 'Translation' };
+
+        fTransform.add(gizmoModes, 'mode', ['Translation', 'Rotation']).name('Mode Gizmo').onChange((mode) => {
+            this._gizmoMode = mode === 'Rotation' ? 'rotate' : 'translate';
+            if (this.ambiancePanel) {
+                this.ambiancePanel.setGizmoMode(this._gizmoMode);
+            }
+        });
+
+        const housing = laser.getHousingGroup();
+        const curPos = housing ? housing.position : laser.getPosition();
+        this._posState = {
+            x: Math.round(curPos.x * 100) / 100,
+            y: Math.round(curPos.y * 100) / 100,
+            z: Math.round(curPos.z * 100) / 100,
+        };
+
+        const onPosChange = () => {
+            laser.setPosition(this._posState.x, this._posState.y, this._posState.z);
+            if (housing) housing.position.set(this._posState.x, this._posState.y, this._posState.z);
+            if (this.ambiancePanel && this.ambiancePanel.transformControls && this.ambiancePanel.transformControls.object === housing) {
+                this.ambiancePanel.transformControls.updateMatrixWorld();
+            }
+            if (this.ambiancePanel && this.ambiancePanel._emitSync) {
+                this.ambiancePanel._emitSync({
+                    category: 'laser_transform',
+                    id: laser.laserId,
+                    data: { position: { x: this._posState.x, y: this._posState.y, z: this._posState.z } }
+                });
+            }
+        };
+
+        this.controllers.posX = this._setupController(
+            fTransform.add(this._posState, 'x', -100, 100, 0.1).name('Position X').onChange(onPosChange),
+            'posX'
+        );
+
+        this.controllers.posY = this._setupController(
+            fTransform.add(this._posState, 'y', 0, 50, 0.1).name('Position Y').onChange(onPosChange),
+            'posY'
+        );
+
+        this.controllers.posZ = this._setupController(
+            fTransform.add(this._posState, 'z', -100, 100, 0.1).name('Position Z').onChange(onPosChange),
+            'posZ'
+        );
+
+        this._rotState = {
+            angle: Math.round((p.angle || 0) * 10) / 10,
+            tilt:  Math.round((p.tilt || 0) * 10) / 10,
+            roll:  Math.round((p.roll || 0) * 10) / 10,
+        };
+
+        const onRotChange = () => {
+            laser.setParam('angle', this._rotState.angle);
+            laser.setParam('tilt', this._rotState.tilt);
+            laser.setParam('roll', this._rotState.roll);
+            if (housing) {
+                housing.rotation.set(
+                    -this._rotState.tilt * (Math.PI / 180),
+                    this._rotState.angle * (Math.PI / 180),
+                    this._rotState.roll * (Math.PI / 180),
+                    'YXZ'
+                );
+                housing.updateMatrixWorld();
+            }
+            if (this.ambiancePanel && this.ambiancePanel.transformControls && this.ambiancePanel.transformControls.object === housing) {
+                this.ambiancePanel.transformControls.updateMatrixWorld();
+            }
+            if (this.ambiancePanel && this.ambiancePanel._emitSync) {
+                this.ambiancePanel._emitSync({
+                    category: 'laser_transform',
+                    id: laser.laserId,
+                    data: { rotation: { angle: this._rotState.angle, tilt: this._rotState.tilt, roll: this._rotState.roll } }
+                });
+            }
+        };
+
+        this.controllers.angle = this._setupController(
+            fTransform.add(this._rotState, 'angle', -180, 180, 1).name('Angle Horiz. (Yaw)').onChange(onRotChange),
+            'angle'
+        );
+
+        this.controllers.tilt = this._setupController(
+            fTransform.add(this._rotState, 'tilt', -90, 90, 1).name('Inclinaison (Pitch)').onChange(onRotChange),
+            'tilt'
+        );
+
+        this.controllers.roll = this._setupController(
+            fTransform.add(this._rotState, 'roll', -180, 180, 1).name('Rotation (Roll)').onChange(onRotChange),
+            'roll'
+        );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 10. Actions (Harmonisé : Exporter, Dupliquer, Supprimer)
+        // ══════════════════════════════════════════════════════════════════
+        const fActions = this.gui.addFolder('⚙️ Actions');
+        fActions.open();
+
+        const panelActions = {
+            exportLaser: () => {
+                if (this.ambiancePanel) {
+                    this.ambiancePanel.exportSelectedLaser(laser);
+                }
+            },
+            duplicate: () => {
+                if (this.ambiancePanel) {
+                    this.ambiancePanel.duplicateSelectedLaser(laser);
+                }
+            },
+            deleteLaser: () => {
+                if (this.ambiancePanel) {
+                    const id = laser.laserId;
+                    this.close();
+                    if (this.ambiancePanel.laserManager) {
+                        this.ambiancePanel.laserManager.removeLaser(id);
+                    }
+                    this.ambiancePanel.deselectLaser();
+                    this.ambiancePanel._buildGui();
+                    this.ambiancePanel._emitSync({ category: 'laser_remove', id });
+                }
+            }
+        };
+
+        fActions.add(panelActions, 'exportLaser').name('💾 Exporter');
+        fActions.add(panelActions, 'duplicate').name('📋 Dupliquer');
+        fActions.add(panelActions, 'deleteLaser').name('🗑️ Supprimer');
     }
 }
 

@@ -13,10 +13,14 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { RectAreaLightUniformsLib } from 'three/addons/lights/RectAreaLightUniformsLib.js';
 import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js';
 import { makeDraggable } from './draggable.js';
-import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js?v=195';
-import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=188';
+import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js?v=298';
+import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=200';
+import { StrobeInspectorPanel } from '../strobe/ui/StrobeInspectorPanel.js?v=7';
+import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
+
+
 
 export class AmbiancePanel {
     /**
@@ -37,6 +41,8 @@ export class AmbiancePanel {
         if (this.skybox) this.skybox.renderOrder = -2;
         this.staticGI = options.staticGI || null;
 
+
+
         // Initialisation de la librairie pour RectAreaLight
         try {
             RectAreaLightUniformsLib.init();
@@ -50,6 +56,10 @@ export class AmbiancePanel {
 
         this.isOpen = false;
         this.selectedEntry = null;
+        this.selectedLaser = null;
+        this.selectedStrobe = null;
+        this.strobeManager = options.strobeManager || null;
+        this._strobeInspectorPanel = null;
         this.lights = []; // [{ id, name, light, type, isBuiltin, markerMesh, helper, defaultConfig }]
         this._nextId = 1;
 
@@ -118,6 +128,10 @@ export class AmbiancePanel {
         this._exportModalOpen = false;
         this._createExportModalDOM();
 
+        // Initialisation de la modal d'import de configuration lumière JSON
+        this._importModalOpen = false;
+        this._createImportModalDOM();
+
         // Événements boutons et clic raycast
         this._bindEvents();
     }
@@ -134,6 +148,19 @@ export class AmbiancePanel {
             ambiancePanel: this
         });
         // Reconstruire le GUI pour afficher la section Laser
+        this._buildGui();
+    }
+
+    /**
+     * Injecte le StrobeManager et initialise le panneau d'inspection stroboscope.
+     * @param {import('../strobe/StrobeManager.js').StrobeManager} strobeManager
+     */
+    setStrobeManager(strobeManager) {
+        this.strobeManager = strobeManager;
+        this._strobeInspectorPanel = new StrobeInspectorPanel({
+            strobeManager,
+            ambiancePanel: this
+        });
         this._buildGui();
     }
 
@@ -279,6 +306,21 @@ export class AmbiancePanel {
                 return;
             }
 
+            // ── Cas 3 : Gizmo attaché à un Stroboscope ──
+            if (this.selectedStrobe && this.transformControls.object === this.selectedStrobe.group) {
+                if (!this.isDraggingGizmo) return;
+                const mode = this.transformControls.getMode();
+                if (mode === 'translate') {
+                    this.selectedStrobe.syncPositionFromGizmo();
+                } else if (mode === 'rotate') {
+                    this.selectedStrobe.syncRotationFromGizmo();
+                }
+                if (this._strobeInspectorPanel) {
+                    this._strobeInspectorPanel.syncFromStrobe();
+                }
+                return;
+            }
+
             // ── Cas 2 : Lumière classique ──
             if (!this.selectedEntry) return;
 
@@ -387,9 +429,9 @@ export class AmbiancePanel {
                 fogColor: 0x87ceeb,
                 fogNear: 150,
                 fogFar: 400,
-                ambient: { color: '#99bbdd', intensity: 1.0 },
-                hemi: { skyColor: '#87ceeb', groundColor: '#4a7a2a', intensity: 0.8 },
-                dir: { color: '#fff5e0', intensity: 1.8 },
+                ambient: { color: '#98ddbc', intensity: 1.0, enabled: true },
+                hemi: { skyColor: '#87ceeb', groundColor: '#4a7a2a', intensity: 0.0, enabled: false },
+                dir: { color: '#fff5e0', intensity: 3.0, shadowMapSize: 4096, enabled: true },
                 stage1: { color: '#ff3366', intensity: 0.5, distance: 30 },
                 stage2: { color: '#3366ff', intensity: 0.5, distance: 30 },
             },
@@ -694,8 +736,8 @@ export class AmbiancePanel {
         };
 
         this.envState = {
-            presetKey: 'night_aurora',
-            stars: true,
+            presetKey: 'day',
+            stars: false,
             starSize: 0.5,
             starCount: 6000,
             starBrightness: 3.0,
@@ -704,7 +746,7 @@ export class AmbiancePanel {
 
         this._isApplyingEnvPreset = false;
         this.starfield = this._createStarfield();
-        this.applyEnvPreset('night_aurora');
+        this.applyEnvPreset('day');
     }
 
     _createStarfield() {
@@ -950,8 +992,10 @@ export class AmbiancePanel {
             const name = entry.name || '';
             if (name.includes('Gauche') || name.includes('stageLight1')) {
                 entry.light.intensity = preset.stage1.intensity * this.envState.stageBoost;
+                entry.defaultConfig = this.getDefaultConfigForEntry(entry);
             } else if (name.includes('Droit') || name.includes('stageLight2')) {
                 entry.light.intensity = preset.stage2.intensity * this.envState.stageBoost;
+                entry.defaultConfig = this.getDefaultConfigForEntry(entry);
             }
         });
         this._syncInspectorDisplays();
@@ -966,13 +1010,26 @@ export class AmbiancePanel {
             if (light.isAmbientLight || name.includes('Générale')) {
                 light.color.set(preset.ambient.color);
                 light.intensity = preset.ambient.intensity;
+                light.visible = (preset.ambient.enabled !== false) && (preset.ambient.intensity > 0.0001);
             } else if (light.isHemisphereLight || name.includes('Ciel')) {
                 light.color.set(preset.hemi.skyColor);
                 if (light.groundColor) light.groundColor.set(preset.hemi.groundColor);
                 light.intensity = preset.hemi.intensity;
+                light.visible = (preset.hemi.enabled !== false) && (preset.hemi.intensity > 0.0001);
             } else if (light.isDirectionalLight || name.includes('Soleil')) {
                 light.color.set(preset.dir.color);
                 light.intensity = preset.dir.intensity;
+                light.visible = (preset.dir.enabled !== false) && (preset.dir.intensity > 0.0001);
+                if (preset.dir.shadowMapSize && light.shadow && light.shadow.mapSize) {
+                    const sz = preset.dir.shadowMapSize;
+                    if (light.shadow.mapSize.width !== sz) {
+                        light.shadow.mapSize.set(sz, sz);
+                        if (light.shadow.map) {
+                            light.shadow.map.dispose();
+                            light.shadow.map = null;
+                        }
+                    }
+                }
             } else if (name.includes('Gauche') || name.includes('stageLight1')) {
                 light.color.set(preset.stage1.color);
                 light.intensity = preset.stage1.intensity * this.envState.stageBoost;
@@ -982,6 +1039,9 @@ export class AmbiancePanel {
                 light.intensity = preset.stage2.intensity * this.envState.stageBoost;
                 if (preset.stage2.distance) light.distance = preset.stage2.distance;
             }
+
+            // Maintien de la configuration par défaut synchronisée avec le preset actuel
+            entry.defaultConfig = this.getDefaultConfigForEntry(entry);
 
             // Mise à jour du repère visuel et de son helper
             if (entry.markerMesh) {
@@ -1000,8 +1060,11 @@ export class AmbiancePanel {
             }
         });
 
-        // Rafraîchir les valeurs des sliders de l'inspecteur sans reconstruire le DOM
+        // Rafraîchir les valeurs des sliders et contrôleurs de l'inspecteur
         this._syncInspectorDisplays();
+        if (this.selectedEntry) {
+            this._rebuildInspectorGui();
+        }
     }
 
     _syncInspectorDisplays() {
@@ -1016,6 +1079,9 @@ export class AmbiancePanel {
             }
             if (this._inspectorProxies.angleProxy && light.angle !== undefined) {
                 this._inspectorProxies.angleProxy.deg = THREE.MathUtils.radToDeg(light.angle);
+            }
+            if (this._inspectorProxies.shadowProxy && light.shadow && light.shadow.mapSize) {
+                this._inspectorProxies.shadowProxy.mapSize = light.shadow.mapSize.width;
             }
         }
         const updateFolder = (folder) => {
@@ -1114,6 +1180,7 @@ export class AmbiancePanel {
             markerMesh,
             helper,
             defaultConfig,
+            creationConfig: { ...defaultConfig },
         };
 
         this.lights.push(entry);
@@ -1432,6 +1499,7 @@ export class AmbiancePanel {
         }
 
         this.deselectLaser();
+        this.deselectStrobe();
 
         // Si cette lumière est déjà sélectionnée et attachée, ne rien faire
         if (this.selectedEntry === entry && this.transformControls.object === entry.light) {
@@ -1492,6 +1560,7 @@ export class AmbiancePanel {
     deselectLight() {
         this.selectedEntry = null;
         this.deselectLaser();
+        this.deselectStrobe();
         this.transformControls.detach();
         this.transformControls.visible = false;
         this.transformControls.enabled = false;
@@ -1518,6 +1587,7 @@ export class AmbiancePanel {
     selectLaser(laser) {
         if (!laser) return;
         this.selectedEntry = null;
+        this.deselectStrobe();
         this.selectedLaser = laser;
 
         // Détacher gizmo de toute lumière précédente
@@ -1556,17 +1626,72 @@ export class AmbiancePanel {
      * Désélectionne le laser actuel et détache le Gizmo
      */
     deselectLaser() {
-        if (this.selectedLaser) {
-            this.selectedLaser = null;
-            if (this.transformControls.object && !this.selectedEntry) {
-                this.transformControls.detach();
-                this.transformControls.visible = false;
-                this.transformControls.enabled = false;
-            }
-            if (this._laserInspectorPanel) {
-                this._laserInspectorPanel.close();
-            }
+        this.selectedLaser = null;
+        if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedStrobe) {
+            this.transformControls.detach();
+            this.transformControls.visible = false;
+            this.transformControls.enabled = false;
         }
+        if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) {
+            this._laserInspectorPanel.close();
+        }
+        this._rebuildInspectorGui();
+    }
+
+    /**
+     * Sélectionne un Stroboscope 3D et attache le Gizmo à son boîtier
+     * @param {import('../strobe/StrobeLight.js').StrobeLight} strobe
+     */
+    selectStrobe(strobe) {
+        if (!strobe) return;
+        this.selectedEntry = null;
+        this.selectedLaser = null;
+        this.selectedStrobe = strobe;
+
+        // Détacher gizmo de toute lumière/laser précédent
+        this.transformControls.detach();
+
+        if (strobe.group) {
+            strobe.group.updateMatrixWorld(true);
+            this.transformControls.attach(strobe.group);
+            this.transformControls.visible = true;
+            this.transformControls.enabled = true;
+            this.transformControls.updateMatrixWorld(true);
+        }
+
+        // Réinitialiser les repères de lumière
+        this.lights.forEach(e => {
+            if (e.markerMesh) {
+                const ring = e.markerMesh.children[1];
+                if (ring) {
+                    ring.scale.setScalar(1.0);
+                    ring.material.color.set(0xffffff);
+                    ring.material.opacity = 0.6;
+                }
+            }
+        });
+        this._updateAllHelpersVisibility();
+        this._rebuildInspectorGui();
+
+        if (this._strobeInspectorPanel) {
+            this._strobeInspectorPanel.openForStrobe(strobe.id, strobe);
+        }
+    }
+
+    /**
+     * Désélectionne le stroboscope actuel et détache le Gizmo
+     */
+    deselectStrobe() {
+        this.selectedStrobe = null;
+        if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedLaser) {
+            this.transformControls.detach();
+            this.transformControls.visible = false;
+            this.transformControls.enabled = false;
+        }
+        if (this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen) {
+            this._strobeInspectorPanel.close();
+        }
+        this._rebuildInspectorGui();
     }
 
     setGizmoVisible(val) {
@@ -1623,7 +1748,9 @@ export class AmbiancePanel {
     }
 
     handleCanvasClick(event) {
-        if (!this.isOpen || this.isDraggingGizmo) return;
+        const isLaserOpen = Boolean(this._laserInspectorPanel && this._laserInspectorPanel.isOpen);
+        const isStrobeOpen = Boolean(this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen);
+        if ((!this.isOpen && !isLaserOpen && !isStrobeOpen) || this.isDraggingGizmo) return;
         // Si un drag de Gizmo vient tout juste de se terminer, ne pas interpréter comme un clic
         if (performance.now() - (this._dragEndTime || 0) < 120) return;
         // Si la souris survole ou manipule une flèche du Gizmo, ignorer la sélection
@@ -1649,6 +1776,20 @@ export class AmbiancePanel {
             }
         }
 
+        // ── Tester ensuite les stroboscopes ──
+        if (this.strobeManager && this.strobeManager.count > 0) {
+            const strobeObjects = this.strobeManager.getStrobeObjects();
+            const strobeIntersects = this.raycaster.intersectObjects(strobeObjects, true);
+            if (strobeIntersects.length > 0) {
+                const hitObj = strobeIntersects[0].object;
+                const strobe = this.strobeManager.getStrobeFromObject(hitObj);
+                if (strobe) {
+                    this.selectStrobe(strobe);
+                    return;
+                }
+            }
+        }
+
         // Tester l'intersection avec tous les repères de lumière
         const markerObjects = [];
         this.lights.forEach(e => {
@@ -1669,8 +1810,9 @@ export class AmbiancePanel {
                 this.selectLight(hitEntry);
             }
         } else {
-            // Clic dans le vide 3D : désélectionne la lumière et le laser
+            // Clic dans le vide 3D : désélectionne la lumière, le laser et le stroboscope
             this.deselectLaser();
+            this.deselectStrobe();
             this.deselectLight();
         }
     }
@@ -1735,6 +1877,21 @@ export class AmbiancePanel {
                 light.position.copy(spawnPos);
                 light.lookAt(spawnPos.x, 0, spawnPos.z);
                 break;
+
+            case '⚡ Stroboscope':
+                if (!this.strobeManager) {
+                    console.warn('[AmbiancePanel] StrobeManager non disponible. Appelez setStrobeManager() depuis main.js.');
+                    return null;
+                }
+                {
+                    const strobeSpawnPos = spawnPos.clone();
+                    strobeSpawnPos.y = Math.max(3.0, strobeSpawnPos.y);
+                    const { id, strobe } = this.strobeManager.addStrobe(strobeSpawnPos);
+                    this.selectStrobe(strobe);
+                    this._buildGui();
+                    this._logSceneProbe('⚡ Stroboscope');
+                    return null;
+                }
 
             case '🔴 LaserPod':
                 // Cas spécial : délégation au LaserManager
@@ -1850,6 +2007,8 @@ export class AmbiancePanel {
 
             if (entry.markerMesh) entry.markerMesh.position.copy(entry.light.position);
             if (entry.helper && entry.helper.update) entry.helper.update();
+            entry.creationConfig = this._captureLightState(entry.light, entry.type);
+            entry.defaultConfig = entry.creationConfig;
             this.selectLight(entry);
             this._emitSync({
                 category: 'light_add',
@@ -1864,42 +2023,161 @@ export class AmbiancePanel {
         }
     }
 
-    // ─── 5. Réinitialisation Unitaire & Globale ──────────────────────
-    resetLight(entry) {
-        if (!entry || !entry.defaultConfig) return;
-        const def = entry.defaultConfig;
+    // ─── 5. Réinitialisation Unitaire & Globale (Source Unique de Vérité) ──
+    /**
+     * Source unique de vérité pour la configuration par défaut d'une lumière.
+     * Pour les lumières intégrées (Soleil, Ciel/Sol, Ambiance générale, Spots scène),
+     * les valeurs par défaut sont déduites dynamiquement du preset d'ambiance actif.
+     * Pour les lumières créées par l'utilisateur, ce sont leurs paramètres initiaux à la création.
+     */
+    getDefaultConfigForEntry(entry, presetKey = this.envState?.presetKey) {
+        if (!entry) return null;
+        if (!entry.isBuiltin) {
+            return entry.creationConfig || entry.defaultConfig;
+        }
+        const preset = (this.envPresets && this.envPresets[presetKey]) || this.envPresets?.day || this.envPresets?.night_aurora;
+        const name = entry.name || '';
         const light = entry.light;
 
-        light.color.set(def.color);
-        light.intensity = def.intensity;
-        light.visible = def.visible;
-        light.position.set(def.position.x, def.position.y, def.position.z);
-        light.castShadow = def.castShadow;
+        if (light.isAmbientLight || name.includes('Générale')) {
+            const amb = preset?.ambient || { color: '#98ddbc', intensity: 1.0, enabled: true };
+            return {
+                color: amb.color,
+                intensity: amb.intensity,
+                visible: (amb.enabled !== false) && (amb.intensity > 0.0001),
+                position: { x: 0, y: 0, z: 0 },
+                castShadow: false,
+            };
+        } else if (light.isHemisphereLight || name.includes('Ciel')) {
+            const hemi = preset?.hemi || { skyColor: '#87ceeb', groundColor: '#4a7a2a', intensity: 0.0, enabled: false };
+            return {
+                color: hemi.skyColor,
+                groundColor: hemi.groundColor,
+                intensity: hemi.intensity,
+                visible: (hemi.enabled !== false) && (hemi.intensity > 0.0001),
+                position: { x: 0, y: 0, z: 0 },
+                castShadow: false,
+            };
+        } else if (light.isDirectionalLight || name.includes('Soleil')) {
+            const dir = preset?.dir || { color: '#fff5e0', intensity: 3.0, enabled: true, shadowMapSize: 4096 };
+            return {
+                color: dir.color,
+                intensity: dir.intensity,
+                visible: (dir.enabled !== false) && (dir.intensity > 0.0001),
+                position: { x: 32, y: 45, z: 38 },
+                target: { x: 0, y: 0, z: 0 },
+                castShadow: true,
+                shadowMapSize: dir.shadowMapSize || 4096,
+                shadowBias: -0.0003,
+                shadowNormalBias: 0.02,
+            };
+        } else if (name.includes('Gauche') || name.includes('stageLight1')) {
+            const s1 = preset?.stage1 || { color: '#ff3366', intensity: 0.5, distance: 30 };
+            const boost = this.envState?.stageBoost ?? 1.0;
+            return {
+                color: s1.color,
+                intensity: s1.intensity * boost,
+                distance: s1.distance || 30,
+                decay: 2,
+                position: { x: -8, y: 18, z: -2 },
+                visible: true,
+                castShadow: false,
+            };
+        } else if (name.includes('Droit') || name.includes('stageLight2')) {
+            const s2 = preset?.stage2 || { color: '#3366ff', intensity: 0.5, distance: 30 };
+            const boost = this.envState?.stageBoost ?? 1.0;
+            return {
+                color: s2.color,
+                intensity: s2.intensity * boost,
+                distance: s2.distance || 30,
+                decay: 2,
+                position: { x: 8, y: 18, z: -2 },
+                visible: true,
+                castShadow: false,
+            };
+        }
+
+        return entry.defaultConfig;
+    }
+
+    getLightDefaultParam(entry, path) {
+        const def = this.getDefaultConfigForEntry(entry);
+        if (!def) return undefined;
+        const parts = path.split('.');
+        let val = def;
+        for (const part of parts) {
+            if (val === undefined || val === null) return undefined;
+            val = val[part];
+        }
+        return val;
+    }
+
+    _getEnvPresetDefault(paramKey) {
+        const preset = this.envPresets?.[this.envState?.presetKey] || this.envPresets?.day;
+        if (!preset) return undefined;
+        if (paramKey === 'stars') return Boolean(preset.hasStars);
+        if (paramKey === 'starSize') return 0.5;
+        if (paramKey === 'starCount') return 6000;
+        if (paramKey === 'starBrightness') return 3.0;
+        if (paramKey === 'stageBoost') return 1.0;
+        return undefined;
+    }
+
+    resetLight(entry) {
+        if (!entry) return;
+        const def = this.getDefaultConfigForEntry(entry);
+        if (!def) return;
+        entry.defaultConfig = def;
+        const light = entry.light;
+
+        if (def.color !== undefined) light.color.set(def.color);
+        if (def.intensity !== undefined) light.intensity = def.intensity;
+        if (def.visible !== undefined) light.visible = def.visible;
+        if (def.position) light.position.set(def.position.x, def.position.y, def.position.z);
+        if (def.castShadow !== undefined) light.castShadow = def.castShadow;
 
         if (entry.type === 'SpotLight') {
-            light.distance = def.distance;
-            light.angle = THREE.MathUtils.degToRad(def.angle);
-            light.penumbra = def.penumbra;
-            light.decay = def.decay;
+            if (def.distance !== undefined) light.distance = def.distance;
+            if (def.angle !== undefined) light.angle = THREE.MathUtils.degToRad(def.angle);
+            if (def.penumbra !== undefined) light.penumbra = def.penumbra;
+            if (def.decay !== undefined) light.decay = def.decay;
             if (light.target && def.target) {
                 light.target.position.set(def.target.x, def.target.y, def.target.z);
+                light.target.updateMatrixWorld(true);
             }
         } else if (entry.type === 'PointLight') {
-            light.distance = def.distance;
-            light.decay = def.decay;
+            if (def.distance !== undefined) light.distance = def.distance;
+            if (def.decay !== undefined) light.decay = def.decay;
         } else if (entry.type === 'HemisphereLight') {
-            light.groundColor.set(def.groundColor);
+            if (def.groundColor && light.groundColor) light.groundColor.set(def.groundColor);
         } else if (entry.type === 'RectAreaLight') {
-            light.width = def.width;
-            light.height = def.height;
-        } else if (entry.type === 'DirectionalLight' && light.target && def.target) {
-            light.target.position.set(def.target.x, def.target.y, def.target.z);
+            if (def.width !== undefined) light.width = def.width;
+            if (def.height !== undefined) light.height = def.height;
+        } else if (entry.type === 'DirectionalLight') {
+            if (light.target && def.target) {
+                light.target.position.set(def.target.x, def.target.y, def.target.z);
+                light.target.updateMatrixWorld(true);
+            }
+            if (def.shadowMapSize && light.shadow && light.shadow.mapSize) {
+                const sz = def.shadowMapSize;
+                if (light.shadow.mapSize.width !== sz) {
+                    light.shadow.mapSize.set(sz, sz);
+                    if (light.shadow.map) {
+                        light.shadow.map.dispose();
+                        light.shadow.map = null;
+                    }
+                }
+            }
+            if (def.shadowBias !== undefined && light.shadow) light.shadow.bias = def.shadowBias;
+            if (def.shadowNormalBias !== undefined && light.shadow) light.shadow.normalBias = def.shadowNormalBias;
         }
 
         if (entry.markerMesh) {
             entry.markerMesh.position.copy(light.position);
             const core = entry.markerMesh.children[0];
-            if (core) core.material.color.copy(light.color);
+            if (core && core.material) {
+                core.material.color.copy(light.color);
+            }
         }
         if (light.userData && light.userData.bulbMesh && light.userData.bulbMesh.material) {
             light.userData.bulbMesh.material.color.copy(light.color);
@@ -1911,6 +2189,7 @@ export class AmbiancePanel {
             entry.helper.update();
         }
 
+        this._syncInspectorDisplays();
         this._rebuildInspectorGui();
         this._emitSync({ category: 'light_reset', id: entry.id });
     }
@@ -1920,9 +2199,9 @@ export class AmbiancePanel {
         const created = this.lights.filter(e => !e.isBuiltin);
         created.forEach(e => this.removeLight(e));
 
-        // Rétablir l'ambiance céleste par défaut (Plein Jour)
+        // Rétablir l'ambiance céleste par défaut au chargement (Plein Jour Standard)
         this.envState.stageBoost = 1.0;
-        this.envState.stars = true;
+        this.envState.stars = false;
         this.envState.starSize = 0.5;
         this.envState.starCount = 6000;
         this.envState.starBrightness = 3.0;
@@ -1930,9 +2209,10 @@ export class AmbiancePanel {
         this.setStarCount(6000);
         this.setStarBrightness(3.0);
         this.setMarkersVisible(true);
-        this.applyEnvPreset('night_aurora', true);
+        this.setShowSpotCones(true);
+        this.applyEnvPreset('day', true);
 
-        // Réinitialiser toutes les lumières de base
+        // Réinitialiser toutes les lumières de base aux paramètres de 'day' et positions d'origine
         this.lights.forEach(e => {
             if (e.isBuiltin) this.resetLight(e);
         });
@@ -1950,6 +2230,25 @@ export class AmbiancePanel {
             this.staticGI.params.subwooferBounceColor = '#2b3626';
             this.staticGI.update();
             this.staticGI.generateStaticEnvMap();
+        }
+
+        // Réinitialiser le Bloom et post-processing
+        if (this.laserManager) {
+            this.laserManager.setPostProcessingParam('lightsBloomEnabled', true);
+            this.laserManager.setPostProcessingParam('lightsBloomStrength', 0.25);
+            this.laserManager.setPostProcessingParam('lightsBloomRadius', 0.4);
+            this.laserManager.setPostProcessingParam('lightsBloomThreshold', 0.05);
+
+            this.laserManager.setPostProcessingParam('laserBloomEnabled', true);
+            this.laserManager.setPostProcessingParam('laserBloomStrength', 0.15);
+            this.laserManager.setPostProcessingParam('laserBloomRadius', 0.5);
+            this.laserManager.setPostProcessingParam('laserBloomThreshold', 0.0);
+
+            this.laserManager.setPostProcessingParam('chromaEnabled', true);
+            this.laserManager.setPostProcessingParam('chroma', 0.25);
+            this.laserManager.setPostProcessingParam('fogEnabled', false);
+            this.laserManager.setPostProcessingParam('fogDensity', 0.005);
+            this.laserManager.setPostProcessingParam('fogColor', '#111122');
         }
 
         // Remettre la première en sélection
@@ -2146,7 +2445,321 @@ export class AmbiancePanel {
         return lines.join('\n');
     }
 
+    // ── Export complet de Laser ──────────────────────────────────────
+    exportLaserData(laser) {
+        if (!laser) return null;
+        const housing = laser.getHousingGroup();
+        const pos = housing ? housing.position : laser.getPosition();
+
+        // Extraire rigoureusement TOUS les paramètres sans aucune exception
+        const allParams = {};
+        for (const [k, def] of Object.entries(LASER_PARAMS_SCHEMA)) {
+            allParams[k] = def.value;
+        }
+        if (laser.params) {
+            for (const [k, v] of Object.entries(laser.params)) {
+                if (v && typeof v === 'object' && typeof v.clone === 'function') {
+                    allParams[k] = v.clone();
+                } else {
+                    allParams[k] = v;
+                }
+            }
+        }
+
+        return {
+            name: `Laser #${laser.laserId}`,
+            type: 'LaserPod',
+            position: {
+                x: Number(pos.x.toFixed(3)),
+                y: Number(pos.y.toFixed(3)),
+                z: Number(pos.z.toFixed(3)),
+            },
+            rotation: {
+                angle: Number((allParams.angle !== undefined ? allParams.angle : 0).toFixed(1)),
+                tilt:  Number((allParams.tilt !== undefined ? allParams.tilt : 0).toFixed(1)),
+                roll:  Number((allParams.roll !== undefined ? allParams.roll : 0).toFixed(1)),
+            },
+            params: allParams
+        };
+    }
+
+    generateLaserCode(laser, data) {
+        if (!data) data = this.exportLaserData(laser);
+        const p = data.params;
+        const pos = data.position;
+        const rot = data.rotation;
+
+        const lines = [];
+        lines.push(`// ==========================================`);
+        lines.push(`// Laser exporté : ${data.name} (LaserPod)`);
+        lines.push(`// Position 3D : x: ${pos.x}, y: ${pos.y}, z: ${pos.z}`);
+        lines.push(`// Orientation : Angle ${rot.angle}°, Tilt ${rot.tilt}°, Roll ${rot.roll}°`);
+        lines.push(`// ==========================================`);
+        lines.push(`const laserPos = new THREE.Vector3(${pos.x}, ${pos.y}, ${pos.z});`);
+        lines.push(`const laserParams = {`);
+
+        const keys = Object.keys(p);
+        keys.forEach((k, idx) => {
+            const v = p[k];
+            const comma = (idx < keys.length - 1) ? ',' : '';
+            if (typeof v === 'string') {
+                lines.push(`    ${k}: '${v}'${comma}`);
+            } else if (typeof v === 'boolean' || typeof v === 'number') {
+                lines.push(`    ${k}: ${v}${comma}`);
+            } else {
+                lines.push(`    ${k}: ${JSON.stringify(v)}${comma}`);
+            }
+        });
+        lines.push(`};`);
+        lines.push(``);
+        lines.push(`// Création du laser dans le LaserManager :`);
+        lines.push(`const { laserShow } = laserManager.addLaser(laserPos, laserParams);`);
+        lines.push(`laserShow.setRotation(${rot.angle}, ${rot.tilt}, ${rot.roll});`);
+
+        return lines.join('\n');
+    }
+
+    exportSelectedLaser(laser = this.selectedLaser) {
+        if (!laser) return;
+        const data = this.exportLaserData(laser);
+        const jsonStr = JSON.stringify(data, null, 2);
+        const jsCode = this.generateLaserCode(laser, data);
+        const mockEntry = {
+            name: data.name,
+            type: 'LaserPod',
+            light: null
+        };
+        this._showExportModal(mockEntry, jsCode, jsonStr);
+    }
+
+    copyLaserParams(laser = this.selectedLaser) {
+        if (!laser) return;
+        this._laserParamsClipboard = {};
+        for (const [key, def] of Object.entries(LASER_PARAMS_SCHEMA)) {
+            this._laserParamsClipboard[key] = def.value;
+        }
+        for (const [key, val] of Object.entries(laser.params || {})) {
+            if (val && typeof val === 'object' && typeof val.clone === 'function') {
+                this._laserParamsClipboard[key] = val.clone();
+            } else {
+                this._laserParamsClipboard[key] = val;
+            }
+        }
+        try {
+            const data = this.exportLaserData(laser);
+            navigator.clipboard.writeText(JSON.stringify(data, null, 2));
+        } catch (_) {}
+
+        alert(`📋 Tous les paramètres du Laser #${laser.laserId} ont été copiés !`);
+        this._buildGui();
+    }
+
+    pasteLaserParams(laser = this.selectedLaser) {
+        if (!laser || !this._laserParamsClipboard) {
+            alert('Aucun paramètre de laser enregistré.');
+            return;
+        }
+        for (const [key, val] of Object.entries(this._laserParamsClipboard)) {
+            laser.setParam(key, val);
+        }
+        if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) {
+            this._laserInspectorPanel.syncFromLaser();
+        }
+        this._buildGui();
+        this._emitSync({
+            category: 'laser_param',
+            id: laser.laserId,
+            params: { ...laser.params }
+        });
+        alert(`📥 Paramètres appliqués sur le Laser #${laser.laserId} !`);
+    }
+
+    duplicateSelectedLaser(laser = this.selectedLaser) {
+        if (!laser || !this.laserManager) return;
+        const srcParams = laser.params || {};
+        const paramsCopy = {};
+        for (const [key, def] of Object.entries(LASER_PARAMS_SCHEMA)) {
+            paramsCopy[key] = def.value;
+        }
+        for (const key in srcParams) {
+            const v = srcParams[key];
+            if (v && typeof v === 'object' && typeof v.clone === 'function') {
+                paramsCopy[key] = v.clone();
+            } else {
+                paramsCopy[key] = v;
+            }
+        }
+        paramsCopy.angle = srcParams.angle !== undefined ? srcParams.angle : 0;
+        paramsCopy.tilt  = srcParams.tilt  !== undefined ? srcParams.tilt  : 0;
+        paramsCopy.roll  = srcParams.roll  !== undefined ? srcParams.roll  : 0;
+
+        const srcPos = laser.getPosition ? laser.getPosition() : laser.getHousingGroup().position;
+        const newPos = srcPos.clone();
+        newPos.x += 1.5;
+        const { laserShow: newLaser } = this.laserManager.addLaser(newPos, paramsCopy);
+
+        const srcHousing = laser.getHousingGroup();
+        const dstHousing = newLaser.getHousingGroup();
+        if (srcHousing && dstHousing) {
+            dstHousing.rotation.copy(srcHousing.rotation);
+            dstHousing.quaternion.copy(srcHousing.quaternion);
+            dstHousing.updateMatrixWorld(true);
+        }
+        if (laser.group && newLaser.group) {
+            newLaser.group.rotation.copy(laser.group.rotation);
+            newLaser.group.quaternion.copy(laser.group.quaternion);
+            newLaser.group.updateMatrixWorld(true);
+        }
+        newLaser._animTime = laser._animTime;
+        newLaser.isPaused = laser.isPaused;
+
+        this.selectLaser(newLaser);
+        this._buildGui();
+        const housingRot = dstHousing ? {
+            angle: Math.round(THREE.MathUtils.radToDeg(dstHousing.rotation.y)),
+            tilt: Math.round(THREE.MathUtils.radToDeg(-dstHousing.rotation.x)),
+            roll: Math.round(THREE.MathUtils.radToDeg(dstHousing.rotation.z))
+        } : { angle: paramsCopy.angle || 0, tilt: paramsCopy.tilt || 0, roll: paramsCopy.roll || 0 };
+
+        this._emitSync({
+            category: 'laser_add',
+            data: {
+                id: newLaser.laserId,
+                position: { x: newPos.x, y: newPos.y, z: newPos.z },
+                rotation: housingRot,
+                params: paramsCopy
+            }
+        });
+        this._logSceneProbe('🔴 LaserPod (Duplication)');
+        return newLaser;
+    }
+
+    // ── Export de Stroboscope ─────────────────────────────────────────
+    exportStrobeData(strobe) {
+        if (!strobe) return null;
+        const p = strobe.params;
+        return {
+            name: `Stroboscope #${strobe.id}`,
+            type: 'StrobeLight',
+            position: {
+                x: Number(p.posX.toFixed(3)),
+                y: Number(p.posY.toFixed(3)),
+                z: Number(p.posZ.toFixed(3)),
+            },
+            rotation: {
+                angle: Number((p.angle !== undefined ? p.angle : 0).toFixed(1)),
+                tilt:  Number((p.tilt !== undefined ? p.tilt : 0).toFixed(1)),
+                roll:  Number((p.roll !== undefined ? p.roll : 0).toFixed(1)),
+            },
+            params: { ...p }
+        };
+    }
+
+    exportSelectedStrobe(strobe = this.selectedStrobe) {
+        if (!strobe) return;
+        const data = this.exportStrobeData(strobe);
+        const jsonStr = JSON.stringify(data, null, 2);
+        const lines = [
+            `// ==========================================`,
+            `// Stroboscope exporté : ${data.name}`,
+            `// ==========================================`,
+            `strobeManager.addStrobe(`,
+            `    new THREE.Vector3(${data.position.x}, ${data.position.y}, ${data.position.z}),`,
+            `    ${JSON.stringify(data.params, null, 4)}`,
+            `);`
+        ];
+        const jsCode = lines.join('\n');
+        const mockEntry = {
+            name: data.name,
+            type: 'StrobeLight',
+            light: null
+        };
+        this._showExportModal(mockEntry, jsCode, jsonStr);
+    }
+
+    // ── Export de TOUS les Lasers et Stroboscopes de la scène ──────────
+    exportAllLasersAndStrobes() {
+        const lasers = this.laserManager ? this.laserManager.getAllLasers() : [];
+        const strobes = this.strobeManager ? this.strobeManager.getAllStrobes() : [];
+
+        if (lasers.length === 0 && strobes.length === 0) {
+            alert('Aucun laser ou stroboscope placé dans la scène à exporter.');
+            return;
+        }
+
+        const lasersData = lasers.map(l => this.exportLaserData(l)).filter(Boolean);
+        const strobesData = strobes.map(s => this.exportStrobeData(s)).filter(Boolean);
+
+        const fullExport = {
+            exportDate: new Date().toISOString(),
+            totalLights: lasersData.length + strobesData.length,
+            lasersCount: lasersData.length,
+            strobesCount: strobesData.length,
+            lasers: lasersData,
+            strobes: strobesData
+        };
+
+        const jsonStr = JSON.stringify(fullExport, null, 2);
+
+        const lines = [
+            `// ==========================================`,
+            `// Export Global SoundStage3D (Lasers & Stroboscopes)`,
+            `// Total lumières : ${lasersData.length + strobesData.length} (Lasers: ${lasersData.length}, Strobes: ${strobesData.length})`,
+            `// Date : ${new Date().toLocaleString()}`,
+            `// ==========================================`,
+            ``
+        ];
+
+        if (lasersData.length > 0) {
+            lines.push(`// ── LASERS (${lasersData.length}) ──────────────────────────`);
+            lasersData.forEach((ld, idx) => {
+                lines.push(`// Laser #${idx + 1} (${ld.name})`);
+                lines.push(`{`);
+                lines.push(`    const pos = new THREE.Vector3(${ld.position.x}, ${ld.position.y}, ${ld.position.z});`);
+                lines.push(`    const params = ${JSON.stringify(ld.params, null, 4)};`);
+                lines.push(`    const { laserShow } = laserManager.addLaser(pos, params);`);
+                lines.push(`    laserShow.setRotation(${ld.rotation.angle}, ${ld.rotation.tilt}, ${ld.rotation.roll});`);
+                lines.push(`}`);
+                lines.push(``);
+            });
+        }
+
+        if (strobesData.length > 0) {
+            lines.push(`// ── STROBOSCOPES (${strobesData.length}) ───────────────────`);
+            strobesData.forEach((sd, idx) => {
+                lines.push(`// Stroboscope #${idx + 1} (${sd.name})`);
+                lines.push(`{`);
+                lines.push(`    const pos = new THREE.Vector3(${sd.position.x}, ${sd.position.y}, ${sd.position.z});`);
+                lines.push(`    const params = ${JSON.stringify(sd.params, null, 4)};`);
+                lines.push(`    strobeManager.addStrobe(pos, params);`);
+                lines.push(`}`);
+                lines.push(``);
+            });
+        }
+
+        const jsCode = lines.join('\n');
+        const mockEntry = {
+            name: `Export Global (${lasersData.length} Lasers, ${strobesData.length} Strobes)`,
+            type: 'GlobalExport',
+            light: null
+        };
+        this._showExportModal(mockEntry, jsCode, jsonStr);
+    }
+
     exportSelectedLight() {
+        // 1. Si un Laser est actuellement sélectionné : exporter LE laser !
+        if (this.selectedLaser) {
+            this.exportSelectedLaser(this.selectedLaser);
+            return;
+        }
+
+        // 2. Si un Stroboscope est sélectionné : exporter le stroboscope !
+        if (this.selectedStrobe) {
+            this.exportSelectedStrobe(this.selectedStrobe);
+            return;
+        }
+
+        // 3. Sinon, exporter la lampe de scène sélectionnée
         let entry = this.selectedEntry;
         if (!entry) {
             if (this.lights.length > 0) {
@@ -2372,6 +2985,447 @@ export class AmbiancePanel {
         }
     }
 
+    // ─── 5c. Importation de Configuration Lumière (JSON) ─────────────
+    _createImportModalDOM() {
+        if (document.getElementById('ambiance-import-overlay')) {
+            this.importOverlay = document.getElementById('ambiance-import-overlay');
+            this.importTextarea = document.getElementById('ambiance-import-textarea');
+            this.importStatusEl = document.getElementById('ambiance-import-status');
+            this.importFileEl = document.getElementById('ambiance-import-file');
+            return;
+        }
+
+        const overlay = document.createElement('div');
+        overlay.id = 'ambiance-import-overlay';
+        overlay.className = 'ambiance-export-overlay hidden';
+
+        overlay.innerHTML = `
+            <div id="ambiance-import-modal" class="ambiance-export-modal" role="dialog" aria-modal="true" style="max-width: 640px;">
+                <div class="ambiance-export-header">
+                    <div class="ambiance-export-title-wrap">
+                        <span class="ambiance-export-title-icon">📥</span>
+                        <span class="ambiance-export-title-text">Importer Configuration Lumière (JSON / JS)</span>
+                        <span class="ambiance-export-badge" style="background:rgba(34, 197, 94, 0.15); color:#4ade80; border:1px solid rgba(34, 197, 94, 0.35);">Lasers, Strobes & Lampes</span>
+                    </div>
+                    <button class="ambiance-export-close-btn" id="ambiance-import-close-btn" title="Fermer (Échap)">✕</button>
+                </div>
+
+                <div class="ambiance-export-content" style="padding-top:10px;">
+                    <div style="font-size:12.5px; color:#94a3b8; line-height:1.5; margin-bottom:10px;">
+                        Collez ci-dessous le code JSON ou le code JavaScript (Three.js) exporté d'un laser, d'un stroboscope ou d'un export global. Tous les projecteurs seront créés dans la scène avec leur position 3D, orientation et réglages.
+                    </div>
+
+                    <div class="ambiance-export-code-box" style="padding:0; overflow:hidden; border:1px solid #334155;">
+                        <textarea id="ambiance-import-textarea" placeholder="Collez votre code JSON ou code JS Three.js ici..." style="width:100%; height:240px; box-sizing:border-box; background:#0a0f1d; color:#38bdf8; font-family:Consolas, Monaco, monospace; font-size:12px; border:none; padding:12px; outline:none; resize:vertical;"></textarea>
+                    </div>
+
+                    <input type="file" id="ambiance-import-file" accept=".json,.js,text/plain,application/json" style="display:none;" />
+                </div>
+
+                <div class="ambiance-export-footer" style="flex-wrap:wrap; gap:8px;">
+                    <div class="ambiance-export-status" id="ambiance-import-status" style="width:100%; margin-bottom:4px;">📋 En attente de JSON ou code JS...</div>
+                    <div style="display:flex; gap:8px; width:100%; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; gap:8px;">
+                            <button class="ambiance-modal-btn secondary" id="ambiance-import-paste-btn" title="Coller depuis le presse-papier">📋 Coller</button>
+                            <button class="ambiance-modal-btn secondary" id="ambiance-import-file-btn" title="Ouvrir un fichier .json ou .js">📁 Fichier JSON / JS</button>
+                        </div>
+                        <button class="ambiance-modal-btn primary" id="ambiance-import-submit-btn" style="background:#0284c7; color:#ffffff; font-weight:bold;">✨ Créer dans la scène</button>
+                    </div>
+                </div>
+            </div>
+        `;
+
+        document.body.appendChild(overlay);
+
+        this.importOverlay = overlay;
+        this.importTextarea = overlay.querySelector('#ambiance-import-textarea');
+        this.importStatusEl = overlay.querySelector('#ambiance-import-status');
+        this.importFileEl = overlay.querySelector('#ambiance-import-file');
+
+        const closeBtn = overlay.querySelector('#ambiance-import-close-btn');
+        closeBtn.addEventListener('click', () => this._hideImportModal());
+
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) this._hideImportModal();
+        });
+
+        // Bouton coller
+        const pasteBtn = overlay.querySelector('#ambiance-import-paste-btn');
+        pasteBtn.addEventListener('click', async () => {
+            try {
+                if (navigator.clipboard && navigator.clipboard.readText) {
+                    const text = await navigator.clipboard.readText();
+                    if (text) {
+                        this.importTextarea.value = text;
+                        this.importStatusEl.textContent = '📋 Contenu collé depuis le presse-papier.';
+                    }
+                } else {
+                    this.importStatusEl.textContent = '⚠️ Utilisez Ctrl+V dans la zone de texte.';
+                }
+            } catch (_) {
+                this.importStatusEl.textContent = '⚠️ Utilisez Ctrl+V dans la zone de texte.';
+            }
+        });
+
+        // Bouton charger un fichier
+        const fileBtn = overlay.querySelector('#ambiance-import-file-btn');
+        fileBtn.addEventListener('click', () => this.importFileEl.click());
+        this.importFileEl.addEventListener('change', (e) => {
+            const file = e.target.files && e.target.files[0];
+            if (file) {
+                const reader = new FileReader();
+                reader.onload = (evt) => {
+                    this.importTextarea.value = evt.target.result;
+                    this.importStatusEl.textContent = `📁 Fichier "${file.name}" chargé.`;
+                };
+                reader.readAsText(file);
+            }
+        });
+
+        // Bouton soumettre
+        const submitBtn = overlay.querySelector('#ambiance-import-submit-btn');
+        submitBtn.addEventListener('click', () => {
+            const code = this.importTextarea.value.trim();
+            if (!code) {
+                this.importStatusEl.textContent = '⚠️ Veuillez coller ou charger du JSON ou du code JS valide d\'abord.';
+                return;
+            }
+            this.importLightingFromJson(code);
+        });
+    }
+
+    openImportModal() {
+        if (!this.importOverlay) {
+            this._createImportModalDOM();
+        }
+        this._importModalOpen = true;
+        if (this.importTextarea) {
+            this.importTextarea.value = '';
+        }
+        if (this.importStatusEl) {
+            this.importStatusEl.textContent = '📋 En attente de JSON ou code JS...';
+        }
+        this.importOverlay.classList.remove('hidden');
+        if (this.importTextarea) {
+            setTimeout(() => this.importTextarea.focus(), 50);
+        }
+    }
+
+    _hideImportModal() {
+        this._importModalOpen = false;
+        if (this.importOverlay) {
+            this.importOverlay.classList.add('hidden');
+        }
+    }
+
+    importLightingFromJson(input) {
+        let parsed = null;
+        let isJsCode = false;
+
+        if (typeof input === 'object' && input !== null) {
+            parsed = input;
+        } else if (typeof input === 'string') {
+            const trimmed = input.trim();
+            try {
+                parsed = JSON.parse(trimmed);
+            } catch (jsonErr) {
+                // Ce n'est pas un JSON pur : on tente l'exécution comme code JavaScript
+                isJsCode = true;
+            }
+        }
+
+        let createdLasersCount = 0;
+        let createdStrobesCount = 0;
+        let createdLightsCount = 0;
+        let lastCreatedLaser = null;
+        let lastCreatedStrobe = null;
+
+        if (isJsCode) {
+            try {
+                const laserManagerAdapter = {
+                    addLaser: (pos, params) => {
+                        const px = (pos && typeof pos.x === 'number') ? pos.x : 0;
+                        const py = (pos && typeof pos.y === 'number') ? pos.y : 12;
+                        const pz = (pos && typeof pos.z === 'number') ? pos.z : -4;
+                        const vec = new THREE.Vector3(px, py, pz);
+                        const res = this.laserManager.addLaser(vec, params || {});
+                        if (res && res.laserShow) {
+                            createdLasersCount++;
+                            lastCreatedLaser = res.laserShow;
+
+                            // Intercepter setRotation pour synchroniser en temps réel
+                            const origSetRotation = res.laserShow.setRotation.bind(res.laserShow);
+                            res.laserShow.setRotation = (a, t, r) => {
+                                origSetRotation(a, t, r);
+                                this._emitSync({
+                                    category: 'laser_update',
+                                    id: res.id,
+                                    data: {
+                                        rotation: {
+                                            angle: res.laserShow.params.angle || 0,
+                                            tilt: res.laserShow.params.tilt || 0,
+                                            roll: res.laserShow.params.roll || 0
+                                        },
+                                        params: { ...res.laserShow.params }
+                                    }
+                                });
+                            };
+
+                            this._emitSync({
+                                category: 'laser_add',
+                                data: {
+                                    id: res.id,
+                                    position: { x: vec.x, y: vec.y, z: vec.z },
+                                    rotation: {
+                                        angle: res.laserShow.params.angle || 0,
+                                        tilt: res.laserShow.params.tilt || 0,
+                                        roll: res.laserShow.params.roll || 0
+                                    },
+                                    params: { ...res.laserShow.params }
+                                }
+                            });
+                        }
+                        return res;
+                    },
+                    getLaser: (id) => this.laserManager?.getLaser(id),
+                    removeLaser: (id) => this.laserManager?.removeLaser(id)
+                };
+
+                const strobeManagerAdapter = {
+                    addStrobe: (pos, params) => {
+                        const px = (pos && typeof pos.x === 'number') ? pos.x : 0;
+                        const py = (pos && typeof pos.y === 'number') ? pos.y : 8;
+                        const pz = (pos && typeof pos.z === 'number') ? pos.z : -5;
+                        const vec = new THREE.Vector3(px, py, pz);
+                        const res = this.strobeManager.addStrobe(vec, params || {});
+                        if (res && res.strobe) {
+                            if (params && (params.angle !== undefined || params.tilt !== undefined || params.roll !== undefined)) {
+                                res.strobe.setRotation(params.angle || 0, params.tilt !== undefined ? params.tilt : -15, params.roll || 0);
+                            }
+                            createdStrobesCount++;
+                            lastCreatedStrobe = res.strobe;
+                        }
+                        return res;
+                    },
+                    getStrobe: (id) => this.strobeManager?.getStrobe(id),
+                    removeStrobe: (id) => this.strobeManager?.removeStrobe(id)
+                };
+
+                const fn = new Function('THREE', 'laserManager', 'strobeManager', 'scene', input);
+                fn(THREE, laserManagerAdapter, strobeManagerAdapter, this.scene);
+
+            } catch (jsErr) {
+                if (this.importStatusEl) {
+                    this.importStatusEl.innerHTML = `<span style="color:#ef4444">❌ Erreur lors de l'exécution du code : ${jsErr.message}</span>`;
+                } else {
+                    alert('Erreur lors de l\'importation (JSON / JS) : ' + jsErr.message);
+                }
+                return { success: false, error: jsErr };
+            }
+        } else {
+            if (!parsed) {
+                if (this.importStatusEl) this.importStatusEl.textContent = '⚠️ Aucun objet valide trouvé.';
+                return { success: false };
+            }
+
+            const lasersToCreate = [];
+            const strobesToCreate = [];
+            const lightsToCreate = [];
+
+            if (Array.isArray(parsed)) {
+                parsed.forEach(item => {
+                    if (!item || typeof item !== 'object') return;
+                    const type = item.type || '';
+                    if (type === 'LaserPod' || type.includes('Laser') || item.beamCount !== undefined || item.laserId !== undefined) {
+                        lasersToCreate.push(item);
+                    } else if (type === 'StrobeLight' || type.includes('Strobe') || item.strobeSpeed !== undefined || (item.params && item.params.strobeSpeed !== undefined)) {
+                        strobesToCreate.push(item);
+                    } else {
+                        lightsToCreate.push(item);
+                    }
+                });
+            } else if (typeof parsed === 'object') {
+                if (Array.isArray(parsed.lasers)) {
+                    lasersToCreate.push(...parsed.lasers);
+                }
+                if (Array.isArray(parsed.strobes)) {
+                    strobesToCreate.push(...parsed.strobes);
+                }
+                if (Array.isArray(parsed.lights)) {
+                    lightsToCreate.push(...parsed.lights);
+                }
+
+                if (lasersToCreate.length === 0 && strobesToCreate.length === 0 && lightsToCreate.length === 0) {
+                    const type = parsed.type || '';
+                    if (type === 'LaserPod' || type.includes('Laser') || parsed.beamCount !== undefined) {
+                        lasersToCreate.push(parsed);
+                    } else if (type === 'StrobeLight' || type.includes('Strobe') || parsed.strobeSpeed !== undefined || (parsed.params && parsed.params.strobeSpeed !== undefined)) {
+                        strobesToCreate.push(parsed);
+                    } else if (['PointLight', 'SpotLight', 'DirectionalLight', 'AmbientLight', 'HemisphereLight', 'RectAreaLight'].includes(type)) {
+                        lightsToCreate.push(parsed);
+                    }
+                }
+            }
+
+            // 1. Création des lasers
+            if (this.laserManager && lasersToCreate.length > 0) {
+                lasersToCreate.forEach(ld => {
+                    const px = ld.position?.x ?? 0;
+                    const py = ld.position?.y ?? 12;
+                    const pz = ld.position?.z ?? -4;
+                    const pos = new THREE.Vector3(px, py, pz);
+                    const params = ld.params || {};
+
+                    const { id, laserShow } = this.laserManager.addLaser(pos, params);
+                    if (laserShow) {
+                        const rot = ld.rotation || {};
+                        const angle = rot.angle !== undefined ? rot.angle : (params.angle || 0);
+                        const tilt  = rot.tilt  !== undefined ? rot.tilt  : (params.tilt  || 0);
+                        const roll  = rot.roll  !== undefined ? rot.roll  : (params.roll  || 0);
+                        laserShow.setRotation(angle, tilt, roll);
+                        lastCreatedLaser = laserShow;
+                        createdLasersCount++;
+
+                        this._emitSync({
+                            category: 'laser_add',
+                            data: {
+                                id,
+                                position: { x: pos.x, y: pos.y, z: pos.z },
+                                rotation: { angle, tilt, roll },
+                                params: { ...laserShow.params }
+                            }
+                        });
+                    }
+                });
+            }
+
+            // 2. Création des stroboscopes
+            if (this.strobeManager && strobesToCreate.length > 0) {
+                strobesToCreate.forEach(sd => {
+                    const px = sd.position?.x ?? 0;
+                    const py = sd.position?.y ?? 8;
+                    const pz = sd.position?.z ?? -5;
+                    const pos = new THREE.Vector3(px, py, pz);
+                    const params = sd.params || {};
+
+                    const res = this.strobeManager.addStrobe(pos, params);
+                    if (res && res.strobe) {
+                        const rot = sd.rotation || {};
+                        const angle = rot.angle !== undefined ? rot.angle : (params.angle !== undefined ? params.angle : 0);
+                        const tilt  = rot.tilt  !== undefined ? rot.tilt  : (params.tilt  !== undefined ? params.tilt  : -15);
+                        const roll  = rot.roll  !== undefined ? rot.roll  : (params.roll  !== undefined ? params.roll  : 0);
+                        res.strobe.setRotation(angle, tilt, roll);
+                        lastCreatedStrobe = res.strobe;
+                        createdStrobesCount++;
+                    }
+                });
+            }
+
+            // 3. Création des lumières classiques Three.js
+            if (lightsToCreate.length > 0) {
+                lightsToCreate.forEach(lightData => {
+                    const created = this._createLightFromExportData(lightData);
+                    if (created) createdLightsCount++;
+                });
+            }
+        }
+
+        const totalCreated = createdLasersCount + createdStrobesCount + createdLightsCount;
+
+        if (totalCreated === 0) {
+            if (this.importStatusEl) {
+                this.importStatusEl.innerHTML = `<span style="color:#f59e0b">⚠️ Aucun laser, stroboscope ou lumière valide n'a pu être extrait.</span>`;
+            }
+            return { success: false, totalCreated: 0 };
+        }
+
+        // Reconstruire l'inspecteur pour voir tous les nouveaux éléments
+        this._buildGui();
+
+        // Sélectionner le dernier élément créé
+        if (lastCreatedStrobe) {
+            this.selectStrobe(lastCreatedStrobe);
+        } else if (lastCreatedLaser) {
+            this.selectLaser(lastCreatedLaser);
+        }
+
+        const parts = [];
+        if (createdLasersCount > 0) parts.push(`${createdLasersCount} laser(s)`);
+        if (createdStrobesCount > 0) parts.push(`${createdStrobesCount} stroboscope(s)`);
+        if (createdLightsCount > 0) parts.push(`${createdLightsCount} lampe(s)`);
+        const statusMsg = `✅ Succès : ${parts.join(', ')} créé(s) dans la scène !`;
+
+        if (this.importStatusEl) {
+            this.importStatusEl.innerHTML = `<span style="color:#22c55e; font-weight:bold;">${statusMsg}</span>`;
+            setTimeout(() => {
+                this._hideImportModal();
+            }, 1600);
+        }
+
+        return {
+            success: true,
+            totalCreated,
+            createdLasersCount,
+            createdStrobesCount,
+            createdLightsCount
+        };
+    }
+
+    _createLightFromExportData(data) {
+        const type = data.type || 'PointLight';
+        const color = new THREE.Color(data.color || data.colorHex || '#ffffff');
+        const intensity = data.intensity !== undefined ? data.intensity : 2.0;
+        const pos = data.position || { x: 0, y: 5, z: 0 };
+
+        let light = null;
+        switch (type) {
+            case 'SpotLight':
+                light = new THREE.SpotLight(color, intensity);
+                light.distance = data.distance || 30.0;
+                light.angle = data.angle || THREE.MathUtils.degToRad(data.angleDeg || 35);
+                light.penumbra = data.penumbra || 0.4;
+                light.decay = data.decay || 1.0;
+                light.castShadow = Boolean(data.castShadow);
+                if (data.target) {
+                    light.target.position.set(data.target.x, data.target.y, data.target.z);
+                    this.scene.add(light.target);
+                }
+                break;
+            case 'PointLight':
+                light = new THREE.PointLight(color, intensity, data.distance || 25);
+                light.decay = data.decay || 1.0;
+                light.castShadow = Boolean(data.castShadow);
+                break;
+            case 'DirectionalLight':
+                light = new THREE.DirectionalLight(color, intensity);
+                light.castShadow = Boolean(data.castShadow);
+                if (data.target) {
+                    light.target.position.set(data.target.x, data.target.y, data.target.z);
+                    this.scene.add(light.target);
+                }
+                break;
+            case 'RectAreaLight':
+                light = new THREE.RectAreaLight(color, intensity, data.width || 4.0, data.height || 2.0);
+                break;
+            case 'HemisphereLight':
+                light = new THREE.HemisphereLight(color, data.groundColor || '#444444', intensity);
+                break;
+            case 'AmbientLight':
+                light = new THREE.AmbientLight(color, intensity);
+                break;
+            default:
+                light = new THREE.PointLight(color, intensity, 25);
+                break;
+        }
+
+        if (light) {
+            light.position.set(pos.x, pos.y, pos.z);
+            const entry = this._registerLight(light, data.name || type, type, false);
+            return entry;
+        }
+        return null;
+    }
+
     // ─── 6. Interface lil-gui avec DA de DSP ─────────────────────────
     _buildGui() {
         if (this.gui) {
@@ -2384,19 +3438,36 @@ export class AmbiancePanel {
             container: this.panelContainer,
             title: '💡 Ambiance & Éclairage 3D',
             autoPlace: false,
-            width: 320,
+            width: 340,
         });
 
-        // Injecter le bouton de réinitialisation générale (↺ Tout reset) dans le titre du panneau
+        // Injecter le texte propre et le bouton de réinitialisation générale (↺ Tout reset) dans le titre du panneau
         const titleEl = this.gui.domElement.querySelector('.title');
         if (titleEl) {
-            const resetBtn = document.createElement('button');
+            const rawTitle = '💡 Ambiance & Éclairage 3D';
+            titleEl.textContent = ''; // Vider le texte brut injecté par lil-gui pour éviter les retours à la ligne flex
+
+            const textSpan = document.createElement('span');
+            textSpan.className = 'lil-panel-title-text';
+            textSpan.textContent = rawTitle;
+            titleEl.appendChild(textSpan);
+
+            const resetBtn = document.createElement('span');
+            resetBtn.setAttribute('role', 'button');
+            resetBtn.setAttribute('tabindex', '0');
             resetBtn.className = 'lil-panel-reset-btn';
             resetBtn.title = 'Réinitialiser toutes les lumières et l\'ambiance (↺ Tout reset)';
-            resetBtn.innerHTML = '↺ Tout reset';
-            resetBtn.addEventListener('click', (e) => {
+            resetBtn.textContent = '↺ Tout reset';
+            const triggerReset = (e) => {
                 e.stopPropagation();
+                e.preventDefault();
                 this.resetAll();
+            };
+            resetBtn.addEventListener('click', triggerReset);
+            resetBtn.addEventListener('mousedown', (e) => e.stopPropagation());
+            resetBtn.addEventListener('pointerdown', (e) => e.stopPropagation());
+            resetBtn.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') triggerReset(e);
             });
             titleEl.appendChild(resetBtn);
         }
@@ -2454,7 +3525,7 @@ export class AmbiancePanel {
         cStars.onChange(() => {
             this._updateStarsVisibility();
         });
-        this._setupController(cStars, () => true, (v) => {
+        this._setupController(cStars, () => this._getEnvPresetDefault('stars'), (v) => {
             this.envState.stars = v;
             this._updateStarsVisibility();
         });
@@ -2463,7 +3534,7 @@ export class AmbiancePanel {
         cStarSize.onChange(val => {
             this.setStarSize(val);
         });
-        this._setupController(cStarSize, () => 0.5, (val) => {
+        this._setupController(cStarSize, () => this._getEnvPresetDefault('starSize'), (val) => {
             this.setStarSize(val);
         });
 
@@ -2471,7 +3542,7 @@ export class AmbiancePanel {
         cStarCount.onChange(val => {
             this.setStarCount(val);
         });
-        this._setupController(cStarCount, () => 6000, (val) => {
+        this._setupController(cStarCount, () => this._getEnvPresetDefault('starCount'), (val) => {
             this.setStarCount(val);
         });
 
@@ -2479,7 +3550,7 @@ export class AmbiancePanel {
         cStarBright.onChange(val => {
             this.setStarBrightness(val);
         });
-        this._setupController(cStarBright, () => 3.0, (val) => {
+        this._setupController(cStarBright, () => this._getEnvPresetDefault('starBrightness'), (val) => {
             this.setStarBrightness(val);
         });
 
@@ -2488,7 +3559,7 @@ export class AmbiancePanel {
         cBoost.onChange(() => {
             this._updateStageBoost();
         });
-        this._setupController(cBoost, () => 1.0, (v) => {
+        this._setupController(cBoost, () => this._getEnvPresetDefault('stageBoost'), (v) => {
             this.envState.stageBoost = v;
             this._updateStageBoost();
         });
@@ -2604,7 +3675,8 @@ export class AmbiancePanel {
             showMarkers: this.markersVisible,
             showSpotCones: this.showSpotCones,
             gizmoMode: this.transformControls.getMode() || 'translate',
-            exportLight: () => this.exportSelectedLight(),
+            exportAll: () => this.exportAllLasersAndStrobes(),
+            importJson: () => this.openImportModal(),
         };
 
         this._cShowMarkers = fTools.add(toolsState, 'showMarkers').name('💡 Lumières 3D');
@@ -2628,7 +3700,8 @@ export class AmbiancePanel {
             this.setGizmoMode(mode);
         });
 
-        fTools.add(toolsState, 'exportLight').name('💾 Exporter la lampe');
+        fTools.add(toolsState, 'exportAll').name('💾 Exporter Lasers & Strobes');
+        fTools.add(toolsState, 'importJson').name('📥 Importer Config JSON');
 
         // ── Dossier Ajouter une lumière ──
         const fAdd = this.gui.addFolder('➕ Poser une Lumière');
@@ -2641,6 +3714,7 @@ export class AmbiancePanel {
             'AmbientLight',
             'HemisphereLight',
             'RectAreaLight',
+            '⚡ Stroboscope',
             '🔴 LaserPod',
         ]).name('Type');
 
@@ -2648,8 +3722,8 @@ export class AmbiancePanel {
         const cAddIntensity = fAdd.add(this.creationParams, 'intensity', 0.1, 20.0, 0.1).name('Intensité');
 
         const updateAddInputsVisibility = (type) => {
-            const isLaser = type === '🔴 LaserPod' || (typeof type === 'string' && type.includes('Laser'));
-            if (isLaser) {
+            const isCustom = type === '🔴 LaserPod' || type === '⚡ Stroboscope' || (typeof type === 'string' && (type.includes('Laser') || type.includes('Stroboscope')));
+            if (isCustom) {
                 if (cAddColor.hide) cAddColor.hide();
                 if (cAddColor.domElement) {
                     cAddColor.domElement.style.setProperty('display', 'none', 'important');
@@ -2684,53 +3758,87 @@ export class AmbiancePanel {
         const addActions = {
             spawn: () => {
                 this.addNewLight(this.creationParams.type, true);
+            },
+            importJson: () => {
+                this.openImportModal();
             }
         };
         fAdd.add(addActions, 'spawn').name('✨ Poser devant moi');
+        fAdd.add(addActions, 'importJson').name('📥 Importer depuis JSON');
 
         // ── Dossier Inspecteur de la lumière sélectionnée ──
         this.fInspector = this.gui.addFolder('🎯 Lumière Sélectionnée');
         this.fInspector.open();
         this._rebuildInspectorGui();
 
-        // ── Dossier Post-traitement Laser (visible uniquement si LaserManager disponible) ──
+        // ── Dossiers Post-traitement et Bloom (visible uniquement si LaserManager disponible) ──
         if (this.laserManager) {
+            // 💡 Bloom Lampes & Scène (Spotlights, ampoules, LEDs DJ — SANS aberration chromatique)
+            const fLightsBloom = this.gui.addFolder('💡 Bloom Lampes & Scène');
+            fLightsBloom.close();
+
+            const cLightsBloomEn = fLightsBloom.add(globalLaserPostParams, 'lightsBloomEnabled').name('Activer Bloom').onChange(v => {
+                this.laserManager.setPostProcessingParam('lightsBloomEnabled', v);
+            });
+            this._setupController(cLightsBloomEn, () => true, v => this.laserManager.setPostProcessingParam('lightsBloomEnabled', v));
+
+            const cLightsBloomStr = fLightsBloom.add(globalLaserPostParams, 'lightsBloomStrength', 0, 2, 0.05).name('Intensité').onChange(v => {
+                this.laserManager.setPostProcessingParam('lightsBloomStrength', v);
+            });
+            this._setupController(cLightsBloomStr, () => 0.25, v => this.laserManager.setPostProcessingParam('lightsBloomStrength', v));
+
+            const cLightsBloomRad = fLightsBloom.add(globalLaserPostParams, 'lightsBloomRadius', 0, 2, 0.05).name('Rayon').onChange(v => {
+                this.laserManager.setPostProcessingParam('lightsBloomRadius', v);
+            });
+            this._setupController(cLightsBloomRad, () => 0.4, v => this.laserManager.setPostProcessingParam('lightsBloomRadius', v));
+
+            const cLightsBloomThresh = fLightsBloom.add(globalLaserPostParams, 'lightsBloomThreshold', 0, 1, 0.01).name('Seuil').onChange(v => {
+                this.laserManager.setPostProcessingParam('lightsBloomThreshold', v);
+            });
+            this._setupController(cLightsBloomThresh, () => 0.05, v => this.laserManager.setPostProcessingParam('lightsBloomThreshold', v));
+
+            // 🔴 Post-traitement Laser (Bloom Laser + Aberration Chromatique Laser uniquement)
             const fLaser = this.gui.addFolder('🔴 Post-traitement Laser');
             fLaser.close();
 
-            const cEnabled = fLaser.add(globalLaserPostParams, 'enabled').name('Activer').onChange(v => {
-                this.laserManager.setPostProcessingParam('enabled', v);
+            const cPlayerColEn = fLaser.add(globalLaserPostParams, 'playerCollisionEnabled').name('👤 Collision Joueurs').onChange(v => {
+                this.laserManager.setPostProcessingParam('playerCollisionEnabled', v);
             });
-            this._setupController(cEnabled, () => true, v => this.laserManager.setPostProcessingParam('enabled', v));
+            this._setupController(cPlayerColEn, () => true, v => this.laserManager.setPostProcessingParam('playerCollisionEnabled', v));
 
-            // Bloom
-            const fBloom = fLaser.addFolder('✨ Bloom (Glow Laser)');
-            const cBloomStr = fBloom.add(globalLaserPostParams, 'bloomStrength', 0, 2, 0.05).name('Intensité Bloom').onChange(v => {
-                this.laserManager.setPostProcessingParam('bloomStrength', v);
+            // Bloom Laser
+            const fLaserBloom = fLaser.addFolder('✨ Bloom Laser');
+            const cLaserBloomEn = fLaserBloom.add(globalLaserPostParams, 'laserBloomEnabled').name('Activer Bloom').onChange(v => {
+                this.laserManager.setPostProcessingParam('laserBloomEnabled', v);
             });
-            this._setupController(cBloomStr, () => 0.15, v => this.laserManager.setPostProcessingParam('bloomStrength', v));
+            this._setupController(cLaserBloomEn, () => true, v => this.laserManager.setPostProcessingParam('laserBloomEnabled', v));
 
-            const cBloomRad = fBloom.add(globalLaserPostParams, 'bloomRadius', 0, 2, 0.05).name('Rayon Bloom').onChange(v => {
-                this.laserManager.setPostProcessingParam('bloomRadius', v);
+            const cLaserBloomStr = fLaserBloom.add(globalLaserPostParams, 'laserBloomStrength', 0, 2, 0.05).name('Intensité').onChange(v => {
+                this.laserManager.setPostProcessingParam('laserBloomStrength', v);
             });
-            this._setupController(cBloomRad, () => 0.5, v => this.laserManager.setPostProcessingParam('bloomRadius', v));
+            this._setupController(cLaserBloomStr, () => 0.15, v => this.laserManager.setPostProcessingParam('laserBloomStrength', v));
 
-            const cBloomThresh = fBloom.add(globalLaserPostParams, 'bloomThreshold', 0, 1, 0.01).name('Seuil Bloom').onChange(v => {
-                this.laserManager.setPostProcessingParam('bloomThreshold', v);
+            const cLaserBloomRad = fLaserBloom.add(globalLaserPostParams, 'laserBloomRadius', 0, 2, 0.05).name('Rayon').onChange(v => {
+                this.laserManager.setPostProcessingParam('laserBloomRadius', v);
             });
-            this._setupController(cBloomThresh, () => 0.0, v => this.laserManager.setPostProcessingParam('bloomThreshold', v));
+            this._setupController(cLaserBloomRad, () => 0.5, v => this.laserManager.setPostProcessingParam('laserBloomRadius', v));
 
-            // Aberration chromatique
-            const fChroma = fLaser.addFolder('🌈 Aberration Chromatique');
+            const cLaserBloomThresh = fLaserBloom.add(globalLaserPostParams, 'laserBloomThreshold', 0, 1, 0.01).name('Seuil').onChange(v => {
+                this.laserManager.setPostProcessingParam('laserBloomThreshold', v);
+            });
+            this._setupController(cLaserBloomThresh, () => 0.0, v => this.laserManager.setPostProcessingParam('laserBloomThreshold', v));
+
+            // Aberration chromatique (UNIQUEMENT SUR LE LASER)
+            const fChroma = fLaser.addFolder('🌈 Aberration Chromatique (Laser)');
+            const cChromaEn = fChroma.add(globalLaserPostParams, 'chromaEnabled').name('Activer').onChange(v => {
+                this.laserManager.setPostProcessingParam('chromaEnabled', v);
+            });
+            this._setupController(cChromaEn, () => true, v => this.laserManager.setPostProcessingParam('chromaEnabled', v));
+
             const cChroma = fChroma.add(globalLaserPostParams, 'chroma', 0, 0.5, 0.01).name('Intensité').onChange(v => {
                 this.laserManager.setPostProcessingParam('chroma', v);
             });
             this._setupController(cChroma, () => 0.25, v => this.laserManager.setPostProcessingParam('chroma', v));
-
-            const cAA = fChroma.add(globalLaserPostParams, 'antialiasing', ['FXAA', 'Aucun']).name('Antialiasing').onChange(v => {
-                this.laserManager.setPostProcessingParam('antialiasing', v);
-            });
-            this._setupController(cAA, () => 'Aucun', v => this.laserManager.setPostProcessingParam('antialiasing', v));
 
             // Fumée scénique
             const fFog = fLaser.addFolder('💨 Fumée Scénique');
@@ -2776,7 +3884,7 @@ export class AmbiancePanel {
 
         // Dropdown de sélection parmi toutes les lumières de la scène (Lumières Three.js + Lasers 3D)
         const lightOptions = {};
-        const isAnythingSelected = Boolean(this.selectedEntry || this.selectedLaser);
+        const isAnythingSelected = Boolean(this.selectedEntry || this.selectedLaser || this.selectedStrobe);
         if (!isAnythingSelected) {
             lightOptions['— Choisir une lumière —'] = '';
         } else {
@@ -2796,11 +3904,21 @@ export class AmbiancePanel {
             });
         }
 
+        // 3. Stroboscopes 3D de la scène
+        if (this.strobeManager) {
+            const allStrobes = this.strobeManager.getAllStrobes();
+            allStrobes.forEach(strobe => {
+                lightOptions[`⚡ Stroboscope #${strobe.id}`] = `strobe_${strobe.id}`;
+            });
+        }
+
         let currentSelectedId = '';
         if (this.selectedEntry) {
             currentSelectedId = this.selectedEntry.id;
         } else if (this.selectedLaser) {
             currentSelectedId = `laser_${this.selectedLaser.laserId}`;
+        } else if (this.selectedStrobe) {
+            currentSelectedId = `strobe_${this.selectedStrobe.id}`;
         }
 
         const selObj = { currentId: currentSelectedId };
@@ -2818,12 +3936,48 @@ export class AmbiancePanel {
                 }
                 return;
             }
+            if (typeof id === 'string' && id.startsWith('strobe_')) {
+                const strobeId = parseInt(id.replace('strobe_', ''), 10);
+                const strobe = this.strobeManager ? this.strobeManager.getStrobe(strobeId) : null;
+                if (strobe) {
+                    this.selectStrobe(strobe);
+                }
+                return;
+            }
             const target = this.lights.find(e => e.id === id);
             if (target) {
                 this.deselectLaser();
+                this.deselectStrobe();
                 this.selectLight(target);
             }
         });
+
+        // ── Cas Stroboscope sélectionné dans l'inspecteur ──
+        if (this.selectedStrobe) {
+            const strobe = this.selectedStrobe;
+            this._currentInspectorEntry = null;
+
+            const strobeActions = {
+                duplicateStrobe: () => {
+                    if (!this.strobeManager) return;
+                    const res = this.strobeManager.duplicateStrobe(strobe.id);
+                    if (res) this.selectStrobe(res.strobe);
+                },
+                deleteStrobe: () => {
+                    if (!this.strobeManager) return;
+                    this.strobeManager.removeStrobe(strobe.id);
+                    this.deselectStrobe();
+                    this._rebuildInspectorGui();
+                }
+            };
+
+            const fStrobeActions = this.fInspector.addFolder(`⚡ Stroboscope #${strobe.id} - Actions`);
+            fStrobeActions.open();
+            fStrobeActions.add({ exportStrobe: () => this.exportSelectedStrobe(strobe) }, 'exportStrobe').name('💾 Exporter');
+            fStrobeActions.add(strobeActions, 'duplicateStrobe').name('📋 Dupliquer');
+            fStrobeActions.add(strobeActions, 'deleteStrobe').name('🗑️ Supprimer');
+            return;
+        }
 
         // ── Cas Laser sélectionné dans l'inspecteur ──
         if (this.selectedLaser) {
@@ -2832,63 +3986,8 @@ export class AmbiancePanel {
             this._currentInspectorEntry = null;
 
             const laserActions = {
-                duplicateLaser: () => {
-                    // Copier les paramètres du laser sélectionné (deep copy des valeurs scalaires)
-                    const srcParams = laser.params;
-                    const paramsCopy = {};
-                    for (const key in srcParams) {
-                        const v = srcParams[key];
-                        if (v && typeof v === 'object' && typeof v.clone === 'function') {
-                            paramsCopy[key] = v.clone();
-                        } else {
-                            paramsCopy[key] = v;
-                        }
-                    }
-                    // S'assurer que l'orientation exacte est bien copiée
-                    paramsCopy.angle = laser.params.angle !== undefined ? laser.params.angle : 0;
-                    paramsCopy.tilt = laser.params.tilt !== undefined ? laser.params.tilt : 0;
-
-                    // Position décalée de 1.5m sur X pour ne pas superposer
-                    const srcPos = laser.getPosition ? laser.getPosition() : laser.getHousingGroup().position;
-                    const newPos = srcPos.clone();
-                    newPos.x += 1.5;
-                    const { laserShow: newLaser } = this.laserManager.addLaser(newPos, paramsCopy);
-
-                    // Copier l'orientation 3D exacte du boîtier et du groupe racine
-                    const srcHousing = laser.getHousingGroup();
-                    const dstHousing = newLaser.getHousingGroup();
-                    if (srcHousing && dstHousing) {
-                        dstHousing.rotation.copy(srcHousing.rotation);
-                        dstHousing.quaternion.copy(srcHousing.quaternion);
-                        dstHousing.updateMatrixWorld(true);
-                    }
-                    if (laser.group && newLaser.group) {
-                        newLaser.group.rotation.copy(laser.group.rotation);
-                        newLaser.group.quaternion.copy(laser.group.quaternion);
-                        newLaser.group.updateMatrixWorld(true);
-                    }
-                    newLaser._animTime = laser._animTime;
-                    newLaser.isPaused = laser.isPaused;
-
-                    this.selectLaser(newLaser);
-                    this._buildGui();
-                    const housingRot = dstHousing ? {
-                        angle: Math.round(THREE.MathUtils.radToDeg(dstHousing.rotation.y)),
-                        tilt: Math.round(THREE.MathUtils.radToDeg(-dstHousing.rotation.x)),
-                        roll: Math.round(THREE.MathUtils.radToDeg(dstHousing.rotation.z))
-                    } : { angle: paramsCopy.angle || 0, tilt: paramsCopy.tilt || 0, roll: paramsCopy.roll || 0 };
-
-                    this._emitSync({
-                        category: 'laser_add',
-                        data: {
-                            id: newLaser.laserId,
-                            position: { x: newPos.x, y: newPos.y, z: newPos.z },
-                            rotation: housingRot,
-                            params: paramsCopy
-                        }
-                    });
-                    this._logSceneProbe('🔴 LaserPod (Duplication)');
-                },
+                exportLaser: () => this.exportSelectedLaser(laser),
+                duplicateLaser: () => this.duplicateSelectedLaser(laser),
                 deleteLaser: () => {
                     const id = laser.laserId;
                     this.laserManager.removeLaser(id);
@@ -2896,16 +3995,13 @@ export class AmbiancePanel {
                     this._buildGui();
                     this._emitSync({ category: 'laser_remove', id });
                 },
-                setTranslate: () => this.setGizmoMode('translate'),
-                setRotate: () => this.setGizmoMode('rotate'),
             };
 
             const fLaserActions = this.fInspector.addFolder(`🔴 Laser #${laser.laserId} - Actions`);
             fLaserActions.open();
-            fLaserActions.add(laserActions, 'setTranslate').name('↔ Gizmo Déplacement');
-            fLaserActions.add(laserActions, 'setRotate').name('🔄 Gizmo Rotation');
-            fLaserActions.add(laserActions, 'duplicateLaser').name('⧉ Dupliquer ce laser');
-            fLaserActions.add(laserActions, 'deleteLaser').name('🗑️ Supprimer ce laser');
+            fLaserActions.add(laserActions, 'exportLaser').name('💾 Exporter');
+            fLaserActions.add(laserActions, 'duplicateLaser').name('📋 Dupliquer');
+            fLaserActions.add(laserActions, 'deleteLaser').name('🗑️ Supprimer');
 
             // Position 3D du laser dans l'inspecteur
             const fPos = this.fInspector.addFolder('📍 Position 3D Laser');
@@ -2978,9 +4074,6 @@ export class AmbiancePanel {
             this._setupController(ctrlAngle, () => 0, (v) => { rotState.angle = v; ctrlAngle.setValue(v); onLaserRotChange(); });
             this._setupController(ctrlTilt, () => 0, (v) => { rotState.tilt = v; ctrlTilt.setValue(v); onLaserRotChange(); });
             this._setupController(ctrlRoll, () => 0, (v) => { rotState.roll = v; ctrlRoll.setValue(v); onLaserRotChange(); });
-            fLaserActions.add({ openFull: () => {
-                if (this._laserInspectorPanel) this._laserInspectorPanel.openForLaser(laser.laserId, laser);
-            }}, 'openFull').name('🎛️ Ouvrir Paramètres Laser');
 
             return;
         }
@@ -2993,7 +4086,6 @@ export class AmbiancePanel {
         this._currentInspectorEntry = this.selectedEntry;
         const entry = this.selectedEntry;
         const light = entry.light;
-        const def = entry.defaultConfig;
 
         // Boutons d'action pour la lumière
         const lightActions = {
@@ -3025,7 +4117,7 @@ export class AmbiancePanel {
 
         // Visible (ON/OFF)
         const cVis = fProps.add(light, 'visible').name('Activée');
-        this._setupController(cVis, () => def.visible, (v) => { light.visible = v; });
+        this._setupController(cVis, () => this.getLightDefaultParam(entry, 'visible'), (v) => { light.visible = v; });
 
         // Couleur
         const colorProxy = { col: '#' + light.color.getHexString() };
@@ -3041,14 +4133,14 @@ export class AmbiancePanel {
                 light.userData.bulbMesh.material.color.set(hex);
             }
         });
-        this._setupController(cColor, () => def.color, (v) => {
+        this._setupController(cColor, () => this.getLightDefaultParam(entry, 'color'), (v) => {
             colorProxy.col = v;
             cColor.setValue(v);
         });
 
         // Intensité
         const cInt = fProps.add(light, 'intensity', 0, (entry.type === 'AmbientLight' || entry.type === 'HemisphereLight') ? 5 : 25, 0.05).name('Intensité');
-        this._setupController(cInt, () => def.intensity, (v) => { light.intensity = v; });
+        this._setupController(cInt, () => this.getLightDefaultParam(entry, 'intensity'), (v) => { light.intensity = v; });
 
         // ── Position X, Y, Z (pour toutes sauf Ambient) ──
         if (entry.type !== 'AmbientLight') {
@@ -3068,9 +4160,9 @@ export class AmbiancePanel {
             this.ctrlPosY.onChange(onPosChange);
             this.ctrlPosZ.onChange(onPosChange);
 
-            this._setupController(this.ctrlPosX, () => def.position.x, (v) => { light.position.x = v; onPosChange(); });
-            this._setupController(this.ctrlPosY, () => def.position.y, (v) => { light.position.y = v; onPosChange(); });
-            this._setupController(this.ctrlPosZ, () => def.position.z, (v) => { light.position.z = v; onPosChange(); });
+            this._setupController(this.ctrlPosX, () => this.getLightDefaultParam(entry, 'position.x') ?? 0, (v) => { light.position.x = v; onPosChange(); });
+            this._setupController(this.ctrlPosY, () => this.getLightDefaultParam(entry, 'position.y') ?? 0, (v) => { light.position.y = v; onPosChange(); });
+            this._setupController(this.ctrlPosZ, () => this.getLightDefaultParam(entry, 'position.z') ?? 0, (v) => { light.position.z = v; onPosChange(); });
         }
 
         // ── Paramètres Spécifiques selon le type ──
@@ -3094,7 +4186,7 @@ export class AmbiancePanel {
 
             const cDist = fSpot.add(light, 'distance', 0, 150, 1).name('Portée (dist)');
             cDist.onChange(onSpotChange);
-            this._setupController(cDist, () => def.distance, (v) => { light.distance = v; onSpotChange(); });
+            this._setupController(cDist, () => this.getLightDefaultParam(entry, 'distance') ?? 25, (v) => { light.distance = v; onSpotChange(); });
 
             const angleProxy = { deg: THREE.MathUtils.radToDeg(light.angle) };
             if (this._inspectorProxies) this._inspectorProxies.angleProxy = angleProxy;
@@ -3103,7 +4195,7 @@ export class AmbiancePanel {
                 light.angle = THREE.MathUtils.degToRad(deg);
                 onSpotChange();
             });
-            this._setupController(cAngle, () => def.angle, (v) => {
+            this._setupController(cAngle, () => this.getLightDefaultParam(entry, 'angle') ?? 45, (v) => {
                 angleProxy.deg = v;
                 cAngle.setValue(v);
                 onSpotChange();
@@ -3111,19 +4203,19 @@ export class AmbiancePanel {
 
             const cPen = fSpot.add(light, 'penumbra', 0, 1, 0.05).name('Pénombre');
             cPen.onChange(onSpotChange);
-            this._setupController(cPen, () => def.penumbra, (v) => { light.penumbra = v; onSpotChange(); });
+            this._setupController(cPen, () => this.getLightDefaultParam(entry, 'penumbra') ?? 0.4, (v) => { light.penumbra = v; onSpotChange(); });
 
             const cDec = fSpot.add(light, 'decay', 0, 2, 0.1).name('Décroissance');
-            this._setupController(cDec, () => def.decay, (v) => { light.decay = v; });
+            this._setupController(cDec, () => this.getLightDefaultParam(entry, 'decay') ?? 1.0, (v) => { light.decay = v; });
         } else if (entry.type === 'PointLight') {
             const fPoint = this.fInspector.addFolder('💡 Atténuation');
             fPoint.open();
 
             const cDist = fPoint.add(light, 'distance', 0, 150, 1).name('Distance');
-            this._setupController(cDist, () => def.distance, (v) => { light.distance = v; });
+            this._setupController(cDist, () => this.getLightDefaultParam(entry, 'distance') ?? 25, (v) => { light.distance = v; });
 
             const cDec = fPoint.add(light, 'decay', 0, 2, 0.1).name('Décroissance');
-            this._setupController(cDec, () => def.decay, (v) => { light.decay = v; });
+            this._setupController(cDec, () => this.getLightDefaultParam(entry, 'decay') ?? 1.0, (v) => { light.decay = v; });
         } else if (entry.type === 'HemisphereLight') {
             const fHemi = this.fInspector.addFolder('🌱 Couleur Sol');
             fHemi.open();
@@ -3132,7 +4224,7 @@ export class AmbiancePanel {
             if (this._inspectorProxies) this._inspectorProxies.groundProxy = groundProxy;
             const cGround = fHemi.addColor(groundProxy, 'groundCol').name('Sol');
             cGround.onChange(hex => light.groundColor.set(hex));
-            this._setupController(cGround, () => def.groundColor, (v) => {
+            this._setupController(cGround, () => this.getLightDefaultParam(entry, 'groundColor') || '#4a7a2a', (v) => {
                 groundProxy.groundCol = v;
                 cGround.setValue(v);
             });
@@ -3142,8 +4234,8 @@ export class AmbiancePanel {
 
             const cW = fRect.add(light, 'width', 0.2, 20, 0.2).name('Largeur');
             const cH = fRect.add(light, 'height', 0.2, 20, 0.2).name('Hauteur');
-            this._setupController(cW, () => def.width,  (v) => { light.width  = v; if (entry.helper && entry.helper.update) entry.helper.update(); });
-            this._setupController(cH, () => def.height, (v) => { light.height = v; if (entry.helper && entry.helper.update) entry.helper.update(); });
+            this._setupController(cW, () => this.getLightDefaultParam(entry, 'width') ?? 4.0,  (v) => { light.width  = v; if (entry.helper && entry.helper.update) entry.helper.update(); });
+            this._setupController(cH, () => this.getLightDefaultParam(entry, 'height') ?? 2.0, (v) => { light.height = v; if (entry.helper && entry.helper.update) entry.helper.update(); });
 
             // ── Atténuation ──
             const fAtten = this.fInspector.addFolder('💡 Atténuation');
@@ -3199,7 +4291,7 @@ export class AmbiancePanel {
             fShadow.close();
 
             const cCast = fShadow.add(light, 'castShadow').name('Ombre Active');
-            this._setupController(cCast, () => def.castShadow, (v) => { light.castShadow = v; });
+            this._setupController(cCast, () => this.getLightDefaultParam(entry, 'castShadow'), (v) => { light.castShadow = v; });
 
             if (light.shadow) {
                 const shadowProxy = {
@@ -3214,15 +4306,15 @@ export class AmbiancePanel {
                     if (light.shadow.map) light.shadow.map.dispose();
                     light.shadow.map = null;
                 });
-                this._setupController(cRes, () => def.shadowMapSize || 1024, (v) => { cRes.setValue(v); });
+                this._setupController(cRes, () => this.getLightDefaultParam(entry, 'shadowMapSize') || 1024, (v) => { cRes.setValue(v); });
 
                 const cBias = fShadow.add(shadowProxy, 'bias', -0.005, 0.005, 0.00005).name('Bias');
                 cBias.onChange(b => { light.shadow.bias = b; });
-                this._setupController(cBias, () => def.shadowBias || 0, (v) => { cBias.setValue(v); });
+                this._setupController(cBias, () => this.getLightDefaultParam(entry, 'shadowBias') ?? 0, (v) => { cBias.setValue(v); });
 
                 const cNormBias = fShadow.add(shadowProxy, 'normalBias', 0, 0.2, 0.005).name('Normal Bias');
                 cNormBias.onChange(nb => { light.shadow.normalBias = nb; });
-                this._setupController(cNormBias, () => def.shadowNormalBias || 0, (v) => { cNormBias.setValue(v); });
+                this._setupController(cNormBias, () => this.getLightDefaultParam(entry, 'shadowNormalBias') ?? 0, (v) => { cNormBias.setValue(v); });
             }
         }
 
@@ -3232,7 +4324,6 @@ export class AmbiancePanel {
             if (entry.type === 'SpotLight') fTarget.open(); else fTarget.close();
 
             const targetPos = light.target.position;
-            const defTarget = def.target || { x: targetPos.x, y: targetPos.y, z: targetPos.z };
 
             const onTargetChange = () => {
                 light.target.updateMatrixWorld(true);
@@ -3256,9 +4347,9 @@ export class AmbiancePanel {
             this.ctrlTargetY.onChange(onTargetChange);
             this.ctrlTargetZ.onChange(onTargetChange);
 
-            this._setupController(this.ctrlTargetX, () => defTarget.x, (v) => { targetPos.x = v; onTargetChange(); });
-            this._setupController(this.ctrlTargetY, () => defTarget.y, (v) => { targetPos.y = v; onTargetChange(); });
-            this._setupController(this.ctrlTargetZ, () => defTarget.z, (v) => { targetPos.z = v; onTargetChange(); });
+            this._setupController(this.ctrlTargetX, () => this.getLightDefaultParam(entry, 'target.x') ?? 0, (v) => { targetPos.x = v; onTargetChange(); });
+            this._setupController(this.ctrlTargetY, () => this.getLightDefaultParam(entry, 'target.y') ?? 0, (v) => { targetPos.y = v; onTargetChange(); });
+            this._setupController(this.ctrlTargetZ, () => this.getLightDefaultParam(entry, 'target.z') ?? 0, (v) => { targetPos.z = v; onTargetChange(); });
         }
     }
 
@@ -3466,7 +4557,9 @@ export class AmbiancePanel {
         } else {
             // Quitter le mode Gizmo & fermer : détachement et masquage complet
             this._hideExportModal();
+            this._hideImportModal();
             this.deselectLaser();
+            this.deselectStrobe();
             this.transformControls.detach();
             this.transformControls.visible = false;
             this.transformControls.enabled = false;
@@ -3509,13 +4602,29 @@ export class AmbiancePanel {
         // Raccourcis clavier (Échap pour quitter le mode Gizmo ou fermer le panneau)
         window.addEventListener('keydown', (e) => {
             if (e.code === 'Escape') {
+                if (this._importModalOpen) {
+                    this._hideImportModal();
+                    e.stopPropagation();
+                    return;
+                }
                 if (this._exportModalOpen) {
                     this._hideExportModal();
                     e.stopPropagation();
                     return;
                 }
-                if (this.selectedLaser) {
+                if (this.selectedLaser || (this._laserInspectorPanel && this._laserInspectorPanel.isOpen)) {
+                    if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) {
+                        this._laserInspectorPanel.close();
+                    }
                     this.deselectLaser();
+                    e.stopPropagation();
+                    return;
+                }
+                if (this.selectedStrobe || (this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen)) {
+                    if (this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen) {
+                        this._strobeInspectorPanel.close();
+                    }
+                    this.deselectStrobe();
                     e.stopPropagation();
                     return;
                 }

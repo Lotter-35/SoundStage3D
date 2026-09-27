@@ -313,6 +313,11 @@ export class LightingSync {
                 fLaser.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} });
                 fLaser.folders?.forEach(f => f.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} }));
             }
+            const fLightsBloom = this.ambiancePanel.gui.folders?.find(f => f._title === '💡 Bloom Lampes & Scène');
+            if (fLightsBloom) {
+                fLightsBloom.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} });
+                fLightsBloom.folders?.forEach(f => f.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} }));
+            }
         }
     }
 

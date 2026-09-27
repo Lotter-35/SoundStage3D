@@ -60,6 +60,10 @@ export class Listener {
         this._onModeChange = null;
         this._onCameraModeChange = null;
 
+        // Vitesse de vol ajustable à la molette
+        this.flySpeed = FLY_SPEED;
+        this.flyVerticalSpeed = VERTICAL_SPEED;
+
         // Personnage 3D animé et caméra 3ème personne
         this._character3D = new Character3D(scene, camera, domElement);
         this._character3D.isThirdPerson = true;
@@ -70,6 +74,7 @@ export class Listener {
 
         this._onKeyDown = this._onKeyDown.bind(this);
         this._onKeyUp = this._onKeyUp.bind(this);
+        this._onWheel = this._onWheel.bind(this);
 
         // Vecteurs réutilisés pour éviter toute allocation par frame
         this._direction = new THREE.Vector3();
@@ -117,6 +122,7 @@ export class Listener {
 
         document.addEventListener('keydown', this._onKeyDown);
         document.addEventListener('keyup', this._onKeyUp);
+        window.addEventListener('wheel', this._onWheel, { passive: true });
     }
 
     /** Réinitialise les entrées de mouvement */
@@ -239,6 +245,37 @@ export class Listener {
 
     onModeChange(cb) {
         this._onModeChange = cb;
+    }
+
+    /**
+     * Contrôle la vitesse de déplacement en vol libre à la molette :
+     * - Molette vers le haut : accélérer
+     * - Molette vers le bas : ralentir
+     */
+    _onWheel(e) {
+        if (!this.isFlying) return;
+
+        // Ignorer si la molette est au-dessus d'une interface utilisateur (lil-gui, playlist, modale, etc.)
+        if (e.target && (
+            e.target.closest('#playback-bar-wrap, #pb-queue-container, .emote-window, #emote-window, .lil-gui, #hud, #overlay, #chat-container, .ambiance-export-overlay, #ambiance-import-overlay') ||
+            (e.target !== document.getElementById('canvas') && e.target !== document.body)
+        )) {
+            return;
+        }
+
+        // deltaY < 0 : molette vers le haut (plus vite)
+        // deltaY > 0 : molette vers le bas (moins vite)
+        const dir = -Math.sign(e.deltaY);
+        if (dir === 0) return;
+
+        // Échelonnage progressif selon la vitesse actuelle
+        const step = this.flySpeed < 10 ? 1.5 : (this.flySpeed < 30 ? 3.0 : 6.0);
+        this.flySpeed = THREE.MathUtils.clamp(
+            Math.round((this.flySpeed + dir * step) * 10) / 10,
+            2.0,
+            160.0
+        );
+        this.flyVerticalSpeed = Math.round(this.flySpeed * 0.85 * 10) / 10;
     }
 
     _onKeyDown(e) {
@@ -443,10 +480,10 @@ export class Listener {
                     }
                 }
 
-                // En vol : vitesse FLY_SPEED, au sol : marche normale ou sprint (Shift)
+                // En vol : vitesse dynamique this.flySpeed, au sol : marche normale ou sprint (Shift)
                 let moveSpeed;
                 if (this.isFlying) {
-                    moveSpeed = FLY_SPEED;
+                    moveSpeed = this.flySpeed;
                 } else {
                     moveSpeed = this.move.down ? SPRINT_SPEED : WALK_SPEED;
                 }
@@ -495,10 +532,10 @@ export class Listener {
                 // Gestion de la hauteur en mode vol : Espace = monter, Shift = descendre
                 if (this.isFlying) {
                     if (this.move.up) {
-                        this._character3D.position.y += VERTICAL_SPEED * dt;
+                        this._character3D.position.y += this.flyVerticalSpeed * dt;
                     }
                     if (this.move.down) {
-                        this._character3D.position.y -= VERTICAL_SPEED * dt;
+                        this._character3D.position.y -= this.flyVerticalSpeed * dt;
                     }
                     this._character3D.position.y = Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, this._character3D.position.y));
                 }

@@ -13,24 +13,91 @@
 import * as THREE from 'three';
 import { BEAM_DIVERGENCE } from './config/laserConstants.js';
 
-// ── Texture de fumée pré-calculée (remplace le bruit procédural FBM/domain-warp par un lookup GPU) ──
-// Bakée une fois hors-ligne avec l'outil tools/bake-smoke-texture.html (même look que l'ancien shader,
-// figé sur une frame). R = forme principale (FBM domain-warp), G = poches macro-densité (patch).
-// Le "vent" (translation lente) reste piloté par uWind, déjà calculé côté CPU dans LaserShow.js —
-// on ne fait plus que décaler l'UV de lecture au lieu de recalculer le bruit à chaque pixel.
-const SMOKE_TEXTURE_URL = 'src/assets/textures/laser/smoke-bake.png';
-let _smokeTexture = null;
-function getSmokeTexture() {
-    if (!_smokeTexture) {
-        _smokeTexture = new THREE.TextureLoader().load(SMOKE_TEXTURE_URL);
-        _smokeTexture.wrapS = THREE.MirroredRepeatWrapping; // pas de couture visible même sans bruit périodique
-        _smokeTexture.wrapT = THREE.MirroredRepeatWrapping;
-        _smokeTexture.minFilter = THREE.LinearMipmapLinearFilter;
-        _smokeTexture.magFilter = THREE.LinearFilter;
-        _smokeTexture.generateMipmaps = true;
-    }
-    return _smokeTexture;
+// ── Bruit Simplex 3D Volumétrique Ashima Arts (Isotrope Espace Monde 3D) ──
+// Échantillonné directement en coordonnées 3D réelles mondes (X, Y, Z) :
+// 0 étirement, 0 distorsion lors des balayages horizontaux et des courbures sinusoïdales
+const _NOISE_3D_GLSL = `
+vec4 mod289(vec4 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
+vec4 permute(vec4 x) { return mod289(((x * 34.0) + 1.0) * x); }
+vec4 taylorInvSqrt(vec4 r) { return 1.79284291400159 - 0.85373472095314 * r; }
+
+float snoise(vec3 v) {
+    const vec2 C = vec2(1.0 / 6.0, 1.0 / 3.0);
+    const vec4 D = vec4(0.0, 0.5, 1.0, 2.0);
+
+    // Premier coin
+    vec3 i  = floor(v + dot(v, C.yyy));
+    vec3 x0 = v - i + dot(i, C.xxx);
+
+    // Autres coins
+    vec3 g = step(x0.yzx, x0.xyz);
+    vec3 l = 1.0 - g;
+    vec3 i1 = min(g.xyz, l.zxy);
+    vec3 i2 = max(g.xyz, l.zxy);
+
+    vec3 x1 = x0 - i1 + C.xxx;
+    vec3 x2 = x0 - i2 + C.yyy;
+    vec3 x3 = x0 - D.yyy;
+
+    // Permutations
+    i = mod289(i);
+    vec4 p = permute(permute(permute(
+               i.z + vec4(0.0, i1.z, i2.z, 1.0))
+             + i.y + vec4(0.0, i1.y, i2.y, 1.0))
+             + i.x + vec4(0.0, i1.x, i2.x, 1.0));
+
+    // Gradients
+    float n_ = 0.142857142857; // 1.0 / 7.0
+    vec3  ns = n_ * D.wyz - D.xzx;
+
+    vec4 j = p - 49.0 * floor(p * ns.z * ns.z);
+
+    vec4 x_ = floor(j * ns.z);
+    vec4 y_ = floor(j - 7.0 * x_);
+
+    vec4 x = x_ * ns.x + ns.yyyy;
+    vec4 y = y_ * ns.x + ns.yyyy;
+    vec4 h = 1.0 - abs(x) - abs(y);
+
+    vec4 b0 = vec4(x.xy, y.xy);
+    vec4 b1 = vec4(x.zw, y.zw);
+
+    vec4 s0 = floor(b0) * 2.0 + 1.0;
+    vec4 s1 = floor(b1) * 2.0 + 1.0;
+    vec4 sh = -step(h, vec4(0.0));
+
+    vec4 a0 = b0.xzyw + s0.xzyw * sh.xxyy;
+    vec4 a1 = b1.xzyw + s1.xzyw * sh.zzww;
+
+    vec3 p0 = vec3(a0.xy, h.x);
+    vec3 p1 = vec3(a0.zw, h.y);
+    vec3 p2 = vec3(a1.xy, h.z);
+    vec3 p3 = vec3(a1.zw, h.w);
+
+    vec4 norm = taylorInvSqrt(vec4(dot(p0, p0), dot(p1, p1), dot(p2, p2), dot(p3, p3)));
+    p0 *= norm.x;
+    p1 *= norm.y;
+    p2 *= norm.z;
+    p3 *= norm.w;
+
+    vec4 m = max(0.6 - vec4(dot(x0, x0), dot(x1, x1), dot(x2, x2), dot(x3, x3)), 0.0);
+    m = m * m;
+    return 42.0 * dot(m * m, vec4(dot(p0, x0), dot(p1, x1), dot(p2, x2), dot(p3, x3)));
 }
+`;
+
+// ── Hyper-Saturation & Vibrance Chromatique Laser (Couleurs intenses hardcodées) ──
+const _COLOR_SATURATION_GLSL = `
+vec3 boostLaserSaturation(vec3 c, float sat) {
+    float luma = dot(c, vec3(0.2126, 0.7152, 0.0722));
+    // Amplification de la saturation par rapport à la luminance
+    vec3 saturated = mix(vec3(luma), c, sat);
+    // Renforcement chromatique des composantes dominantes (effet laser diode pur néon/fluo)
+    vec3 pure = pow(max(vec3(0.0), saturated), vec3(0.86));
+    return max(vec3(0.0), mix(saturated, pure, 0.45));
+}
+`;
 
 // ── 1. Faisceaux Laser (Cylindres caméra-alignés avec divergence & fumée SimonDev) ───
 export function createLaserShaderMaterial(params) {
@@ -92,6 +159,8 @@ export function createLaserShaderMaterial(params) {
             }
         `,
         fragmentShader: `
+            ${_COLOR_SATURATION_GLSL}
+
             uniform vec3  uColor;
             uniform float uBeamPower;
             uniform float uBeamWidth;
@@ -117,20 +186,21 @@ export function createLaserShaderMaterial(params) {
                 float fogScatter = uFogDensity * 45.0 * uFogGlowCoupling * scatter;
                 float halo = pow(1.0 - distFromCenter, max(0.2, uGlowFalloff)) * (uGlowIntensity * 0.4 + fogScatter);
 
-                // Éclat blanc concentré à la source (buse physique du laser)
-                float sourceWhite = exp(-min(vMeterDist * 3.5, vUv.y * 18.0)) * clamp(uSourceGlowPower, 0.0, 1.5);
+                // Éclat blanc puissant à l'émission (sortie du laser éclatante et diffusive)
+                float sourceWhite = exp(-vMeterDist / 25.0) * clamp(uSourceGlowPower, 0.0, 1.5);
 
                 // Atténuation physique atmosphérique le long du faisceau
                 float beamDistFalloff = 1.0 / (1.0 + pow(max(0.0, vMeterDist) / 65.0, 1.35));
 
-                // Cœur blanc du faisceau : strictement conditionné par la diffusion du faisceau
-                // Si scatter == 0.0 → beamWhite = 0.0 (le trait garde 100% sa couleur pure)
-                // Si scatter == 1.0 → beamWhite = 0.85 (effet d'origine avec cœur blanc intense)
+                // Cœur blanc éclatant et diffusion dans les traits de laser
                 float beamCoreWhite = pow(baseAlpha, 4.0) * 0.85 * scatter;
-                float haloWhite     = halo * 0.25 * scatter;
+                float haloWhite     = halo * 0.20 * scatter;
 
                 float totalWhite = clamp(sourceWhite + beamCoreWhite + haloWhite, 0.0, 1.0);
-                vec3 col = mix(uColor, vec3(1.0, 1.0, 1.0), totalWhite);
+
+                // Couleurs hyper-saturées traversées par le blanc éclatant au cœur et à la sortie
+                vec3 satColor = boostLaserSaturation(uColor, 1.35);
+                vec3 col = mix(satColor, vec3(1.0, 1.0, 1.0), totalWhite);
 
                 float alpha = clamp(baseAlpha + halo * (0.35 + 0.50 * scatter) + sourceWhite * 0.8, 0.0, 1.0) * uBeamPower * beamDistFalloff;
 
@@ -152,23 +222,25 @@ export function createFanShaderMaterial(params) {
             uOrigin:           { value: new THREE.Vector3() },
             uTime:             { value: 0.0 },
             uWind:             { value: new THREE.Vector3() },
-            uSmokeTex:         { value: getSmokeTexture() },
             uSmokeEnabled:     { value: params.panSmokeEnabled !== false ? 1.0 : 0.0 },
-            uSmokeSpeed:       { value: params.panSmokeSpeed !== undefined ? params.panSmokeSpeed : 0.8 },
-            uSmokeScale:       { value: params.panSmokeScale !== undefined ? params.panSmokeScale : 0.08 },
-            uSmokeContrast:    { value: params.panSmokeContrast !== undefined ? params.panSmokeContrast : 0.65 },
-            uSmokeBrightness:  { value: params.panSmokeBrightness !== undefined ? params.panSmokeBrightness : 0.75 },
-            uSmokeWindChange:  { value: params.panSmokeWindChange !== undefined ? params.panSmokeWindChange : 0.8 },
+            uSmokeSpeed:       { value: params.panSmokeSpeed !== undefined ? params.panSmokeSpeed : 0.30 },
+            uSmokeScale:       { value: params.panSmokeScale !== undefined ? params.panSmokeScale : 0.35 },
+            uSmokeContrast:    { value: params.panSmokeContrast !== undefined ? params.panSmokeContrast : 0.50 },
+            uSmokeBrightness:  { value: params.panSmokeBrightness !== undefined ? params.panSmokeBrightness : 2.0 },
+            uSmokeWindChange:  { value: params.panSmokeWindChange !== undefined ? params.panSmokeWindChange : 1.0 },
             uPanPower:         { value: params.panPower },
             uBeamPower:        { value: params.beamPower },
             uBeamWidth:        { value: params.beamWidth },
             uLaserForward:     { value: new THREE.Vector3(0, 0, 1) },
             uLaserRight:       { value: new THREE.Vector3(1, 0, 0) },
             uLaserUp:          { value: new THREE.Vector3(0, 1, 0) },
-            uSmokePatchDensity:   { value: params.panSmokePatchDensity !== undefined ? params.panSmokePatchDensity : 0.60 },
-            uSmokePatchScale:     { value: params.panSmokePatchScale !== undefined ? params.panSmokePatchScale : 0.06 },
-            uSmokePatchContrast:  { value: params.panSmokePatchContrast !== undefined ? params.panSmokePatchContrast : 0.70 },
-            uSmokePatchSpeed:     { value: params.panSmokePatchSpeed !== undefined ? params.panSmokePatchSpeed : 0.02 },
+            uSmokePatchDensity:   { value: params.panSmokePatchDensity !== undefined ? params.panSmokePatchDensity : 0.50 },
+            uSmokePatchScale:     { value: params.panSmokePatchScale !== undefined ? params.panSmokePatchScale : 0.04 },
+            uSmokePatchContrast:  { value: params.panSmokePatchContrast !== undefined ? params.panSmokePatchContrast : 0.40 },
+            uSmokePatchSpeed:     { value: params.panSmokePatchSpeed !== undefined ? params.panSmokePatchSpeed : 0.04 },
+            uPanNormal:           { value: new THREE.Vector3(0, 1, 0) },
+            uSmokePerpSpeed:      { value: params.panSmokePerpSpeed !== undefined ? params.panSmokePerpSpeed : 0.15 },
+            uLaserCount:          { value: 1.0 },
             uSourceGlowPower:  { value: 1.0 },
             uGlowIntensity:    { value: params.glowIntensity },
             uFogDensity:       { value: params.fogDensity },
@@ -178,36 +250,31 @@ export function createFanShaderMaterial(params) {
             attribute float aDistRatio;
             attribute float aLateral;
             uniform vec3  uOrigin;
-            uniform vec3  uLaserForward;
-            uniform vec3  uLaserRight;
-            uniform vec3  uLaserUp;
 
             varying float vDistRatio;
             varying float vLateral;
             varying float vMeterDist;
-            varying vec3  vLocalPos3D;
+            varying vec3  vWorldPos3D;
 
             void main() {
                 vDistRatio   = aDistRatio;
                 vLateral     = aLateral;
                 vMeterDist   = length(position - uOrigin);
 
-                // ── Échantillonnage 3D métrique dans le repère orienté du laser (0 étirement quelle que soit la forme) ──
-                vec3 rel = position - uOrigin;
-                vLocalPos3D = vec3(
-                    dot(rel, uLaserRight),
-                    dot(rel, uLaserUp),
-                    dot(rel, uLaserForward)
-                );
+                // Position absolue en coordonnées réelles du monde (espace scène 3D unifié)
+                vWorldPos3D  = position;
 
                 gl_Position  = projectionMatrix * viewMatrix * vec4(position, 1.0);
             }
         `,
         fragmentShader: `
+            ${_NOISE_3D_GLSL}
+            ${_COLOR_SATURATION_GLSL}
+
             uniform vec3  uColor;
+            uniform vec3  uOrigin;
             uniform float uTime;
             uniform vec3  uWind;
-            uniform sampler2D uSmokeTex;
             uniform float uSmokeEnabled;
             uniform float uSmokeContrast;
             uniform float uSmokeBrightness;
@@ -216,6 +283,9 @@ export function createFanShaderMaterial(params) {
             uniform float uSmokePatchScale;
             uniform float uSmokePatchDensity;
             uniform float uSmokePatchSpeed;
+            uniform vec3  uPanNormal;
+            uniform float uSmokePerpSpeed;
+            uniform float uLaserCount;
             uniform float uPanPower;
             uniform float uBeamPower;
             uniform float uBeamWidth;
@@ -227,7 +297,7 @@ export function createFanShaderMaterial(params) {
             varying float vDistRatio;
             varying float vLateral;
             varying float vMeterDist;
-            varying vec3  vLocalPos3D;
+            varying vec3  vWorldPos3D;
 
             void main() {
                 if (uPanPower <= 0.001) discard;
@@ -236,78 +306,73 @@ export function createFanShaderMaterial(params) {
                 float meterDist    = max(0.0, vMeterDist);
                 float meterFalloff = 1.0 / (1.0 + pow(meterDist / 38.0, 1.75));
 
-                float distanceFalloff = meterFalloff * mix(1.0, 0.40,
-                    smoothstep(0.0, 1.0, clamp(vDistRatio, 0.0, 1.0)));
+                // Atténuation métrique continue identique vers le sol (30m) ou vers le ciel (500m)
+                float distanceFalloff = meterFalloff;
 
-                // Rejet précoce : fragments transparents lointains (~40% du budget économisé)
-                if (distanceFalloff < 0.006) discard;
+                // Rejet précoce : fragments quasi-invisibles au fond du ciel (>120m) sans démarcation visible
+                if (distanceFalloff < 0.005) discard;
 
-                float originGlow = exp(-vDistRatio * 10.0) * uSourceGlowPower;
+                // Éclat d'émission blanc lumineux puissant (très localisé à la buse)
+                float originGlow = exp(-vMeterDist / 12.0) * uSourceGlowPower;
 
                 float lateralBase = 1.0;
                 float fogPanScatter = uFogDensity * 30.0 * uFogGlowCoupling * uGlowIntensity;
                 float lateralProfile = lateralBase + fogPanScatter;
 
-                // ── Fumée : texture statique bakée + défilement UV (vent) ──
-                // Remplace ~6 évaluations de simplex-noise 3D par pixel par 2 lectures de texture.
-                // uWind (calculé côté CPU dans LaserShow.js) sert directement de décalage d'UV : c'est
-                // lui qui fait "translater" la texture pour imiter le vent, sans aucun recalcul GPU.
-                //
-                // Astuce anti-couture : le MirroredRepeat seul évite les à-coups de couleur mais laisse
-                // voir le motif qui se répète (symétrie visible). On combine donc 2 lectures de la MÊME
-                // texture à une échelle + rotation différentes : les deux grilles ne se répètent jamais
-                // en phase, donc l'œil ne détecte plus de motif répétitif. Coût : 1 texture read de plus,
-                // toujours dérisoire comparé aux 6 évaluations de bruit procédural d'avant.
+                // ── Fumée 3D Volumétrique Espace Monde (Isotrope) ──
                 float smokeMod    = 1.0;
                 float smokeScatter = 0.0;
 
                 if (uSmokeEnabled > 0.5) {
-                    vec2 smokeUV1 = vLocalPos3D.xz * uSmokeScale + uWind.xz;
+                    // Décomposition spatiale : déplacement dans le plan laser vs perpendiculaire au plan
+                    vec3 relPos = vWorldPos3D - uOrigin;
+                    vec3 nrm = length(uPanNormal) > 0.5 ? normalize(uPanNormal) : vec3(0.0, 1.0, 0.0);
+                    float perpDist = dot(relPos, nrm);
+                    vec3 inPlanePos = relPos - nrm * perpDist;
 
-                    // Rotation ~42.5° pré-calculée (cos=0.7373, sin=0.6755) + échelle ×1.7 : décorrèle
-                    // totalement la 2ᵉ grille de répétition de la 1ère.
-                    vec2 rotated = vec2(
-                        vLocalPos3D.x * 0.7373 - vLocalPos3D.z * 0.6755,
-                        vLocalPos3D.x * 0.6755 + vLocalPos3D.z * 0.7373
-                    );
-                    vec2 smokeUV2 = rotated * uSmokeScale * 1.7 + uWind.xz * 1.3 + vec2(37.0, 11.0);
+                    vec3 effectiveWorldPos = uOrigin + inPlanePos + nrm * (perpDist * clamp(uSmokePerpSpeed, 0.005, 1.0));
+                    vec3 sampleCoord = effectiveWorldPos * uSmokeScale + uWind;
 
-                    float smokeShape = mix(
-                        texture2D(uSmokeTex, smokeUV1).r,
-                        texture2D(uSmokeTex, smokeUV2).r,
-                        0.4
-                    );
+                    // Léger tourbillon fluide 3D (swirl domain-warp très léger et rapide)
+                    float swirl = snoise(sampleCoord * 1.3 + vec3(1.2, 3.4, 5.6)) * 0.22;
+                    vec3 warpedCoord = sampleCoord + vec3(swirl, swirl * 0.5, -swirl * 0.7);
+
+                    // 2 octaves 3D complètes et continues (sans aucune démarcation ni saut de LOD)
+                    float rawNoise = snoise(warpedCoord) * 0.65 + snoise(warpedCoord * 2.08 + vec3(2.3, 1.1, 4.7)) * 0.35;
+                    float smokeShape = smoothstep(0.18, 0.82, clamp(rawNoise * 0.5 + 0.5, 0.0, 1.0));
 
                     smokeMod     = mix(1.0 - uSmokeContrast * 0.70, 1.0 + uSmokeContrast * 0.85, smokeShape);
                     smokeScatter = pow(smokeShape, 2.2) * 0.45 * uSmokeContrast * uSmokeBrightness;
 
-                    // ── Surcouche Poches / Amas Hétérogènes de Fumée (Macro-Densité) ──
+                    // ── Surcouche Poches / Amas Hétérogènes de Fumée (Macro-Densité 3D Monde continue) ──
                     if (uSmokePatchContrast > 0.001) {
-                        vec2 patchUV1 = vLocalPos3D.xz * uSmokePatchScale + uWind.xz * uSmokePatchSpeed;
-                        vec2 patchUV2 = rotated * uSmokePatchScale * 1.7 + uWind.xz * uSmokePatchSpeed * 1.3 + vec2(37.0, 11.0);
-                        float rawPatch = mix(
-                            texture2D(uSmokeTex, patchUV1).g,
-                            texture2D(uSmokeTex, patchUV2).g,
-                            0.4
-                        );
+                        vec3 patchWind = uWind * (uSmokePatchSpeed * 2.5) + vec3(uTime * 0.035 * uSmokePatchSpeed, uTime * 0.015 * uSmokePatchSpeed, -uTime * 0.025 * uSmokePatchSpeed);
+                        vec3 patchCoord = effectiveWorldPos * uSmokePatchScale + patchWind;
 
-                        float edgeLow  = max(0.0, (1.0 - uSmokePatchDensity) * 0.7 - 0.2);
-                        float edgeHigh = min(1.0, edgeLow + 0.5);
+                        // 2 octaves 3D continues pour des amas volumineux avec contours vaporeux naturels
+                        float rawPatch = snoise(patchCoord) * 0.70 + snoise(patchCoord * 2.15 + vec3(4.1, 1.7, 5.3)) * 0.30;
+                        rawPatch = clamp(rawPatch * 0.5 + 0.5, 0.0, 1.0);
+
+                        float edgeLow  = max(0.0, (1.0 - uSmokePatchDensity) * 0.75 - 0.15);
+                        float edgeHigh = min(1.0, edgeLow + 0.45);
                         float patchMask = smoothstep(edgeLow, edgeHigh, rawPatch);
 
-                        float patchMultiplier = mix(1.0 - uSmokePatchContrast * 0.95, 1.0 + uSmokePatchContrast * 0.65, patchMask);
+                        float patchMultiplier = mix(1.0 - uSmokePatchContrast * 0.85, 1.0 + uSmokePatchContrast * 1.25, patchMask);
                         patchMultiplier = max(0.02, patchMultiplier);
 
                         smokeMod *= patchMultiplier;
-                        smokeScatter *= patchMultiplier;
+                        smokeScatter = smokeScatter * patchMultiplier + pow(patchMask, 2.0) * 0.40 * uSmokePatchContrast * uSmokeBrightness;
                     }
                 }
 
                 float sheetAlpha = 0.38 * distanceFalloff * lateralProfile * smokeMod;
-                float whiteCore  = clamp(smokeScatter * 0.60, 0.0, 1.0);
+                float whiteCore  = clamp(smokeScatter * 0.35, 0.0, 0.85);
+                float originWhite = exp(-vMeterDist / 25.0) * clamp(uSourceGlowPower * 0.70, 0.0, 1.0);
 
-                vec3  col        = mix(uColor, vec3(1.0), clamp(originGlow * 0.75 + whiteCore, 0.0, 1.0));
-                float alpha      = clamp(sheetAlpha + originGlow * 0.4, 0.0, 1.0) * uPanPower;
+                // Hyper-saturation hardcodée de la nappe et des volutes de fumée avec diffusion blanche à la sortie
+                vec3 satColor = boostLaserSaturation(uColor, 1.35);
+                vec3 col      = mix(satColor, vec3(1.0), clamp(originWhite + whiteCore, 0.0, 0.85));
+                float alpha   = clamp(sheetAlpha + originGlow * 0.40, 0.0, 1.0) * uPanPower;
 
                 gl_FragColor = vec4(col, alpha);
             }
@@ -340,6 +405,8 @@ export function createPodGlowMaterial(params) {
             }
         `,
         fragmentShader: `
+            ${_COLOR_SATURATION_GLSL}
+
             uniform vec3 uColor;
             uniform float uSourceGlowPower;
             uniform float uSourceEmissionPower;
@@ -360,8 +427,9 @@ export function createPodGlowMaterial(params) {
                 float fogDispersion = uFogDensity * 25.0 * uFogGlowCoupling;
                 float aura = exp(-scaledDist * 3.2) * (0.8 + fogDispersion) * uSourceEmissionPower * uSourceGlowPower;
 
-                float whiteFactor = clamp(core * 0.95, 0.0, 1.0);
-                vec3 col = mix(uColor, vec3(1.0, 1.0, 1.0), whiteFactor);
+                float whiteFactor = clamp(core * 0.90, 0.0, 1.0);
+                vec3 satColor = boostLaserSaturation(uColor, 1.45);
+                vec3 col = mix(satColor, vec3(1.0, 1.0, 1.0), whiteFactor);
 
                 float alpha = clamp((core * 0.9 + aura * 0.6), 0.0, 1.0);
 
@@ -396,6 +464,8 @@ export function createImpactShaderMaterial(params) {
             }
         `,
         fragmentShader: `
+            ${_COLOR_SATURATION_GLSL}
+
             uniform vec3 uColor;
             uniform float uImpactPower;
             uniform float uFogDensity;
@@ -416,8 +486,9 @@ export function createImpactShaderMaterial(params) {
                 float fogImpactAura = uFogDensity * 30.0 * uFogGlowCoupling * uImpactGlowIntensity;
                 float fogHalo = exp(-dist * dist * (3.5 / max(0.1, uImpactGlowRadius))) * fogImpactAura;
 
-                float whiteFactor = pow(clamp(uImpactPower * 0.22, 0.0, 1.0), 2.2) * exp(-dist * dist * 5.0);
-                vec3 finalColor = mix(uColor, vec3(1.0, 1.0, 1.0), whiteFactor);
+                float whiteFactor = pow(clamp(uImpactPower * 0.15, 0.0, 1.0), 2.5) * exp(-dist * dist * 6.0) * 0.40;
+                vec3 satColor = boostLaserSaturation(uColor, 1.45);
+                vec3 finalColor = mix(satColor, vec3(1.0, 1.0, 1.0), whiteFactor);
 
                 float alpha = alphaShape * (0.3 + 0.7 * core + fogHalo) * uImpactPower;
 
@@ -450,6 +521,8 @@ export function createPanImpactShaderMaterial(params) {
             }
         `,
         fragmentShader: `
+            ${_COLOR_SATURATION_GLSL}
+
             uniform vec3 uColor;
             uniform float uLinePower;
             uniform float uFogDensity;
@@ -470,8 +543,9 @@ export function createPanImpactShaderMaterial(params) {
                 float fogImpactAura = uFogDensity * 20.0 * uFogGlowCoupling * uImpactGlowIntensity;
                 float fogHalo = exp(-dist * dist * (4.0 / max(0.1, uImpactGlowRadius))) * fogImpactAura;
 
-                float whiteFactor = pow(clamp(uLinePower * 0.22, 0.0, 1.0), 2.2) * exp(-dist * dist * 8.0);
-                vec3 finalCol = mix(uColor, vec3(1.0, 1.0, 1.0), whiteFactor);
+                float whiteFactor = pow(clamp(uLinePower * 0.15, 0.0, 1.0), 2.5) * exp(-dist * dist * 8.0) * 0.40;
+                vec3 satColor = boostLaserSaturation(uColor, 1.45);
+                vec3 finalCol = mix(satColor, vec3(1.0, 1.0, 1.0), whiteFactor);
 
                 float alpha = alphaShape * (0.35 + 0.65 * core + fogHalo) * uLinePower;
 

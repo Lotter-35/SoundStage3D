@@ -69,7 +69,7 @@ export function makeDraggable(panelEl, handleEl = panelEl, storageKey = null, al
         if (e.button !== undefined && e.button !== 0) return;
 
         // Do not drag on interactive elements or resize handles
-        if (e.target.closest('button, input, select, .lil-reset-btn, .lil-panel-reset-btn, .pb-icon-btn, a, .win-resize-handle')) {
+        if (e.target.closest('button, input, select, .lil-reset-btn, .lil-panel-reset-btn, .lil-panel-close-btn, .pb-icon-btn, a, .win-resize-handle')) {
             return;
         }
 

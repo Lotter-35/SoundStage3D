@@ -324,61 +324,34 @@ export function createStage(scene) {
     soundMarkersGroup.add(fohMarker);
 
     // --- Lighting ---
-    const ambientLight = new THREE.AmbientLight(0x99bbdd, 1.0);
+    const ambientLight = new THREE.AmbientLight(0x98ddbc, 1.0);
     ambientLight.name = 'Ambiance Générale';
     scene.add(ambientLight);
 
     // Hemisphere light for sky/ground color bleed
-    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 0.8);
+    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 0.0);
     hemiLight.name = 'Ciel / Sol';
+    hemiLight.visible = false;
     scene.add(hemiLight);
 
-    const dirLight = new THREE.DirectionalLight(0xfff5e0, 1.8);
+    const dirLight = new THREE.DirectionalLight(0xfff5e0, 3.0);
     dirLight.name = 'Soleil Principal';
-    dirLight.position.set(30, 60, 40);
+    dirLight.position.set(32, 45, 38);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 2048;
-    dirLight.shadow.mapSize.height = 2048;
-    dirLight.shadow.camera.near = 1;
-    dirLight.shadow.camera.far = 300;
+    dirLight.shadow.mapSize.width = 4096;
+    dirLight.shadow.mapSize.height = 4096;
+    dirLight.shadow.camera.near = 10;
+    dirLight.shadow.camera.far = 200;
     dirLight.shadow.camera.left = -60;
     dirLight.shadow.camera.right = 60;
     dirLight.shadow.camera.top = 60;
     dirLight.shadow.camera.bottom = -60;
-    dirLight.shadow.bias = 0.00002;
-    dirLight.shadow.normalBias = 0.08;
-    dirLight.shadow.radius = 1.8;
+    dirLight.shadow.bias = -0.0003;
+    dirLight.shadow.normalBias = 0.02;
     dirLight.shadow.camera.updateProjectionMatrix();
     scene.add(dirLight);
     scene.add(dirLight.target);
 
-    // Stage lights (colored point lights — subtle in daytime)
-    const stageLight1 = new THREE.PointLight(0xff3366, 0.5, 30);
-    stageLight1.name = 'Projecteur Scène Gauche';
-    stageLight1.position.set(-8, 18, -2);
-    scene.add(stageLight1);
-
-    const bulbGeo = new THREE.SphereGeometry(0.35, 16, 16);
-    const bulb1Mat = new THREE.MeshBasicMaterial({ color: 0xff3366 });
-    const bulb1 = new THREE.Mesh(bulbGeo, bulb1Mat);
-    bulb1.position.set(-8, 18, -2);
-    bulb1.name = 'Bulb Projecteur Gauche';
-    enableBloom(bulb1);
-    scene.add(bulb1);
-    stageLight1.userData.bulbMesh = bulb1;
-
-    const stageLight2 = new THREE.PointLight(0x3366ff, 0.5, 30);
-    stageLight2.name = 'Projecteur Scène Droit';
-    stageLight2.position.set(8, 18, -2);
-    scene.add(stageLight2);
-
-    const bulb2Mat = new THREE.MeshBasicMaterial({ color: 0x3366ff });
-    const bulb2 = new THREE.Mesh(bulbGeo, bulb2Mat);
-    bulb2.position.set(8, 18, -2);
-    bulb2.name = 'Bulb Projecteur Droit';
-    enableBloom(bulb2);
-    scene.add(bulb2);
-    stageLight2.userData.bulbMesh = bulb2;
 
     // --- Sky ---
     scene.background = new THREE.Color(0x87ceeb);
@@ -448,6 +421,6 @@ export function createStage(scene) {
         }
     }
 
-    const initialLights = [ambientLight, hemiLight, dirLight, stageLight1, stageLight2];
+    const initialLights = [ambientLight, hemiLight, dirLight];
     return { coneContainer, coneGroups, dirLight, lights: initialLights, soundMarkersGroup, fohMarker };
 }

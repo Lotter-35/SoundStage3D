@@ -3,8 +3,8 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js?v=183';
-import { Listener } from './scene/listener.js?v=154';
+import { createStage } from './scene/stage.js?v=186';
+import { Listener } from './scene/listener.js?v=155';
 import { createHitboxVisualizer } from './scene/collision.js?v=154';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
@@ -19,7 +19,7 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=159';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=190';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=297';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
@@ -29,29 +29,32 @@ import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=1';
 import { LightingSync } from './multiplayer/LightingSync.js?v=9';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=184';
-import { LaserManager } from './laser/LaserManager.js?v=196';
+import { LaserManager } from './laser/LaserManager.js?v=304';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
+import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
+import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
+import { StrobeManager } from './strobe/StrobeManager.js?v=12';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
     localStorage.removeItem('soundstage3d:master-uncapped-fps');
     localStorage.removeItem('soundstage3d:master-mouse-sensitivity');
     localStorage.removeItem('soundstage_dance_loop_settings');
+    localStorage.removeItem('soundstage_user_render_settings_v1');
 } catch (e) {}
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
-// antialias:false car le FXAA dans l'EffectComposer le gère → économie GPU ~3-5ms/frame
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
+// Antialiasing matériel activé par défaut (MSAA 4x direct du canvas)
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.shadowMap.autoUpdate = true;
-// Tone mapping nécessaire pour que l'OutputPass du post-processing produise
-// un résultat correct (bloom laser visible, éblouissement physiologique)
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
+// Rendu naturel sans tone mapping (couleurs douces et naturelles d'origine)
+renderer.toneMapping = THREE.NoToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
@@ -61,8 +64,8 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 // Build 3D stage
 const { coneContainer, coneGroups, dirLight, lights, soundMarkersGroup } = createStage(scene);
 if (dirLight && dirLight.shadow) {
-    const maxTex = renderer.capabilities.maxTextureSize || 2048;
-    const shadowRes = Math.min(2048, maxTex);
+    const maxTex = renderer.capabilities.maxTextureSize || 4096;
+    const shadowRes = Math.min(4096, maxTex);
     dirLight.shadow.mapSize.set(shadowRes, shadowRes);
 }
 
@@ -84,6 +87,11 @@ await loadStageSpeakers(scene);
 // ─── Listener (FPS controls + 3D Animated Character) ─────────────
 const listener = new Listener(camera, document.body, scene);
 
+// ─── Player Laser Collider (Dynamic 3D body collision) ────────────
+const playerLaserCollider = new PlayerLaserCollider();
+playerLaserCollider.setLocalPlayer(listener);
+registerPlayerCollider(playerLaserCollider);
+
 // ─── Drag & Drop 3D Model Loader (Debug) ─────────────────────────
 initModelDropLoader({ scene, camera });
 
@@ -103,10 +111,18 @@ const ambiancePanel = new AmbiancePanel({
 
 // ─── Laser System ─────────────────────────────────────────────────
 const laserManager = new LaserManager({ scene, renderer, camera });
+laserManager.setPlayerCollider(playerLaserCollider);
 ambiancePanel.setLaserManager(laserManager);
 
 // Laser de base présent dès le spawn (au centre du pont scénique au-dessus de la régie DJ)
 laserManager.addLaser(new THREE.Vector3(0, 5.0, -4.0), {}, 0);
+
+// ─── Strobe System ────────────────────────────────────────────────
+const strobeManager = new StrobeManager({ scene, camera, renderer });
+ambiancePanel.setStrobeManager(strobeManager);
+
+// Stroboscope de base présent dès le spawn (fixé sur le pont scénique au-dessus de la scène)
+strobeManager.addStrobe(new THREE.Vector3(0, 6.5, -4.2), { angle: 0, tilt: 0, roll: 0 });
 
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
@@ -633,6 +649,9 @@ try {
 
     // Instantiate player avatars renderer — filter own avatar by server-assigned clientId
     playerAvatars = new PlayerAvatars(scene, mp.clientId);
+    if (playerLaserCollider) {
+        playerLaserCollider.setPlayerAvatars(playerAvatars);
+    }
 
     // Apply synchronized random player color to local character
     if (mp.color && listener?._character3D) {
@@ -3091,7 +3110,7 @@ ${memLines}`;
 let _lastFrameTime = performance.now();
 let _lastRealFrameMs = 16; // suivi du dernier frame time (pour détection lagspike dans heartbeat)
 let _lastLagSpikeAt = 0;   // timestamp du dernier lagspike détecté (cooldown correction audio)
-const _dirLightOffset = new THREE.Vector3(30, 60, 40);
+const _dirLightOffset = new THREE.Vector3(32, 40, 38);
 
 function renderFrame() {
     const now = performance.now();
@@ -3223,15 +3242,18 @@ function renderFrame() {
     // Show/hide grass chunks near camera
     updateVegetation(camera);
 
-    // Update dynamic shadow camera to follow player directly and smoothly
+    // Update dynamic shadow camera to encompass both stage and player seamlessly
     if (dirLight && listener) {
         const lp = listener.position;
-        dirLight.target.position.set(lp.x, lp.y, lp.z);
+        const targetX = lp.x * 0.4;
+        const targetY = Math.min(5.0, Math.max(1.0, lp.y * 0.5 + 1.5));
+        const targetZ = -5.0 + (lp.z - (-5.0)) * 0.45;
+        dirLight.target.position.set(targetX, targetY, targetZ);
         dirLight.target.updateMatrixWorld();
         if (ambiancePanel && ambiancePanel.selectedEntry && ambiancePanel.selectedEntry.light === dirLight && (ambiancePanel.isDraggingGizmo || ambiancePanel.isOpen)) {
-            _dirLightOffset.copy(dirLight.position).sub(lp);
+            _dirLightOffset.copy(dirLight.position).sub(dirLight.target.position);
         } else {
-            dirLight.position.set(lp.x + _dirLightOffset.x, lp.y + _dirLightOffset.y, lp.z + _dirLightOffset.z);
+            dirLight.position.set(targetX + _dirLightOffset.x, targetY + _dirLightOffset.y, targetZ + _dirLightOffset.z);
         }
     }
 
@@ -3243,9 +3265,19 @@ function renderFrame() {
     // Avancer l'horloge partagée du balayage laser avec le delta temps réel
     _sharedSweepTime += dt;
 
+    // Mise à jour des colliders anatomiques des joueurs (corps 3D temps réel)
+    if (playerLaserCollider && playerLaserCollider.enabled) {
+        playerLaserCollider.update();
+    }
+
     // Update all active lasers (balayage fluide 100% synchrone entre tous les joueurs, indépendant de la musique)
     if (laserManager) {
         laserManager.updateAll(dt, _sharedSweepTime);
+    }
+
+    // Update all active strobes (clignotement stroboscopique synchronisé)
+    if (strobeManager) {
+        strobeManager.updateAll(dt);
     }
 
     // Update Hitbox Visualizer (player position)

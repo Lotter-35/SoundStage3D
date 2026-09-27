@@ -21,23 +21,36 @@ const _normal = new THREE.Vector3();
 const _result = { hit: _hit, normal: _normal, isRealSurface: true };
 
 // ── Boîtes AABB des obstacles physiques de la scène ─────────────────────────
+// Dimensions calibrées au centimètre près sur les meshes 3D réels de stage.js
 const STAGE_OBSTACLES = [
-    // 1. Plateforme de scène (largeur 30m, hauteur 3m, profondeur 10m centrée en z=-5)
-    { minX: -15.0, minY: 0.0,   minZ: -10.0, maxX: 15.0, maxY: 3.0,   maxZ: 0.0 },
-    // 2. Toit de scène (largeur 34m, épaisseur 0.3m, profondeur 14m)
-    { minX: -17.0, minY: 19.8,  minZ: -10.0, maxX: 17.0, maxY: 20.2,  maxZ: 4.0 },
-    // 3. Régie DJ (table + decks)
-    { minX: -1.9,  minY: 3.0,   minZ: -5.6,  maxX: 1.9,  maxY: 4.15,  maxZ: -4.4 },
-    // 4. Piliers métalliques gauche & droite
-    { minX: -17.3, minY: 0.0,   minZ: -0.3,  maxX: -16.7, maxY: 20.0, maxZ: 0.3 },
-    { minX: 16.7,  minY: 0.0,   minZ: -0.3,  maxX: 17.3,  maxY: 20.0, maxZ: 0.3 },
-    { minX: -17.3, minY: 0.0,   minZ: -10.3, maxX: -16.7, maxY: 20.0, maxZ: -9.7 },
-    { minX: 16.7,  minY: 0.0,   minZ: -10.3, maxX: 17.3,  maxY: 20.0, maxZ: -9.7 },
-    // 5. Blocs de subwoofers en façade
-    { minX: -13.0, minY: 0.0,   minZ: 0.0,   maxX: 13.0,  maxY: 2.1,   maxZ: 2.2 },
-    // 6. Line arrays suspendus gauche & droite
-    { minX: -17.5, minY: 4.0,   minZ: -1.8,  maxX: -15.5, maxY: 18.0,  maxZ: 0.2 },
-    { minX: 15.5,  minY: 4.0,   minZ: -1.8,  maxX: 17.5,  maxY: 18.0,  maxZ: 0.2 },
+    // 1. Plateforme de scène (largeur 30m [-15, 15], hauteur 3m [0, 3], profondeur 10m [-10, 0])
+    { minX: -15.0, minY: 0.0, minZ: -10.0, maxX: 15.0, maxY: 3.0, maxZ: 0.0 },
+
+    // 2. Mur de fond de scène (largeur 30m [-15, 15], hauteur 20m [0, 20], profondeur 1.5m [-11.5, -10.0])
+    { minX: -15.0, minY: 0.0, minZ: -11.5, maxX: 15.0, maxY: 20.0, maxZ: -10.0 },
+
+    // 3. Toit de scène (largeur 34m [-17, 17], épaisseur 0.3m [19.85, 20.15], profondeur 14m [-10, 4])
+    { minX: -17.0, minY: 19.85, minZ: -10.0, maxX: 17.0, maxY: 20.15, maxZ: 4.0 },
+
+    // 4. Régie DJ (table + decks centrés en x=0, z=-5, y=[3.0, 4.15])
+    { minX: -1.8, minY: 3.0, minZ: -5.5, maxX: 1.8, maxY: 4.15, maxZ: -4.5 },
+
+    // 5. Les 4 Piliers métalliques verticaux (BoxGeometry 0.4 x 20 x 0.4, centrage exact)
+    // Pilier avant gauche (x=-17, z=0, largeur exacte 0.4m : [-17.2, -16.8], profondeur 0.4m : [-0.2, 0.2])
+    { minX: -17.2, minY: 0.0, minZ: -0.2, maxX: -16.8, maxY: 20.0, maxZ: 0.2, isPillar: true },
+    // Pilier avant droit (x=+17, z=0, largeur exacte 0.4m : [16.8, 17.2], profondeur 0.4m : [-0.2, 0.2])
+    { minX: 16.8, minY: 0.0, minZ: -0.2, maxX: 17.2, maxY: 20.0, maxZ: 0.2, isPillar: true },
+    // Pilier arrière gauche (x=-17, z=-10, largeur exacte 0.4m : [-17.2, -16.8], profondeur 0.4m : [-10.2, -9.8])
+    { minX: -17.2, minY: 0.0, minZ: -10.2, maxX: -16.8, maxY: 20.0, maxZ: -9.8, isPillar: true },
+    // Pilier arrière droit (x=+17, z=-10, largeur exacte 0.4m : [16.8, 17.2], profondeur 0.4m : [-10.2, -9.8])
+    { minX: 16.8, minY: 0.0, minZ: -10.2, maxX: 17.2, maxY: 20.0, maxZ: -9.8, isPillar: true },
+
+    // 6. Blocs de subwoofers en façade (7 caissons de x=-9 à +9, largeur réelle [-10.3, 10.3], hauteur 2m, z=[-1.0, 1.05])
+    { minX: -10.3, minY: 0.0, minZ: -1.0, maxX: 10.3, maxY: 2.05, maxZ: 1.05 },
+
+    // 7. Grappes Line Array suspendues (réellement situées à x=±12m, suspendues entre y=8 et 12.5)
+    { minX: -12.6, minY: 8.0, minZ: -0.5, maxX: -11.4, maxY: 12.5, maxZ: 0.5 },
+    { minX: 11.4, minY: 8.0, minZ: -0.5, maxX: 12.6, maxY: 12.5, maxZ: 0.5 },
 ];
 
 /**
@@ -88,13 +101,41 @@ function intersectBox(origin, dir, box) {
     }
 
     if (tNear < 0.001) return null; // Ne bloque pas si le rayon démarre à l'intérieur
+
+    // Si c'est un pilier et que l'intersection se fait sur une face latérale (normX !== 0)
+    // alors que le rayon se propage principalement selon l'axe longitudinal Z :
+    // le rayon passe à côté du pilier et ne doit pas s'accrocher sur l'épaisseur du flanc.
+    if (box.isPillar && normX !== 0 && Math.abs(dir.z) > Math.abs(dir.x) * 0.4) {
+        return null;
+    }
+
     return { t: tNear, nx: normX, ny: normY, nz: normZ };
 }
 const OPEN_AIR_MAX_DISTANCE = 500;
 
+let _playerCollider = null;
+const _playerHit = { t: Infinity, nx: 0, ny: 0, nz: 0 };
+
+export function registerPlayerCollider(collider) {
+    _playerCollider = collider;
+}
+
+/**
+ * Teste si un joueur actif peut se trouver dans le secteur angulaire dirA -> dirB
+ * @param {THREE.Vector3} origin
+ * @param {THREE.Vector3} dirA
+ * @param {THREE.Vector3} dirB
+ * @param {number} maxDist
+ * @returns {boolean}
+ */
+export function isPlayerInWedge(origin, dirA, dirB, maxDist = 65) {
+    if (!_playerCollider) return false;
+    return _playerCollider.isPlayerInWedge(origin, dirA, dirB, maxDist);
+}
+
 /**
  * Calcule l'intersection d'un rayon (origin + direction) avec l'environnement :
- * sol du festival, obstacles physiques réels de la scène, ou espace ouvert (ciel/lointain).
+ * sol du festival, obstacles physiques réels de la scène, joueurs 3D, ou espace ouvert (ciel/lointain).
  * Aucun mur virtuel plat n'est imposé : les faisceaux en plein air s'étendent naturellement.
  * @param {THREE.Vector3} origin
  * @param {THREE.Vector3} dir (doit être normalisé)
@@ -117,7 +158,18 @@ export function getSceneHit(origin, dir) {
         }
     }
 
-    // 2. Sol extérieur (y = SCENE_FLOOR_Y = 0) — surface réelle dans l'enceinte du festival
+    // 2. Test des joueurs (modèles 3D dynamiques temps réel — local et multijoueur)
+    if (_playerCollider && _playerCollider.enabled !== false) {
+        if (_playerCollider.intersectRay(origin, dir, tMin, _playerHit)) {
+            tMin = _playerHit.t;
+            nx = _playerHit.nx;
+            ny = _playerHit.ny;
+            nz = _playerHit.nz;
+            hitsSurface = true;
+        }
+    }
+
+    // 3. Sol extérieur (y = SCENE_FLOOR_Y = 0) — surface réelle dans l'enceinte du festival
     if (dir.y < -1e-6) {
         const t = (SCENE_FLOOR_Y - origin.y) / dir.y;
         if (t > 1e-4 && t < tMin) {

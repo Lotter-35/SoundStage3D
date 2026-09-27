@@ -9,7 +9,7 @@ export const TOTAL_MAX_FAN_SEGMENTS = MAX_BEAMS_PER_POD - 1;
 
 // Physique
 export const BEAM_DIVERGENCE   = 1.0;
-export const ARC_SUBDIVISIONS  = 32;
+export const ARC_SUBDIVISIONS  = 96;
 
 // Sol + plafond virtuel (remplace Room.js du projet original)
 export const SCENE_FLOOR_Y = 0;
