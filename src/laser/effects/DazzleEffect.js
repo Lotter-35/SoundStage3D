@@ -14,7 +14,7 @@
  */
 
 import * as THREE from 'three';
-import { beamSpread, clamp } from '../config/laserConstants.js';
+import { BEAM_DIVERGENCE, clamp } from '../config/laserConstants.js';
 
 export class DazzleEffect {
     /**
@@ -129,7 +129,7 @@ export class DazzleEffect {
 
             // 1. FAISCEAUX DIRECTS (traversée pupille)
             if (effectiveBeamPower > 0.005) {
-                const beamDivAtEye = beamSpread(distToPod);
+                const beamDivAtEye = 1.0 + (distToPod * 0.008) * BEAM_DIVERGENCE;
                 const effectiveBeamWidth = this.BEAM_HALF_WIDTH * (0.5 + 0.5 * (params.beamWidth || 1.0)) * beamDivAtEye;
                 const threshold = this.PUPIL_RADIUS + effectiveBeamWidth;
                 const thresholdSq = threshold * threshold;
