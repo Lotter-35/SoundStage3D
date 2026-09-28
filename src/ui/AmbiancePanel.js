@@ -78,7 +78,8 @@ export class AmbiancePanel {
         this.helpersGroup.visible = false;
         this.scene.add(this.helpersGroup);
 
-        this.markersVisible = true;
+        this.markersVisible = false;
+        this.soundMarkersVisible = false; // Ronds d'émission son masqués par défaut
         this.gizmoVisible = true;
         this.showSpotCones = true;
         this._gizmoTargetMode = 'lamp';
@@ -1722,6 +1723,16 @@ export class AmbiancePanel {
         }
     }
 
+    /** Affiche / masque les ronds d'émission sonore des enceintes et le marqueur FOH */
+    setSoundMarkersVisible(val) {
+        this.soundMarkersVisible = Boolean(val);
+        const g = this.scene.getObjectByName('sound-markers-group');
+        if (g) g.visible = this.soundMarkersVisible;
+        if (this._cShowSoundMarkers && this._cShowSoundMarkers.getValue() !== this.soundMarkersVisible) {
+            this._cShowSoundMarkers.setValue(this.soundMarkersVisible);
+        }
+    }
+
     setMarkersVisible(val) {
         this.markersVisible = Boolean(val);
         this.markersGroup.visible = this.markersVisible;
@@ -2224,7 +2235,8 @@ export class AmbiancePanel {
         this.setStarSize(0.5);
         this.setStarCount(12000);
         this.setStarBrightness(3.0);
-        this.setMarkersVisible(true);
+        this.setMarkersVisible(false);
+        this.setSoundMarkersVisible(false);
         this.setShowSpotCones(true);
         this.applyEnvPreset('day', true);
 
@@ -3738,8 +3750,17 @@ export class AmbiancePanel {
         this._cShowMarkers.onChange(val => {
             this.setMarkersVisible(val);
         });
-        this._setupController(this._cShowMarkers, () => true, (v) => {
+        this._setupController(this._cShowMarkers, () => false, (v) => {
             this.setMarkersVisible(v);
+        });
+
+        toolsState.showSoundMarkers = this.soundMarkersVisible;
+        this._cShowSoundMarkers = fTools.add(toolsState, 'showSoundMarkers').name('🔊 Ronds émission son');
+        this._cShowSoundMarkers.onChange(val => {
+            this.setSoundMarkersVisible(val);
+        });
+        this._setupController(this._cShowSoundMarkers, () => false, (v) => {
+            this.setSoundMarkersVisible(v);
         });
 
         this._cShowSpotCones = fTools.add(toolsState, 'showSpotCones').name('🔦 Cônes SpotLights');
@@ -4434,7 +4455,7 @@ export class AmbiancePanel {
         const prop = ctrl.property;
 
         // Outils 3D locaux & Création locale -> pas de synchronisation réseau
-        if (obj === this.creationParams || prop === 'showMarkers' || prop === 'showSpotCones' || prop === 'gizmoMode' || prop === 'currentId') {
+        if (obj === this.creationParams || prop === 'showMarkers' || prop === 'showSoundMarkers' || prop === 'showSpotCones' || prop === 'gizmoMode' || prop === 'currentId') {
             return;
         }
 

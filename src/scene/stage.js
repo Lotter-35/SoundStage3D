@@ -274,6 +274,7 @@ export function createStage(scene) {
     // Groupe dédié aux bulles / ronds d'émission sonore et marqueur FOH (masquable en mode F1)
     const soundMarkersGroup = new THREE.Group();
     soundMarkersGroup.name = 'sound-markers-group';
+    soundMarkersGroup.visible = false; // Masqué par défaut (bouton « Ronds émission son » dans Ambiance)
     scene.add(soundMarkersGroup);
 
     for (const def of SPEAKER_DEFS) {
