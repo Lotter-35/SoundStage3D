@@ -2268,7 +2268,7 @@ export class AmbiancePanel {
             this.laserManager.setPostProcessingParam('lightsBloomThreshold', 0.05);
 
             this.laserManager.setPostProcessingParam('laserBloomEnabled', true);
-            this.laserManager.setPostProcessingParam('laserBloomStrength', 0.15);
+            this.laserManager.setPostProcessingParam('laserBloomStrength', 0.5);
             this.laserManager.setPostProcessingParam('laserBloomRadius', 0.5);
             this.laserManager.setPostProcessingParam('laserBloomThreshold', 0.0);
 
@@ -3892,7 +3892,7 @@ export class AmbiancePanel {
             const cLaserBloomStr = fLaserBloom.add(globalLaserPostParams, 'laserBloomStrength', 0, 2, 0.05).name('Intensité').onChange(v => {
                 this.laserManager.setPostProcessingParam('laserBloomStrength', v);
             });
-            this._setupController(cLaserBloomStr, () => 0.15, v => this.laserManager.setPostProcessingParam('laserBloomStrength', v));
+            this._setupController(cLaserBloomStr, () => 0.5, v => this.laserManager.setPostProcessingParam('laserBloomStrength', v));
 
             const cLaserBloomRad = fLaserBloom.add(globalLaserPostParams, 'laserBloomRadius', 0, 2, 0.05).name('Rayon').onChange(v => {
                 this.laserManager.setPostProcessingParam('laserBloomRadius', v);

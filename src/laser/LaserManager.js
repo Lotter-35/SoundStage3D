@@ -177,7 +177,7 @@ const AA_STORAGE_KEY = 'soundstage.antialiasing';
 export const globalLaserPostParams = {
     // ── Bloom Laser (Layer 1) ──
     laserBloomEnabled:   true,
-    laserBloomStrength:  0.15,
+    laserBloomStrength:  0.5,
     laserBloomRadius:    0.5,
     laserBloomThreshold: 0.0,
     chroma:              0.25,   // Aberration chromatique : UNIQUEMENT SUR LE LASER

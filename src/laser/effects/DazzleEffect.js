@@ -316,7 +316,7 @@ export class DazzleEffect {
             const baseBloom  = this.baseParams.bloomStrength;
             const baseChroma = this.baseParams.chroma;
 
-            const targetBloom  = baseBloom  + (this.dazzleFlash * this.sourceVisibility) * 1.5;
+            const targetBloom  = baseBloom  + (this.dazzleFlash * this.sourceVisibility) * 0.5; // boost réduit : le glow ne dépend plus autant de la direction du regard
             const targetChroma = baseChroma + this.chromaBoost * 2.0;
 
             if (this.postProcessing._bloomPass) {
