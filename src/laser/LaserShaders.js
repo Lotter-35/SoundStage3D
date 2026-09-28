@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { BEAM_DIVERGENCE, BEAM_START_SCALE, BEAM_GROWTH, BEAM_GROWTH_MAX_DIST, LASER_MAX_RANGE, LASER_FADE_START } from './config/laserConstants.js';
+import { BEAM_DIVERGENCE, LASER_MAX_RANGE, LASER_FADE_START } from './config/laserConstants.js';
 import { SMOKE_NOISE_UVW_SCALE } from './LaserSmokeNoise.js';
 
 // Intensité relative minimale de la nappe PAN au loin (atteinte vers 270 m ; de près rien ne change)
@@ -115,7 +115,7 @@ export function createBeamMaterial(paramsTexture) {
                 // Élargissement physique réaliste du faisceau avec la distance (divergence laser)
                 float currentDist = uv.y * rayDist;
                 vMeterDist = currentDist;
-                float divergenceFactor = ${BEAM_START_SCALE.toFixed(3)} + min(currentDist, ${BEAM_GROWTH_MAX_DIST.toFixed(1)}) * ${BEAM_GROWTH.toFixed(4)} * uBeamDivergence;
+                float divergenceFactor = 1.0 + (currentDist * 0.008) * uBeamDivergence;
                 float baseWidth = (0.012 + 0.016 * beamWidth);
                 float width = baseWidth * divergenceFactor;
                 vec3 finalViewPos = vPos + vSide * aSide * width;

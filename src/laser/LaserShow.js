@@ -27,7 +27,6 @@ import * as THREE from 'three';
 import {
     ARC_SUBDIVISIONS,
     BEAM_DIVERGENCE,
-    beamSpread,
     LASER_MAX_RANGE,
     clamp
 } from './config/laserConstants.js?v=2';
@@ -552,7 +551,7 @@ export class LaserShow {
             if (hitObj.isRealSurface) {
                 const hdx = hit.x - origin.x, hdy = hit.y - origin.y, hdz = hit.z - origin.z;
                 const hitDist = Math.sqrt(hdx * hdx + hdy * hdy + hdz * hdz);
-                const divergenceFactor = beamSpread(hitDist);
+                const divergenceFactor = 1.0 + (hitDist * 0.008) * BEAM_DIVERGENCE;
                 const beamRadius = (0.022 + 0.025 * beamWidth) * divergenceFactor;
                 out.pushImpact(row,
                     hit.x + nrm.x * 0.015, hit.y + nrm.y * 0.015, hit.z + nrm.z * 0.015,
@@ -750,7 +749,7 @@ export class LaserShow {
         if (svLenSq < 1e-6) return;
 
         // Divergence
-        const hw = lineHalfWidth * beamSpread(midRayDist) / Math.sqrt(svLenSq);
+        const hw = lineHalfWidth * (1.0 + (midRayDist * 0.008) * BEAM_DIVERGENCE) / Math.sqrt(svLenSq);
 
         // Points décalés de la normale de surface (0.012m pour éviter le z-fighting)
         this.output.pushPanImpact(this.row,

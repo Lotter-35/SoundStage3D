@@ -8,14 +8,6 @@ export const MAX_BEAMS_PER_POD = 32;
 
 // Physique
 export const BEAM_DIVERGENCE   = 1.0;
-// Profil de largeur du faisceau : fin à la sortie de la buse, puis s'élargit avec la distance
-// (facteur = START + min(d, MAX_DIST) * GROWTH → 0.3× à la buse, ~6.3× à 120 m et au-delà)
-export const BEAM_START_SCALE    = 0.3;
-export const BEAM_GROWTH         = 0.05;
-export const BEAM_GROWTH_MAX_DIST = 120;
-export function beamSpread(dist) {
-    return BEAM_START_SCALE + Math.min(Math.max(dist, 0), BEAM_GROWTH_MAX_DIST) * BEAM_GROWTH * BEAM_DIVERGENCE;
-}
 export const ARC_SUBDIVISIONS  = 96;
 
 // Sol + plafond virtuel (remplace Room.js du projet original)
