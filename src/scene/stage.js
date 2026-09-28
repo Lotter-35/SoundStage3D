@@ -331,12 +331,12 @@ export function createStage(scene) {
     soundMarkersGroup.add(fohMarker);
 
     // --- Lighting ---
-    const ambientLight = new THREE.AmbientLight(0x98ddbc, 1.0);
+    const ambientLight = new THREE.AmbientLight(0x98ddbc, 0.3);
     ambientLight.name = 'Ambiance Générale';
     scene.add(ambientLight);
 
     // Hemisphere light for sky/ground color bleed (maintenue active avec intensité minime pour pré-compiler le shader Three.js)
-    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 0.0001);
+    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 1.0);
     hemiLight.name = 'Ciel / Sol';
     hemiLight.visible = true;
     scene.add(hemiLight);
