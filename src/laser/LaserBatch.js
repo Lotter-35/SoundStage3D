@@ -323,7 +323,6 @@ export class LaserBatch {
 
         if (smokeState) {
             this.fanMaterial.uniforms.uTime.value = smokeState.time || 0;
-            this.beamMaterial.uniforms.uTime.value = smokeState.time || 0;
             if (smokeState.wind) this.fanMaterial.uniforms.uWind.value.copy(smokeState.wind);
         }
 

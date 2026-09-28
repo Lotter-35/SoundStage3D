@@ -74,12 +74,6 @@ export const LASER_PARAMS_SCHEMA = {
     smkRayScale:         { value: 5,         min: 5,    max: 150,  step: 1,     label: 'Nombre de stries',       group: 'smokeLayers' },
     smkRaySpeed:         { value: 0.3,       min: 0,    max: 2,    step: 0.05,  label: 'Vitesse',                group: 'smokeLayers' },
 
-    // ── Points scintillants dans les faisceaux (vus de près, 1 px, positions aléatoires) ──
-    beamSpeckleEnabled:   { value: true,                                          label: 'Points scintillants',    group: 'laserStyle', type: 'bool' },
-    beamSpeckleDensity:   { value: 0.5,      min: 0,    max: 1,    step: 0.05,  label: 'Densité des points',     group: 'laserStyle' },
-    beamSpeckleDistance:  { value: 15,       min: 1,    max: 40,   step: 0.5,   label: 'Distance d’apparition (m)', group: 'laserStyle' },
-    beamSpeckleIntensity: { value: 1.0,      min: 0,    max: 2,    step: 0.05,  label: 'Intensité des points',   group: 'laserStyle' },
-
     // ── Tweeking visuel source (exactement comme dans le repo GitHub LaserSimulation) ──
     sourceEmissionPower: { value: 4.0,       min: 0,    max: 4,    step: 0.05,  label: 'Puissance Buse',         group: 'sourceVisual' },
     sourceGlowRadius:    { value: 0.4,       min: 0.2,  max: 3,    step: 0.1,   label: 'Rayon Halo Buse',        group: 'sourceVisual' },

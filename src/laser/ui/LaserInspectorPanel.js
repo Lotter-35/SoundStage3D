@@ -628,10 +628,6 @@ export class LaserInspectorPanel {
             ['🔆 Rayons radiaux',      ['smkRayEnabled', 'smkRayIntensity', 'smkRayScale', 'smkRaySpeed']],
         ]);
 
-        // Points scintillants des faisceaux (visibles uniquement de très près)
-        this._addSchemaFolders(fDiffusion, p, laser, [
-            ['✴️ Points scintillants', ['beamSpeckleEnabled', 'beamSpeckleDensity', 'beamSpeckleDistance', 'beamSpeckleIntensity']],
-        ]);
 
         // ══════════════════════════════════════════════════════════════════
         // 7. Visuel source (fermée par défaut)

@@ -43,8 +43,7 @@ const _RANGE_FADE = `(1.0 - smoothstep(${LASER_FADE_START.toFixed(1)}, ${LASER_M
 // T10 : rayons radiaux — actif, intensité, nombre de stries, vitesse
 // T11 : poches géantes — actif, contraste, taille, densité
 // T12 : poches géantes vitesse, intensité visuelle de la fumée, -, -
-// T13 : points scintillants des faisceaux — actif, densité, distance, intensité
-export const PARAM_TEXELS = 14;
+export const PARAM_TEXELS = 13;
 
 const _PARAMS_GLSL = `
 uniform highp sampler2D uLaserParams;
@@ -67,8 +66,7 @@ export function createBeamMaterial(paramsTexture) {
     return new THREE.ShaderMaterial({
         uniforms: {
             uLaserParams:    { value: paramsTexture },
-            uBeamDivergence: { value: BEAM_DIVERGENCE },
-            uTime:           { value: 0.0 }
+            uBeamDivergence: { value: BEAM_DIVERGENCE }
         },
         vertexShader: `
             ${_PARAMS_GLSL}
@@ -83,13 +81,10 @@ export function createBeamMaterial(paramsTexture) {
             flat varying vec4 vColorPower;  // satColor.rgb, beamPower
             flat varying vec4 vGlowA;       // beamWidth, sourceGlow, glowIntensity, glowScattering
             flat varying vec4 vGlowB;       // glowFalloff, fogDensity, fogGlowCoupling, -
-            flat varying vec4 vSpeckle;     // actif, densité, distance, intensité
-            varying float vViewDist;        // distance caméra → fragment (points scintillants)
 
             void main() {
                 vUv = uv;
                 float row = aBeamA.w;
-                vSpeckle = laserParam(row, 13);
                 vec4 t0 = laserParam(row, 0);
                 vec4 t2 = laserParam(row, 2);
                 vec4 t3 = laserParam(row, 3);
@@ -124,7 +119,6 @@ export function createBeamMaterial(paramsTexture) {
                 float baseWidth = (0.012 + 0.016 * beamWidth);
                 float width = baseWidth * divergenceFactor;
                 vec3 finalViewPos = vPos + vSide * aSide * width;
-                vViewDist = length(finalViewPos);
 
                 gl_Position = projectionMatrix * vec4(finalViewPos, 1.0);
             }
@@ -135,16 +129,6 @@ export function createBeamMaterial(paramsTexture) {
             flat varying vec4 vColorPower;
             flat varying vec4 vGlowA;
             flat varying vec4 vGlowB;
-            flat varying vec4 vSpeckle;
-            varying float vViewDist;
-            uniform float uTime;
-
-            // Hash pseudo-aléatoire 2D → [0,1) (Dave Hoskins)
-            float hash12(vec2 p) {
-                vec3 p3 = fract(vec3(p.xyx) * 0.1031);
-                p3 += dot(p3, p3.yzx + 33.33);
-                return fract((p3.x + p3.y) * p3.z);
-            }
 
             void main() {
                 float uBeamPower       = vColorPower.w;
@@ -186,23 +170,6 @@ export function createBeamMaterial(paramsTexture) {
                 float skyFade = ${_RANGE_FADE}vMeterDist));
 
                 float alpha = clamp(baseAlpha + halo * (0.35 + 0.50 * scatter) + sourceWhite * 0.8, 0.0, 1.0) * uBeamPower * beamDistFalloff * skyFade;
-
-                // ── Points scintillants : pixels isolés (1 px) qui s'allument au hasard dans le faisceau,
-                //    uniquement quand on en est très proche (poussières traversant le faisceau) ──
-                if (vSpeckle.x > 0.5) {
-                    float nearF = 1.0 - smoothstep(vSpeckle.z * 0.6, vSpeckle.z, vViewDist);
-                    if (nearF > 0.0) {
-                        // Nouveau tirage ~24 fois par seconde : positions totalement aléatoires
-                        // Cellules de 2x2 px : un point de 1 px était quasi invisible
-                        float h = hash12(floor(gl_FragCoord.xy * 0.5) + floor(uTime * 24.0) * vec2(17.13, 91.71));
-                        if (h < vSpeckle.y * 0.25 * nearF) {
-                            // Point HDR (> blanc) : ressort sur le halo et scintille dans le bloom
-                            float k = vSpeckle.w * nearF * (0.5 + 0.5 * min(1.0, uBeamPower * 2.0));
-                            col = mix(vColorPower.rgb, vec3(1.0), 0.6) * (1.0 + 4.0 * k);
-                            alpha = max(alpha, clamp(k, 0.0, 1.0));
-                        }
-                    }
-                }
 
                 gl_FragColor = vec4(col, alpha);
             }

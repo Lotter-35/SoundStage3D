@@ -291,12 +291,11 @@ export class LaserShow {
         maxMod = 1.0 + (maxMod - 1.0) * Math.max(1.0, smokeI);
         d[o++] = p.impactGlowRadius; d[o++] = p.sourceEmissionPower; d[o++] = p.sourceGlowRadius; d[o++] = maxMod;
 
-        // T9..T13 : couches de fumée supplémentaires + points scintillants des faisceaux
+        // T9..T12 : couches de fumée supplémentaires
         d[o++] = on(p.smkTurbEnabled);     d[o++] = p.smkTurbStrength;     d[o++] = p.smkTurbScale;        d[o++] = p.smkTurbSpeed;
         d[o++] = on(p.smkRayEnabled);      d[o++] = p.smkRayIntensity;     d[o++] = p.smkRayScale;         d[o++] = p.smkRaySpeed;
         d[o++] = on(p.smkGiantEnabled);    d[o++] = p.smkGiantContrast;    d[o++] = p.smkGiantScale;       d[o++] = p.smkGiantDensity;
-        d[o++] = p.smkGiantSpeed;          d[o++] = smokeI;                d[o++] = 0;                     d[o++] = 0;
-        d[o++] = on(p.beamSpeckleEnabled); d[o++] = p.beamSpeckleDensity;  d[o++] = p.beamSpeckleDistance; d[o] = p.beamSpeckleIntensity;
+        d[o++] = p.smkGiantSpeed;          d[o++] = smokeI;                d[o++] = 0;                     d[o] = 0;
 
         // Drapeaux de rendu (les shaders d'origine rejetaient ces cas pixel par pixel)
         this._drawBeams   = effectiveBeamPower * beamPanAttenuation > 0.001 && p.beamWidth > 0.001;
