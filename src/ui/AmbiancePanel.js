@@ -434,7 +434,7 @@ export class AmbiancePanel {
                 fogColor: 0x87ceeb,
                 fogNear: 150,
                 fogFar: 400,
-                ambient: { color: '#98ddbc', intensity: 0.3, enabled: true },
+                ambient: { color: '#98ddbc', intensity: 0.1, enabled: true },
                 hemi: { skyColor: '#87ceeb', groundColor: '#4a7a2a', intensity: 1.0, enabled: true },
                 dir: { color: '#fff5e0', intensity: 3.0, shadowMapSize: 4096, enabled: true },
                 stage1: { color: '#ff3366', intensity: 0.5, distance: 30 },
@@ -2067,7 +2067,7 @@ export class AmbiancePanel {
         const light = entry.light;
 
         if (light.isAmbientLight || name.includes('Générale')) {
-            const amb = preset?.ambient || { color: '#98ddbc', intensity: 0.3, enabled: true };
+            const amb = preset?.ambient || { color: '#98ddbc', intensity: 0.1, enabled: true };
             return {
                 color: amb.color,
                 intensity: amb.intensity,

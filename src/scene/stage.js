@@ -331,7 +331,7 @@ export function createStage(scene) {
     soundMarkersGroup.add(fohMarker);
 
     // --- Lighting ---
-    const ambientLight = new THREE.AmbientLight(0x98ddbc, 0.3);
+    const ambientLight = new THREE.AmbientLight(0x98ddbc, 0.1);
     ambientLight.name = 'Ambiance Générale';
     scene.add(ambientLight);
 
