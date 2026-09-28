@@ -7,7 +7,7 @@
 export const LASER_PARAMS_SCHEMA = {
     // ── Style laser (exactement comme dans le repo GitHub LaserSimulation) ──
     count:               { value: 8,         min: 1,    max: 512,  step: 1,     label: 'Nombre Trait',           group: 'laserStyle' },
-    beamWidth:           { value: 3.0,       min: 0,    max: 5,    step: 0.05,  label: 'Taille Trait',           group: 'laserStyle' },
+    beamWidth:           { value: 3.0,       min: 0,    max: 10,   step: 0.05,  label: 'Taille Trait',           group: 'laserStyle' },
     spread:              { value: 50,        min: 0,    max: 110,  step: 0.1,   label: 'Écart laser',            group: 'laserStyle' },
     color:               { value: '#1100ff',                                     label: 'Couleur',                group: 'laserStyle', type: 'color' },
     laserPan:            { value: true,                                          label: 'Laser PAN',              group: 'laserStyle', type: 'bool' },
@@ -41,7 +41,7 @@ export const LASER_PARAMS_SCHEMA = {
 
     // ── Fumée Laser PAN (SimonDev Noise & Turbulence) ────────────────────
     panSmokeEnabled:     { value: true,                                          label: 'Activer Fumée',          group: 'panSmoke', type: 'bool' },
-    panSmokeIntensity:   { value: 1.0,       min: 0.0,  max: 2.0,  step: 0.05,  label: 'Intensité visuelle',     group: 'panSmoke' },
+    panSmokeIntensity:   { value: 0.30,      min: 0.0,  max: 2.0,  step: 0.05,  label: 'Intensité visuelle',     group: 'panSmoke' },
     panSmokeSpeed:       { value: 0.30,      min: 0.05, max: 3.0,  step: 0.05,  label: 'Vitesse Fumée',          group: 'panSmoke' },
     panSmokeScale:       { value: 0.35,      min: 0.10, max: 1.0,  step: 0.01,  label: 'Échelle Volutes',       group: 'panSmoke' },
     panSmokeContrast:    { value: 0.50,      min: 0.0,  max: 1.0,  step: 0.05,  label: 'Contraste Turbulence',   group: 'panSmoke' },
@@ -51,8 +51,8 @@ export const LASER_PARAMS_SCHEMA = {
     panSmokePerpSpeed:      { value: 0.15,      min: 0.01, max: 1.0,  step: 0.01,  label: 'Vitesse Balayage Perp.', group: 'panSmoke' },
 
     // ── Surcouche Poches / Amas Hétérogènes de Fumée ──
-    panSmokePatchContrast:  { value: 0.40,      min: 0.0,  max: 1.5,  step: 0.05,  label: 'Contraste Poches',       group: 'panSmoke' },
-    panSmokePatchScale:     { value: 0.04,      min: 0.01, max: 0.30, step: 0.01,  label: 'Taille Poches',          group: 'panSmoke' },
+    panSmokePatchContrast:  { value: 0.35,      min: 0.0,  max: 1.5,  step: 0.05,  label: 'Contraste Poches',       group: 'panSmoke' },
+    panSmokePatchScale:     { value: 0.09,      min: 0.01, max: 0.30, step: 0.01,  label: 'Taille Poches',          group: 'panSmoke' },
     panSmokePatchDensity:   { value: 0.50,      min: 0.0,  max: 1.0,  step: 0.05,  label: 'Densité Poches',         group: 'panSmoke' },
     panSmokePatchSpeed:     { value: 0.04,      min: 0.0,  max: 1.0,  step: 0.02,  label: 'Vitesse Dérive Poches',  group: 'panSmoke' },
 
@@ -64,8 +64,8 @@ export const LASER_PARAMS_SCHEMA = {
     smkTurbSpeed:        { value: 0.2,       min: 0,    max: 2,    step: 0.05,  label: 'Vitesse',                group: 'smokeLayers' },
     // Poches & amas géants : même principe que les poches, à bien plus grande échelle
     smkGiantEnabled:     { value: true,                                          label: 'Poches géantes',         group: 'smokeLayers', type: 'bool' },
-    smkGiantContrast:    { value: 0.7,       min: 0,    max: 1.5,  step: 0.05,  label: 'Contraste',              group: 'smokeLayers' },
-    smkGiantScale:       { value: 0.009,     min: 0.001, max: 0.05, step: 0.001, label: 'Taille (petit = énorme)', group: 'smokeLayers' },
+    smkGiantContrast:    { value: 0.5,       min: 0,    max: 1.5,  step: 0.05,  label: 'Contraste',              group: 'smokeLayers' },
+    smkGiantScale:       { value: 0.032,     min: 0.001, max: 0.05, step: 0.001, label: 'Taille (petit = énorme)', group: 'smokeLayers' },
     smkGiantDensity:     { value: 0.5,       min: 0,    max: 1,    step: 0.05,  label: 'Densité',                group: 'smokeLayers' },
     smkGiantSpeed:       { value: 0.04,      min: 0,    max: 0.5,  step: 0.01,  label: 'Dérive',                 group: 'smokeLayers' },
     // Rayons radiaux : stries de lumière qui partent de la source (mis de côté pour le futur système ILDA)
@@ -77,7 +77,7 @@ export const LASER_PARAMS_SCHEMA = {
     // ── Points scintillants dans les faisceaux (vus de près, 1 px, positions aléatoires) ──
     beamSpeckleEnabled:   { value: true,                                          label: 'Points scintillants',    group: 'laserStyle', type: 'bool' },
     beamSpeckleDensity:   { value: 0.5,      min: 0,    max: 1,    step: 0.05,  label: 'Densité des points',     group: 'laserStyle' },
-    beamSpeckleDistance:  { value: 8,        min: 1,    max: 40,   step: 0.5,   label: 'Distance d’apparition (m)', group: 'laserStyle' },
+    beamSpeckleDistance:  { value: 15,       min: 1,    max: 40,   step: 0.5,   label: 'Distance d’apparition (m)', group: 'laserStyle' },
     beamSpeckleIntensity: { value: 1.0,      min: 0,    max: 2,    step: 0.05,  label: 'Intensité des points',   group: 'laserStyle' },
 
     // ── Tweeking visuel source (exactement comme dans le repo GitHub LaserSimulation) ──

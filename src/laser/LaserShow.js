@@ -114,6 +114,8 @@ export class LaserShow {
         this._loHit  = new THREE.Vector3();
         this._loNorm = new THREE.Vector3();
         this._hiHit  = new THREE.Vector3();
+        this._gapLo = new THREE.Vector3();
+        this._gapHi = new THREE.Vector3();
         this._hiNorm = new THREE.Vector3();
 
         // Couleurs pré-allouées
@@ -271,18 +273,18 @@ export class LaserShow {
         d[o++] = p.panSmokePerpSpeed !== undefined ? p.panSmokePerpSpeed : 0.15;
         // T6
         const smokeC = p.panSmokeContrast !== undefined ? p.panSmokeContrast : 0.50;
-        const patchC = p.panSmokePatchContrast !== undefined ? p.panSmokePatchContrast : 0.40;
+        const patchC = p.panSmokePatchContrast !== undefined ? p.panSmokePatchContrast : 0.35;
         d[o++] = p.panSmokeScale !== undefined ? p.panSmokeScale : 0.35;
         d[o++] = smokeC;
         d[o++] = p.panSmokeBrightness !== undefined ? p.panSmokeBrightness : 2.0;
         d[o++] = patchC;
         // T7
-        d[o++] = p.panSmokePatchScale !== undefined ? p.panSmokePatchScale : 0.04;
+        d[o++] = p.panSmokePatchScale !== undefined ? p.panSmokePatchScale : 0.09;
         d[o++] = p.panSmokePatchDensity !== undefined ? p.panSmokePatchDensity : 0.50;
         d[o++] = p.panSmokePatchSpeed !== undefined ? p.panSmokePatchSpeed : 0.04;
         d[o++] = p.impactGlowIntensity;
         // T8 (+ borne max de modulation de la fumée, pour le rejet précoce exact des pixels invisibles)
-        const smokeI = p.panSmokeIntensity !== undefined ? p.panSmokeIntensity : 1.0;
+        const smokeI = p.panSmokeIntensity !== undefined ? p.panSmokeIntensity : 0.30;
         let maxMod = (1.0 + smokeC * 0.85) * (1.0 + Math.max(0, patchC) * 1.25);
         if (p.smkGiantEnabled) maxMod *= 1.0 + Math.max(0, p.smkGiantContrast) * 1.25;
         if (p.smkRayEnabled)   maxMod *= 1.0 + p.smkRayIntensity * 1.2;
@@ -575,7 +577,7 @@ export class LaserShow {
         const beamNormals = this._beamNormals;
         const beamReal = this._beamReal;
 
-        const lineHalfWidth = 0.015 + 0.015 * clamp(p.beamWidth, 0.2, 3.0);
+        const lineHalfWidth = 0.015 + 0.015 * clamp(p.beamWidth, 0.2, 10.0);
         const spreadPerInterval = Math.abs(a2 - a1) / (nBeams - 1);
 
         for (let i = 0; i < nBeams - 1; i++) {
@@ -664,6 +666,19 @@ export class LaserShow {
                     // chaque nappe s'arrête strictement sur sa surface respective.
                     out.pushFan(row, arcHit0, hitLo);
                     out.pushFan(row, hitHi, arcHit1);
+                    // Combler la fente angulaire entre hitLo et hitHi jusqu'à l'obstacle le plus proche :
+                    // sinon une fine bande vide apparaît de chaque côté de l'obstacle (joueur),
+                    // visible comme deux traits entre la source et l'obstacle.
+                    {
+                        const dLo = hitLo.distanceTo(origin);
+                        const dHi = hitHi.distanceTo(origin);
+                        const dNear = Math.min(dLo, dHi);
+                        if (dLo > 1e-4 && dHi > 1e-4) {
+                            const gLo = this._gapLo.subVectors(hitLo, origin).multiplyScalar(dNear / dLo).add(origin);
+                            const gHi = this._gapHi.subVectors(hitHi, origin).multiplyScalar(dNear / dHi).add(origin);
+                            out.pushFan(row, gLo, gHi);
+                        }
+                    }
                     this._pushPanImpact(origin, arcHit0, arcNorm0, arcReal0, hitLo, normLo, realLo, lineHalfWidth);
                     this._pushPanImpact(origin, hitHi, normHi, realHi, arcHit1, arcNorm1, arcReal1, lineHalfWidth);
                 }

@@ -450,7 +450,9 @@ export class PlayerLaserCollider {
         const listener = this.localListener;
         if (listener && listener.characterMode && listener._character3D) {
             const c3d = listener._character3D;
-            if (c3d.isLoaded && c3d.model && c3d.model.visible) {
+            // En 1ère personne le modèle est caché (model.visible = false) mais le corps
+            // doit toujours bloquer les lasers : on se base sur c3d.enabled, pas la visibilité
+            if (c3d.isLoaded && c3d.model && c3d.enabled) {
                 // Synchronisation instantanée des matrices mondiales des os avec la nouvelle position du joueur
                 c3d.model.updateMatrixWorld(true);
                 if (this._updateModelCapsules(c3d.model, this._localPlayerData)) {

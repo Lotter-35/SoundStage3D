@@ -190,11 +190,12 @@ export function createBeamMaterial(paramsTexture) {
                 // ── Points scintillants : pixels isolés (1 px) qui s'allument au hasard dans le faisceau,
                 //    uniquement quand on en est très proche (poussières traversant le faisceau) ──
                 if (vSpeckle.x > 0.5) {
-                    float nearF = 1.0 - smoothstep(vSpeckle.z * 0.5, vSpeckle.z, vViewDist);
-                    if (nearF > 0.0 && baseAlpha > 0.05) {
+                    float nearF = 1.0 - smoothstep(vSpeckle.z * 0.6, vSpeckle.z, vViewDist);
+                    if (nearF > 0.0) {
                         // Nouveau tirage ~24 fois par seconde : positions totalement aléatoires
-                        float h = hash12(gl_FragCoord.xy + floor(uTime * 24.0) * vec2(17.13, 91.71));
-                        if (h < vSpeckle.y * 0.05 * nearF) {
+                        // Cellules de 2x2 px : un point de 1 px était quasi invisible
+                        float h = hash12(floor(gl_FragCoord.xy * 0.5) + floor(uTime * 24.0) * vec2(17.13, 91.71));
+                        if (h < vSpeckle.y * 0.25 * nearF) {
                             // Point HDR (> blanc) : ressort sur le halo et scintille dans le bloom
                             float k = vSpeckle.w * nearF * (0.5 + 0.5 * min(1.0, uBeamPower * 2.0));
                             col = mix(vColorPower.rgb, vec3(1.0), 0.6) * (1.0 + 4.0 * k);

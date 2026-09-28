@@ -331,7 +331,7 @@ export class LaserInspectorPanel {
         );
 
         this.controllers.beamWidth = this._setupController(
-            fStyle.add(p, 'beamWidth', 0, 5, 0.05).name('Taille faisceaux').onChange(v => laser.setParam('beamWidth', v)),
+            fStyle.add(p, 'beamWidth', 0, 10, 0.05).name('Taille faisceaux').onChange(v => laser.setParam('beamWidth', v)),
             'beamWidth'
         );
 
