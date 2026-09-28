@@ -741,9 +741,9 @@ export class AmbiancePanel {
 
         this.envState = {
             presetKey: 'day',
-            stars: false,
+            stars: true, // affichées automatiquement dès qu'une ambiance de nuit en prévoit (hasStars)
             starSize: 0.5,
-            starCount: 6000,
+            starCount: 12000,
             starBrightness: 3.0,
             stageBoost: 1.0,
         };
@@ -2133,7 +2133,7 @@ export class AmbiancePanel {
         if (!preset) return undefined;
         if (paramKey === 'stars') return Boolean(preset.hasStars);
         if (paramKey === 'starSize') return 0.5;
-        if (paramKey === 'starCount') return 6000;
+        if (paramKey === 'starCount') return 12000;
         if (paramKey === 'starBrightness') return 3.0;
         if (paramKey === 'stageBoost') return 1.0;
         return undefined;
@@ -2217,12 +2217,12 @@ export class AmbiancePanel {
 
         // Rétablir l'ambiance céleste par défaut au chargement (Plein Jour Standard)
         this.envState.stageBoost = 1.0;
-        this.envState.stars = false;
+        this.envState.stars = true;
         this.envState.starSize = 0.5;
-        this.envState.starCount = 6000;
+        this.envState.starCount = 12000;
         this.envState.starBrightness = 3.0;
         this.setStarSize(0.5);
-        this.setStarCount(6000);
+        this.setStarCount(12000);
         this.setStarBrightness(3.0);
         this.setMarkersVisible(true);
         this.setShowSpotCones(true);

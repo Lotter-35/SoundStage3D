@@ -59,7 +59,8 @@ renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
 const scene = new THREE.Scene();
-const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+// far = 5000 : les faisceaux laser partant dans le ciel portent jusqu'à 3 km (LASER_MAX_RANGE)
+const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
 
 // Build 3D stage
 const { coneContainer, coneGroups, dirLight, lights, soundMarkersGroup } = createStage(scene);
@@ -116,6 +117,9 @@ ambiancePanel.setLaserManager(laserManager);
 
 // Laser de base présent dès le spawn (au centre du pont scénique au-dessus de la régie DJ)
 laserManager.addLaser(new THREE.Vector3(0, 5.0, -4.0), {}, 0);
+
+// Poignée de debug / benchmark (console : __SS3D.laserManager, __SS3D.renderer.info...)
+window.__SS3D = { scene, camera, renderer, laserManager, ambiancePanel };
 
 // ─── Strobe System ────────────────────────────────────────────────
 const strobeManager = new StrobeManager({ scene, camera, renderer });

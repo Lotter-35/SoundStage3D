@@ -165,7 +165,7 @@ function intersectSphere(origin, dir, cx, cy, cz, radius, maxT, outResult) {
         outResult.t = t;
         const invR = 1.0 / radius;
         outResult.nx = (origin.x + dir.x * t - cx) * invR;
-        outResult.y  = (origin.y + dir.y * t - cy) * invR;
+        outResult.ny = (origin.y + dir.y * t - cy) * invR;
         outResult.nz = (origin.z + dir.z * t - cz) * invR;
         return true;
     }

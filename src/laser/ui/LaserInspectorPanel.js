@@ -193,6 +193,27 @@ export class LaserInspectorPanel {
     }
 
     /**
+     * Crée des sous-dossiers de contrôles générés depuis LASER_PARAMS_SCHEMA
+     * @param {Array<[string, string[]]>} folders [titre, clés de paramètres]
+     */
+    _addSchemaFolders(parent, p, laser, folders) {
+        for (const [title, keys] of folders) {
+            const fl = parent.addFolder(title);
+            fl.close();
+            for (const key of keys) {
+                const def = LASER_PARAMS_SCHEMA[key];
+                if (!def) continue;
+                if (p[key] === undefined) p[key] = def.value;
+                const ctrl = def.type === 'bool'
+                    ? fl.add(p, key).name('Activer')
+                    : fl.add(p, key, def.min, def.max, def.step).name(def.label);
+                ctrl.onChange(v => laser.setParam(key, v));
+                this.controllers[key] = this._setupController(ctrl, key);
+            }
+        }
+    }
+
+    /**
      * Réinitialise tous les paramètres du laser sélectionné à leurs valeurs par défaut
      */
     resetAllLaserParams() {
@@ -305,7 +326,7 @@ export class LaserInspectorPanel {
         );
 
         this.controllers.count = this._setupController(
-            fStyle.add(p, 'count', 1, 32, 1).name('Nombre faisceaux').onChange(v => laser.setParam('count', v)),
+            fStyle.add(p, 'count', 1, 512, 1).name('Nombre faisceaux').onChange(v => laser.setParam('count', v)),
             'count'
         );
 
@@ -532,6 +553,12 @@ export class LaserInspectorPanel {
             'panSmokeEnabled'
         );
 
+        if (p.panSmokeIntensity === undefined) p.panSmokeIntensity = LASER_PARAMS_SCHEMA.panSmokeIntensity.value;
+        this.controllers.panSmokeIntensity = this._setupController(
+            fSmoke.add(p, 'panSmokeIntensity', 0.0, 2.0, 0.05).name('Intensité visuelle').onChange(v => laser.setParam('panSmokeIntensity', v)),
+            'panSmokeIntensity'
+        );
+
         this.controllers.panSmokeSpeed = this._setupController(
             fSmoke.add(p, 'panSmokeSpeed', 0.05, 3.0, 0.05).name('Vitesse fumée').onChange(v => laser.setParam('panSmokeSpeed', v)),
             'panSmokeSpeed'
@@ -590,6 +617,21 @@ export class LaserInspectorPanel {
             fPatches.add(p, 'panSmokePatchSpeed', 0.0, 1.0, 0.02).name('Dérive').onChange(v => laser.setParam('panSmokePatchSpeed', v)),
             'panSmokePatchSpeed'
         );
+
+        // Couches de fumée supplémentaires : 1 sous-dossier par couche,
+        // curseurs générés depuis LASER_PARAMS_SCHEMA (bornes, pas et libellés)
+        const fLayers = fSmoke.addFolder('🧪 Couches supplémentaires');
+        fLayers.close();
+        this._addSchemaFolders(fLayers, p, laser, [
+            ['🌀 Turbulence',          ['smkTurbEnabled', 'smkTurbStrength', 'smkTurbScale', 'smkTurbSpeed']],
+            ['☁️ Poches & amas géants', ['smkGiantEnabled', 'smkGiantContrast', 'smkGiantScale', 'smkGiantDensity', 'smkGiantSpeed']],
+            ['🔆 Rayons radiaux',      ['smkRayEnabled', 'smkRayIntensity', 'smkRayScale', 'smkRaySpeed']],
+        ]);
+
+        // Points scintillants des faisceaux (visibles uniquement de très près)
+        this._addSchemaFolders(fDiffusion, p, laser, [
+            ['✴️ Points scintillants', ['beamSpeckleEnabled', 'beamSpeckleDensity', 'beamSpeckleDistance', 'beamSpeckleIntensity']],
+        ]);
 
         // ══════════════════════════════════════════════════════════════════
         // 7. Visuel source (fermée par défaut)

@@ -4,6 +4,8 @@
  * Orchestrateur principal du système laser SoundStage3D.
  *
  * - Maintient la liste de tous les lasers posés (Map<id, LaserShow>)
+ * - Rendu BATCHÉ de tous les lasers (LaserBatch : 5 draw calls au total,
+ *   boîtiers instanciés, pool fixe de lumières agrégées)
  * - Gère le post-processing (EffectComposer avec Bloom + Aberration)
  * - Route les updates vers tous les lasers actifs
  * - Expose addLaser(), removeLaser(), getLaser(), updateAll()
@@ -19,7 +21,10 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { LaserShow } from './LaserShow.js?v=28';
+import { Pass } from 'three/addons/postprocessing/Pass.js';
+import { LaserShow } from './LaserShow.js?v=29';
+import { LaserBatch } from './LaserBatch.js';
+import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
 
@@ -29,28 +34,57 @@ export const BLOOM_LASER_LAYER = 1;
 // Layer 2 : Lampes et lumières de scène (Bloom Lampes SANS aberration chromatique)
 export const BLOOM_LIGHTS_LAYER = 2;
 
+// Registre des objets émissifs par layer de bloom. Stocké sur globalThis : ce module est
+// importé avec plusieurs suffixes ?v= (donc évalué plusieurs fois) et le registre doit être unique.
+// Il permet aux passes de bloom de masquer ces objets pendant le rendu des occulteurs
+// sans parcourir toute la scène à chaque frame.
+const _bloomRegistry = globalThis.__ss3dBloomRegistry || (globalThis.__ss3dBloomRegistry = {
+    [BLOOM_LASER_LAYER]: new Set(),
+    [BLOOM_LIGHTS_LAYER]: new Set()
+});
+
+function setBloomLayer(obj, layer, enabled) {
+    if (!obj) return;
+    const apply = (o) => {
+        if (!o.layers) return;
+        if (enabled) {
+            o.layers.enable(layer);
+            _bloomRegistry[layer].add(o);
+        } else {
+            o.layers.disable(layer);
+            _bloomRegistry[layer].delete(o);
+        }
+    };
+    if (obj.traverse) obj.traverse(apply);
+    else apply(obj);
+}
+
+/** true si au moins un objet enregistré sur ce layer de bloom est visible (hiérarchie comprise) */
+function layerHasVisibleObject(layer) {
+    for (const obj of _bloomRegistry[layer]) {
+        if (!obj.layers.isEnabled(layer)) continue;
+        let o = obj;
+        while (o && o.visible) {
+            if (o.parent === null) {
+                if (o.isScene) return true;
+                break;
+            }
+            o = o.parent;
+        }
+    }
+    return false;
+}
+
 /**
  * Active le bloom laser et l'aberration chromatique sur un objet laser
  * @param {THREE.Object3D} obj
  */
 export function enableLaserBloom(obj) {
-    if (!obj) return;
-    if (obj.layers) obj.layers.enable(BLOOM_LASER_LAYER);
-    if (obj.traverse) {
-        obj.traverse(child => {
-            if (child.layers) child.layers.enable(BLOOM_LASER_LAYER);
-        });
-    }
+    setBloomLayer(obj, BLOOM_LASER_LAYER, true);
 }
 
 export function disableLaserBloom(obj) {
-    if (!obj) return;
-    if (obj.layers) obj.layers.disable(BLOOM_LASER_LAYER);
-    if (obj.traverse) {
-        obj.traverse(child => {
-            if (child.layers) child.layers.disable(BLOOM_LASER_LAYER);
-        });
-    }
+    setBloomLayer(obj, BLOOM_LASER_LAYER, false);
 }
 
 /**
@@ -58,24 +92,80 @@ export function disableLaserBloom(obj) {
  * @param {THREE.Object3D} obj
  */
 export function enableLightsBloom(obj) {
-    if (!obj) return;
-    if (obj.layers) obj.layers.enable(BLOOM_LIGHTS_LAYER);
-    if (obj.traverse) {
-        obj.traverse(child => {
-            if (child.layers) child.layers.enable(BLOOM_LIGHTS_LAYER);
-        });
-    }
+    setBloomLayer(obj, BLOOM_LIGHTS_LAYER, true);
 }
 
 export function disableLightsBloom(obj) {
-    if (!obj) return;
-    if (obj.layers) obj.layers.disable(BLOOM_LIGHTS_LAYER);
-    if (obj.traverse) {
-        obj.traverse(child => {
-            if (child.layers) child.layers.disable(BLOOM_LIGHTS_LAYER);
-        });
+    setBloomLayer(obj, BLOOM_LIGHTS_LAYER, false);
+}
+
+/**
+ * Passe de rendu sélectif d'un layer de bloom (remplace RenderPass + traverse de la scène) :
+ * 1. Occulteurs : toute la scène en noir via scene.overrideMaterial (profondeur correcte),
+ *    en masquant uniquement les objets émissifs enregistrés (lasers, et le layer rendu)
+ * 2. Objets du layer seuls (camera.layers), avec leurs propres matériaux
+ * Les ombres ne sont pas recalculées dans ces passes (inutiles : matériaux non éclairés).
+ */
+class SelectiveLayerPass extends Pass {
+    constructor(scene, camera, layer, hideLayers, darkMaterial) {
+        super();
+        this.scene = scene;
+        this.camera = camera;
+        this.layer = layer;
+        this.hideLayers = hideLayers;
+        this.darkMaterial = darkMaterial;
+        this.needsSwap = false;
+        this._hidden = [];
+    }
+
+    render(renderer, writeBuffer, readBuffer) {
+        const scene = this.scene;
+        const camera = this.camera;
+        const oldAutoClear = renderer.autoClear;
+        const shadowMap = renderer.shadowMap;
+        const oldShadowAuto = shadowMap.autoUpdate;
+        const oldShadowNeeds = shadowMap.needsUpdate;
+        shadowMap.autoUpdate = false;
+        shadowMap.needsUpdate = false;
+        renderer.autoClear = false;
+
+        renderer.setRenderTarget(this.renderToScreen ? null : readBuffer);
+        renderer.clear(true, true, false);
+
+        // 1. Occulteurs (sans les objets émissifs)
+        const hidden = this._hidden;
+        hidden.length = 0;
+        for (const layer of this.hideLayers) {
+            for (const obj of _bloomRegistry[layer]) {
+                // Un objet dont le layer a été désactivé (ex. écran de stroboscope éteint) reste un occulteur
+                if (obj.visible && obj.layers.isEnabled(layer)) {
+                    obj.visible = false;
+                    hidden.push(obj);
+                }
+            }
+        }
+        scene.overrideMaterial = this.darkMaterial;
+        renderer.render(scene, camera);
+        scene.overrideMaterial = null;
+        for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
+        hidden.length = 0;
+
+        // 2. Objets émissifs du layer uniquement
+        const oldMask = camera.layers.mask;
+        camera.layers.set(this.layer);
+        renderer.render(scene, camera);
+        camera.layers.mask = oldMask;
+
+        renderer.autoClear = oldAutoClear;
+        shadowMap.autoUpdate = oldShadowAuto;
+        shadowMap.needsUpdate = oldShadowNeeds;
     }
 }
+
+// Nombre de lumières ponctuelles émises par les lasers : créées dès le départ (éteintes) et
+// jamais retirées → le nombre de lumières de la scène ne change pas quand on pose un laser
+// (pas de recompilation de tous les shaders éclairés).
+const LASER_LIGHT_POOL_SIZE = 4;
 
 // Alias de compatibilité pour stage.js et AmbiancePanel.js (qui ciblent les lampes de scène)
 export const enableBloom = enableLightsBloom;
@@ -132,6 +222,30 @@ export class LaserManager {
         this._lasers = new Map();   // Map<id (number), LaserShow>
         this._nextId = 1;
 
+        // Rendu batché partagé par tous les lasers (5 draw calls au total)
+        this._batch = new LaserBatch(scene, enableLaserBloom);
+        this._batchCompiled = false;
+
+        // Pool fixe de lumières ponctuelles agrégées (au lieu d'1 PointLight par laser)
+        // Toutes les lumières du pool sont créées dès le départ (éteintes) : le nombre de lumières
+        // de la scène ne change jamais, donc poser un laser ne force plus la recompilation de
+        // tous les shaders éclairés.
+        this._laserLights = [];
+        for (let i = 0; i < LASER_LIGHT_POOL_SIZE; i++) {
+            const light = new THREE.PointLight(new THREE.Color('#0055ff'), 0, 15, 1.8);
+            light.userData.isAmbianceInternal = true;
+            light.name = 'laser-light-pool-' + i;
+            scene.add(light);
+            this._laserLights.push(light);
+        }
+        this._lightPods = [];
+        this._lightSeeds = [];
+        this._lightAcc = [];
+        for (let i = 0; i < LASER_LIGHT_POOL_SIZE; i++) {
+            this._lightAcc.push({ w: 0, x: 0, y: 0, z: 0, r: 0, g: 0, b: 0, px: 0, py: 0, pz: 0, n: 0, dist: 0 });
+        }
+        this._dazzleData = [];
+
         // EffectComposers pour le post-processing sélectif à double bloom
         this._laserBloomComposer  = null;
         this._lightsBloomComposer = null;
@@ -152,6 +266,7 @@ export class LaserManager {
         this._bloomPass     = null;
         this._chromaPass    = null;
 
+        this._hiddenGizmos  = [];
         this._msaaSamples   = 4;
         this._useComposer   = false;
         this._playerCollider = null;
@@ -202,47 +317,9 @@ export class LaserManager {
                 depthTest: true,
                 side: THREE.DoubleSide
             });
-            this._materialsMap = new Map();
-            this._visibilityMap = new Map();
-
-            // Fonctions de traversée haute performance pour masquer le décor non-lumineux (0 allocation GC)
-            this._darkenNonLaser = (obj) => {
-                if (this._laserLayer.test(obj.layers) === false) {
-                    if (obj.isMesh) {
-                        this._materialsMap.set(obj.uuid, obj.material);
-                        obj.material = this._darkMaterial;
-                    } else if (obj.isLine || obj.isPoints || obj.isSprite) {
-                        this._visibilityMap.set(obj.uuid, obj.visible);
-                        obj.visible = false;
-                    }
-                }
-            };
-
-            this._darkenNonLights = (obj) => {
-                if (this._lightsLayer.test(obj.layers) === false) {
-                    if (obj.isMesh) {
-                        this._materialsMap.set(obj.uuid, obj.material);
-                        obj.material = this._darkMaterial;
-                    } else if (obj.isLine || obj.isPoints || obj.isSprite) {
-                        this._visibilityMap.set(obj.uuid, obj.visible);
-                        obj.visible = false;
-                    }
-                }
-            };
-
-            this._restoreMaterial = (obj) => {
-                if (this._materialsMap.has(obj.uuid)) {
-                    obj.material = this._materialsMap.get(obj.uuid);
-                    this._materialsMap.delete(obj.uuid);
-                }
-                if (this._visibilityMap.has(obj.uuid)) {
-                    obj.visible = this._visibilityMap.get(obj.uuid);
-                    this._visibilityMap.delete(obj.uuid);
-                }
-            };
-
             // ── 1. Laser Bloom Composer (Rendu isolé des lasers avec Bloom + Aberration Chromatique) ──
-            const renderLaserScene = new RenderPass(this.scene, this.camera);
+            // Lasers seuls, occultés par le décor (les lampes font partie des occulteurs noirs)
+            const renderLaserScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LASER_LAYER, [BLOOM_LASER_LAYER], this._darkMaterial);
             this._laserBloomComposer = new EffectComposer(this.renderer);
             this._laserBloomComposer.renderToScreen = false;
             this._laserBloomComposer.addPass(renderLaserScene);
@@ -295,7 +372,8 @@ export class LaserManager {
             this._laserBloomComposer.addPass(this._laserChromaPass);
 
             // ── 2. Lights Bloom Composer (Rendu isolé des lampes de scène : Bloom PUR SANS aberration) ──
-            const renderLightsScene = new RenderPass(this.scene, this.camera);
+            // Lampes seules : les lasers (transparents additifs) ne doivent pas les occulter
+            const renderLightsScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LIGHTS_LAYER, [BLOOM_LIGHTS_LAYER, BLOOM_LASER_LAYER], this._darkMaterial);
             this._lightsBloomComposer = new EffectComposer(this.renderer);
             this._lightsBloomComposer.renderToScreen = false;
             this._lightsBloomComposer.addPass(renderLightsScene);
@@ -413,24 +491,14 @@ export class LaserManager {
     addLaser(position = new THREE.Vector3(0, 12, -4), paramOverrides = {}, customId = null) {
         const id = (customId !== null && customId !== undefined) ? customId : this._nextId++;
         if (this._nextId <= id) this._nextId = id + 1;
-        const laserShow = new LaserShow(this.scene, position.clone(), paramOverrides);
+        const laserShow = new LaserShow(this.scene, position.clone(), paramOverrides, this._batch);
         laserShow.laserId = id;
         this._lasers.set(id, laserShow);
 
-        // Warm-up / Précompilation des shaders et géométries sur le GPU pour éviter tout gel d'animation (0 stutter)
-        if (this.renderer && this.camera && typeof this.renderer.compile === 'function') {
-            try {
-                this.renderer.compile(laserShow.group, this.camera);
-                if (laserShow.renderer) {
-                    if (laserShow.renderer.beamsMesh) this.renderer.compile(laserShow.renderer.beamsMesh, this.camera);
-                    if (laserShow.renderer.impactMesh) this.renderer.compile(laserShow.renderer.impactMesh, this.camera);
-                    if (laserShow.renderer.panImpactMesh) this.renderer.compile(laserShow.renderer.panImpactMesh, this.camera);
-                }
-                if (laserShow.pod) {
-                    if (laserShow.pod.fanMesh) this.renderer.compile(laserShow.pod.fanMesh, this.camera);
-                    if (laserShow.pod.glowMesh) this.renderer.compile(laserShow.pod.glowMesh, this.camera);
-                }
-            } catch (_) {}
+        // Warm-up / Précompilation des shaders batchés (1 seule fois pour tous les lasers, 0 stutter)
+        if (!this._batchCompiled && this.renderer && this.camera && typeof this.renderer.compile === 'function') {
+            this._batch.compile(this.renderer, this.camera);
+            this._batchCompiled = true;
         }
 
         // Activer le bloom dès qu'il y a au moins un laser
@@ -540,20 +608,112 @@ export class LaserManager {
             laser.update(delta, animTime, camPos, this._globalSmokeState);
         }
 
-        // 2. Éblouissement physiologique — collecte les données de chaque laser
+        // 2. Assemblage GPU de tous les lasers (5 draw calls) + boîtiers instanciés + éclairage
+        this._batch.assemble(this._lasers.values(), this._globalSmokeState);
+        flushHousings(this.scene);
+        this._updateLaserLights();
+
+        // 3. Éblouissement physiologique — collecte les données de chaque laser (objets réutilisés)
         if (this._dazzle) {
-            const laserData = [];
+            const laserData = this._dazzleData;
+            let i = 0;
             for (const laser of this._lasers.values()) {
-                laserData.push({
-                    pod:               laser.pod,
-                    hitPts:            laser._podHitPts,
-                    params:            laser.params,
-                    effectiveBeamPower: laser._effectiveBeamPower || 0,
-                    effectivePanPower:  laser._effectivePanPower  || 0,
-                });
+                let d = laserData[i];
+                if (!d) d = laserData[i] = {};
+                d.pod                = laser.pod;
+                d.hitPts             = laser._podHitPts;
+                d.params             = laser.params;
+                d.effectiveBeamPower = laser.visible ? (laser._effectiveBeamPower || 0) : 0;
+                d.effectivePanPower  = laser.visible ? (laser._effectivePanPower  || 0) : 0;
+                i++;
             }
+            laserData.length = i;
             this._dazzle.update(delta, laserData);
         }
+    }
+
+    /**
+     * Éclairage émis par les lasers : pool FIXE de PointLight.
+     * - Jusqu'à LASER_LIGHT_POOL_SIZE lasers : 1 lumière par laser (rendu identique à l'original)
+     * - Au-delà : les sources sont regroupées spatialement (graines choisies par éloignement,
+     *   indépendantes de l'intensité → regroupement stable) ; chaque lumière reçoit la somme
+     *   des intensités de son groupe, au barycentre pondéré, avec la couleur moyenne pondérée.
+     * Le coût par pixel de l'éclairage de la scène ne dépend plus du nombre de lasers.
+     */
+    _updateLaserLights() {
+        const pods = this._lightPods;
+        pods.length = 0;
+        for (const laser of this._lasers.values()) {
+            if (laser.visible) pods.push(laser.pod);
+        }
+
+        const lights = this._laserLights;
+        const K = lights.length;
+        const acc = this._lightAcc;
+        for (let k = 0; k < K; k++) {
+            const a = acc[k];
+            a.w = 0; a.x = 0; a.y = 0; a.z = 0; a.r = 0; a.g = 0; a.b = 0;
+            a.px = 0; a.py = 0; a.pz = 0; a.n = 0; a.dist = 0;
+        }
+
+        if (pods.length <= K) {
+            for (let i = 0; i < pods.length; i++) this._accumulateLight(acc[i], pods[i]);
+        } else {
+            // Graines : échantillonnage par point le plus éloigné (déterministe)
+            const seeds = this._lightSeeds;
+            seeds.length = 0;
+            seeds.push(0);
+            while (seeds.length < K) {
+                let best = -1, bestD = -1;
+                for (let i = 0; i < pods.length; i++) {
+                    let dMin = Infinity;
+                    for (let j = 0; j < seeds.length; j++) {
+                        const d = pods[i].lightPosition.distanceToSquared(pods[seeds[j]].lightPosition);
+                        if (d < dMin) dMin = d;
+                    }
+                    if (dMin > bestD) { bestD = dMin; best = i; }
+                }
+                seeds.push(best);
+            }
+            for (let i = 0; i < pods.length; i++) {
+                let best = 0, bestD = Infinity;
+                for (let j = 0; j < K; j++) {
+                    const d = pods[i].lightPosition.distanceToSquared(pods[seeds[j]].lightPosition);
+                    if (d < bestD) { bestD = d; best = j; }
+                }
+                this._accumulateLight(acc[best], pods[i]);
+            }
+        }
+
+        for (let k = 0; k < K; k++) {
+            const a = acc[k];
+            const light = lights[k];
+            if (a.n === 0) {
+                light.intensity = 0;
+                continue;
+            }
+            if (a.w > 1e-6) {
+                light.position.set(a.x / a.w, a.y / a.w, a.z / a.w);
+                light.color.setRGB(a.r / a.w, a.g / a.w, a.b / a.w);
+            } else {
+                light.position.set(a.px / a.n, a.py / a.n, a.pz / a.n);
+            }
+            light.intensity = a.w;
+            light.distance = a.dist;
+        }
+        for (let k = K; k < lights.length; k++) lights[k].intensity = 0;
+    }
+
+    _accumulateLight(a, pod) {
+        const w = pod.lightIntensity;
+        const lp = pod.lightPosition;
+        const c = pod.lightColor;
+        a.w += w;
+        a.x += lp.x * w; a.y += lp.y * w; a.z += lp.z * w;
+        a.r += c.r * w; a.g += c.g * w; a.b += c.b * w;
+        a.px += lp.x; a.py += lp.y; a.pz += lp.z;
+        a.n++;
+        if (pod.lightDistance > a.dist) a.dist = pod.lightDistance;
     }
 
     /**
@@ -565,8 +725,14 @@ export class LaserManager {
      */
     render() {
         if (this._useComposer && this._finalComposer) {
-            const renderLaser = Boolean(globalLaserPostParams.laserBloomEnabled && this._laserBloomComposer);
-            const renderLights = Boolean(globalLaserPostParams.lightsBloomEnabled && this._lightsBloomComposer);
+            // Un bloom sans aucun objet émissif visible ne produit que du noir : on saute toute la passe
+            const renderLaser = Boolean(globalLaserPostParams.laserBloomEnabled && this._laserBloomComposer) && layerHasVisibleObject(BLOOM_LASER_LAYER);
+            const renderLights = Boolean(globalLaserPostParams.lightsBloomEnabled && this._lightsBloomComposer) && layerHasVisibleObject(BLOOM_LIGHTS_LAYER);
+
+            // Matrices monde calculées UNE fois pour les 5 rendus de la frame (bloom ×2 ×2 + final)
+            this.scene.updateMatrixWorld();
+            const oldMatrixAuto = this.scene.matrixWorldAutoUpdate;
+            this.scene.matrixWorldAutoUpdate = false;
 
             let origBg = null;
             let origFog = null;
@@ -582,13 +748,20 @@ export class LaserManager {
                 this.renderer.getClearColor(this._origClearColor);
                 origClearAlpha = this.renderer.getClearAlpha();
                 this.renderer.setClearColor(0x000000, 0);
+
+                // Le gizmo d'édition (TransformControls) est posé sur le boîtier du laser : repeint en noir avec
+                // profondeur dans les passes de bloom, il masquerait l'origine du rayon. On le cache pendant ces passes.
+                for (const child of this.scene.children) {
+                    if (child.isTransformControls && child.visible) {
+                        this._hiddenGizmos.push(child);
+                        child.visible = false;
+                    }
+                }
             }
 
             // 2. Bloom Laser (Layer 1) avec aberration chromatique
             if (renderLaser) {
-                this.scene.traverse(this._darkenNonLaser);
                 this._laserBloomComposer.render();
-                this.scene.traverse(this._restoreMaterial);
                 this._mixPass.material.uniforms.laserBloomTexture.value = this._laserBloomComposer.readBuffer.texture;
                 this._mixPass.material.uniforms.uLaserBloomEnabled.value = 1.0;
             } else {
@@ -597,9 +770,7 @@ export class LaserManager {
 
             // 3. Bloom Lampes & Scène (Layer 2) pur, sans aberration chromatique
             if (renderLights) {
-                this.scene.traverse(this._darkenNonLights);
                 this._lightsBloomComposer.render();
-                this.scene.traverse(this._restoreMaterial);
                 this._mixPass.material.uniforms.lightsBloomTexture.value = this._lightsBloomComposer.readBuffer.texture;
                 this._mixPass.material.uniforms.uLightsBloomEnabled.value = 1.0;
             } else {
@@ -611,10 +782,13 @@ export class LaserManager {
                 this.scene.background = origBg;
                 this.scene.fog = origFog;
                 this.renderer.setClearColor(this._origClearColor, origClearAlpha);
+                for (const gizmo of this._hiddenGizmos) gizmo.visible = true;
+                this._hiddenGizmos.length = 0;
             }
 
             // 5. Rendu final de la scène normale + mixage additif des deux blooms + OutputPass
             this._finalComposer.render();
+            this.scene.matrixWorldAutoUpdate = oldMatrixAuto;
         } else {
             this.renderer.render(this.scene, this.camera);
         }

@@ -13,11 +13,12 @@
  * - Crochet demi-collier et tronçon de structure aluminium (truss)
  * - Panneau technique arrière (connecteurs ILDA, DMX, PowerCON, clé)
  * ─────────────────────────────────────────────────────────────
- * OPTIMISÉ : géométries et matériaux partagés à 100% entre les pods
- * (0 surcoût mémoire, 0 allocation GC par frame).
+ * OPTIMISÉ : tous les boîtiers de la scène sont dessinés par des InstancedMesh partagés
+ * (1 draw call par matériau pour N lasers, 0 allocation GC par frame).
  */
 
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 
 
 let _sharedResources = null;
@@ -227,155 +228,270 @@ function getSharedResources() {
     return _sharedResources;
 }
 
+
+// ── Description des pièces du boîtier (espace local, identique au modèle d'origine) ──
+// NOTE ESSENTIELLE SUR LE POSITIONNEMENT :
+// Le point d'émission laser (pod.origin) est en (0, 0, 0) dans l'espace local.
+// Les faisceaux et la nappe PAN se propagent vers Z >= 0.
+// TOUTES les pièces opaques du boîtier sont donc strictement placées à Z <= -0.035m :
+// aucune géométrie ne peut occlure ou découper le faisceau / la nappe.
+const HALF_PI = Math.PI / 2;
+function buildPartList() {
+    const parts = [];
+    const add = (geo, mat, x, y, z, rx = 0, rz = 0) => parts.push({ geo, mat, x, y, z, rx, rz });
+
+    // 1. Corps principal du boîtier (centre à Z = -0.266m, face avant à Z = -0.056m)
+    add('chassisGeo', 'chassisMat', 0, 0, -0.266);
+    // 2. Cornières de protection sur les 4 arêtes verticales
+    add('cornerGeo', 'bumperMat', -0.25, 0, -0.07);
+    add('cornerGeo', 'bumperMat',  0.25, 0, -0.07);
+    add('cornerGeo', 'bumperMat', -0.25, 0, -0.46);
+    add('cornerGeo', 'bumperMat',  0.25, 0, -0.46);
+    // 3. Façade avant découpée
+    add('frontPlateGeo', 'frontPlateMat', 0, 0, -0.050);
+    // 4. Cadre de la fenêtre de sortie optique
+    add('apertureFrameGeo', 'frameMat', 0, 0, -0.043);
+    // Vitre optique additive synchronisée avec le laser (pièce dynamique)
+    add('apertureHoleGeo', 'glass', 0, 0, -0.049);
+    // Volet de sécurité mécanique (safety shutter)
+    add('shutterGeo', 'shutterMat', 0, 0.073, -0.042);
+    // 5. Étiquette Danger Laser
+    add('hazardGeo', 'hazardMat', -0.15, 0.01, -0.043);
+    // 6. LEDs indicatrices : verte (interlock) et rouge (émission, pièce dynamique)
+    add('ledGeo', 'greenLedMat', -0.15, -0.065, -0.043);
+    add('ledGeo', 'redLed', -0.10, -0.065, -0.043);
+    // 7. Ailettes de refroidissement sur les deux flancs
+    for (const fy of [-0.07, -0.02, 0.03, 0.08]) {
+        add('finGeo', 'finMat', -0.255, fy, -0.266);
+        add('finGeo', 'finMat',  0.255, fy, -0.266);
+    }
+    // 8. Lyre de fixation (bras, barre, volants de serrage, crochet, truss)
+    add('yokeArmGeo', 'yokeMat', -0.275, 0.11, -0.266);
+    add('yokeArmGeo', 'yokeMat',  0.275, 0.11, -0.266);
+    add('yokeBarGeo', 'yokeMat', 0, 0.245, -0.266);
+    add('knobGeo', 'knobMat', -0.295, 0.01, -0.266, 0, HALF_PI);
+    add('knobGeo', 'knobMat',  0.295, 0.01, -0.266, 0, HALF_PI);
+    add('clampGeo', 'yokeMat', 0, 0.28, -0.266);
+    add('trussTubeGeo', 'trussMat', 0, 0.32, -0.266, 0, HALF_PI);
+    // 9. Panneau technique arrière (ventilation et connectique)
+    add('fanGrilleGeo', 'connectorMat', -0.12, 0.02, -0.482, HALF_PI);
+    add('connectorGeo', 'connectorMat',  0.10, -0.04, -0.482, HALF_PI);
+    add('connectorGeo', 'connectorMat',  0.15, -0.04, -0.482, HALF_PI);
+    add('connectorGeo', 'connectorMat',  0.12,  0.04, -0.482, HALF_PI);
+    return parts;
+}
+
+function transformedPart(res, part) {
+    const geo = res.geometries[part.geo].clone();
+    const m = new THREE.Matrix4().compose(
+        new THREE.Vector3(part.x, part.y, part.z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(part.rx, 0, part.rz)),
+        new THREE.Vector3(1, 1, 1)
+    );
+    geo.applyMatrix4(m);
+    return geo;
+}
+
+/**
+ * Instancieur partagé : dessine TOUS les boîtiers de la scène avec 1 InstancedMesh
+ * par matériau (15 draw calls au total au lieu de 27 par laser).
+ * Les matériaux et la géométrie sont exactement ceux du modèle d'origine.
+ */
+class HousingInstancer {
+    constructor(scene) {
+        this.scene = scene;
+        const res = getSharedResources();
+        const parts = buildPartList();
+
+        // Regroupement des pièces par matériau → 1 géométrie fusionnée par matériau
+        const byMat = new Map();
+        const all = [];
+        for (const part of parts) {
+            const geo = transformedPart(res, part);
+            all.push(geo.clone());
+            if (!byMat.has(part.mat)) byMat.set(part.mat, []);
+            byMat.get(part.mat).push(geo);
+        }
+        this._merged = new Map();
+        for (const [mat, geos] of byMat) {
+            this._merged.set(mat, mergeGeometries(geos, false));
+            geos.forEach(g => g.dispose());
+        }
+        // Géométrie complète (invisible) utilisée pour la sélection au clic
+        this.pickGeometry = mergeGeometries(all, false);
+        all.forEach(g => g.dispose());
+        this.pickMaterial = new THREE.MeshBasicMaterial({ visible: false });
+
+        // Matériaux dynamiques
+        this._glassMat = new THREE.MeshBasicMaterial({
+            color: 0xffffff,
+            transparent: true,
+            opacity: 1.0,
+            blending: THREE.AdditiveBlending,
+            depthWrite: false
+        });
+        this._redOnMat = res.materials.redLedMat.clone();
+        this._redOnMat.emissiveIntensity = 2.2;
+        this._redOffMat = res.materials.redLedMat.clone();
+        this._redOffMat.emissiveIntensity = 0.08;
+        this._resMaterials = res.materials;
+
+        this.capacity = 0;
+        this.slots = [];      // LaserPodHousing | null
+        this.meshes = null;   // { key: InstancedMesh }
+        this._count = 0;
+        this._dirtyMatrices = false;
+        this._dirtyColors = false;
+        this.zeroMatrix = new THREE.Matrix4().makeScale(0, 0, 0);
+        this._build(32);
+    }
+
+    _materialFor(key) {
+        if (key === 'glass') return this._glassMat;
+        return this._resMaterials[key];
+    }
+
+    _build(capacity) {
+        const old = this.meshes;
+        const meshes = {};
+        const add = (key, geo, mat) => {
+            const im = new THREE.InstancedMesh(geo, mat, capacity);
+            im.name = 'laser-housing-' + key;
+            im.frustumCulled = false;
+            im.matrixAutoUpdate = false;
+            im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+            im.count = 0;
+            if (key === 'glass') {
+                im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
+                im.instanceColor.setUsage(THREE.DynamicDrawUsage);
+            }
+            if (old && old[key]) {
+                im.instanceMatrix.array.set(old[key].instanceMatrix.array);
+                if (old[key].instanceColor) im.instanceColor.array.set(old[key].instanceColor.array);
+                this.scene.remove(old[key]);
+                old[key].dispose();
+            }
+            this.scene.add(im);
+            meshes[key] = im;
+        };
+        for (const [key, geo] of this._merged) {
+            if (key === 'redLed') {
+                add('redLedOn', geo, this._redOnMat);
+                add('redLedOff', geo, this._redOffMat);
+            } else {
+                add(key, geo, this._materialFor(key));
+            }
+        }
+        this.meshes = meshes;
+        this._meshList = Object.values(meshes);
+        this.capacity = capacity;
+        this._dirtyMatrices = true;
+        this._dirtyColors = true;
+        this._applyCount();
+    }
+
+    allocSlot(housing) {
+        let slot = this.slots.indexOf(null);
+        if (slot === -1) {
+            slot = this.slots.length;
+            this.slots.push(null);
+            if (slot >= this.capacity) this._build(this.capacity * 2);
+        }
+        this.slots[slot] = housing;
+        this.writeSlot(slot, this.zeroMatrix, false, null);
+        this._count = Math.max(this._count, slot + 1);
+        this._applyCount();
+        return slot;
+    }
+
+    freeSlot(slot) {
+        this.slots[slot] = null;
+        this.writeSlot(slot, this.zeroMatrix, false, null);
+        while (this._count > 0 && this.slots[this._count - 1] === null) this._count--;
+        this._applyCount();
+    }
+
+    _applyCount() {
+        for (const im of this._meshList) im.count = this._count;
+    }
+
+    /** Écrit la matrice monde d'un boîtier dans toutes les pièces instanciées */
+    writeSlot(slot, matrix, emitting, glassColor) {
+        const m = this.meshes;
+        for (const key in m) {
+            if (key === 'redLedOn') m[key].setMatrixAt(slot, emitting ? matrix : this.zeroMatrix);
+            else if (key === 'redLedOff') m[key].setMatrixAt(slot, emitting ? this.zeroMatrix : matrix);
+            else m[key].setMatrixAt(slot, matrix);
+        }
+        if (glassColor) {
+            m.glass.setColorAt(slot, glassColor);
+            this._dirtyColors = true;
+        }
+        this._dirtyMatrices = true;
+    }
+
+    /** Envoie au GPU uniquement la portion utilisée, et seulement si quelque chose a changé */
+    flush() {
+        if (this._count === 0) return;
+        if (this._dirtyMatrices) {
+            for (const im of this._meshList) {
+                im.instanceMatrix.clearUpdateRanges();
+                im.instanceMatrix.addUpdateRange(0, this._count * 16);
+                im.instanceMatrix.needsUpdate = true;
+            }
+            this._dirtyMatrices = false;
+        }
+        if (this._dirtyColors) {
+            const c = this.meshes.glass.instanceColor;
+            c.clearUpdateRanges();
+            c.addUpdateRange(0, this._count * 3);
+            c.needsUpdate = true;
+            this._dirtyColors = false;
+        }
+    }
+}
+
+const _instancers = new WeakMap();
+function getHousingInstancer(scene) {
+    let inst = _instancers.get(scene);
+    if (!inst) {
+        inst = new HousingInstancer(scene);
+        _instancers.set(scene, inst);
+    }
+    return inst;
+}
+
+/** Envoie au GPU les instances de boîtiers modifiées (1 fois par frame, après les updates) */
+export function flushHousings(scene) {
+    const inst = _instancers.get(scene);
+    if (inst) inst.flush();
+}
+
 export class LaserPodHousing {
     /**
      * @param {THREE.Scene} scene
      */
     constructor(scene) {
         this.scene = scene;
+        this._instancer = getHousingInstancer(scene);
+
+        // Groupe de manipulation (gizmo, sélection) : le rendu est assuré par l'instancieur,
+        // le groupe ne contient qu'un maillage invisible servant au raycast de sélection.
         this.group = new THREE.Group();
-
-        this._buildModel();
+        this.group.name = 'laser-housing';
+        this._pickMesh = new THREE.Mesh(this._instancer.pickGeometry, this._instancer.pickMaterial);
+        this._pickMesh.name = 'laser-housing-pick';
+        this.group.add(this._pickMesh);
         this.scene.add(this.group);
-    }
 
-    _buildModel() {
-        const res = getSharedResources();
-        const { materials: m, geometries: g } = res;
-
-        // NOTE ESSENTIELLE SUR LE POSITIONNEMENT :
-        // Le point d'émission laser (pod.origin) est en (0, 0, 0) dans l'espace local.
-        // Les faisceaux et la nappe PAN se propagent vers Z >= 0.
-        // TOUTES les pièces opaques du boîtier sont donc strictement placées à Z <= -0.035m.
-        // Cela garantit un dégagement optique absolu : aucune géométrie ne peut venir
-        // occlure ou découper le faisceau / la nappe, éliminant ainsi toute "bande noire" !
-
-        // ── 1. Corps principal du boîtier (centre à Z = -0.266m, face avant à Z = -0.056m)
-        const chassis = new THREE.Mesh(g.chassisGeo, m.chassisMat);
-        chassis.position.set(0, 0, -0.266);
-        this.group.add(chassis);
-
-        // ── 2. Cornières de protection sur les 4 arêtes verticales
-        const cornerOffsets = [
-            [-0.25, 0, -0.07],
-            [ 0.25, 0, -0.07],
-            [-0.25, 0, -0.46],
-            [ 0.25, 0, -0.46]
-        ];
-        for (const [cx, cy, cz] of cornerOffsets) {
-            const corner = new THREE.Mesh(g.cornerGeo, m.bumperMat);
-            corner.position.set(cx, cy, cz);
-            this.group.add(corner);
-        }
-
-        // ── 3. Façade avant découpée (Z = -0.050m)
-        const frontPlate = new THREE.Mesh(g.frontPlateGeo, m.frontPlateMat);
-        frontPlate.position.set(0, 0, -0.050);
-        this.group.add(frontPlate);
-
-        // ── 4. Fenêtre de sortie optique (Aperture scanner) centrée sur X=0, Y=0
-        const apertureFrame = new THREE.Mesh(g.apertureFrameGeo, m.frameMat);
-        apertureFrame.position.set(0, 0, -0.043);
-        this.group.add(apertureFrame);
-
-        // Vitre optique avec shader additif synchronisé avec le laser
-        this.apertureMesh = new THREE.Mesh(g.apertureHoleGeo, m.glassMat.clone());
-        this.apertureMesh.position.set(0, 0, -0.049);
-        this.group.add(this.apertureMesh);
-
-        // Volet de sécurité mécanique (safety shutter) situé au-dessus de la fenêtre
-        const shutter = new THREE.Mesh(g.shutterGeo, m.shutterMat);
-        shutter.position.set(0, 0.073, -0.042);
-        this.group.add(shutter);
-
-        // ── 5. Étiquette Danger Laser sur la gauche de la façade
-        const hazardDecal = new THREE.Mesh(g.hazardGeo, m.hazardMat);
-        hazardDecal.position.set(-0.15, 0.01, -0.043);
-        this.group.add(hazardDecal);
-
-        // ── 6. LEDs indicatrices de statut
-        // LED verte (Power & Interlock armé)
-        const powerLed = new THREE.Mesh(g.ledGeo, m.greenLedMat);
-        powerLed.position.set(-0.15, -0.065, -0.043);
-        this.group.add(powerLed);
-
-        // LED rouge (Émission active / clignotement synchronisé)
-        this.emissionLed = new THREE.Mesh(g.ledGeo, m.redLedMat.clone());
-        this.emissionLed.position.set(-0.10, -0.065, -0.043);
-        this.group.add(this.emissionLed);
-
-        // ── 7. Ailettes de refroidissement (heatsinks) sur les deux flancs
-        const finYOffsets = [-0.07, -0.02, 0.03, 0.08];
-        for (const fy of finYOffsets) {
-            // Flanc gauche
-            const finL = new THREE.Mesh(g.finGeo, m.finMat);
-            finL.position.set(-0.255, fy, -0.266);
-            this.group.add(finL);
-
-            // Flanc droit
-            const finR = new THREE.Mesh(g.finGeo, m.finMat);
-            finR.position.set(0.255, fy, -0.266);
-            this.group.add(finR);
-        }
-
-        // ── 8. Lyre de fixation métallique (Yoke / Étrier)
-        // Bras gauche
-        const armL = new THREE.Mesh(g.yokeArmGeo, m.yokeMat);
-        armL.position.set(-0.275, 0.11, -0.266);
-        this.group.add(armL);
-
-        // Bras droit
-        const armR = new THREE.Mesh(g.yokeArmGeo, m.yokeMat);
-        armR.position.set(0.275, 0.11, -0.266);
-        this.group.add(armR);
-
-        // Barre supérieure
-        const yokeBar = new THREE.Mesh(g.yokeBarGeo, m.yokeMat);
-        yokeBar.position.set(0, 0.245, -0.266);
-        this.group.add(yokeBar);
-
-        // Volants de serrage moletés sur les pivots gauche et droit
-        const knobL = new THREE.Mesh(g.knobGeo, m.knobMat);
-        knobL.rotation.z = Math.PI / 2;
-        knobL.position.set(-0.295, 0.01, -0.266);
-        this.group.add(knobL);
-
-        const knobR = new THREE.Mesh(g.knobGeo, m.knobMat);
-        knobR.rotation.z = Math.PI / 2;
-        knobR.position.set(0.295, 0.01, -0.266);
-        this.group.add(knobR);
-
-        // Crochet demi-collier sur la barre
-        const clampMesh = new THREE.Mesh(g.clampGeo, m.yokeMat);
-        clampMesh.position.set(0, 0.28, -0.266);
-        this.group.add(clampMesh);
-
-        // Tronçon de structure aluminium (truss tube)
-        const trussTube = new THREE.Mesh(g.trussTubeGeo, m.trussMat);
-        trussTube.rotation.z = Math.PI / 2;
-        trussTube.position.set(0, 0.32, -0.266);
-        this.group.add(trussTube);
-
-        // ── 9. Panneau technique arrière (ventilation et connectique)
-        const fanGrille = new THREE.Mesh(g.fanGrilleGeo, m.connectorMat);
-        fanGrille.rotation.x = Math.PI / 2;
-        fanGrille.position.set(-0.12, 0.02, -0.482);
-        this.group.add(fanGrille);
-
-        const dmxIn = new THREE.Mesh(g.connectorGeo, m.connectorMat);
-        dmxIn.rotation.x = Math.PI / 2;
-        dmxIn.position.set(0.10, -0.04, -0.482);
-        this.group.add(dmxIn);
-
-        const dmxOut = new THREE.Mesh(g.connectorGeo, m.connectorMat);
-        dmxOut.rotation.x = Math.PI / 2;
-        dmxOut.position.set(0.15, -0.04, -0.482);
-        this.group.add(dmxOut);
-
-        const powerIn = new THREE.Mesh(g.connectorGeo, m.connectorMat);
-        powerIn.rotation.x = Math.PI / 2;
-        powerIn.position.set(0.12, 0.04, -0.482);
-        this.group.add(powerIn);
+        this._visible = true;
+        this._slot = this._instancer.allocSlot(this);
+        this._lastMatrix = new THREE.Matrix4();
+        this._lastMatrix.elements[0] = NaN; // force la première écriture
+        this._lastEmitting = true;
+        this._glassColor = new THREE.Color(0x0055ff);
+        this._glassOut = new THREE.Color();
+        this._lastGlass = new THREE.Color(-1, -1, -1);
     }
 
     /**
@@ -396,30 +512,40 @@ export class LaserPodHousing {
                 'YXZ'
             );
         }
+        this.group.updateMatrixWorld();
 
-        if (this.emissionLed && this.emissionLed.material) {
-            this.emissionLed.material.emissiveIntensity = strobeFactor > 0.01 ? 2.2 : 0.08;
-        }
+        if (colorHex) this._glassColor.set(colorHex);
+        this._syncInstance(strobeFactor > 0.01);
+    }
 
-        if (this.apertureMesh && this.apertureMesh.material) {
-            if (colorHex) {
-                this.apertureMesh.material.color.set(colorHex);
-            }
-            this.apertureMesh.material.opacity = strobeFactor > 0.01 ? 0.70 : 0.05;
-        }
+    _syncInstance(emitting) {
+        if (!this._visible) return;
+        // Vitre additive : couleur × opacité d'origine (0.70 en émission, 0.05 éteinte)
+        const opacity = emitting ? 0.70 : 0.05;
+        this._glassOut.copy(this._glassColor).multiplyScalar(opacity);
+        const mw = this.group.matrixWorld;
+        if (emitting === this._lastEmitting && this._glassOut.equals(this._lastGlass) && mw.equals(this._lastMatrix)) return;
+
+        this._lastMatrix.copy(mw);
+        this._lastEmitting = emitting;
+        this._lastGlass.copy(this._glassOut);
+        this._instancer.writeSlot(this._slot, mw, emitting, this._glassOut);
     }
 
     setVisible(visible) {
         this.group.visible = visible;
+        if (this._visible === visible) return;
+        this._visible = visible;
+        if (!visible) {
+            this._instancer.writeSlot(this._slot, this._instancer.zeroMatrix, false, null);
+        } else {
+            this._lastMatrix.elements[0] = NaN;
+            this._syncInstance(this._lastEmitting);
+        }
     }
 
     dispose() {
         this.scene.remove(this.group);
-        if (this.emissionLed && this.emissionLed.material) {
-            this.emissionLed.material.dispose();
-        }
-        if (this.apertureMesh && this.apertureMesh.material) {
-            this.apertureMesh.material.dispose();
-        }
+        this._instancer.freeSlot(this._slot);
     }
 }

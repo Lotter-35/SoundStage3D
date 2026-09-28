@@ -7,13 +7,14 @@
  * - Sol (y=0) → normal vers le haut (0,1,0) — surface réelle
  * - Murs virtuels (boîte ±200m) — surfaces virtuelles seulement si rayon monte
  * ─────────────────────────────────────────────────────────────
- * OPTIMISÉ : 0 allocation GC par frame (vecteurs pré-alloués statiques).
+ * OPTIMISÉ : 0 allocation GC par frame (vecteurs et résultats pré-alloués),
+ * pré-filtrage des obstacles par éventail laser (collectFanObstacles).
  */
 
 import * as THREE from 'three';
 
 
-import { SCENE_FLOOR_Y, SCENE_HALF_SIZE } from './config/laserConstants.js';
+import { SCENE_FLOOR_Y, SCENE_HALF_SIZE, LASER_MAX_RANGE } from './config/laserConstants.js';
 
 // Vecteurs pré-alloués (0 GC par frame)
 const _hit    = new THREE.Vector3();
@@ -53,8 +54,12 @@ const STAGE_OBSTACLES = [
     { minX: 11.4, minY: 8.0, minZ: -0.5, maxX: 12.6, maxY: 12.5, maxZ: 0.5 },
 ];
 
+// Résultat partagé du test rayon / boîte (0 allocation)
+const _boxHit = { t: 0, nx: 0, ny: 0, nz: 0 };
+
 /**
- * Test analytique rapide d'intersection rayon / boîte AABB (0 allocation)
+ * Test analytique rapide d'intersection rayon / boîte AABB (0 allocation).
+ * @returns {boolean} true si impact (résultat dans _boxHit)
  */
 function intersectBox(origin, dir, box) {
     let tNear = -Infinity;
@@ -69,9 +74,9 @@ function intersectBox(origin, dir, box) {
         if (t1 > t2) { const s = t1; t1 = t2; t2 = s; n1 = 1; n2 = -1; }
         if (t1 > tNear) { tNear = t1; normX = n1; normY = 0; normZ = 0; }
         if (t2 < tFar) tFar = t2;
-        if (tNear > tFar || tFar < 0.001) return null;
+        if (tNear > tFar || tFar < 0.001) return false;
     } else if (origin.x < box.minX || origin.x > box.maxX) {
-        return null;
+        return false;
     }
 
     // Y
@@ -82,9 +87,9 @@ function intersectBox(origin, dir, box) {
         if (t1 > t2) { const s = t1; t1 = t2; t2 = s; n1 = 1; n2 = -1; }
         if (t1 > tNear) { tNear = t1; normX = 0; normY = n1; normZ = 0; }
         if (t2 < tFar) tFar = t2;
-        if (tNear > tFar || tFar < 0.001) return null;
+        if (tNear > tFar || tFar < 0.001) return false;
     } else if (origin.y < box.minY || origin.y > box.maxY) {
-        return null;
+        return false;
     }
 
     // Z
@@ -95,29 +100,88 @@ function intersectBox(origin, dir, box) {
         if (t1 > t2) { const s = t1; t1 = t2; t2 = s; n1 = 1; n2 = -1; }
         if (t1 > tNear) { tNear = t1; normX = 0; normY = 0; normZ = n1; }
         if (t2 < tFar) tFar = t2;
-        if (tNear > tFar || tFar < 0.001) return null;
+        if (tNear > tFar || tFar < 0.001) return false;
     } else if (origin.z < box.minZ || origin.z > box.maxZ) {
-        return null;
+        return false;
     }
 
-    if (tNear < 0.001) return null; // Ne bloque pas si le rayon démarre à l'intérieur
+    if (tNear < 0.001) return false; // Ne bloque pas si le rayon démarre à l'intérieur
 
     // Si c'est un pilier et que l'intersection se fait sur une face latérale (normX !== 0)
     // alors que le rayon se propage principalement selon l'axe longitudinal Z :
     // le rayon passe à côté du pilier et ne doit pas s'accrocher sur l'épaisseur du flanc.
     if (box.isPillar && normX !== 0 && Math.abs(dir.z) > Math.abs(dir.x) * 0.4) {
-        return null;
+        return false;
     }
 
-    return { t: tNear, nx: normX, ny: normY, nz: normZ };
+    _boxHit.t = tNear;
+    _boxHit.nx = normX;
+    _boxHit.ny = normY;
+    _boxHit.nz = normZ;
+    return true;
 }
-const OPEN_AIR_MAX_DISTANCE = 500;
+
+// ── Pré-filtrage des obstacles par laser (calculé 1 fois par frame et par laser) ──
+// Liste active des obstacles potentiellement touchés par l'éventail courant.
+let _activeObstacles = null;      // Int32Array | null (null = tous les obstacles)
+let _activeObstacleCount = 0;
+
+/**
+ * Détermine quels obstacles de la scène peuvent être touchés par un éventail laser
+ * plan (rayons issus de `origin`, contenus dans le plan de normale `planeNormal`,
+ * orientés vers l'avant `forward`). Test conservatif : on ne rejette une boîte que si
+ * elle est entièrement d'un côté du plan (au-delà de `slab`) ou entièrement derrière.
+ * @param {Int32Array} out Tableau de sortie (taille >= nombre d'obstacles)
+ * @returns {number} nombre d'obstacles retenus
+ */
+export function collectFanObstacles(origin, planeNormal, forward, slab, out) {
+    let count = 0;
+    const nx = planeNormal.x, ny = planeNormal.y, nz = planeNormal.z;
+    const fx = forward.x, fy = forward.y, fz = forward.z;
+    for (let i = 0; i < STAGE_OBSTACLES.length; i++) {
+        const b = STAGE_OBSTACLES[i];
+        let minD = Infinity, maxD = -Infinity, maxF = -Infinity;
+        for (let c = 0; c < 8; c++) {
+            const x = ((c & 1) ? b.maxX : b.minX) - origin.x;
+            const y = ((c & 2) ? b.maxY : b.minY) - origin.y;
+            const z = ((c & 4) ? b.maxZ : b.minZ) - origin.z;
+            const d = x * nx + y * ny + z * nz;
+            if (d < minD) minD = d;
+            if (d > maxD) maxD = d;
+            const f = x * fx + y * fy + z * fz;
+            if (f > maxF) maxF = f;
+        }
+        if (minD > slab || maxD < -slab) continue; // boîte entièrement hors du plan
+        if (maxF < 0) continue;                     // boîte entièrement derrière le laser
+        out[count++] = i;
+    }
+    return count;
+}
+
+/**
+ * Restreint les tests d'obstacles de getSceneHit() à une liste (null = tous).
+ */
+export function setActiveObstacles(list, count) {
+    _activeObstacles = list;
+    _activeObstacleCount = count;
+}
+const OPEN_AIR_MAX_DISTANCE = LASER_MAX_RANGE;
 
 let _playerCollider = null;
 const _playerHit = { t: Infinity, nx: 0, ny: 0, nz: 0 };
 
+export const STAGE_OBSTACLE_COUNT = STAGE_OBSTACLES.length;
+
 export function registerPlayerCollider(collider) {
     _playerCollider = collider;
+}
+
+/**
+ * true si au moins un joueur (local ou distant) peut intercepter les lasers cette frame
+ */
+export function hasActivePlayers() {
+    return Boolean(_playerCollider && _playerCollider.enabled !== false &&
+        _playerCollider._activeColliders && _playerCollider._activeColliders.length > 0);
 }
 
 /**
@@ -147,13 +211,16 @@ export function getSceneHit(origin, dir) {
     let hitsSurface = false; // true = surface physique réelle
 
     // 1. Test des obstacles physiques réels de la scène (plateforme, régie DJ, piliers, subs, line arrays)
-    for (let i = 0; i < STAGE_OBSTACLES.length; i++) {
-        const hit = intersectBox(origin, dir, STAGE_OBSTACLES[i]);
-        if (hit && hit.t < tMin) {
-            tMin = hit.t;
-            nx = hit.nx;
-            ny = hit.ny;
-            nz = hit.nz;
+    //    Restreint aux obstacles pré-filtrés pour l'éventail courant si une liste est active.
+    const list = _activeObstacles;
+    const nObs = list ? _activeObstacleCount : STAGE_OBSTACLES.length;
+    for (let k = 0; k < nObs; k++) {
+        const box = STAGE_OBSTACLES[list ? list[k] : k];
+        if (intersectBox(origin, dir, box) && _boxHit.t < tMin) {
+            tMin = _boxHit.t;
+            nx = _boxHit.nx;
+            ny = _boxHit.ny;
+            nz = _boxHit.nz;
             hitsSurface = true;
         }
     }

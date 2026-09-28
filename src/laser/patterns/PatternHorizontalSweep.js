@@ -151,6 +151,15 @@ export class PatternHorizontalSweep extends PatternBase {
     }
 
     /**
+     * Normale du plan de l'éventail et direction centrale (espace monde) pour la frame courante.
+     * Pour le motif 'Horizontal', tous les rayons sont exactement contenus dans ce plan.
+     */
+    getFanFrame(outNormal, outForward) {
+        outNormal.set(0, 1, 0).applyQuaternion(this._rotQuat);
+        outForward.set(0, 0, 1).applyQuaternion(this._rotQuat);
+    }
+
+    /**
      * Calcule tous les faisceaux du pod pour la frame courante selon le modèle de visée laser.
      * @param {THREE.Vector3} podOrigin
      * @param {object|number} animTimes Horloges de balayage { pitch, yaw, roll }
@@ -210,6 +219,11 @@ export class PatternHorizontalSweep extends PatternBase {
         const a1 = centerAngle - halfSpread;
         const a2 = centerAngle + halfSpread;
         const invNm1 = nBeams > 1 ? 1.0 / (nBeams - 1) : 0;
+
+        // Pool de faisceaux extensible (centaines de traits par émetteur)
+        while (this._beamPool.length < nBeams) {
+            this._beamPool.push({ dir: new THREE.Vector3(), angleDeg: 0 });
+        }
 
         for (let i = 0; i < nBeams; i++) {
             const b = this._beamPool[i];

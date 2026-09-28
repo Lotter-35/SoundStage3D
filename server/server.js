@@ -234,9 +234,9 @@ function defaultLightingState() {
         env: {
             presetKey: 'day',
             stageBoost: 1.0,
-            stars: false,
+            stars: true, // visibles automatiquement dans les ambiances de nuit (hasStars)
             starSize: 0.5,
-            starCount: 6000,
+            starCount: 12000,
             starBrightness: 3.0,
         },
         gi: {
