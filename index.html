@@ -4,7 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Festival Sound System Simulator</title>
-    <link rel="stylesheet" href="style.css?v=56">
+    <link rel="icon" href="data:,">
+    <link rel="stylesheet" href="style.css?v=57">
     <script type="importmap">
     {
         "imports": {
@@ -94,7 +95,6 @@
         </div>
         <!-- Level meters (top-left, inside HUD so only visible in-game) -->
         <div id="meters">
-            <div id="position-display">X: 0 &nbsp; Y: 1.7 &nbsp; Z: 50</div>
             <div id="meters-tracks">
             <div class="meter" id="meter-sub">
                 <div class="meter-label">SUB</div>
@@ -125,8 +125,6 @@
         </div>
     </div>
 
-    <!-- ─── Tooltip container for DSP parameters ─── -->
-    <div id="dsp-tooltip"></div>
 
     <!-- ─── Environnement Panel (en haut à droite) ─── -->
     <div id="env-panel-wrap" class="hidden">
@@ -302,6 +300,6 @@
     <div id="dazzle-overlay"    style="display:none"></div>
     <div id="afterimage-overlay" style="display:none"></div>
 
-    <script type="module" src="src/main.js?v=327"></script>
+    <script type="module" src="src/main.js?v=340"></script>
 </body>
 </html>

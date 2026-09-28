@@ -9,7 +9,6 @@
  */
 import GUI from 'lil-gui';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
-import { DSP_TOOLTIPS } from '../config/dsp-tooltips.js';
 import { makeDraggable } from './draggable.js';
 
 export class DspPanels {
@@ -17,9 +16,6 @@ export class DspPanels {
         this.state = state;
         this.callbacks = callbacks;
         this.guis = {};
-
-        this.tooltipEl = document.getElementById('dsp-tooltip');
-        this._tooltipTimer = null;
 
         this.dspPanels = document.getElementById('dsp-panels');
         this.envPanelWrap = document.getElementById('env-panel-wrap');
@@ -36,41 +32,7 @@ export class DspPanels {
     }
 
     _setupController(ctrl, tooltipKey, defaultValue, isLeftGroup) {
-        // 1. Tooltip
-        const tipText = DSP_TOOLTIPS[tooltipKey];
-        if (tipText && this.tooltipEl) {
-            ctrl.domElement.setAttribute('data-tooltip', tipText);
-            ctrl.domElement.addEventListener('mouseenter', () => {
-                clearTimeout(this._tooltipTimer);
-                this.tooltipEl.textContent = tipText;
-                const rect = ctrl.domElement.getBoundingClientRect();
-                const ttWidth = 280;
-                let top = rect.top + rect.height / 2;
-                let left;
-
-                if (isLeftGroup) {
-                    left = rect.right + 14;
-                    this.tooltipEl.classList.add('arrow-right');
-                } else {
-                    left = rect.left - ttWidth - 14;
-                    this.tooltipEl.classList.remove('arrow-right');
-                }
-
-                this.tooltipEl.classList.add('visible');
-                this.tooltipEl.style.left = Math.max(8, left) + 'px';
-                const ttHeight = this.tooltipEl.offsetHeight || 60;
-                top = Math.max(8, Math.min(window.innerHeight - ttHeight - 8, top - ttHeight / 2));
-                this.tooltipEl.style.top = top + 'px';
-            });
-
-            ctrl.domElement.addEventListener('mouseleave', () => {
-                this._tooltipTimer = setTimeout(() => {
-                    this.tooltipEl.classList.remove('visible');
-                }, 80);
-            });
-        }
-
-        // 2. Individual Reset Button
+        // Individual Reset Button
         if (defaultValue !== undefined) {
             const resetBtn = document.createElement('button');
             resetBtn.type = 'button';

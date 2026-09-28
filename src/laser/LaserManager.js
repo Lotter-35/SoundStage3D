@@ -83,6 +83,7 @@ export const disableBloom = disableLightsBloom;
 export const BLOOM_SCENE_LAYER = BLOOM_LIGHTS_LAYER;
 
 // Paramètres globaux post-traitement avec 2 blooms 100% indépendants
+const AA_STORAGE_KEY = 'soundstage.antialiasing';
 export const globalLaserPostParams = {
     // ── Bloom Laser (Layer 1) ──
     laserBloomEnabled:   true,
@@ -157,6 +158,12 @@ export class LaserManager {
 
         this._initPostProcessing();
         this._useComposer = !!(this._finalComposer && (this._laserBloomComposer || this._lightsBloomComposer));
+
+        // Anti-crénelage : réglage local du joueur (MSAA 4x par défaut)
+        try {
+            const savedAA = localStorage.getItem(AA_STORAGE_KEY);
+            if (savedAA) this.setAntialiasing(savedAA);
+        } catch (_) {}
 
         // Préalloué pour éviter new THREE.Color() à chaque frame dans render()
         this._origClearColor = new THREE.Color();
@@ -409,6 +416,22 @@ export class LaserManager {
         const laserShow = new LaserShow(this.scene, position.clone(), paramOverrides);
         laserShow.laserId = id;
         this._lasers.set(id, laserShow);
+
+        // Warm-up / Précompilation des shaders et géométries sur le GPU pour éviter tout gel d'animation (0 stutter)
+        if (this.renderer && this.camera && typeof this.renderer.compile === 'function') {
+            try {
+                this.renderer.compile(laserShow.group, this.camera);
+                if (laserShow.renderer) {
+                    if (laserShow.renderer.beamsMesh) this.renderer.compile(laserShow.renderer.beamsMesh, this.camera);
+                    if (laserShow.renderer.impactMesh) this.renderer.compile(laserShow.renderer.impactMesh, this.camera);
+                    if (laserShow.renderer.panImpactMesh) this.renderer.compile(laserShow.renderer.panImpactMesh, this.camera);
+                }
+                if (laserShow.pod) {
+                    if (laserShow.pod.fanMesh) this.renderer.compile(laserShow.pod.fanMesh, this.camera);
+                    if (laserShow.pod.glowMesh) this.renderer.compile(laserShow.pod.glowMesh, this.camera);
+                }
+            } catch (_) {}
+        }
 
         // Activer le bloom dès qu'il y a au moins un laser
         this._updateBloomState();
@@ -691,6 +714,7 @@ export class LaserManager {
     setAntialiasing(mode) {
         if (!mode) return;
         globalLaserPostParams.antialiasing = mode;
+        try { localStorage.setItem(AA_STORAGE_KEY, mode); } catch (_) {}
 
         let samples = 0;
         let enableFxaa = false;

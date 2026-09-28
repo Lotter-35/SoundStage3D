@@ -11,8 +11,9 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-import { getGroundHeight } from './collision.js';
+import { getGroundHeight } from './collision.js?v=155';
 import { DanceManager } from './DanceManager.js';
+import { tintAvatarMaterial } from './avatarTint.js?v=3';
 
 const MODEL_PATH = 'src/assets/models/Ybot.fbx';
 
@@ -304,15 +305,9 @@ export class Character3D {
     setColor(hex) {
         this._colorHex = hex;
         if (!this.model) return;
-        const tint = new THREE.Color(hex);
         this.model.traverse((node) => {
             if (node.isMesh && node.material) {
-                const applyTint = (mat) => {
-                    const m = mat.clone();
-                    m.color.multiply(tint);
-                    m.roughness = 0.8;
-                    return m;
-                };
+                const applyTint = (mat) => tintAvatarMaterial(mat, hex);
                 node.material = Array.isArray(node.material)
                     ? node.material.map(applyTint)
                     : applyTint(node.material);
@@ -675,7 +670,7 @@ export class Character3D {
      */
     update(dt, horizontalVelocity, jumpInput = false, isMoving = false) {
         // ── 1. Physique verticale (Saut & Gravité ou Vol) ───────────
-        const floorY = getGroundHeight(this.position.x, this.position.z);
+        const floorY = getGroundHeight(this.position.x, this.position.z, this.position.y);
 
         if (this.isFlying) {
             // En mode vol, pas de gravité terrestre ; la hauteur y est gérée par les contrôles
@@ -703,13 +698,15 @@ export class Character3D {
             } else {
                 // Au sol : si le relief monte sous les pieds (ex: marches/rampe d'escalier), on monte
                 if (this.position.y < floorY) {
-                    this.position.y = floorY;
+                    // Montée de marche lissée (~4 m/s) pour éviter le saut brusque de la caméra
+                    this.position.y = Math.min(floorY, this.position.y + Math.max(dt, 0.001) * 4.0);
                 } else if (this.position.y > floorY + 0.35) {
                     // Si on a marché dans le vide (chute du bord de scène), on commence à tomber avec gravité
                     this.onGround = false;
                     this.verticalVelocity = 0;
                 } else {
-                    this.position.y = floorY;
+                    // Descente de marche lissée (comme la montée)
+                    this.position.y = Math.max(floorY, this.position.y - Math.max(dt, 0.001) * 4.0);
                 }
             }
         }

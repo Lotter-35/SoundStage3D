@@ -3,9 +3,9 @@
  */
 import * as THREE from 'three';
 
-import { createStage } from './scene/stage.js?v=186';
-import { Listener } from './scene/listener.js?v=155';
-import { createHitboxVisualizer } from './scene/collision.js?v=154';
+import { createStage } from './scene/stage.js?v=188';
+import { Listener } from './scene/listener.js?v=160';
+import { createHitboxVisualizer } from './scene/collision.js?v=155';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
 
@@ -18,23 +18,23 @@ import { InputStage } from './audio/inputStage.js';
 import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
-import { Controls } from './ui/controls.js?v=159';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=297';
+import { Controls } from './ui/controls.js?v=160';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=302';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=155';
-import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=1';
-import { LightingSync } from './multiplayer/LightingSync.js?v=9';
+import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=4';
+import { LightingSync } from './multiplayer/LightingSync.js?v=10';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=184';
-import { LaserManager } from './laser/LaserManager.js?v=304';
+import { LaserManager } from './laser/LaserManager.js?v=306';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
-import { StrobeManager } from './strobe/StrobeManager.js?v=12';
+import { StrobeManager } from './strobe/StrobeManager.js?v=13';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -123,6 +123,13 @@ ambiancePanel.setStrobeManager(strobeManager);
 
 // Stroboscope de base présent dès le spawn (fixé sur le pont scénique au-dessus de la scène)
 strobeManager.addStrobe(new THREE.Vector3(0, 6.5, -4.2), { angle: 0, tilt: 0, roll: 0 });
+
+// ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
+if (renderer && typeof renderer.compile === 'function') {
+    try {
+        renderer.compile(scene, camera);
+    } catch (_) {}
+}
 
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
@@ -653,7 +660,7 @@ try {
         playerLaserCollider.setPlayerAvatars(playerAvatars);
     }
 
-    // Apply synchronized random player color to local character
+    // Couleur attribuée par le serveur : la même pour le joueur local et pour les avatars vus par les autres
     if (mp.color && listener?._character3D) {
         listener._character3D.setColor(mp.color);
     }
@@ -1265,10 +1272,41 @@ try {
 
 } catch (err) {
     console.warn('[MP] Multiplayer server unavailable — running in offline mode.', err.message || err);
-    // Hide invite button in offline mode
-    if (controls.inviteBtn) controls.inviteBtn.classList.add('hidden');
     if (controls.mpStatusEl) controls.mpStatusEl.classList.add('hidden');
+
+    // Mode solo : couleur aléatoire au chargement
+    const SOLO_COLORS = ['#00d2ff', '#ff3d00', '#a855f7', '#22c55e', '#eab308', '#ec4899', '#3b82f6', '#f97316', '#06b6d4', '#10b981', '#d946ef', '#84cc16'];
+    listener?._character3D?.setColor(SOLO_COLORS[Math.floor(Math.random() * SOLO_COLORS.length)]);
+
+    // Mode solo : "Inviter" tente de joindre le serveur ; s'il répond, on recharge la page
+    // (une salle est alors créée automatiquement) et le lien d'invitation est proposé.
+    controls.onInvite(async () => {
+        const reachable = await new Promise((resolve) => {
+            let done = false;
+            const finish = (ok) => { if (!done) { done = true; resolve(ok); } };
+            try {
+                const probe = new WebSocket(`${mpProto}://${mpHost}:${mpPort}`);
+                probe.onopen = () => { probe.close(); finish(true); };
+                probe.onerror = () => finish(false);
+                setTimeout(() => { try { probe.close(); } catch (_) {} finish(false); }, 2500);
+            } catch (_) { finish(false); }
+        });
+        if (reachable) {
+            try { sessionStorage.setItem('ss-invite-after-reload', '1'); } catch (_) {}
+            window.location.reload();
+        } else {
+            alert('Serveur multijoueur indisponible : vous restez en mode solo. Relancez le serveur puis cliquez de nouveau sur Inviter.');
+        }
+    });
 }
+
+// Après la création automatique de la salle (suite à un clic sur Inviter en solo)
+try {
+    if (_mpReady && sessionStorage.getItem('ss-invite-after-reload')) {
+        sessionStorage.removeItem('ss-invite-after-reload');
+        setTimeout(() => prompt('Salle créée ! Copiez ce lien pour inviter :', mp.getInviteUrl()), 500);
+    }
+} catch (_) {}
 
 // Charger les playlists sauvegardées depuis le serveur dès le chargement de la page
 async function loadServerPlaylists() {

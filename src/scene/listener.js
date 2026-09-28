@@ -13,8 +13,8 @@
  */
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { Character3D } from './character3D.js';
-import { resolveCollision } from './collision.js';
+import { Character3D } from './character3D.js?v=6';
+import { resolveCollision } from './collision.js?v=155';
 import { EmoteMenu } from '../ui/EmoteMenu.js';
 import { DanceManager } from './DanceManager.js';
 
@@ -25,9 +25,10 @@ const VERTICAL_SPEED = 15;  // m/s — vitesse verticale en vol libre
 const PLAYER_HEIGHT  = 1.7; // hauteur d'écoute et des yeux en mètres
 
 const BOUNDS = {
-    minX: -100, maxX: 100,
-    minY: 0,    maxY: 40,
-    minZ: -50,  maxZ: 200,
+    // Limites = bords réels du sol (plan de 400 × 400 m) : pas de mur invisible avant le bord de la carte
+    minX: -199, maxX: 199,
+    minY: 0,    maxY: 300,
+    minZ: -199, maxZ: 199,
 };
 
 // Position de référence de la régie FOH

@@ -304,6 +304,8 @@ export class LightingSync {
         if (!data || !this.laserManager) return;
 
         for (const [key, val] of Object.entries(data)) {
+            // L'anti-crénelage est un réglage local (par machine), jamais imposé par le serveur
+            if (key === 'antialiasing') continue;
             this.laserManager.setPostProcessingParam(key, val);
         }
 

@@ -20,6 +20,10 @@ import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
 
+// Réglages propres à chaque machine : jamais synchronisés via le serveur
+const LOCAL_ONLY_POST_KEYS = new Set(['antialiasing']);
+const LOCAL_ONLY_LIGHT_KEYS = new Set(['shadowMapSize', 'mapSize']);
+
 
 
 export class AmbiancePanel {
@@ -1009,17 +1013,22 @@ export class AmbiancePanel {
 
             if (light.isAmbientLight || name.includes('Générale')) {
                 light.color.set(preset.ambient.color);
-                light.intensity = preset.ambient.intensity;
-                light.visible = (preset.ambient.enabled !== false) && (preset.ambient.intensity > 0.0001);
+                // Toujours visible (intensité ~0 si désactivée) : changer le nombre de lumières visibles
+                // force Three.js à recompiler tous les shaders (gros freeze au premier changement d'ambiance)
+                light.intensity = (preset.ambient.enabled !== false) ? Math.max(0.0001, preset.ambient.intensity) : 0.0001;
+                light.visible = true;
             } else if (light.isHemisphereLight || name.includes('Ciel')) {
                 light.color.set(preset.hemi.skyColor);
                 if (light.groundColor) light.groundColor.set(preset.hemi.groundColor);
-                light.intensity = preset.hemi.intensity;
-                light.visible = (preset.hemi.enabled !== false) && (preset.hemi.intensity > 0.0001);
+                light.intensity = (preset.hemi.enabled !== false) ? Math.max(0.0001, preset.hemi.intensity) : 0.0001;
+                light.visible = true; // voir remarque ci-dessus : jamais de changement du nombre de lumières
             } else if (light.isDirectionalLight || name.includes('Soleil')) {
                 light.color.set(preset.dir.color);
-                light.intensity = preset.dir.intensity;
-                light.visible = (preset.dir.enabled !== false) && (preset.dir.intensity > 0.0001);
+                // Laisser le soleil toujours visible et castShadow=true avec une intensité minimale non-nulle pour éviter toute recompilation de shaders PBR
+                const targetIntensity = (preset.dir.enabled !== false) ? preset.dir.intensity : 0.0001;
+                light.intensity = Math.max(0.0001, targetIntensity);
+                light.visible = true;
+                // Ne JAMAIS détruire/réallouer la shadow map 4096 si la taille est déjà identique ou non redéfinie (évite un freeze GPU de 300ms)
                 if (preset.dir.shadowMapSize && light.shadow && light.shadow.mapSize) {
                     const sz = preset.dir.shadowMapSize;
                     if (light.shadow.mapSize.width !== sz) {
@@ -1060,11 +1069,8 @@ export class AmbiancePanel {
             }
         });
 
-        // Rafraîchir les valeurs des sliders et contrôleurs de l'inspecteur
+        // Rafraîchir directement les valeurs des sliders et contrôleurs de l'inspecteur sans détruire tout le DOM GUI
         this._syncInspectorDisplays();
-        if (this.selectedEntry) {
-            this._rebuildInspectorGui();
-        }
     }
 
     _syncInspectorDisplays() {
@@ -1836,8 +1842,10 @@ export class AmbiancePanel {
             case 'PointLight':
                 light = new THREE.PointLight(color, intensity, this.creationParams.distance);
                 light.position.copy(spawnPos);
-                light.castShadow = true;
+                // Ombres désactivées par défaut sur les nouvelles lampes ponctuelles pour préserver les perfs (activable en 1 clic dans l'inspecteur)
+                light.castShadow = false;
                 light.shadow.bias = -0.0001;
+                light.shadow.mapSize.set(1024, 1024);
                 break;
 
             case 'SpotLight':
@@ -1846,7 +1854,9 @@ export class AmbiancePanel {
                 light.distance = this.creationParams.distance || 30.0;
                 light.angle = THREE.MathUtils.degToRad(this.creationParams.angle || 35);
                 light.penumbra = this.creationParams.penumbra || 0.4;
-                light.castShadow = true;
+                // Ombres désactivées par défaut (évite d'allouer une shadow map 2K/4K superflue, activable dans l'inspecteur)
+                light.castShadow = false;
+                light.shadow.mapSize.set(1024, 1024);
                 // Viser en avant et vers le sol pour créer un faisceau visible naturel
                 const forwardDir = new THREE.Vector3(0, 0, -1);
                 if (this.camera) this.camera.getWorldDirection(forwardDir);
@@ -1859,7 +1869,8 @@ export class AmbiancePanel {
             case 'DirectionalLight':
                 light = new THREE.DirectionalLight(color, intensity);
                 light.position.copy(spawnPos);
-                light.castShadow = true;
+                light.castShadow = false;
+                light.shadow.mapSize.set(2048, 2048);
                 this.scene.add(light.target);
                 break;
 
@@ -1888,7 +1899,6 @@ export class AmbiancePanel {
                     strobeSpawnPos.y = Math.max(3.0, strobeSpawnPos.y);
                     const { id, strobe } = this.strobeManager.addStrobe(strobeSpawnPos);
                     this.selectStrobe(strobe);
-                    this._buildGui();
                     this._logSceneProbe('⚡ Stroboscope');
                     return null;
                 }
@@ -1905,7 +1915,6 @@ export class AmbiancePanel {
                     laserSpawnPos.y = Math.max(12.0, laserSpawnPos.y);
                     const { id, laserShow } = this.laserManager.addLaser(laserSpawnPos);
                     this.selectLaser(laserShow);
-                    this._buildGui();
                     this._emitSync({
                         category: 'laser_add',
                         data: {
@@ -1927,6 +1936,13 @@ export class AmbiancePanel {
         this.scene.add(light);
         const entry = this.registerLight(light, false);
         this.selectLight(entry);
+
+        // Warm-up GPU pour compiler les matériaux sans freeze au runtime
+        if (this.renderer && this.camera && typeof this.renderer.compile === 'function') {
+            try {
+                if (entry.markerMesh) this.renderer.compile(entry.markerMesh, this.camera);
+            } catch (_) {}
+        }
 
         // Reconstruire le GUI pour mettre à jour la liste
         this._buildGui();
@@ -2614,7 +2630,6 @@ export class AmbiancePanel {
         newLaser.isPaused = laser.isPaused;
 
         this.selectLaser(newLaser);
-        this._buildGui();
         const housingRot = dstHousing ? {
             angle: Math.round(THREE.MathUtils.radToDeg(dstHousing.rotation.y)),
             tilt: Math.round(THREE.MathUtils.radToDeg(-dstHousing.rotation.x)),
@@ -3084,13 +3099,22 @@ export class AmbiancePanel {
 
         // Bouton soumettre
         const submitBtn = overlay.querySelector('#ambiance-import-submit-btn');
-        submitBtn.addEventListener('click', () => {
+        submitBtn.addEventListener('click', async () => {
             const code = this.importTextarea.value.trim();
             if (!code) {
                 this.importStatusEl.textContent = '⚠️ Veuillez coller ou charger du JSON ou du code JS valide d\'abord.';
                 return;
             }
-            this.importLightingFromJson(code);
+            submitBtn.disabled = true;
+            submitBtn.style.opacity = '0.6';
+            submitBtn.textContent = '⏳ Création en cours...';
+            try {
+                await this.importLightingFromJson(code);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.style.opacity = '1';
+                submitBtn.textContent = '✨ Créer dans la scène';
+            }
         });
     }
 
@@ -3118,7 +3142,7 @@ export class AmbiancePanel {
         }
     }
 
-    importLightingFromJson(input) {
+    async importLightingFromJson(input) {
         let parsed = null;
         let isJsCode = false;
 
@@ -3139,6 +3163,8 @@ export class AmbiancePanel {
         let createdLightsCount = 0;
         let lastCreatedLaser = null;
         let lastCreatedStrobe = null;
+
+        const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
 
         if (isJsCode) {
             try {
@@ -3200,7 +3226,7 @@ export class AmbiancePanel {
                         const res = this.strobeManager.addStrobe(vec, params || {});
                         if (res && res.strobe) {
                             if (params && (params.angle !== undefined || params.tilt !== undefined || params.roll !== undefined)) {
-                                res.strobe.setRotation(params.angle || 0, params.tilt !== undefined ? params.tilt : -15, params.roll || 0);
+                                res.strobe.setRotation(params.angle || 0, params.tilt !== undefined ? params.tilt : 0, params.roll || 0);
                             }
                             createdStrobesCount++;
                             lastCreatedStrobe = res.strobe;
@@ -3267,9 +3293,19 @@ export class AmbiancePanel {
                 }
             }
 
-            // 1. Création des lasers
+            const totalQueue = lasersToCreate.length + strobesToCreate.length + lightsToCreate.length;
+            let processed = 0;
+
+            const updateProgress = () => {
+                if (this.importStatusEl && totalQueue > 1) {
+                    this.importStatusEl.innerHTML = `<span>⏳ Création fluide en cours... (${processed}/${totalQueue})</span>`;
+                }
+            };
+
+            // 1. Création des lasers (time-sliced par paquets de 2 par frame pour 0 freeze)
             if (this.laserManager && lasersToCreate.length > 0) {
-                lasersToCreate.forEach(ld => {
+                for (let i = 0; i < lasersToCreate.length; i++) {
+                    const ld = lasersToCreate[i];
                     const px = ld.position?.x ?? 0;
                     const py = ld.position?.y ?? 12;
                     const pz = ld.position?.z ?? -4;
@@ -3296,12 +3332,19 @@ export class AmbiancePanel {
                             }
                         });
                     }
-                });
+
+                    processed++;
+                    updateProgress();
+                    if ((i + 1) % 2 === 0 && (i + 1) < lasersToCreate.length) {
+                        await nextFrame();
+                    }
+                }
             }
 
-            // 2. Création des stroboscopes
+            // 2. Création des stroboscopes (time-sliced par paquets de 2 par frame)
             if (this.strobeManager && strobesToCreate.length > 0) {
-                strobesToCreate.forEach(sd => {
+                for (let i = 0; i < strobesToCreate.length; i++) {
+                    const sd = strobesToCreate[i];
                     const px = sd.position?.x ?? 0;
                     const py = sd.position?.y ?? 8;
                     const pz = sd.position?.z ?? -5;
@@ -3312,21 +3355,33 @@ export class AmbiancePanel {
                     if (res && res.strobe) {
                         const rot = sd.rotation || {};
                         const angle = rot.angle !== undefined ? rot.angle : (params.angle !== undefined ? params.angle : 0);
-                        const tilt  = rot.tilt  !== undefined ? rot.tilt  : (params.tilt  !== undefined ? params.tilt  : -15);
+                        const tilt  = rot.tilt  !== undefined ? rot.tilt  : (params.tilt  !== undefined ? params.tilt  : 0);
                         const roll  = rot.roll  !== undefined ? rot.roll  : (params.roll  !== undefined ? params.roll  : 0);
                         res.strobe.setRotation(angle, tilt, roll);
                         lastCreatedStrobe = res.strobe;
                         createdStrobesCount++;
                     }
-                });
+
+                    processed++;
+                    updateProgress();
+                    if ((i + 1) % 2 === 0 && (i + 1) < strobesToCreate.length) {
+                        await nextFrame();
+                    }
+                }
             }
 
             // 3. Création des lumières classiques Three.js
             if (lightsToCreate.length > 0) {
-                lightsToCreate.forEach(lightData => {
+                for (let i = 0; i < lightsToCreate.length; i++) {
+                    const lightData = lightsToCreate[i];
                     const created = this._createLightFromExportData(lightData);
                     if (created) createdLightsCount++;
-                });
+                    processed++;
+                    updateProgress();
+                    if ((i + 1) % 3 === 0 && (i + 1) < lightsToCreate.length) {
+                        await nextFrame();
+                    }
+                }
             }
         }
 
@@ -3339,7 +3394,7 @@ export class AmbiancePanel {
             return { success: false, totalCreated: 0 };
         }
 
-        // Reconstruire l'inspecteur pour voir tous les nouveaux éléments
+        // Reconstruire l'inspecteur une seule fois à la fin
         this._buildGui();
 
         // Sélectionner le dernier élément créé
@@ -4360,6 +4415,12 @@ export class AmbiancePanel {
 
     _emitSync(payload) {
         if (this._isRemoteUpdate) return;
+        // Réglages de qualité propres à chaque machine : jamais envoyés au réseau
+        if (payload && payload.data && (payload.category === 'light_add' || payload.category === 'light_update')) {
+            const data = { ...payload.data };
+            for (const k of LOCAL_ONLY_LIGHT_KEYS) delete data[k];
+            payload = { ...payload, data };
+        }
         if (this._syncCallbacks) {
             for (const cb of this._syncCallbacks) {
                 try { cb(payload); } catch (e) { console.error('[AmbiancePanelSync] error:', e); }
@@ -4397,6 +4458,7 @@ export class AmbiancePanel {
 
         // 3. Post-traitement Laser
         if (obj === globalLaserPostParams) {
+            if (LOCAL_ONLY_POST_KEYS.has(prop)) return;
             this._emitSync({
                 category: 'laser_post',
                 data: { [prop]: val }
@@ -4427,6 +4489,7 @@ export class AmbiancePanel {
 
         // 5. Lumière sélectionnée
         if (this.selectedEntry) {
+            if (LOCAL_ONLY_LIGHT_KEYS.has(prop)) return;
             const entry = this.selectedEntry;
             const changes = {};
             if (prop === 'col') {

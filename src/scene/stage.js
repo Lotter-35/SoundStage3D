@@ -5,7 +5,7 @@
  */
 import * as THREE from 'three';
 import { SPEAKER_DEFS } from '../audio/speakers.js';
-import { enableBloom } from '../laser/LaserManager.js';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 
 // Visual config per bus type
 const BUS_VISUAL = {
@@ -197,24 +197,30 @@ export function createStage(scene) {
     djTable.receiveShadow = true;
     djGroup.add(djTable);
 
-    const djDeckMat = new THREE.MeshStandardMaterial({ color: 0x0c0c0c, roughness: 0.4, metalness: 0.7 });
-    const djDeckGeo = new THREE.BoxGeometry(3.2, 0.08, 0.7);
-    const djDecks = new THREE.Mesh(djDeckGeo, djDeckMat);
-    djDecks.position.set(0, 3.0 + 0.95 + 0.04, -5.0);
-    djDecks.castShadow = true;
-    djDecks.receiveShadow = true;
-    djGroup.add(djDecks);
-
-    const djLedMat = new THREE.MeshBasicMaterial({ color: 0x00ffcc });
-    const djLedLeft = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 16), djLedMat);
-    djLedLeft.position.set(-1.0, 3.0 + 0.95 + 0.09, -5.0);
-    enableBloom(djLedLeft);
-    djGroup.add(djLedLeft);
-
-    const djLedRight = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.18, 0.02, 16), djLedMat);
-    djLedRight.position.set(1.0, 3.0 + 0.95 + 0.09, -5.0);
-    enableBloom(djLedRight);
-    djGroup.add(djLedRight);
+    // Modèle 3D : 2 CDJ-3000 + table de mixage DJM-A9 posés sur la table.
+    // Le modèle est en mètres (1.41 x 0.44 m), origine au centre du mixeur, base à y≈0.
+    // Retourné de 180° : câbles et faces arrière côté public (+z), commandes côté DJ.
+    const DJ_GEAR_SCALE = 1.5;
+    const DJ_TABLE_TOP_Y = 3.0 + 0.95;
+    new GLTFLoader().load(
+        'src/assets/models/CDJ_300_DJM_A9.glb',
+        (gltf) => {
+            const gear = gltf.scene;
+            gear.name = 'dj-gear-cdj-djm';
+            gear.scale.setScalar(DJ_GEAR_SCALE);
+            gear.rotation.y = Math.PI;
+            gear.position.set(0, DJ_TABLE_TOP_Y + 0.006, -5.0);
+            gear.traverse((node) => {
+                if (node.isMesh) {
+                    node.castShadow = true;
+                    node.receiveShadow = true;
+                }
+            });
+            djGroup.add(gear);
+        },
+        undefined,
+        (err) => console.warn('[Stage] Chargement du matériel DJ impossible :', err)
+    );
 
     scene.add(djGroup);
 
@@ -328,10 +334,10 @@ export function createStage(scene) {
     ambientLight.name = 'Ambiance Générale';
     scene.add(ambientLight);
 
-    // Hemisphere light for sky/ground color bleed
-    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 0.0);
+    // Hemisphere light for sky/ground color bleed (maintenue active avec intensité minime pour pré-compiler le shader Three.js)
+    const hemiLight = new THREE.HemisphereLight(0x87ceeb, 0x4a7a2a, 0.0001);
     hemiLight.name = 'Ciel / Sol';
-    hemiLight.visible = false;
+    hemiLight.visible = true;
     scene.add(hemiLight);
 
     const dirLight = new THREE.DirectionalLight(0xfff5e0, 3.0);

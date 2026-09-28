@@ -42,6 +42,14 @@ export class StrobeManager {
             params
         });
         this._strobes.set(id, strobe);
+
+        // Warm-up / Précompilation des shaders et géométries sur le GPU
+        if (this.renderer && this.camera && typeof this.renderer.compile === 'function') {
+            try {
+                this.renderer.compile(strobe.group, this.camera);
+            } catch (_) {}
+        }
+
         return { id, strobe };
     }
 

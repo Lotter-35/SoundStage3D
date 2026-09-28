@@ -13,6 +13,7 @@ import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { DanceManager } from '../scene/DanceManager.js';
+import { tintAvatarMaterial } from '../scene/avatarTint.js?v=3';
 
 const MODEL_PATH = 'src/assets/models/Ybot.fbx';
 const MODEL_SCALE = 1.0;
@@ -230,16 +231,9 @@ export class PlayerAvatars {
                 this._colorIdx++;
                 colorHex = AVATAR_COLORS[colorIdx];
             }
-            const tint = new THREE.Color(colorHex);
             model.traverse(node => {
                 if (!node.isMesh) return;
-                const applyTint = mat => {
-                    const m = mat.clone();
-                    // Teinter franchement en multipliant la couleur originale par la teinte choisie
-                    m.color.multiply(tint);
-                    m.roughness = 0.8;
-                    return m;
-                };
+                const applyTint = mat => tintAvatarMaterial(mat, colorHex);
                 node.material = Array.isArray(node.material)
                     ? node.material.map(applyTint)
                     : applyTint(node.material);

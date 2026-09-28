@@ -2461,50 +2461,6 @@ body {
     transform: scale(0.96);
 }
 
-/* ─── DSP Tooltip (position: fixed) ─── */
-#dsp-tooltip {
-    position: fixed;
-    background: rgba(15, 15, 20, 0.96);
-    color: #ddd;
-    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
-    font-size: 0.74rem;
-    font-weight: 400;
-    line-height: 1.5;
-    padding: 10px 14px;
-    border-radius: 6px;
-    border: 1px solid rgba(100, 170, 255, 0.35);
-    width: 280px;
-    white-space: normal;
-    pointer-events: none;
-    opacity: 0;
-    visibility: hidden;
-    transition: opacity 0.15s ease, visibility 0.15s ease;
-    z-index: 9999;
-    box-shadow: 0 8px 28px rgba(0, 0, 0, 0.75);
-}
-
-#dsp-tooltip.visible {
-    opacity: 1;
-    visibility: visible;
-}
-
-#dsp-tooltip::after {
-    content: '';
-    position: absolute;
-    right: -11px;
-    top: 50%;
-    transform: translateY(-50%);
-    border: 6px solid transparent;
-    border-left-color: rgba(15, 15, 20, 0.96);
-}
-
-#dsp-tooltip.arrow-right::after {
-    right: auto;
-    left: -11px;
-    border-left-color: transparent;
-    border-right-color: rgba(15, 15, 20, 0.96);
-}
-
 /* ==================================================================
    EMOTE & DANCE MENU (Fenetre Flottante, Sobre & Redimensionnable)
    ================================================================== */
@@ -3485,3 +3441,7 @@ body.cinematic-mode #debug-container {
     display: none !important;
 }
 
+/* Jauges de niveau (debug) : jamais affichées */
+#meters {
+    display: none !important;
+}

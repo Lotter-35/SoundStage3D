@@ -8,7 +8,7 @@
  * - Preserves 100% backward compatibility with main.js API.
  */
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
-import { DspPanels } from './DspPanels.js';
+import { DspPanels } from './DspPanels.js?v=2';
 import { PlaybackUI } from './PlaybackUI.js';
 import { HudBar } from './HudBar.js';
 
