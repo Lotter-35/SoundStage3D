@@ -19,7 +19,7 @@
  */
 
 import * as THREE from 'three';
-import { BEAM_DIVERGENCE, LASER_MAX_RANGE, LASER_FADE_START } from './config/laserConstants.js';
+import { BEAM_DIVERGENCE, BEAM_START_SCALE, BEAM_NARROW_DIST, BEAM_GROWTH, BEAM_GROWTH_MAX_DIST, LASER_MAX_RANGE, LASER_FADE_START } from './config/laserConstants.js';
 import { SMOKE_NOISE_UVW_SCALE } from './LaserSmokeNoise.js';
 
 // Intensité relative minimale de la nappe PAN au loin (atteinte vers 270 m ; de près rien ne change)
@@ -119,7 +119,8 @@ export function createBeamMaterial(paramsTexture) {
                 // Élargissement physique réaliste du faisceau avec la distance (divergence laser)
                 float currentDist = uv.y * rayDist;
                 vMeterDist = currentDist;
-                float divergenceFactor = 1.0 + (currentDist * 0.008) * uBeamDivergence;
+                float divergenceFactor = mix(${BEAM_START_SCALE.toFixed(3)}, 1.0, smoothstep(0.0, ${BEAM_NARROW_DIST.toFixed(1)}, currentDist))
+                                       * (1.0 + min(currentDist, ${BEAM_GROWTH_MAX_DIST.toFixed(1)}) * ${BEAM_GROWTH.toFixed(4)} * uBeamDivergence);
                 float baseWidth = (0.012 + 0.016 * beamWidth);
                 float width = baseWidth * divergenceFactor;
 
@@ -179,7 +180,7 @@ export function createBeamMaterial(paramsTexture) {
                 float beamCoreWhite = pow(baseAlpha, 4.0) * 0.85 * scatter;
                 float haloWhite     = halo * 0.20 * scatter;
 
-                float totalWhite = clamp(sourceWhite + beamCoreWhite + haloWhite, 0.0, 1.0);
+                float totalWhite = clamp(sourceWhite * baseAlpha + beamCoreWhite + haloWhite, 0.0, 1.0);
 
                 // Couleur hyper-saturée (pré-calculée CPU) traversée par le blanc éclatant
                 vec3 col = mix(vColorPower.rgb, vec3(1.0, 1.0, 1.0), totalWhite);
@@ -189,7 +190,7 @@ export function createBeamMaterial(paramsTexture) {
 
                 float alpha = clamp(baseAlpha * beamDistFalloff
                                   + halo * (0.35 + 0.50 * scatter) * haloDistFalloff
-                                  + sourceWhite * 0.8 * beamDistFalloff, 0.0, 1.0) * uBeamPower * skyFade;
+                                  + sourceWhite * 0.8 * baseAlpha * beamDistFalloff, 0.0, 1.0) * uBeamPower * skyFade;
 
                 gl_FragColor = vec4(col, alpha);
             }
