@@ -193,10 +193,16 @@ class Speaker {
         }
 
         // --- Wiring ---
-        // All speakers: full chain with distance attenuation, air absorption & high-shelf
-        this.distanceGain.connect(this.airAbsorption1);
-        this.airAbsorption1.connect(this.airAbsorption2);
-        this.airAbsorption2.connect(this.highShelf);
+        // Mid/top/fill : atténuation distance → absorption de l'air → high-shelf.
+        // Subs : ces 3 filtres agissent au-dessus de ~500 Hz alors que le bus sub est coupé à ~90 Hz
+        // (effet < 0,01 dB) → non câblés pour économiser 21 biquads. Le point de départ de la chaîne
+        // sub est directement le gain de distance.
+        if (!this._isSub) {
+            this.distanceGain.connect(this.airAbsorption1);
+            this.airAbsorption1.connect(this.airAbsorption2);
+            this.airAbsorption2.connect(this.highShelf);
+        }
+        this._chainTap = this._isSub ? this.distanceGain : this.highShelf;
 
         // Sub speakers: proximity saturation between high-shelf and panner
         if (this._isSub) {
@@ -216,7 +222,7 @@ class Speaker {
             this._proxOffTimer = null;
             this._proxShaper.connect(this._proxWet);
             this._proxWet.connect(this._proxOut);
-            this.highShelf.connect(this._proxDry);
+            this._chainTap.connect(this._proxDry);
             this._proxDry.connect(this._proxOut);
             this._proxOut.connect(this.panner);
         } else {
@@ -251,10 +257,12 @@ class Speaker {
 
         // Air absorption: high-frequency rolloff with distance (24 dB/oct cascaded)
         // MID/FILL have a higher cutoff floor to preserve their useful band (90–2kHz)
-        const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
-        const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
-        this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
-        this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
+        if (!this._isSub) {
+            const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
+            const cutoff = Math.max(cutoffFloor, 18000 - distance * this._airAbsCoeff);
+            this.airAbsorption1.frequency.setTargetAtTime(cutoff, t, smooth);
+            this.airAbsorption2.frequency.setTargetAtTime(cutoff, t, smooth);
+        }
 
         // Sub proximity saturation: smooth cross-fade via GainNodes only
         // NO per-frame curve reallocation (eliminates audio crackles on movement)
@@ -278,14 +286,14 @@ class Speaker {
         if (active) {
             if (this._proxOffTimer) { clearTimeout(this._proxOffTimer); this._proxOffTimer = null; }
             if (!this._proxConnected) {
-                this.highShelf.connect(this._proxShaper);
+                this._chainTap.connect(this._proxShaper);
                 this._proxConnected = true;
             }
         } else if (this._proxConnected && !this._proxOffTimer) {
             this._proxOffTimer = setTimeout(() => {
                 this._proxOffTimer = null;
                 if (this._proxConnected) {
-                    try { this.highShelf.disconnect(this._proxShaper); } catch (_) {}
+                    try { this._chainTap.disconnect(this._proxShaper); } catch (_) {}
                     this._proxConnected = false;
                 }
             }, 1000);
@@ -324,7 +332,7 @@ class Speaker {
      */
     setAirAbsCoeff(coeff) {
         this._airAbsCoeff = coeff;
-        if (this._lastDistance != null) {
+        if (this._lastDistance != null && !this._isSub) {
             const cutoffFloor = (this._isMid || this._isFill) ? 1500 : 500;
             const cutoff = Math.max(cutoffFloor, 18000 - this._lastDistance * this._airAbsCoeff);
             const t = this.ctx.currentTime;
@@ -339,6 +347,7 @@ class Speaker {
      * @param {number} db — 0 = neutral, up to +15 dB for extreme brightness
      */
     setHighShelfGain(db) {
+        if (this._isSub) return; // high-shelf non câblé sur les subs
         this.highShelf.gain.setTargetAtTime(db, this.ctx.currentTime, 0.04);
     }
 
