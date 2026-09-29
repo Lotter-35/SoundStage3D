@@ -77,8 +77,6 @@ export class Character3D {
         this.orbitPitch = 0.15; // légère vue plongeante
         this.cameraDistance = DEFAULT_DISTANCE;
         this.targetDistance = DEFAULT_DISTANCE;
-        this.invertX = false;
-        this.invertY = false;
 
         // Modèle 3D et animations
         this.model = null;
@@ -423,8 +421,8 @@ export class Character3D {
      */
     handleMouseMove(movementX, movementY, sensitivity = 1.0) {
         const factor = 0.002 * sensitivity;
-        const signX = this.invertX ? -1 : 1;
-        const signY = this.invertY ? -1 : 1;
+        const signX = 1;
+        const signY = 1;
         this.orbitYaw -= movementX * factor * signX;
         this.orbitPitch += movementY * factor * signY;
         this.orbitPitch = THREE.MathUtils.clamp(this.orbitPitch, PITCH_MIN, PITCH_MAX);

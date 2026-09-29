@@ -1935,14 +1935,6 @@ clientOptions.bind('mouseSensitivity', (v) => {
     controls.state.user['mouse-sensitivity'] = v;
     listener.setSensitivity(v / 100);
 });
-clientOptions.bind('invertY', (v) => {
-    controls.state.user['invert-y'] = v;
-    listener.setInvertPitch(v);
-});
-clientOptions.bind('invertX', (v) => {
-    controls.state.user['invert-x'] = v;
-    listener.setInvertYaw(v);
-});
 const optionsPanel = new OptionsPanel(document.getElementById('options-btn'));
 window.__SS3D.optionsPanel = optionsPanel;
 
@@ -3009,14 +3001,6 @@ controls.onEnvDsp((param, value) => {
 controls.onUserDsp((param, value) => {
     if (param === 'mouse-sensitivity') {
         listener.setSensitivity(value / 100);
-        return;
-    }
-    if (param === 'invert-y') {
-        listener.setInvertPitch(value);
-        return;
-    }
-    if (param === 'invert-x') {
-        listener.setInvertYaw(value);
         return;
     }
     if (param === 'local-volume') {

@@ -50,8 +50,6 @@ export const CLIENT_OPTIONS_SCHEMA = {
 
     // ── Contrôles ──
     mouseSensitivity: num(60, 0, 200, 1, 'Sensibilité souris (%)', 'input'),
-    invertY:          bool(false, 'Inverser l\'axe vertical', 'input'),
-    invertX:          bool(false, 'Inverser l\'axe horizontal', 'input'),
 };
 
 export function defaultClientOptions() {
