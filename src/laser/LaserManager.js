@@ -307,7 +307,32 @@ class SceneMSAAPass extends Pass {
     }
 }
 
+// Les sources lumineuses des deux blooms sont dessinées en demi-résolution (les petites sources — lentilles,
+// LED — ne scintillent pas), mais toute la chaîne de flou (le plus coûteux) démarre en quart de résolution :
+// chaque niveau de flou y est 2× plus grand à l'écran, donc les poids des niveaux sont décalés d'un cran
+// (applyQuarterBloomWeights) pour garder la même taille de halo.
 const BLOOM_RESOLUTION_SCALE = 0.5;
+
+/**
+ * Poids des 5 niveaux de flou d'un UnrealBloomPass dont la chaîne démarre en quart de résolution, pour retrouver
+ * le halo de la chaîne en demi-résolution : le niveau i (quart) a la taille du niveau i+1 (demi) → il reprend son
+ * poids ; la moitié du niveau le plus fin (demi), qui n'existe plus, est reportée sur le premier (tout reporter
+ * élargit les petits points lumineux) ; le 5e niveau (plus grand qu'avant) est coupé. Les poids dépendent du
+ * « rayon » du bloom (mélange des facteurs dans le shader de three.js).
+ */
+function applyQuarterBloomWeights(pass) {
+    if (!pass || !pass.compositeMaterial) return;
+    const u = pass.compositeMaterial.uniforms;
+    const r = pass.radius;
+    const lerp = (f) => f + r * (1.2 - 2 * f); // lerpBloomFactor de three.js
+    u.bloomFactors.value = [0.8, 0.6, 0.4, 0.2, 0.2];
+    const l08 = lerp(0.8);
+    const t0 = l08 > 0.05 ? (0.5 * lerp(1.0) + l08) / l08 : 1.0;
+    const tints = u.bloomTintColors.value;
+    tints[0].set(t0, t0, t0);
+    for (let i = 1; i < 4; i++) tints[i].set(1, 1, 1);
+    tints[4].set(0, 0, 0);
+}
 
 // Nombre de lumières ponctuelles émises par les lasers : créées dès le départ (éteintes) et
 // jamais retirées → le nombre de lumières de la scène ne change pas quand on pose un laser
@@ -522,6 +547,7 @@ export class LaserManager {
                 globalLaserPostParams.laserBloomThreshold
             );
             this._laserBloomPass.enabled = globalLaserPostParams.laserBloomEnabled;
+            applyQuarterBloomWeights(this._laserBloomPass);
             this._laserBloomComposer.addPass(this._laserBloomPass);
 
             // Aberration chromatique : UNIQUEMENT SUR LE LASER
@@ -577,6 +603,7 @@ export class LaserManager {
                 globalLaserPostParams.lightsBloomThreshold
             );
             this._lightsBloomPass.enabled = globalLaserPostParams.lightsBloomEnabled;
+            applyQuarterBloomWeights(this._lightsBloomPass);
             this._lightsBloomComposer.addPass(this._lightsBloomPass);
 
             // Alias de compatibilité pour DazzleEffect
@@ -1175,7 +1202,10 @@ export class LaserManager {
             case 'laserBloomRadius':
             case 'bloomRadius':
                 globalLaserPostParams.laserBloomRadius = value;
-                if (this._laserBloomPass) this._laserBloomPass.radius = value;
+                if (this._laserBloomPass) {
+                    this._laserBloomPass.radius = value;
+                    applyQuarterBloomWeights(this._laserBloomPass);
+                }
                 break;
             case 'laserBloomThreshold':
             case 'bloomThreshold':
@@ -1201,7 +1231,10 @@ export class LaserManager {
                 if (this._lightsBloomPass) this._lightsBloomPass.strength = value;
                 break;
             case 'lightsBloomRadius':
-                if (this._lightsBloomPass) this._lightsBloomPass.radius = value;
+                if (this._lightsBloomPass) {
+                    this._lightsBloomPass.radius = value;
+                    applyQuarterBloomWeights(this._lightsBloomPass);
+                }
                 break;
             case 'lightsBloomThreshold':
                 if (this._lightsBloomPass) this._lightsBloomPass.threshold = value;
@@ -1323,11 +1356,13 @@ export class LaserManager {
         const bloomH = Math.max(1, Math.round(height * this.renderer.getPixelRatio() * BLOOM_RESOLUTION_SCALE));
         if (this._laserBloomComposer) this._laserBloomComposer.setSize(bloomW, bloomH);
         if (this._lightsBloomComposer) this._lightsBloomComposer.setSize(bloomW, bloomH);
-        if (this._laserBloomPass) this._laserBloomPass.setSize(width, height);
-        if (this._lightsBloomPass) this._lightsBloomPass.setSize(width, height);
         const pixelRatio = this.renderer.getPixelRatio();
         const renderW = Math.max(1, Math.round(width * pixelRatio));
         const renderH = Math.max(1, Math.round(height * pixelRatio));
+        // Chaîne de flou des blooms : premier niveau = moitié de la cible du bloom (UnrealBloomPass divise par 2),
+        // soit le quart de la résolution de l'image
+        if (this._laserBloomPass) this._laserBloomPass.setSize(bloomW, bloomH);
+        if (this._lightsBloomPass) this._lightsBloomPass.setSize(bloomW, bloomH);
         // Le composer final travaille en pixels réels (cible créée à la taille × pixelRatio, pixelRatio interne = 1)
         if (this._finalComposer) this._finalComposer.setSize(renderW, renderH);
         const rt = this._sceneRT;
