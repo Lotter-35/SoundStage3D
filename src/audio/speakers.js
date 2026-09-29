@@ -33,6 +33,12 @@ let PROX_FAR  = DSP_DEFAULTS.sub['prox-far'] ?? 4.0;
 let PROX_NEAR = DSP_DEFAULTS.sub['prox-near'] ?? 2.0;
 let PROX_DRIVE_MAX = DSP_DEFAULTS.sub['prox-drive'] ?? 75;
 
+// Directivité verticale des subs (basses « rasantes ») : plein niveau jusqu'à SUB_ELEV_START
+// d'élévation au-dessus du sub, puis atténuation progressive jusqu'à SUB_ELEV_FLOOR à la verticale.
+const SUB_ELEV_START = 20 * Math.PI / 180;  // rad — en dessous : aucune atténuation
+const SUB_ELEV_END   = 80 * Math.PI / 180;  // rad — atténuation maximale atteinte
+const SUB_ELEV_FLOOR = 0.5;                 // gain à la verticale (≈ -6 dB)
+
 // Generate 7 sub definitions matching the visual sub boxes in stage.js
 const SUB_DEFS = [];
 for (let i = -3; i <= 3; i++) {
@@ -127,6 +133,7 @@ class Speaker {
         this._distanceK = (DSP_DEFAULTS[busKey]?.['dist-k'] ?? 60) / 1000;
         this._airAbsCoeff = DEFAULT_AIR_ABS;
         this._lastDistance = null;
+        this._elevFactor = 1; // atténuation verticale (subs uniquement)
 
         // --- Distance attenuation gain ---
         this.distanceGain = ctx.createGain();
@@ -251,8 +258,15 @@ class Speaker {
         // Subs use longer smoothing to avoid zipper noise on 7 simultaneous sources
         const smooth = this._isSub ? 0.08 : 0.04;
 
+        // Subs : atténuation selon l'élévation de l'auditeur au-dessus du sub (basses rasantes)
+        if (this._isSub) {
+            const elev = dy > 0 ? Math.atan2(dy, Math.sqrt(dx * dx + dz * dz)) : 0;
+            const e = Math.max(0, Math.min(1, (elev - SUB_ELEV_START) / (SUB_ELEV_END - SUB_ELEV_START)));
+            this._elevFactor = 1 - (1 - SUB_ELEV_FLOOR) * (e * e * (3 - 2 * e));
+        }
+
         // Distance attenuation
-        const gain = 1 / (1 + this._distanceK * distance);
+        const gain = this._elevFactor / (1 + this._distanceK * distance);
         this.distanceGain.gain.setTargetAtTime(gain, t, smooth);
 
         // Air absorption: high-frequency rolloff with distance (24 dB/oct cascaded)
@@ -321,7 +335,7 @@ class Speaker {
     setDistanceK(k) {
         this._distanceK = k;
         if (this._lastDistance != null) {
-            const gain = 1 / (1 + this._distanceK * this._lastDistance);
+            const gain = this._elevFactor / (1 + this._distanceK * this._lastDistance);
             this.distanceGain.gain.setTargetAtTime(gain, this.ctx.currentTime, this._isSub ? 0.08 : 0.04);
         }
     }

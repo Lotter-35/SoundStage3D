@@ -392,6 +392,8 @@ export function createStage(scene) {
             });
             const sphere = new THREE.Mesh(sphereGeo, sphereMat);
             sphere.position.copy(origin);
+            // Subs : diffusion rasante (atténués au-dessus, cf. SUB_ELEV_* dans speakers.js) → dôme aplati
+            if (bus === 'sub') sphere.scale.y = 0.4;
             group.add(sphere);
         } else {
             const o = def.orientation;
