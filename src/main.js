@@ -41,7 +41,7 @@ import { SpotManager } from './spot/SpotManager.js?v=3';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
-import { clientOptions } from './ui/ClientOptions.js';
+import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
 import { OptionsPanel } from './ui/OptionsPanel.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
@@ -1926,7 +1926,7 @@ clientOptions.bind('spotBeamQuality', (v) => spotManager.setGlobal('beamQuality'
 clientOptions.bind('spotRealLights', (v) => spotManager.setGlobal('realLights', v));
 clientOptions.bind('spotShadows', (v) => spotManager.setGlobal('lightShadows', v));
 clientOptions.bind('laserRange', (v) => laserManager && laserManager.setPostProcessingParam('laserRange', v));
-clientOptions.bind('laserFanQuality', (v) => laserManager && laserManager.setFanQuality(v === 'Pleine résolution' ? 1.0 : 0.5));
+clientOptions.bind('laserFanQuality', (v) => laserManager && laserManager.setFanQuality(RES_QUALITY[v] || 0.25));
 clientOptions.bind('laserSharedSmoke', (v) => laserManager && laserManager.setSharedSmoke(v));
 clientOptions.bind('grassDistance', (v) => {
     controls.state.user['grass-distance'] = v;

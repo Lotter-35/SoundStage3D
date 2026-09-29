@@ -215,7 +215,7 @@ export class SpotVolumePass extends Pass {
         this.batch = batch;
         this.camera = camera;
         this.needsSwap = true;
-        this.resolutionScale = 0.5;
+        this.resolutionScale = 0.25;
         this._width = 1;
         this._height = 1;
         this.volumeTarget = new THREE.WebGLRenderTarget(1, 1, {

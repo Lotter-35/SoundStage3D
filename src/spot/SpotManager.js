@@ -19,6 +19,7 @@ import { getSpotHousingInstancer } from './SpotHousing.js?v=2';
 import { DmxPatch } from '../dmx/DmxPatch.js';
 import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
 import { SpotEffects } from './console/SpotEffects.js';
+import { RES_QUALITY } from '../ui/ClientOptions.js';
 
 function makeId() {
     return 'spot-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
@@ -196,7 +197,7 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
-        this.volumePass.setResolutionScale(g.beamQuality === 'Pleine résolution' ? 1.0 : 0.5);
+        this.volumePass.setResolutionScale(RES_QUALITY[g.beamQuality] || 0.25);
         this.pool.setShadows(g.lightShadows);
     }
 
