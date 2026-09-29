@@ -43,6 +43,7 @@ import { HazeVolume } from './haze/HazeVolume.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
 import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
+import { LightPoolGate } from './render/lightPoolGate.js';
 import { OptionsPanel } from './ui/OptionsPanel.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
@@ -216,6 +217,14 @@ hazeVolume.ambiancePanel = ambiancePanel;
 ambiancePanel.setHazePanel(new HazePanel({ haze: hazeVolume, ambiancePanel }));
 window.__SS3D.hazeVolume = hazeVolume;
 
+// Pools de lumières masqués quand la scène n'a aucun appareil (variante préparée au chargement, sans gel)
+const lightPoolGate = new LightPoolGate(renderer, scene, camera, () => laserManager._sceneRT || null,
+    () => laserManager.count > 0 || strobeManager.getAllStrobes().length > 0 || spotManager.getAllSpots().length > 0);
+lightPoolGate.addPool(laserManager._laserLights);
+lightPoolGate.addPool([...strobeManager.lightPool.shadowSlots, ...strobeManager.lightPool.plainSlots].map(s => s.light));
+lightPoolGate.addPool(spotManager.pool.slots.map(s => s.light));
+window.__SS3D.lightPoolGate = lightPoolGate;
+
 performance.mark('ss3d:managers');
 await bootStep(0.88, 'Compilation des shaders');
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
@@ -225,6 +234,7 @@ if (renderer && typeof renderer.compile === 'function') {
         // Compilation parallèle sur le GPU quand c'est possible : l'écran de chargement reste fluide.
         if (laserManager && typeof laserManager.warmupShadersAsync === 'function') await laserManager.warmupShadersAsync();
         else renderer.compile(scene, camera);
+        await lightPoolGate.prewarm();
     } catch (_) {}
 }
 
@@ -235,6 +245,7 @@ performance.mark('ss3d:warmup');
 // secondes : la scène tourne déjà derrière l'écran de chargement, qui disparaît dès que le personnage
 // est prêt. La musique arrive ensuite en arrière-plan. La boucle complète (animate) prend le relais à la fin.
 let _bootReadyFrames = -1;
+let _bootPrewarm = null;
 function updateBootScreen() {
     if (_bootFinished) return;
     const character = listener && listener._character3D;
@@ -243,12 +254,14 @@ function updateBootScreen() {
         return;
     }
     // Personnage et modèles chargés : préparer leurs shaders pour les deux modes de rendu
-    // (direct / composer) → aucune compilation en jeu lors d'une bascule
+    // (direct / composer) et pour la scène sans appareil (pools de lumières masqués) → aucune compilation en jeu
     if (_bootReadyFrames < 0) {
         if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
         _bootReadyFrames = 0;
+        _bootPrewarm = lightPoolGate.prewarm().catch(() => {}).then(() => { _bootPrewarm = null; });
         return;
     }
+    if (_bootPrewarm && performance.now() - _bootStart <= 15000) return;
     // Deux images complètes encore derrière l'écran de chargement : passes de post-traitement compilées
     if (++_bootReadyFrames >= 2) {
         _bootFinished = true;
@@ -274,6 +287,7 @@ function earlyFrame() {
         strobeManager.updateAll(dt);
         spotManager.update(dt);
         hazeVolume.update(dt);
+        lightPoolGate.update();
         laserManager.render();
     } catch (e) {
         console.warn('[Boot] Image anticipée :', e);
@@ -3592,6 +3606,9 @@ function renderFrame() {
     // carte d'ombre était projetée depuis la nouvelle position → ombre qui saute / clignote) ;
     // une image sur deux seulement quand rien ne bouge (économie).
     if (dirLight && dirLight.shadow) dirLight.shadow.autoUpdate = _shadowMovedThisFrame || ((_shadowFrame++) & 1) === 0;
+
+    // Pools de lumières inutilisés masqués (aucun appareil de ce type dans la scène)
+    lightPoolGate.update();
 
     // Render via l'EffectComposer (bloom laser, aberration chromatique, FXAA)
     // LaserManager.render() bascule automatiquement sur le composer quand des lasers
