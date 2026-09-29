@@ -3,6 +3,7 @@
  */
 import * as THREE from 'three';
 import './scene/softShadows.js?v=3';
+import './render/skipDarkLights.js'; // lumières éteintes ignorées par le GPU (avant toute compilation de shader)
 
 import { createStage } from './scene/stage.js?v=190';
 import { Listener } from './scene/listener.js?v=160';
