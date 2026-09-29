@@ -121,7 +121,7 @@ export class LightingSync {
         }
 
         // Événements continus nécessitant un throttling (sliders, gizmo)
-        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param') {
+        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global') {
             const idPart = (id !== undefined && id !== null) ? id : 'global';
             const throttleKey = `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
             this._sendThrottled(throttleKey, event);
@@ -221,6 +221,27 @@ export class LightingSync {
 
                 case 'laser_reset_all':
                     this._applyLaserResetAll(id);
+                    break;
+
+                // ── 6. Lyres Spot ──
+                case 'spot_add':
+                    this._applySpotAdd(data);
+                    break;
+
+                case 'spot_update':
+                    this._applySpotUpdate(id, data);
+                    break;
+
+                case 'spot_remove':
+                    this._applySpotRemove(id);
+                    break;
+
+                case 'spot_action':
+                    if (msg.action === 'reset') this._spotManager()?.getSpot(id)?.reset(msg.mode);
+                    break;
+
+                case 'spot_global':
+                    this._applySpotGlobal(data);
                     break;
 
                 // ── 6. Reset Global ──
@@ -691,6 +712,73 @@ export class LightingSync {
         }
     }
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // Lyres Spot
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _spotManager() {
+        return this.ambiancePanel ? this.ambiancePanel.spotManager : null;
+    }
+
+    _spotPanelIsOn(id) {
+        const insp = this.ambiancePanel?._spotInspectorPanel;
+        return Boolean(insp && insp.isOpen && insp.currentSpotId === id);
+    }
+
+    _applySpotAdd(data) {
+        const sm = this._spotManager();
+        if (!sm || !data || !data.id || sm.getSpot(data.id)) return;
+        sm.addSpot(null, data.params || {}, data.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applySpotUpdate(id, data) {
+        const sm = this._spotManager();
+        const spot = sm && sm.getSpot(id);
+        if (!spot || !data) return;
+        // Ne pas écraser une lyre que le joueur local est en train de déplacer au gizmo
+        if (this.ambiancePanel?.isDraggingGizmo && this.ambiancePanel.selectedSpot === spot) return;
+        spot.setParams(data);
+        if (this._spotPanelIsOn(id)) this.ambiancePanel._spotInspectorPanel.syncFromSpot();
+        if (this.ambiancePanel?.selectedSpot === spot && this.ambiancePanel.transformControls) {
+            this.ambiancePanel.transformControls.updateMatrixWorld(true);
+        }
+    }
+
+    _applySpotRemove(id) {
+        const sm = this._spotManager();
+        if (!sm || !id) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedSpot && this.ambiancePanel.selectedSpot.id === id) {
+            this.ambiancePanel.deselectSpot();
+        }
+        sm.removeSpot(id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applySpotGlobal(data) {
+        const sm = this._spotManager();
+        if (!sm || !data) return;
+        for (const [k, v] of Object.entries(data)) sm.setGlobal(k, v);
+        const insp = this.ambiancePanel?._spotInspectorPanel;
+        if (insp && insp.isOpen) insp.syncFromSpot();
+    }
+
+    _applySpotsFullState(spots, globals) {
+        const sm = this._spotManager();
+        if (!sm) return;
+        if (globals) this._applySpotGlobal(globals);
+        if (!spots || typeof spots !== 'object') return;
+        const serverIds = new Set(Object.keys(spots));
+        for (const spot of sm.getAllSpots()) {
+            if (!serverIds.has(spot.id)) this._applySpotRemove(spot.id);
+        }
+        for (const [id, s] of Object.entries(spots)) {
+            if (!s) continue;
+            if (sm.getSpot(id)) this._applySpotUpdate(id, s.params || {});
+            else this._applySpotAdd({ id, params: s.params || {} });
+        }
+    }
+
     // ═════════════════════════════════════════════════════════════════════════
     // Synchronisation de l'état complet à la connexion (ROOM_CREATED / ROOM_JOINED)
     // ═════════════════════════════════════════════════════════════════════════
@@ -773,6 +861,11 @@ export class LightingSync {
                         this._applyLaserAdd({ id: laserId, ...laserData });
                     }
                 }
+            }
+
+            // 6. Lyres Spot
+            if (state.spots || state.spotGlobals) {
+                this._applySpotsFullState(state.spots, state.spotGlobals);
             }
 
             if (this.ambiancePanel) {

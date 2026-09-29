@@ -487,6 +487,26 @@ export class LaserManager {
         }
     }
 
+    /**
+     * Insère une passe juste après le rendu de la scène (avant les blooms) et donne une
+     * DepthTexture aux cibles du composer, pour que la passe puisse lire la profondeur
+     * (faisceaux volumétriques des lyres). La profondeur MSAA est résolue par three.js.
+     * @returns {boolean} false si la chaîne de post-traitement n'existe pas
+     */
+    addScenePass(pass) {
+        const composer = this._finalComposer;
+        if (!composer) return false;
+        for (const rt of [composer.renderTarget1, composer.renderTarget2]) {
+            if (rt.depthTexture) continue;
+            const depth = new THREE.DepthTexture(rt.width, rt.height);
+            depth.type = THREE.FloatType; // profondeur 32 bits (far = 5000 m)
+            rt.depthTexture = depth;
+            rt.dispose();
+        }
+        composer.insertPass(pass, 1);
+        return true;
+    }
+
     /** Ajoute un nouveau laser dans la scène */
     addLaser(position = new THREE.Vector3(0, 12, -4), paramOverrides = {}, customId = null) {
         const id = (customId !== null && customId !== undefined) ? customId : this._nextId++;

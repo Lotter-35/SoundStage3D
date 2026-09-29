@@ -16,6 +16,7 @@ import { makeDraggable } from './draggable.js';
 import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js?v=298';
 import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=200';
 import { StrobeInspectorPanel } from '../strobe/ui/StrobeInspectorPanel.js?v=7';
+import { SpotInspectorPanel } from '../spot/ui/SpotInspectorPanel.js';
 import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
@@ -64,6 +65,9 @@ export class AmbiancePanel {
         this.selectedStrobe = null;
         this.strobeManager = options.strobeManager || null;
         this._strobeInspectorPanel = null;
+        this.selectedSpot = null;
+        this.spotManager = null;
+        this._spotInspectorPanel = null;
         this.lights = []; // [{ id, name, light, type, isBuiltin, markerMesh, helper, defaultConfig }]
         this._nextId = 1;
 
@@ -170,6 +174,19 @@ export class AmbiancePanel {
     }
 
     /**
+     * Injecte le SpotManager (lyres Spot) et initialise son panneau d'inspection.
+     * @param {import('../spot/SpotManager.js').SpotManager} spotManager
+     */
+    setSpotManager(spotManager) {
+        this.spotManager = spotManager;
+        this._spotInspectorPanel = new SpotInspectorPanel({
+            spotManager,
+            ambiancePanel: this
+        });
+        this._buildGui();
+    }
+
+    /**
      * Injecte le système d'Illumination Globale Statique
      * @param {object} staticGI
      */
@@ -212,6 +229,14 @@ export class AmbiancePanel {
                         category: 'light_update',
                         id: entry.id,
                         data: finalData,
+                        immediate: true,
+                    });
+                } else if (this.selectedSpot) {
+                    this.selectedSpot.isBeingDragged = false;
+                    this._emitSync({
+                        category: 'spot_update',
+                        id: this.selectedSpot.id,
+                        data: this.selectedSpot.getPlacement(),
                         immediate: true,
                     });
                 } else if (this.selectedLaser) {
@@ -308,6 +333,19 @@ export class AmbiancePanel {
                         }
                     }
                 });
+                return;
+            }
+
+            // ── Cas 4 : Gizmo attaché à une lyre Spot ──
+            if (this.selectedSpot && this.transformControls.object === this.selectedSpot.group) {
+                if (!this.isDraggingGizmo) return;
+                const spot = this.selectedSpot;
+                spot.isBeingDragged = true;
+                spot.syncFromGizmo();
+                if (this._spotInspectorPanel && this._spotInspectorPanel.isOpen) {
+                    this._spotInspectorPanel.syncFromSpot();
+                }
+                this._emitSync({ category: 'spot_update', id: spot.id, data: spot.getPlacement() });
                 return;
             }
 
@@ -1507,6 +1545,7 @@ export class AmbiancePanel {
 
         this.deselectLaser();
         this.deselectStrobe();
+        this.deselectSpot();
 
         // Si cette lumière est déjà sélectionnée et attachée, ne rien faire
         if (this.selectedEntry === entry && this.transformControls.object === entry.light) {
@@ -1568,6 +1607,7 @@ export class AmbiancePanel {
         this.selectedEntry = null;
         this.deselectLaser();
         this.deselectStrobe();
+        this.deselectSpot();
         this.transformControls.detach();
         this.transformControls.visible = false;
         this.transformControls.enabled = false;
@@ -1595,6 +1635,7 @@ export class AmbiancePanel {
         if (!laser) return;
         this.selectedEntry = null;
         this.deselectStrobe();
+        this.deselectSpot();
         this.selectedLaser = laser;
 
         // Détacher gizmo de toute lumière précédente
@@ -1634,7 +1675,7 @@ export class AmbiancePanel {
      */
     deselectLaser() {
         this.selectedLaser = null;
-        if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedStrobe) {
+        if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedStrobe && !this.selectedSpot) {
             this.transformControls.detach();
             this.transformControls.visible = false;
             this.transformControls.enabled = false;
@@ -1653,6 +1694,7 @@ export class AmbiancePanel {
         if (!strobe) return;
         this.selectedEntry = null;
         this.selectedLaser = null;
+        this.deselectSpot();
         this.selectedStrobe = strobe;
 
         // Détacher gizmo de toute lumière/laser précédent
@@ -1690,7 +1732,7 @@ export class AmbiancePanel {
      */
     deselectStrobe() {
         this.selectedStrobe = null;
-        if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedLaser) {
+        if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedLaser && !this.selectedSpot) {
             this.transformControls.detach();
             this.transformControls.visible = false;
             this.transformControls.enabled = false;
@@ -1699,6 +1741,89 @@ export class AmbiancePanel {
             this._strobeInspectorPanel.close();
         }
         this._rebuildInspectorGui();
+    }
+
+    /**
+     * Sélectionne une lyre Spot et attache le Gizmo à son groupe
+     * @param {import('../spot/SpotFixture.js').SpotFixture} spot
+     */
+    selectSpot(spot) {
+        if (!spot) return;
+        this.selectedEntry = null;
+        this.selectedLaser = null;
+        this.selectedStrobe = null;
+        if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) this._laserInspectorPanel.close();
+        if (this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen) this._strobeInspectorPanel.close();
+        this.selectedSpot = spot;
+
+        this.transformControls.detach();
+        spot.group.updateMatrixWorld(true);
+        this.transformControls.attach(spot.group);
+        this.transformControls.visible = true;
+        this.transformControls.enabled = true;
+        this.transformControls.updateMatrixWorld(true);
+
+        this.lights.forEach(e => {
+            if (e.markerMesh) {
+                const ring = e.markerMesh.children[1];
+                if (ring) {
+                    ring.scale.setScalar(1.0);
+                    ring.material.color.set(0xffffff);
+                    ring.material.opacity = 0.6;
+                }
+            }
+        });
+        this._updateAllHelpersVisibility();
+        this._rebuildInspectorGui();
+
+        if (this._spotInspectorPanel) {
+            this._spotInspectorPanel.openForSpot(spot);
+        }
+    }
+
+    /**
+     * Désélectionne la lyre Spot actuelle et détache le Gizmo
+     */
+    deselectSpot() {
+        if (!this.selectedSpot && !(this._spotInspectorPanel && this._spotInspectorPanel.isOpen)) return;
+        if (this.selectedSpot) this.selectedSpot.isBeingDragged = false;
+        this.selectedSpot = null;
+        if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedLaser && !this.selectedStrobe) {
+            this.transformControls.detach();
+            this.transformControls.visible = false;
+            this.transformControls.enabled = false;
+        }
+        if (this._spotInspectorPanel && this._spotInspectorPanel.isOpen) {
+            this._spotInspectorPanel.close();
+        }
+        this._rebuildInspectorGui();
+    }
+
+    /** Duplique une lyre (réglages identiques, décalée de 0.8 m, nouvelle adresse DMX libre) */
+    duplicateSelectedSpot(spot = this.selectedSpot) {
+        if (!spot || !this.spotManager) return null;
+        const res = this.spotManager.duplicateSpot(spot.id);
+        if (!res) return null;
+        this._emitSync({ category: 'spot_add', data: { id: res.id, params: { ...res.spot.params } } });
+        this.selectSpot(res.spot);
+        return res;
+    }
+
+    deleteSelectedSpot(spot = this.selectedSpot) {
+        if (!spot || !this.spotManager) return;
+        const id = spot.id;
+        if (this.selectedSpot === spot) this.deselectSpot();
+        this.spotManager.removeSpot(id);
+        this._emitSync({ category: 'spot_remove', id });
+        this._rebuildInspectorGui();
+    }
+
+    /** Copie la configuration complète de la lyre (JSON) dans le presse-papiers */
+    exportSelectedSpot(spot = this.selectedSpot) {
+        if (!spot) return;
+        const json = JSON.stringify({ name: `Lyre Spot #${spot.number}`, type: 'SpotFixture', params: spot.params }, null, 2);
+        try { navigator.clipboard.writeText(json); } catch (_) {}
+        console.log('[Lyre Spot] Configuration :', json);
     }
 
     setGizmoVisible(val) {
@@ -1767,7 +1892,8 @@ export class AmbiancePanel {
     handleCanvasClick(event) {
         const isLaserOpen = Boolean(this._laserInspectorPanel && this._laserInspectorPanel.isOpen);
         const isStrobeOpen = Boolean(this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen);
-        if ((!this.isOpen && !isLaserOpen && !isStrobeOpen) || this.isDraggingGizmo) return;
+        const isSpotOpen = Boolean(this._spotInspectorPanel && this._spotInspectorPanel.isOpen);
+        if ((!this.isOpen && !isLaserOpen && !isStrobeOpen && !isSpotOpen) || this.isDraggingGizmo) return;
         // Si un drag de Gizmo vient tout juste de se terminer, ne pas interpréter comme un clic
         if (performance.now() - (this._dragEndTime || 0) < 120) return;
         // Si la souris survole ou manipule une flèche du Gizmo, ignorer la sélection
@@ -1807,6 +1933,18 @@ export class AmbiancePanel {
             }
         }
 
+        // ── Tester les lyres Spot ──
+        if (this.spotManager && this.spotManager.count > 0) {
+            const spotHits = this.raycaster.intersectObjects(this.spotManager.getSpotObjects(), false);
+            if (spotHits.length > 0) {
+                const spot = this.spotManager.getSpotFromObject(spotHits[0].object);
+                if (spot) {
+                    this.selectSpot(spot);
+                    return;
+                }
+            }
+        }
+
         // Tester l'intersection avec tous les repères de lumière
         const markerObjects = [];
         this.lights.forEach(e => {
@@ -1830,6 +1968,7 @@ export class AmbiancePanel {
             // Clic dans le vide 3D : désélectionne la lumière, le laser et le stroboscope
             this.deselectLaser();
             this.deselectStrobe();
+            this.deselectSpot();
             this.deselectLight();
         }
     }
@@ -1911,6 +2050,25 @@ export class AmbiancePanel {
                     const { id, strobe } = this.strobeManager.addStrobe(strobeSpawnPos);
                     this.selectStrobe(strobe);
                     this._logSceneProbe('⚡ Stroboscope');
+                    return null;
+                }
+
+            case '🎯 Lyre Spot':
+                if (!this.spotManager) {
+                    console.warn('[AmbiancePanel] SpotManager non disponible. Appelez setSpotManager() depuis main.js.');
+                    return null;
+                }
+                {
+                    // Posée au sol devant le joueur (y = 0), faisceau vers le ciel légèrement incliné
+                    const spotPos = spawnPos.clone();
+                    spotPos.y = 0.0;
+                    const { id, spot } = this.spotManager.addSpot(spotPos, {
+                        yaw: this.camera ? Math.round(THREE.MathUtils.radToDeg(Math.atan2(
+                            this.camera.position.x - spotPos.x, this.camera.position.z - spotPos.z)) + 180) % 360 - 180 : 0,
+                    });
+                    this._emitSync({ category: 'spot_add', data: { id, params: { ...spot.params } } });
+                    this.selectSpot(spot);
+                    this._logSceneProbe('🎯 Lyre Spot');
                     return null;
                 }
 
@@ -3791,6 +3949,7 @@ export class AmbiancePanel {
             'HemisphereLight',
             'RectAreaLight',
             '⚡ Stroboscope',
+            '🎯 Lyre Spot',
             '🔴 LaserPod',
         ]).name('Type');
 
@@ -3798,7 +3957,7 @@ export class AmbiancePanel {
         const cAddIntensity = fAdd.add(this.creationParams, 'intensity', 0.1, 20.0, 0.1).name('Intensité');
 
         const updateAddInputsVisibility = (type) => {
-            const isCustom = type === '🔴 LaserPod' || type === '⚡ Stroboscope' || (typeof type === 'string' && (type.includes('Laser') || type.includes('Stroboscope')));
+            const isCustom = type === '🔴 LaserPod' || type === '⚡ Stroboscope' || type === '🎯 Lyre Spot' || (typeof type === 'string' && (type.includes('Laser') || type.includes('Stroboscope')));
             if (isCustom) {
                 if (cAddColor.hide) cAddColor.hide();
                 if (cAddColor.domElement) {
@@ -3960,7 +4119,7 @@ export class AmbiancePanel {
 
         // Dropdown de sélection parmi toutes les lumières de la scène (Lumières Three.js + Lasers 3D)
         const lightOptions = {};
-        const isAnythingSelected = Boolean(this.selectedEntry || this.selectedLaser || this.selectedStrobe);
+        const isAnythingSelected = Boolean(this.selectedEntry || this.selectedLaser || this.selectedStrobe || this.selectedSpot);
         if (!isAnythingSelected) {
             lightOptions['— Choisir une lumière —'] = '';
         } else {
@@ -3988,8 +4147,17 @@ export class AmbiancePanel {
             });
         }
 
+        // 4. Lyres Spot
+        if (this.spotManager) {
+            this.spotManager.getAllSpots().forEach(spot => {
+                lightOptions[`🎯 Lyre Spot #${spot.number}`] = `spot_${spot.id}`;
+            });
+        }
+
         let currentSelectedId = '';
-        if (this.selectedEntry) {
+        if (this.selectedSpot) {
+            currentSelectedId = `spot_${this.selectedSpot.id}`;
+        } else if (this.selectedEntry) {
             currentSelectedId = this.selectedEntry.id;
         } else if (this.selectedLaser) {
             currentSelectedId = `laser_${this.selectedLaser.laserId}`;
@@ -4012,6 +4180,11 @@ export class AmbiancePanel {
                 }
                 return;
             }
+            if (typeof id === 'string' && id.startsWith('spot_')) {
+                const spot = this.spotManager ? this.spotManager.getSpot(id.slice(5)) : null;
+                if (spot) this.selectSpot(spot);
+                return;
+            }
             if (typeof id === 'string' && id.startsWith('strobe_')) {
                 const strobeId = parseInt(id.replace('strobe_', ''), 10);
                 const strobe = this.strobeManager ? this.strobeManager.getStrobe(strobeId) : null;
@@ -4027,6 +4200,25 @@ export class AmbiancePanel {
                 this.selectLight(target);
             }
         });
+
+        // ── Cas Lyre Spot sélectionnée dans l'inspecteur ──
+        if (this.selectedSpot) {
+            const spot = this.selectedSpot;
+            this._currentInspectorEntry = null;
+
+            const spotActions = {
+                exportSpot: () => this.exportSelectedSpot(spot),
+                duplicateSpot: () => this.duplicateSelectedSpot(spot),
+                deleteSpot: () => this.deleteSelectedSpot(spot),
+            };
+
+            const fSpotActions = this.fInspector.addFolder(`🎯 Lyre Spot #${spot.number} - Actions`);
+            fSpotActions.open();
+            fSpotActions.add(spotActions, 'exportSpot').name('💾 Exporter');
+            fSpotActions.add(spotActions, 'duplicateSpot').name('📋 Dupliquer');
+            fSpotActions.add(spotActions, 'deleteSpot').name('🗑️ Supprimer');
+            return;
+        }
 
         // ── Cas Stroboscope sélectionné dans l'inspecteur ──
         if (this.selectedStrobe) {
@@ -4644,6 +4836,7 @@ export class AmbiancePanel {
             this._hideImportModal();
             this.deselectLaser();
             this.deselectStrobe();
+            this.deselectSpot();
             this.transformControls.detach();
             this.transformControls.visible = false;
             this.transformControls.enabled = false;
@@ -4701,6 +4894,11 @@ export class AmbiancePanel {
                         this._laserInspectorPanel.close();
                     }
                     this.deselectLaser();
+                    e.stopPropagation();
+                    return;
+                }
+                if (this.selectedSpot || (this._spotInspectorPanel && this._spotInspectorPanel.isOpen)) {
+                    this.deselectSpot();
                     e.stopPropagation();
                     return;
                 }

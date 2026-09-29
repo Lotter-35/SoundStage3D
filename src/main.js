@@ -35,6 +35,7 @@ import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=13';
+import { SpotManager } from './spot/SpotManager.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -153,6 +154,12 @@ strobeManager.addStrobe(new THREE.Vector3(0, 19.49, -9.59), {
     strobeEnabled: false, strobeSpeed: 12, pulseWidth: 50, strobeRandom: false,
     posX: 0, posY: 19.49, posZ: -9.59, angle: 0, tilt: 45, roll: 0,
 });
+
+// ─── Lyres Spot (projecteurs asservis, prêts pour le DMX) ─────────
+// Créé avant le warmup : le pool fixe de SpotLight est compilé une seule fois au démarrage
+const spotManager = new SpotManager({ scene, camera, renderer, laserManager });
+ambiancePanel.setSpotManager(spotManager);
+window.__SS3D.spotManager = spotManager;
 
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
 if (renderer && typeof renderer.compile === 'function') {
@@ -3406,6 +3413,11 @@ function renderFrame() {
     // Update all active strobes (clignotement stroboscopique synchronisé)
     if (strobeManager) {
         strobeManager.updateAll(dt);
+    }
+
+    // Lyres Spot : DMX → mécanique → faisceaux batchés → lumières réelles
+    if (spotManager) {
+        spotManager.update(dt);
     }
 
     // Update Hitbox Visualizer (player position)

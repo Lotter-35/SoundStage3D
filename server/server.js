@@ -270,6 +270,8 @@ function defaultLightingState() {
                 pausedOffset: 0,
             }
         },
+        spots: {},        // lyres Spot : { id: { id, params } }
+        spotGlobals: {},  // réglages communs des lyres (fumée, qualité, éclairage réel)
     };
 }
 
@@ -317,6 +319,20 @@ function applyLightingChange(state, msg) {
         if (state.lasers) delete state.lasers[id];
     } else if (category === 'laser_reset_all') {
         if (state.lasers && state.lasers[id]) state.lasers[id].params = {};
+    } else if (category === 'spot_add') {
+        if (!state.spots) state.spots = {};
+        if (data && data.id) state.spots[data.id] = { id: data.id, params: { ...(data.params || {}) } };
+    } else if (category === 'spot_update') {
+        if (!state.spots) state.spots = {};
+        if (id && data) {
+            if (!state.spots[id]) state.spots[id] = { id, params: {} };
+            Object.assign(state.spots[id].params, data);
+        }
+    } else if (category === 'spot_remove') {
+        if (state.spots) delete state.spots[id];
+    } else if (category === 'spot_global') {
+        if (!state.spotGlobals) state.spotGlobals = {};
+        if (data) Object.assign(state.spotGlobals, data);
     } else if (category === 'reset_all') {
         const fresh = defaultLightingState();
         state.env = fresh.env;
@@ -324,6 +340,8 @@ function applyLightingChange(state, msg) {
         state.laserPost = fresh.laserPost;
         state.lights = {};
         state.lasers = {};
+        state.spots = {};
+        state.spotGlobals = {};
     }
 }
 
