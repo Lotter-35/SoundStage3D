@@ -1010,6 +1010,11 @@ export class AmbiancePanel {
                 this.scene.background.set(preset.fogColor);
             }
 
+            // 2b. Brouillard de salle : légère coloration selon la couleur du ciel de l'ambiance
+            if (this.hazeVolume && typeof this.hazeVolume.setEnvTint === 'function') {
+                this.hazeVolume.setEnvTint(this._hazeTintForPreset(preset));
+            }
+
             // 3. Affichage du ciel étoilé
             this._updateStarsVisibility();
 
@@ -1037,6 +1042,32 @@ export class AmbiancePanel {
         } finally {
             this._isApplyingEnvPreset = false;
         }
+    }
+
+    /**
+     * Teinte du brouillard pour une ambiance : rapport de couleur (teinte seule, luminosité conservée)
+     * entre le ciel de l'ambiance et celui du jour par défaut, appliqué à HAZE_ENV_TINT_STRENGTH.
+     * Ambiance jour → blanc (aucun changement).
+     */
+    _hazeTintForPreset(preset) {
+        const HAZE_ENV_TINT_STRENGTH = 0.35;
+        const day = this.envPresets.day;
+        const skyOf = (p) => new THREE.Color((p && p.hemi && p.hemi.skyColor) || (p && p.fogColor) || 0xffffff);
+        const norm = (c) => { const m = Math.max(c.r, c.g, c.b, 1e-4); return c.multiplyScalar(1 / m); };
+        const cur = norm(skyOf(preset));
+        const ref = norm(skyOf(day));
+        const ratio = new THREE.Color(
+            cur.r / Math.max(ref.r, 1e-3),
+            cur.g / Math.max(ref.g, 1e-3),
+            cur.b / Math.max(ref.b, 1e-3)
+        );
+        // Conserver la luminance (seule la teinte change), puis borner
+        const lum = 0.2126 * ratio.r + 0.7152 * ratio.g + 0.0722 * ratio.b;
+        if (lum > 1e-4) ratio.multiplyScalar(1 / lum);
+        ratio.r = Math.min(1.8, Math.max(0.3, ratio.r));
+        ratio.g = Math.min(1.8, Math.max(0.3, ratio.g));
+        ratio.b = Math.min(1.8, Math.max(0.3, ratio.b));
+        return new THREE.Color(1, 1, 1).lerp(ratio, HAZE_ENV_TINT_STRENGTH);
     }
 
     _updateStageBoost() {

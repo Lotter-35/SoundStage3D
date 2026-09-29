@@ -109,6 +109,8 @@ export class HazeVolume {
         this._sceneLights = [];
         this._scanTimer = 0;
         this._levels = new WeakMap(); // persistance par source
+        // Teinte d'ambiance (menu Ambiance) : multipliée à la teinte de la fumée. Blanc = neutre (ambiance jour).
+        this._envTint = new THREE.Color(1, 1, 1);
         this._applyAll();
     }
 
@@ -123,6 +125,12 @@ export class HazeVolume {
         this._applyAll();
     }
 
+    /** Teinte légère liée à l'ambiance choisie (blanc = aucune coloration). */
+    setEnvTint(color) {
+        this._envTint.copy(color);
+        this.material.uniforms.uTint.value.set(this.params.tint).multiply(this._envTint);
+    }
+
     setParams(obj) {
         for (const [k, v] of Object.entries(obj || {})) if (k in HAZE_PARAMS_SCHEMA) this.params[k] = v;
         this._applyAll();
@@ -135,7 +143,7 @@ export class HazeVolume {
         u.uBoxMax.value.set(p.boxX + p.sizeX / 2, p.boxY + p.sizeY / 2, p.boxZ + p.sizeZ / 2);
         u.uEdge.value = Math.min(p.edge, Math.min(p.sizeX, p.sizeY, p.sizeZ) / 2);
         u.uDensity.value = p.density;
-        u.uTint.value.set(p.tint);
+        u.uTint.value.set(p.tint).multiply(this._envTint);
         u.uIntensity.value = p.intensity;
         u.uMS.value = p.multiScatter;
         u.uMSReach.value = p.scatterReach;
