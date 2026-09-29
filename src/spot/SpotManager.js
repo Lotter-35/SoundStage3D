@@ -178,10 +178,19 @@ export class SpotManager {
         this._applyGlobals();
     }
 
+    /**
+     * Densité de fumée imposée par le brouillard de salle (option « Liée au brouillard ») ;
+     * null = densité propre aux lyres (réglage « Densité de la fumée »)
+     */
+    setHazeOverride(density) {
+        this._hazeOverride = (density === null || density === undefined) ? null : density;
+        this._applyGlobals();
+    }
+
     _applyGlobals() {
         const g = this.globals;
         const u = this.batch.volumeMaterial.uniforms;
-        u.uHaze.value = g.hazeDensity;
+        u.uHaze.value = (this._hazeOverride !== null && this._hazeOverride !== undefined) ? this._hazeOverride : g.hazeDensity;
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;

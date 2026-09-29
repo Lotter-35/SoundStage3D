@@ -121,7 +121,7 @@ export class LightingSync {
         }
 
         // Événements continus nécessitant un throttling (sliders, gizmo)
-        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'strobe_update') {
+        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'strobe_update' || category === 'haze') {
             const idPart = (id !== undefined && id !== null) ? id : 'global';
             const throttleKey = event.throttleKey || `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
             this._sendThrottled(throttleKey, event);
@@ -221,6 +221,11 @@ export class LightingSync {
 
                 case 'laser_reset_all':
                     this._applyLaserResetAll(id);
+                    break;
+
+                // ── Brouillard de salle ──
+                case 'haze':
+                    this._applyHaze(data);
                     break;
 
                 // ── 6. Stroboscopes ──
@@ -740,6 +745,18 @@ export class LightingSync {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Brouillard de salle
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _applyHaze(data) {
+        const haze = this.ambiancePanel && this.ambiancePanel.hazeVolume;
+        if (!haze || !data) return;
+        haze.setParams(data);
+        const panel = this.ambiancePanel.hazePanel;
+        if (panel && panel.isOpen) panel.syncFromVolume();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Stroboscopes
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -956,6 +973,11 @@ export class LightingSync {
                         this._applyLaserAdd({ id: laserId, ...laserData });
                     }
                 }
+            }
+
+            // Brouillard de salle
+            if (state.haze) {
+                this._applyHaze(state.haze);
             }
 
             // 6. Stroboscopes

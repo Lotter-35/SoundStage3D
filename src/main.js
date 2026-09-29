@@ -38,6 +38,8 @@ import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=17';
 import { SpotManager } from './spot/SpotManager.js?v=3';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
+import { HazeVolume } from './haze/HazeVolume.js';
+import { HazePanel } from './haze/ui/HazePanel.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -199,6 +201,12 @@ for (let i = 0; i < 9; i++) {
 const spotConsole = new SpotConsolePanel({ spotManager, ambiancePanel, scene, camera, renderer, listener });
 window.__SS3D.spotConsole = spotConsole;
 ambiancePanel.spotConsole = spotConsole;
+
+// ─── Brouillard de salle (fumée éclairée par les strobes / lyres, après leurs faisceaux) ───
+const hazeVolume = new HazeVolume({ scene, camera, laserManager, strobeManager, spotManager });
+ambiancePanel.hazeVolume = hazeVolume;
+ambiancePanel.setHazePanel(new HazePanel({ haze: hazeVolume, ambiancePanel }));
+window.__SS3D.hazeVolume = hazeVolume;
 
 performance.mark('ss3d:managers');
 await bootStep(0.88, 'Compilation des shaders');
@@ -3471,6 +3479,11 @@ function renderFrame() {
     // Lyres Spot : DMX → mécanique → faisceaux batchés → lumières réelles
     if (spotManager) {
         spotManager.update(dt);
+    }
+
+    // Brouillard de salle : sources de lumière de la frame (strobes, lyres, lasers)
+    if (hazeVolume) {
+        hazeVolume.update(dt);
     }
 
     // Update Hitbox Visualizer (player position)

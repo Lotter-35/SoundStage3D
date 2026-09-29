@@ -176,6 +176,15 @@ export class AmbiancePanel {
     }
 
     /**
+     * Injecte le panneau du brouillard de salle (bouton dans le menu Ambiance)
+     * @param {import('../haze/ui/HazePanel.js').HazePanel} hazePanel
+     */
+    setHazePanel(hazePanel) {
+        this.hazePanel = hazePanel;
+        this._buildGui();
+    }
+
+    /**
      * Injecte le SpotManager (lyres Spot) et initialise son panneau d'inspection.
      * @param {import('../spot/SpotManager.js').SpotManager} spotManager
      */
@@ -3827,6 +3836,11 @@ export class AmbiancePanel {
         }
 
         // ── Dossier Ambiance Céleste ──
+        // Brouillard de salle : panneau dédié (fumée éclairée par les strobes / lyres)
+        if (this.hazePanel) {
+            this.gui.add({ haze: () => this.hazePanel.toggle() }, 'haze').name('🌫️ Brouillard de salle…');
+        }
+
         const fEnv = this.gui.addFolder('🌌 Ambiance & Ciel');
         fEnv.open();
 

@@ -511,7 +511,21 @@ export class LaserManager {
             rt.depthTexture = depth;
             rt.dispose();
         }
-        composer.insertPass(pass, 1);
+        // Passe « témoin » juste après le rendu de la scène : mémorise la cible qui contient la profondeur
+        // de la scène (après une passe qui permute les cibles, readBuffer.depthTexture n'est plus la bonne)
+        if (!this._sceneDepthTap) {
+            this.sceneDepth = { texture: null };
+            const shared = this.sceneDepth;
+            this._sceneDepthTap = new (class extends Pass {
+                constructor() { super(); this.needsSwap = false; }
+                render(renderer, writeBuffer, readBuffer) { shared.texture = readBuffer.depthTexture || null; }
+            })();
+            composer.insertPass(this._sceneDepthTap, 1);
+            this._scenePassCount = 0;
+        }
+        // Les passes de scène s'exécutent dans l'ordre d'enregistrement (faisceaux des lyres, puis brouillard…)
+        composer.insertPass(pass, 2 + this._scenePassCount);
+        this._scenePassCount++;
         return true;
     }
 

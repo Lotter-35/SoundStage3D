@@ -333,6 +333,10 @@ function applyLightingChange(state, msg) {
         if (state.lasers) delete state.lasers[id];
     } else if (category === 'laser_reset_all') {
         if (state.lasers && state.lasers[id]) state.lasers[id].params = {};
+    } else if (category === 'haze') {
+        // Brouillard de salle : réglages partagés { param: valeur }
+        if (!state.haze) state.haze = {};
+        if (data) Object.assign(state.haze, data);
     } else if (category === 'strobe_add') {
         if (!state.strobes) state.strobes = {};
         if (data && data.id !== undefined && data.id !== null) {
@@ -384,6 +388,7 @@ function applyLightingChange(state, msg) {
         state.spots = {};
         state.spotGlobals = {};
         state.spotFx = {};
+        state.haze = {};
     }
 }
 
