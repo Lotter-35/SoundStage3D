@@ -265,6 +265,43 @@ performance.mark('ss3d:warmup');
 // La suite (connexion multijoueur, téléchargement et décodage de la musique) peut prendre plusieurs
 // secondes : la scène tourne déjà derrière l'écran de chargement, qui disparaît dès que le personnage
 // est prêt. La musique arrive ensuite en arrière-plan. La boucle complète (animate) prend le relais à la fin.
+/**
+ * Tout ce qui est CACHÉ au démarrage (lune de jour, étoiles, objets masqués, passes d'effets désactivées)
+ * n'était compilé qu'à sa première apparition en jeu → freeze. Pendant l'écran de chargement :
+ *  1. objets cachés rendus temporairement visibles (sauf les lumières : le nombre de lumières des
+ *     variantes de shaders ne doit pas changer) → shaders des deux modes de rendu préparés ;
+ *  2. shaders de toutes les passes de post-traitement (lens flare, anticrénelage, netteté…) ;
+ *  3. toutes les textures envoyées au GPU.
+ */
+async function prewarmHiddenContent() {
+    const hidden = [];
+    scene.traverse((o) => {
+        if (!o.visible && !o.isLight) { hidden.push(o); o.visible = true; }
+    });
+    try {
+        if (laserManager && typeof laserManager.warmupShadersAsync === 'function') await laserManager.warmupShadersAsync();
+        else if (laserManager) laserManager.warmupShaders();
+    } finally {
+        for (const o of hidden) o.visible = false;
+    }
+    if (laserManager && typeof laserManager.prewarmPasses === 'function') laserManager.prewarmPasses();
+    // Textures (matériaux de la scène + uniformes des passes) envoyées au GPU maintenant
+    const seen = new Set();
+    const upload = (t) => {
+        if (!t || !t.isTexture || seen.has(t) || t.isRenderTargetTexture) return;
+        seen.add(t);
+        if (t.image || t.isDataTexture) { try { renderer.initTexture(t); } catch (_) {} }
+    };
+    scene.traverse((o) => {
+        const mats = Array.isArray(o.material) ? o.material : [o.material];
+        for (const m of mats) {
+            if (!m) continue;
+            for (const v of Object.values(m)) upload(v);
+            if (m.uniforms) for (const u of Object.values(m.uniforms)) if (u) upload(u.value);
+        }
+    });
+}
+
 let _bootReadyFrames = -1;
 let _bootPrewarm = null;
 function updateBootScreen() {
@@ -279,7 +316,9 @@ function updateBootScreen() {
     if (_bootReadyFrames < 0) {
         if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
         _bootReadyFrames = 0;
-        _bootPrewarm = lightPoolGate.prewarm().catch(() => {}).then(() => { _bootPrewarm = null; });
+        _bootPrewarm = lightPoolGate.prewarm().catch(() => {})
+            .then(() => prewarmHiddenContent().catch(() => {}))
+            .then(() => { _bootPrewarm = null; });
         return;
     }
     if (_bootPrewarm && performance.now() - _bootStart <= 15000) return;
