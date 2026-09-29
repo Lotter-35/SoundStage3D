@@ -571,6 +571,12 @@ export class Listener {
 
         if (!this._audioListenerInitialized) {
             this._audioListenerInitialized = true;
+            // Automations en k-rate (1 valeur par bloc de 128 échantillons) : les panners n'ont plus
+            // à recalculer azimut/distance à chaque échantillon. Lissage 40 ms inchangé → inaudible.
+            for (const k of ['positionX', 'positionY', 'positionZ', 'forwardX', 'forwardY', 'forwardZ', 'upX', 'upY', 'upZ']) {
+                const prm = audioListener[k];
+                if (prm && 'automationRate' in prm) { try { prm.automationRate = 'k-rate'; } catch (_) {} }
+            }
             if (audioListener.positionX) {
                 audioListener.positionX.setValueAtTime(p.x, t);
                 audioListener.positionY.setValueAtTime(p.y, t);

@@ -18,6 +18,13 @@ import { createGroundReflection } from './effects.js';
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 import { MasterStage } from './masterStage.js';
 
+/** Passe un AudioParam en k-rate (1 valeur par bloc de 128 échantillons) si le navigateur le permet. */
+export function setKRate(param) {
+    if (param && 'automationRate' in param) {
+        try { param.automationRate = 'k-rate'; } catch (_) {}
+    }
+}
+
 const DEFAULT_DISTANCE_K = (DSP_DEFAULTS.sub['dist-k'] ?? 60) / 1000;
 const DEFAULT_AIR_ABS = DSP_DEFAULTS.env?.['air-abs'] ?? DSP_DEFAULTS.master?.['air-abs'] ?? 40;
 
@@ -142,6 +149,10 @@ class Speaker {
         this.highShelf.frequency.value = 3000;
         this.highShelf.gain.value = 0;
 
+        // Fréquence d'absorption de l'air en k-rate : évite le recalcul des coefficients à chaque échantillon
+        setKRate(this.airAbsorption1.frequency);
+        setKRate(this.airAbsorption2.frequency);
+
         // --- Panner ---
         this.panner = ctx.createPanner();
         this.panner.panningModel = 'equalpower';
@@ -173,6 +184,13 @@ class Speaker {
         this.reflection = createGroundReflection(ctx, def.position, {
             panningModel: 'equalpower',
         });
+
+        // Positions/orientations fixes : k-rate pour que les panners restent sur le chemin de calcul par bloc
+        for (const pn of [this.panner, this.reflection.panner]) {
+            for (const k of ['positionX', 'positionY', 'positionZ', 'orientationX', 'orientationY', 'orientationZ']) {
+                setKRate(pn[k]);
+            }
+        }
 
         // --- Wiring ---
         // All speakers: full chain with distance attenuation, air absorption & high-shelf
