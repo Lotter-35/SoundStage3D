@@ -13,6 +13,7 @@
  */
 
 import * as THREE from 'three';
+import { FOH_TOWER_SOLIDS } from './fohTower.js?v=1';
 
 export const PLAYER_RADIUS = 0.22;  // corps ~0.44 m de large : permet de se coller aux caissons et à la table
 export const PLAYER_HEIGHT = 1.8;
@@ -78,6 +79,9 @@ for (const side of [-1, 1]) {
         addSolid('rail', x0, x1, top + 0.75, top + 0.85, -3.84, -3.76);
     }
 }
+
+// Tour de régie derrière le FOH (fohTower.js)
+for (const s of FOH_TOWER_SOLIDS) addSolid(...s);
 
 // ─── Requêtes ─────────────────────────────────────────────────────────────────
 

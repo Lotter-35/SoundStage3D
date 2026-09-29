@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { loadFbxShared, YBOT_PATH } from './fbxCache.js';
-import { getGroundHeight } from './collision.js?v=156';
+import { getGroundHeight } from './collision.js?v=157';
 import { DanceManager } from './DanceManager.js';
 import { tintAvatarMaterial } from './avatarTint.js?v=3';
 

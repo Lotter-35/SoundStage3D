@@ -6,8 +6,9 @@ import './scene/softShadows.js?v=3';
 import './render/skipDarkLights.js'; // lumières éteintes ignorées par le GPU (avant toute compilation de shader)
 
 import { createStage } from './scene/stage.js?v=190';
+import { createFohTower } from './scene/fohTower.js?v=1';
 import { Listener } from './scene/listener.js?v=160';
-import { createHitboxVisualizer } from './scene/collision.js?v=156';
+import { createHitboxVisualizer } from './scene/collision.js?v=157';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
 
@@ -99,6 +100,7 @@ const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerH
 await bootStep(0.2, 'Construction de la scène');
 // Build 3D stage
 const { coneContainer, coneGroups, dirLight, lights, soundMarkersGroup } = createStage(scene);
+createFohTower(scene);
 if (dirLight && dirLight.shadow) {
     const maxTex = renderer.capabilities.maxTextureSize || 4096;
     const shadowRes = Math.min(2048, maxTex);

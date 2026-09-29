@@ -14,7 +14,7 @@
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
 import { Character3D } from './character3D.js?v=7';
-import { resolveCollision } from './collision.js?v=156';
+import { resolveCollision } from './collision.js?v=157';
 import { EmoteMenu } from '../ui/EmoteMenu.js';
 import { DanceManager } from './DanceManager.js';
 
