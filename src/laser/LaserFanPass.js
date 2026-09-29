@@ -139,6 +139,16 @@ export class LaserFanPass extends Pass {
         this._clear = new THREE.Color();
         this._black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
         this._black.needsUpdate = true;
+
+        // Recomposition différée : l'image des nappes est ajoutée par la passe finale unique
+        this.deferred = false;
+        this._out = { kind: 'add', texture: null, res: this._composite.uniforms.uFanRes.value, useDepth: true };
+        this._hasOut = false;
+    }
+
+    /** Image à recomposer (mode différé), ou null s'il n'y a rien à ajouter */
+    deferredOutput() {
+        return this._hasOut ? this._out : null;
     }
 
     setResolutionScale(scale) {
@@ -212,6 +222,9 @@ export class LaserFanPass extends Pass {
         const depth = (this.sceneDepth && this.sceneDepth.texture) || readBuffer.depthTexture;
         const cu = this._composite.uniforms;
         cu.tDiffuse.value = readBuffer.texture;
+        this.needsSwap = !this.deferred;
+        this._hasOut = false;
+        if (this.deferred && (!this.hasFans || !depth)) return;
         if (!this.hasFans || !depth) {
             // Rien à ajouter : simple recopie (la passe échange ses cibles)
             cu.tFans.value = this._black;
@@ -243,6 +256,13 @@ export class LaserFanPass extends Pass {
         cu.uNear.value = cam.near;
         cu.uFar.value = cam.far;
         cu.uUseDepth.value = this.resolutionScale < 0.999 ? 1 : 0;
+        if (this.deferred) {
+            this._out.texture = this.fanTarget.texture;
+            this._out.useDepth = this.resolutionScale < 0.999;
+            this._hasOut = true;
+            renderer.autoClear = oldAutoClear;
+            return;
+        }
         renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
         this._quad.render(renderer);
         renderer.autoClear = oldAutoClear;

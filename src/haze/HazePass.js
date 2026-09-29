@@ -34,6 +34,16 @@ export class HazePass extends Pass {
         this._composite = createHazeCompositeMaterial();
         this._compQuad = new FullScreenQuad(this._composite);
         this._fwd = new THREE.Vector3();
+
+        // Recomposition différée : le brouillard est appliqué par la passe finale unique
+        this.deferred = false;
+        this._out = { kind: 'haze', texture: this.target.texture, res: new THREE.Vector2(1, 1) };
+        this._hasOut = false;
+    }
+
+    /** Image à recomposer (mode différé) */
+    deferredOutput() {
+        return this._hasOut ? this._out : null;
     }
 
     setResolutionScale(s) {
@@ -48,6 +58,7 @@ export class HazePass extends Pass {
     }
 
     render(renderer, writeBuffer, readBuffer) {
+        this._hasOut = false;
         const depth = (this.sceneDepth && this.sceneDepth.texture) || readBuffer.depthTexture;
         const u = this.material.uniforms;
         const cam = this.camera;
@@ -61,6 +72,14 @@ export class HazePass extends Pass {
 
         renderer.setRenderTarget(this.target);
         this._quad.render(renderer);
+
+        this.needsSwap = !this.deferred;
+        if (this.deferred) {
+            this._out.texture = this.target.texture;
+            this._out.res.set(this.target.width, this.target.height);
+            this._hasOut = true;
+            return;
+        }
 
         this._composite.uniforms.tDiffuse.value = readBuffer.texture;
         const cu = this._composite.uniforms;

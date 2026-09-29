@@ -24,6 +24,7 @@ import { Pass } from 'three/addons/postprocessing/Pass.js';
 import { LaserShow } from './LaserShow.js?v=29';
 import { LaserBatch } from './LaserBatch.js';
 import { LaserFanPass } from './LaserFanPass.js';
+import { FinalCompositePass } from './FinalCompositePass.js';
 import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
@@ -486,56 +487,11 @@ export class LaserManager {
             this._scenePass = new SceneMSAAPass(this.scene, this.camera, this._sceneRT);
             this._finalComposer.addPass(this._scenePass);
 
-            // Texture factice noire pour initialiser les slots de sampler2D
-            const dummyTexture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
-            dummyTexture.needsUpdate = true;
-
-            // Pass de mixage multi-bloom additif
-            const mixShader = {
-                uniforms: {
-                    baseTexture:         { value: null },
-                    laserBloomTexture:   { value: dummyTexture },
-                    lightsBloomTexture:  { value: dummyTexture },
-                    uLaserBloomEnabled:  { value: globalLaserPostParams.laserBloomEnabled ? 1.0 : 0.0 },
-                    uLightsBloomEnabled: { value: globalLaserPostParams.lightsBloomEnabled ? 1.0 : 0.0 }
-                },
-                vertexShader: `
-                    varying vec2 vUv;
-                    void main() {
-                        vUv = uv;
-                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-                    }
-                `,
-                fragmentShader: `
-                    uniform sampler2D baseTexture;
-                    uniform sampler2D laserBloomTexture;
-                    uniform sampler2D lightsBloomTexture;
-                    uniform float uLaserBloomEnabled;
-                    uniform float uLightsBloomEnabled;
-                    varying vec2 vUv;
-                    void main() {
-                        vec4 base = texture2D(baseTexture, vUv);
-                        vec3 col = base.rgb;
-                        if (uLaserBloomEnabled > 0.5) {
-                            col += texture2D(laserBloomTexture, vUv).rgb;
-                        }
-                        if (uLightsBloomEnabled > 0.5) {
-                            col += texture2D(lightsBloomTexture, vUv).rgb;
-                        }
-                        gl_FragColor = vec4(col, base.a);
-                    }
-                `
-            };
-            this._mixPass = new ShaderPass(
-                new THREE.ShaderMaterial({
-                    uniforms: mixShader.uniforms,
-                    vertexShader: mixShader.vertexShader,
-                    fragmentShader: mixShader.fragmentShader,
-                    defines: {}
-                }),
-                'baseTexture'
-            );
-            this._mixPass.needsSwap = true;
+            // Passe finale unique : nappes + faisceaux + brouillard + mélange des deux blooms + sortie écran
+            // (les passes d'effets calculent leur image réduite, elle seule les recompose)
+            this._mixPass = new FinalCompositePass(this.camera, null);
+            this._mixPass.material.uniforms.uLaserBloomEnabled.value = globalLaserPostParams.laserBloomEnabled ? 1.0 : 0.0;
+            this._mixPass.material.uniforms.uLightsBloomEnabled.value = globalLaserPostParams.lightsBloomEnabled ? 1.0 : 0.0;
             this._finalComposer.addPass(this._mixPass);
 
             // SMAA Antialiasing (optionnel sur le composite, subpixel net)
@@ -556,7 +512,8 @@ export class LaserManager {
             this._sharpenPass.enabled = false;
             this._finalComposer.addPass(this._sharpenPass);
 
-            // OutputPass (Tone mapping & Color space de Three.js)
+            // OutputPass (Tone mapping & Color space de Three.js) : seulement si FXAA, SMAA ou la netteté
+            // suivent la passe finale (sinon la passe finale écrit elle-même à l'écran en sRGB)
             this._outputPass = new OutputPass();
             this._finalComposer.addPass(this._outputPass);
 
@@ -602,6 +559,12 @@ export class LaserManager {
             })();
             composer.insertPass(this._sceneDepthTap, 1);
             this._scenePassCount = 0;
+            if (this._mixPass) this._mixPass.sceneDepth = this.sceneDepth;
+        }
+        // Recomposition différée : l'image de la passe est recomposée par la passe finale unique
+        if (this._mixPass && 'deferred' in pass) {
+            pass.deferred = true;
+            this._mixPass.producers.push(pass);
         }
         // Les passes de scène s'exécutent dans l'ordre d'enregistrement (faisceaux des lyres, puis brouillard…)
         composer.insertPass(pass, 2 + this._scenePassCount);
@@ -1014,6 +977,11 @@ export class LaserManager {
         const composer = this._finalComposer;
         const passes = composer.passes;
         const renderer = this.renderer;
+        // La passe finale écrit directement à l'écran sauf si un anticrénelage ou la netteté la suit
+        if (this._outputPass) {
+            this._outputPass.enabled = Boolean((this._smaaPass && this._smaaPass.enabled) ||
+                (this._fxaaPass && this._fxaaPass.enabled) || (this._sharpenPass && this._sharpenPass.enabled));
+        }
         let last = -1;
         for (let i = 0; i < passes.length; i++) if (passes[i].enabled) last = i;
 

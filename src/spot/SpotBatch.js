@@ -230,6 +230,16 @@ export class SpotVolumePass extends Pass {
         this._clear = new THREE.Color();
         this._black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
         this._black.needsUpdate = true;
+
+        // Recomposition différée : l'image des faisceaux est ajoutée par la passe finale unique
+        this.deferred = false;
+        this._out = { kind: 'add', texture: null, res: this._composite.uniforms.uVolRes.value, useDepth: true };
+        this._hasOut = false;
+    }
+
+    /** Image à recomposer (mode différé), ou null s'il n'y a rien à ajouter */
+    deferredOutput() {
+        return this._hasOut ? this._out : null;
     }
 
     setResolutionScale(scale) {
@@ -252,6 +262,8 @@ export class SpotVolumePass extends Pass {
         const cam = this.camera;
         const depth = (this.sceneDepth && this.sceneDepth.texture) || readBuffer.depthTexture;
         const hasDepth = Boolean(depth);
+        this.needsSwap = !this.deferred;
+        this._hasOut = false;
 
         if (hasDepth && this.batch.volumeMesh.visible) {
             u.uDepth.value = depth;
@@ -279,7 +291,14 @@ export class SpotVolumePass extends Pass {
             this._composite.uniforms.uNear.value = cam.near;
             this._composite.uniforms.uFar.value = cam.far;
             this._composite.uniforms.uUseDepth.value = this.resolutionScale < 0.999 ? 1 : 0;
+            if (this.deferred) {
+                this._out.texture = this.volumeTarget.texture;
+                this._out.useDepth = this.resolutionScale < 0.999;
+                this._hasOut = true;
+                return;
+            }
         } else {
+            if (this.deferred) return;
             this._composite.uniforms.uUseDepth.value = 0;
             // Rien à ajouter : simple recopie
             this._composite.uniforms.tVolume.value = this._black;
