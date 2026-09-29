@@ -11,6 +11,7 @@
 import * as THREE from 'three';
 import { StrobeLight } from './StrobeLight.js?v=13';
 import { StrobeLightPool } from './StrobeLightPool.js?v=4';
+import { getStrobeHousingInstancer } from './StrobeHousingInstancer.js';
 
 export class StrobeManager {
     /**
@@ -177,6 +178,8 @@ export class StrobeManager {
         for (const strobe of this._strobes.values()) {
             strobe.update(dt);
         }
+        // Boîtiers de tous les stroboscopes : instances recopiées (position, taille, écran allumé / éteint)
+        getStrobeHousingInstancer(this.scene).update();
         this.lightPool.update(this._strobes.values(), this.camera, dt);
     }
 

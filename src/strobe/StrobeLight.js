@@ -2,7 +2,8 @@
  * StrobeLight.js
  * ─────────────────────────────────────────────────────────────
  * Projecteur Stroboscope 3D professionnel pour SoundStage3D :
- * - Boîtier physique 3D réaliste (châssis métallique noir de scène, étrier de fixation, cadre avant).
+ * - Boîtier physique 3D réaliste (châssis métallique noir de scène, étrier de fixation, cadre avant),
+ *   dessiné avec ceux de tous les stroboscopes par StrobeHousingInstancer (5 appels au total).
  * - Écran frontal émissif ultra-lumineux (blanc pur par défaut, bloom layer).
  * - Éclairage réel de la scène délégué au StrobeLightPool (pool fixe de SpotLight partagé) :
  *   ce fichier ne crée aucune lumière, il fournit l'état du flash et la géométrie du faisceau.
@@ -13,7 +14,10 @@
  */
 
 import * as THREE from 'three';
-import { enableLightsBloom } from '../laser/LaserManager.js';
+import { getStrobeHousingInstancer } from './StrobeHousingInstancer.js';
+
+// Boîte invisible de sélection à la souris (partagée : jamais dessinée, seulement lancée de rayons)
+const _pickMaterial = new THREE.MeshBasicMaterial({ visible: false });
 
 export class StrobeLight {
     /**
@@ -77,36 +81,11 @@ export class StrobeLight {
         this.group.userData.strobeId = this.id;
         this.group.userData.strobeInstance = this;
 
-        // Matériaux réutilisables
-        this._chassisMat = new THREE.MeshStandardMaterial({
-            color: 0x141416,
-            roughness: 0.45,
-            metalness: 0.85,
-        });
-
-        this._frameMat = new THREE.MeshStandardMaterial({
-            color: 0x222226,
-            roughness: 0.35,
-            metalness: 0.90,
-        });
-
-        this._bracketMat = new THREE.MeshStandardMaterial({
-            color: 0x2e2e32,
-            roughness: 0.40,
-            metalness: 0.88,
-        });
-
-        this._screenMat = new THREE.MeshBasicMaterial({
-            color: new THREE.Color(this.params.color),
-        });
-
-        // Conteneurs de mesh
-        this.chassisMesh = null;
-        this.frameMesh   = null;
-        this.screenMesh  = null;
-        this.bracketGroup = null;
-
-        this._screenColor = new THREE.Color();
+        // Boîte de sélection (invisible) ; le boîtier visible est dessiné par l'instancieur partagé
+        this.pickMesh = null;
+        this.flash = false;
+        this.screenColor = new THREE.Color();
+        this._instancer = getStrobeHousingInstancer(scene);
 
         // Construction initiale
         this._buildMeshes();
@@ -116,6 +95,7 @@ export class StrobeLight {
         this.setRotation(this.params.angle, this.params.tilt, this.params.roll);
 
         this.scene.add(this.group);
+        this._instancer.add(this);
         this._ready = true;
     }
 
@@ -179,7 +159,8 @@ export class StrobeLight {
     }
 
     /**
-     * Construit / reconstruit la géométrie 3D du boîtier du stroboscope
+     * Construit / reconstruit la boîte de sélection du stroboscope (le boîtier visible est instancié et
+     * suit automatiquement les dimensions, voir StrobeHousingInstancer)
      */
     _buildMeshes() {
         const w = this.params.width;
@@ -187,97 +168,25 @@ export class StrobeLight {
         const d = this.params.depth;
         const isFlat = (this.params.showHousing === false) || (w <= 0.05);
 
-        // Nettoyer les anciens meshes
-        if (this.chassisMesh) {
-            this.group.remove(this.chassisMesh);
-            this.chassisMesh.geometry.dispose();
-            this.chassisMesh = null;
+        if (this.pickMesh) {
+            this.group.remove(this.pickMesh);
+            this.pickMesh.geometry.dispose();
+            this.pickMesh = null;
         }
-        if (this.frameMesh) {
-            this.group.remove(this.frameMesh);
-            this.frameMesh.geometry.dispose();
-            this.frameMesh = null;
-        }
-        if (this.screenMesh) {
-            this.group.remove(this.screenMesh);
-            this.screenMesh.geometry.dispose();
-            this.screenMesh = null;
-        }
-        if (this.bracketGroup) {
-            this.group.remove(this.bracketGroup);
-            this.bracketGroup.traverse(c => { if (c.geometry) c.geometry.dispose(); });
-            this.bracketGroup = null;
-        }
-
+        let geo;
         if (isFlat) {
-            // Mode Plan seul : aucun boîtier 3D, étrier ou cadre, uniquement la surface émissive plate
             const effW = w > 0.05 ? w : Math.max(0.5, h);
-            const effH = Math.max(0.05, h);
-            const screenGeo = new THREE.PlaneGeometry(effW, effH);
-            this.screenMesh = new THREE.Mesh(screenGeo, this._screenMat);
-            this.screenMesh.position.set(0, 0, 0);
-            this.screenMesh.userData.strobeInstance = this;
-            enableLightsBloom(this.screenMesh);
-            this.group.add(this.screenMesh);
+            geo = new THREE.BoxGeometry(effW, Math.max(0.05, h), 0.02);
         } else {
-            // 1. Corps principal du boîtier (châssis arrière et flancs métalliques)
-            const chassisGeo = new THREE.BoxGeometry(w, h, d);
-            this.chassisMesh = new THREE.Mesh(chassisGeo, this._chassisMat);
-            this.chassisMesh.position.set(0, 0, 0);
-            this.chassisMesh.receiveShadow = true;
-            this.chassisMesh.userData.strobeInstance = this;
-            this.group.add(this.chassisMesh);
-
-            // 2. Cadre biseauté avant (délimite le réflecteur)
-            const frameThick = 0.035;
-            const frameGeo = new THREE.BoxGeometry(w + 0.03, h + 0.03, frameThick);
-            this.frameMesh = new THREE.Mesh(frameGeo, this._frameMat);
-            this.frameMesh.position.set(0, 0, d * 0.5 + frameThick * 0.5);
-            this.frameMesh.userData.strobeInstance = this;
-            this.group.add(this.frameMesh);
-
-            // 3. Écran frontal émissif (diffuseur de lumière ultra-lumineux)
-            const screenGeo = new THREE.PlaneGeometry(Math.max(0.05, w - 0.04), Math.max(0.05, h - 0.04));
-            this.screenMesh = new THREE.Mesh(screenGeo, this._screenMat);
-            this.screenMesh.position.set(0, 0, d * 0.5 + frameThick + 0.002);
-            this.screenMesh.userData.strobeInstance = this;
-            enableLightsBloom(this.screenMesh);
-            this.group.add(this.screenMesh);
-
-            // 4. Étrier de montage en U (mounting yoke latéral)
-            this.bracketGroup = new THREE.Group();
-            const armThick = 0.025;
-            const armDepth = d * 1.15;
-            const armGeo = new THREE.BoxGeometry(armThick, h * 0.85, armDepth);
-
-            // Bras gauche
-            const leftArm = new THREE.Mesh(armGeo, this._bracketMat);
-            leftArm.position.set(-(w * 0.5 + armThick * 0.5 + 0.01), 0, 0);
-            this.bracketGroup.add(leftArm);
-
-            // Bras droit
-            const rightArm = new THREE.Mesh(armGeo, this._bracketMat);
-            rightArm.position.set(w * 0.5 + armThick * 0.5 + 0.01, 0, 0);
-            this.bracketGroup.add(rightArm);
-
-            // Molettes de serrage pivot
-            const knobGeo = new THREE.CylinderGeometry(0.032, 0.032, 0.03, 16);
-            knobGeo.rotateZ(Math.PI / 2);
-            const leftKnob = new THREE.Mesh(knobGeo, this._bracketMat);
-            leftKnob.position.set(-(w * 0.5 + armThick + 0.015), 0, 0);
-            this.bracketGroup.add(leftKnob);
-
-            const rightKnob = new THREE.Mesh(knobGeo, this._bracketMat);
-            rightKnob.position.set(w * 0.5 + armThick + 0.015, 0, 0);
-            this.bracketGroup.add(rightKnob);
-
-            this.bracketGroup.traverse(c => {
-                if (c.isMesh) {
-                    c.userData.strobeInstance = this;
-                }
-            });
-            this.group.add(this.bracketGroup);
+            // Enveloppe du châssis, du cadre avant et de l'étrier
+            const frontZ = d * 0.5 + 0.035;
+            geo = new THREE.BoxGeometry(w + 0.12, h + 0.03, Math.max(d * 1.15, d * 0.5 + frontZ));
+            geo.translate(0, 0, (frontZ - d * 0.5) * 0.5);
         }
+        this.pickMesh = new THREE.Mesh(geo, _pickMaterial);
+        this.pickMesh.name = 'strobe-pick';
+        this.pickMesh.userData.strobeInstance = this;
+        this.group.add(this.pickMesh);
     }
 
     /**
@@ -288,8 +197,7 @@ export class StrobeLight {
 
         switch (key) {
             case 'color':
-                if (this._screenMat) this._screenMat.color.set(value);
-                break;
+                break; // lue à chaque image (couleur d'instance de l'écran)
 
             case 'width':
             case 'height':
@@ -407,50 +315,26 @@ export class StrobeLight {
 
         this.flash = isFlash;
 
-        // L'éclairage réel (intensité, ombre) est appliqué par le StrobeLightPool à partir de `flash`
-        if (isFlash) {
-            if (this._screenMat) {
-                this._screenColor.set(p.color).multiplyScalar(Math.max(1.0, p.emissivePower || 2.0));
-                this._screenMat.color.copy(this._screenColor);
-            }
-            if (this.screenMesh) {
-                this.screenMesh.layers.enable(2);
-            }
-        } else {
-            // Éteint : 0 émission
-            if (this._screenMat) {
-                this._screenMat.color.set(0x18181a); // Réflecteur éteint
-            }
-            if (this.screenMesh) {
-                this.screenMesh.layers.disable(2);
-            }
-        }
+        // L'éclairage réel (intensité, ombre) est appliqué par le StrobeLightPool à partir de `flash` ;
+        // l'écran (couleur × éclat pendant le flash, réflecteur éteint sinon) par l'instancieur des boîtiers
+        if (isFlash) this.screenColor.set(p.color).multiplyScalar(Math.max(1.0, p.emissivePower || 2.0));
     }
 
     /**
      * Retourne tous les meshes du projecteur pour le raycasting de sélection
      */
     getPickableObjects() {
-        const list = [];
-        this.group.traverse(c => {
-            if (c.isMesh) list.push(c);
-        });
-        return list;
+        return this.pickMesh ? [this.pickMesh] : [];
     }
 
     /**
      * Nettoyage complet
      */
     dispose() {
+        this._instancer.remove(this);
         if (this.group.parent) {
             this.group.parent.remove(this.group);
         }
-        this.group.traverse(c => {
-            if (c.geometry) c.geometry.dispose();
-        });
-        if (this._chassisMat) this._chassisMat.dispose();
-        if (this._frameMat) this._frameMat.dispose();
-        if (this._bracketMat) this._bracketMat.dispose();
-        if (this._screenMat) this._screenMat.dispose();
+        if (this.pickMesh) this.pickMesh.geometry.dispose();
     }
 }
