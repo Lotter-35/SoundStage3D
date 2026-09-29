@@ -217,7 +217,9 @@ await bootStep(0.88, 'Compilation des shaders');
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
 if (renderer && typeof renderer.compile === 'function') {
     try {
-        renderer.compile(scene, camera);
+        // Les deux variantes (rendu direct / via le composer) : aucun freeze quand on bascule de l'une à l'autre
+        if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
+        else renderer.compile(scene, camera);
     } catch (_) {}
 }
 
@@ -3551,6 +3553,9 @@ function renderFrame() {
         const character = listener && listener._character3D;
         if (!character || character.isLoaded || performance.now() - _bootStart > 10000) {
             _bootFinished = true;
+            // Personnage et modèles chargés : préparer leurs shaders pour les deux modes de rendu
+            // (direct / composer) → aucune compilation en jeu lors d'une bascule
+            if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
             _boot.done();
         } else {
             _boot.set(0.98, 'Chargement du personnage');

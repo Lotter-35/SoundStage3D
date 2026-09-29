@@ -64,6 +64,10 @@ function setBloomLayer(obj, layer, enabled) {
 function layerHasVisibleObject(layer) {
     for (const obj of _bloomRegistry[layer]) {
         if (!obj.layers.isEnabled(layer)) continue;
+        // Mesh instancié sans aucune instance (ex. boîtiers de lyres quand il n'y a plus de lyre) :
+        // rien n'est dessiné, il ne doit pas déclencher toute la passe de bloom
+        if (obj.isInstancedMesh && obj.count === 0) continue;
+        if (obj.geometry && obj.geometry.isInstancedBufferGeometry && obj.geometry.instanceCount === 0) continue;
         let o = obj;
         while (o && o.visible) {
             if (o.parent === null) {
@@ -809,11 +813,57 @@ export class LaserManager {
      * - Les obstacles du décor masquent naturellement les sources lumineuses via le depth buffer
      * - Mélange additif dans la scène nette finale avec MSAA matériel
      */
+    /**
+     * Rendu direct à l'écran possible ? Uniquement quand AUCUNE passe de post-traitement ne sert :
+     * pas de bloom visible, aucune passe de scène active (faisceaux des lyres, brouillard…),
+     * pas de FXAA / SMAA / netteté, et MSAA 4x (identique au MSAA matériel du canvas).
+     * Évite la cible HDR MSAA 4x, la recopie de profondeur et 2 passes plein écran par image.
+     */
+    _canRenderDirect(renderLaser, renderLights) {
+        if (renderLaser || renderLights) return false;
+        if (this._msaaSamples !== 4) return false;
+        const composer = this._finalComposer;
+        for (const pass of composer.passes) {
+            if (!pass.enabled) continue;
+            if (pass === composer.passes[0] || pass === this._sceneDepthTap || pass === this._mixPass || pass === this._outputPass) continue;
+            return false; // une passe d'effet est active (lyres, brouillard, FXAA, SMAA, netteté…)
+        }
+        return true;
+    }
+
+    /**
+     * Précompile les shaders pour les DEUX modes de rendu (direct à l'écran et via le composer) :
+     * basculer de l'un à l'autre (ex. premier laser posé) ne provoque pas de recompilation.
+     */
+    warmupShaders() {
+        const r = this.renderer;
+        if (!r || typeof r.compile !== 'function') return;
+        const prev = r.getRenderTarget();
+        try {
+            r.setRenderTarget(null);
+            r.compile(this.scene, this.camera);
+            if (this._finalComposer && this._finalComposer.renderTarget1) {
+                r.setRenderTarget(this._finalComposer.renderTarget1);
+                r.compile(this.scene, this.camera);
+            }
+        } catch (_) {
+        } finally {
+            r.setRenderTarget(prev);
+        }
+    }
+
     render() {
         if (this._useComposer && this._finalComposer) {
             // Un bloom sans aucun objet émissif visible ne produit que du noir : on saute toute la passe
             const renderLaser = Boolean(globalLaserPostParams.laserBloomEnabled && this._laserBloomComposer) && layerHasVisibleObject(BLOOM_LASER_LAYER);
             const renderLights = Boolean(globalLaserPostParams.lightsBloomEnabled && this._lightsBloomComposer) && layerHasVisibleObject(BLOOM_LIGHTS_LAYER);
+
+            // Aucun effet actif : rendu direct à l'écran (même image, beaucoup moins de travail GPU)
+            if (this._canRenderDirect(renderLaser, renderLights)) {
+                this.renderer.setRenderTarget(null);
+                this.renderer.render(this.scene, this.camera);
+                return;
+            }
 
             // Matrices monde calculées UNE fois pour les 5 rendus de la frame (bloom ×2 ×2 + final)
             this.scene.updateMatrixWorld();
