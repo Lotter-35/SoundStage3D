@@ -95,7 +95,7 @@ function createFanCompositeMaterial() {
     });
 }
 
-export const FAN_RESOLUTION_SCALE = 0.25;
+export const FAN_RESOLUTION_SCALE = 0.5;
 const FAN_RENDER_LAYER = 1; // layer bloom laser, sur lequel la nappe reste (le layer 0 lui est retiré)
 
 export class LaserFanPass extends Pass {

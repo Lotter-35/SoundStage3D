@@ -59,7 +59,7 @@ export const HAZE_PARAMS_SCHEMA = {
     edge:         num(8, 0, 20, 0.1, 'Bords doux (m)', 'box'),
 
     // ── Qualité ──
-    resolution:   opt(HAZE_RESOLUTIONS, 'Quart de résolution', 'Résolution', 'perf'),
+    resolution:   opt(HAZE_RESOLUTIONS, 'Demi-résolution', 'Résolution', 'perf'),
     maxLights:    num(6, 1, 8, 1, 'Nombre de lumières max', 'perf'),
     segments:     num(2, 1, 8, 1, 'Tranches de calcul', 'perf'),
 };

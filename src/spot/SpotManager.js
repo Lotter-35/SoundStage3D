@@ -197,7 +197,7 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
-        this.volumePass.setResolutionScale(RES_QUALITY[g.beamQuality] || 0.25);
+        this.volumePass.setResolutionScale(RES_QUALITY[g.beamQuality] || 0.5);
         this.pool.setShadows(g.lightShadows);
     }
 
