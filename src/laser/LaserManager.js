@@ -1061,47 +1061,6 @@ export class LaserManager {
         }
     }
 
-    /**
-     * Précompile les shaders de TOUTES les passes de post-traitement (y compris désactivées :
-     * lens flare, FXAA, SMAA, netteté, bloom…) → aucune compilation lors de leur première activation.
-     */
-    prewarmPasses() {
-        const r = this.renderer;
-        const rt = this._finalComposer && this._finalComposer.renderTarget1;
-        if (!r || !rt) return 0;
-        const mats = new Set();
-        const scan = (obj, depth) => {
-            if (!obj || typeof obj !== 'object' || depth > 3) return;
-            if (obj.isMaterial) { mats.add(obj); return; }
-            if (obj.isMesh && obj.material) { mats.add(obj.material); return; }
-            if (obj.isTexture || obj.isObject3D || obj.isWebGLRenderTarget || obj.isRenderTarget) return;
-            const vals = Array.isArray(obj) ? obj : Object.values(obj);
-            for (const v of vals) if (v && typeof v === 'object') scan(v, depth + 1);
-        };
-        for (const c of [this._finalComposer, this._laserBloomComposer, this._lightsBloomComposer]) {
-            if (c) for (const pass of c.passes) scan(pass, 0);
-        }
-        const quad = new THREE.Mesh(new THREE.PlaneGeometry(2, 2));
-        quad.frustumCulled = false;
-        const cam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
-        const prev = r.getRenderTarget();
-        // OutputPass ne fixe ses options de couleur qu'à son premier rendu : un rendu hors écran maintenant
-        if (this._outputPass && this._finalComposer.renderTarget2) {
-            try { this._outputPass.render(r, this._finalComposer.renderTarget2, rt); } catch (_) {}
-        }
-        // Deux variantes : vers une cible du composer, et directement à l'écran (dernière passe active)
-        for (const target of [rt, null]) {
-            r.setRenderTarget(target);
-            for (const m of mats) {
-                quad.material = m;
-                try { r.compile(quad, cam); } catch (_) {}
-            }
-        }
-        r.setRenderTarget(prev);
-        quad.geometry.dispose();
-        return mats.size;
-    }
-
     render() {
         if (this._useComposer && this._finalComposer) {
             // Un bloom sans aucun objet émissif visible ne produit que du noir : on saute toute la passe
