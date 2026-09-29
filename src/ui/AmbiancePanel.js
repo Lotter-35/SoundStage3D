@@ -20,6 +20,7 @@ import { SpotInspectorPanel } from '../spot/ui/SpotInspectorPanel.js';
 import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
+import { HAZE_PARAMS_SCHEMA } from '../haze/hazeParams.js';
 
 // Réglages propres à chaque machine : jamais synchronisés via le serveur
 const LOCAL_ONLY_POST_KEYS = new Set(['antialiasing', 'laserRange']);
@@ -1033,8 +1034,12 @@ export class AmbiancePanel {
             }
 
             // 2b. Brouillard de salle : légère coloration selon la couleur du ciel de l'ambiance
-            if (this.hazeVolume && typeof this.hazeVolume.setEnvTint === 'function') {
-                this.hazeVolume.setEnvTint(this._hazeTintForPreset(preset));
+            // → écrit directement dans le paramètre « Teinte / albédo » du brouillard (visible dans son panneau)
+            if (this.hazeVolume && typeof this.hazeVolume.setParam === 'function') {
+                const base = new THREE.Color(HAZE_PARAMS_SCHEMA.tint.value);
+                const albedo = base.multiply(this._hazeTintForPreset(preset));
+                this.hazeVolume.setParam('tint', '#' + albedo.getHexString());
+                if (this.hazePanel && typeof this.hazePanel.syncFromVolume === 'function') this.hazePanel.syncFromVolume();
             }
 
             // 3. Affichage du ciel étoilé
