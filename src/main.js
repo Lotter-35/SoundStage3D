@@ -154,7 +154,7 @@ strobeManager.addStrobe(new THREE.Vector3(0, 19.49, -9.59), {
     distanceFactor: 10, showHousing: true, width: 1.2, height: 0.38, depth: 0.24,
     strobeEnabled: false, strobeSpeed: 12, pulseWidth: 50, strobeRandom: false,
     posX: 0, posY: 19.49, posZ: -9.59, angle: 0, tilt: 45, roll: 0,
-});
+}, 0);
 
 // ─── Lyres Spot (projecteurs asservis, prêts pour le DMX) ─────────
 // Créé avant le warmup : le pool fixe de SpotLight est compilé une seule fois au démarrage

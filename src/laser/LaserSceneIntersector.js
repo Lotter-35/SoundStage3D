@@ -172,6 +172,11 @@ const _playerHit = { t: Infinity, nx: 0, ny: 0, nz: 0 };
 
 export const STAGE_OBSTACLE_COUNT = STAGE_OBSTACLES.length;
 
+/** Boîtes des obstacles physiques de la scène (partagées avec l'occlusion des lyres) */
+export function getStageObstacles() {
+    return STAGE_OBSTACLES;
+}
+
 export function registerPlayerCollider(collider) {
     _playerCollider = collider;
 }

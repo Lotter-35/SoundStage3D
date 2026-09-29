@@ -127,6 +127,28 @@ export class StrobeInspectorPanel {
     }
 
     /**
+     * Rafraîchit tous les contrôles depuis les paramètres du stroboscope
+     * (modification reçue d'un autre joueur)
+     */
+    syncAllFromStrobe() {
+        if (!this.gui || !this._currentStrobe) return;
+        const p = this._currentStrobe.params;
+        if (this._posState) {
+            this._posState.x = Math.round(p.posX * 100) / 100;
+            this._posState.y = Math.round(p.posY * 100) / 100;
+            this._posState.z = Math.round(p.posZ * 100) / 100;
+        }
+        if (this._rotState) {
+            this._rotState.angle = p.angle;
+            this._rotState.tilt = p.tilt;
+            this._rotState.roll = p.roll;
+        }
+        for (const c of Object.values(this.controllers)) {
+            try { c.updateDisplay(); } catch (_) {}
+        }
+    }
+
+    /**
      * Injecte le bouton reset ↺ sur un contrôleur lil-gui
      */
     _setupController(ctrl, key, defaultVal) {
@@ -182,7 +204,7 @@ export class StrobeInspectorPanel {
 
         this.gui = new GUI({
             container: this.panelContainer,
-            title: `⚡ Stroboscope #${this._currentStrobeId}`,
+            title: `⚡ Stroboscope #${strobe.number}`,
             autoPlace: false,
             width: 340,
         });
@@ -190,7 +212,7 @@ export class StrobeInspectorPanel {
         // ── Titre personnalisé avec Reset Tout (↺) et Fermer (✕) ──
         const titleEl = this.gui.domElement.querySelector('.title');
         if (titleEl) {
-            const rawTitle = `⚡ Stroboscope #${this._currentStrobeId}`;
+            const rawTitle = `⚡ Stroboscope #${strobe.number}`;
             titleEl.textContent = '';
 
             const textSpan = document.createElement('span');

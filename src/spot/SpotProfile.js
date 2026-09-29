@@ -221,9 +221,9 @@ const CH = {
     },
     iris: {
         name: 'Iris',
-        // 0 = ouvert, 255 = fermé (minimum 5 %)
-        dec: (v, out) => { out.iris = 100 - (v / 255) * 95; },
-        enc: p => round(((100 - p.iris) / 95) * 255),
+        // 0 = ouvert, 255 = fermé au minimum (20 %)
+        dec: (v, out) => { out.iris = 100 - (v / 255) * 80; },
+        enc: p => round(((100 - p.iris) / 80) * 255),
     },
     zoom: {
         name: 'Zoom',

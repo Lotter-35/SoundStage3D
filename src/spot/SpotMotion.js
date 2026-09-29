@@ -285,7 +285,7 @@ export class SpotMotion {
         let zoomT = p.zoom, irisT = p.iris, frostT = p.frost;
         if (resetFX) {
             zoomT = rt < 1.2 ? 48 : rt < 2.2 ? 5 : p.zoom;
-            irisT = rt < 1.4 ? 5 : p.iris;
+            irisT = rt < 1.4 ? 20 : p.iris;
             frostT = 0;
         }
         this.zoom = approach(this.zoom, zoomT, dt * 75);
@@ -303,7 +303,7 @@ export class SpotMotion {
         out.bladeRot = this.bladeRot * DEG;
 
         out.zoom = this.zoom;
-        out.iris = clamp(this.iris / 100, 0.05, 1);
+        out.iris = clamp(this.iris / 100, 0.2, 1);
         out.frost = clamp(this.frost / 100, 0, 1);
         out.focus = clamp(this.focus / 100, 0, 1);
         return out;

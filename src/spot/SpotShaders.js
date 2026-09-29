@@ -35,9 +35,10 @@
 
 import * as THREE from 'three';
 import { SMOKE_NOISE_UVW_SCALE } from '../laser/LaserSmokeNoise.js';
+import { occluderUniforms, MAX_OCCLUDERS } from './SpotOcclusion.js';
 
 /** Texels RGBA par lyre dans la texture de paramètres */
-export const SPOT_TEXELS = 8;
+export const SPOT_TEXELS = 9;
 /*
  * T0 : couleur A (rgb)            , flux (intensité × dimmer × obturateur)
  * T1 : couleur B (rgb)            , position de la frontière des demi-couleurs (2 = aucune)
@@ -47,6 +48,7 @@ export const SPOT_TEXELS = 8;
  * T5 : couteau 1 (ins, angle)     , couteau 2 (ins, angle)
  * T6 : couteau 3 (ins, angle)     , couteau 4 (ins, angle)
  * T7 : rotation bloc couteaux     , éblouissement , tan(demi-angle du cône) , distance apex → lentille
+ * T8 : indices des 4 obstacles de la scène à tester (−1 = aucun) — voir SpotOcclusion.js
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -152,8 +154,11 @@ vec3 spotGate(int row, vec2 g, float blur) {
 // 1. Faisceau volumétrique
 // ─────────────────────────────────────────────────────────────────────────────
 export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
+    const occ = occluderUniforms();
     return new THREE.ShaderMaterial({
         uniforms: {
+            uBoxMin:     { value: occ.mins },
+            uBoxMax:     { value: occ.maxs },
             uSpotParams: { value: paramsTexture },
             uGobos:      { value: goboTexture },
             uNoise:      { value: noiseTexture },
@@ -214,12 +219,33 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
             uniform float uPhaseG;
             uniform vec3 uWind;
             uniform float uTime;
+            uniform vec3 uBoxMin[${MAX_OCCLUDERS}];
+            uniform vec3 uBoxMax[${MAX_OCCLUDERS}];
             flat varying vec4 vLens;
             flat varying vec4 vAxis;
             flat varying vec4 vRight;
             varying vec3 vWorld;
 
             const float PI = 3.14159265;
+
+            // Le segment a → a + d·t (t < tMax) traverse-t-il un des obstacles de la lyre ?
+            bool segBlocked(vec3 a, vec3 d, float tMax, vec4 idx) {
+                vec3 dd = mix(vec3(1e-7), d, step(1e-7, abs(d)));
+                vec3 inv = 1.0 / dd;
+                for (int k = 0; k < 4; k++) {
+                    float fi = idx[k];
+                    if (fi < 0.0) break;
+                    int i = int(fi + 0.5);
+                    vec3 t0 = (uBoxMin[i] - a) * inv;
+                    vec3 t1 = (uBoxMax[i] - a) * inv;
+                    vec3 tl = min(t0, t1);
+                    vec3 th = max(t0, t1);
+                    float tn = max(max(tl.x, tl.y), tl.z);
+                    float tf = min(min(th.x, th.y), th.z);
+                    if (tn <= tf && tf > 0.0 && tn < tMax) return true;
+                }
+                return false;
+            }
             const float NOISE_UVW = ${SMOKE_NOISE_UVW_SCALE.toFixed(8)};
 
             float hazeDensity(vec3 p) {
@@ -263,6 +289,8 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                 vec4 T2 = spotParam(row, 2);
                 vec4 T4 = spotParam(row, 4);
                 vec4 T7 = spotParam(row, 7);
+                vec4 T8 = spotParam(row, 8);
+                bool hasOcc = T8.x >= 0.0;
                 float flux = T0.w * weight;
                 if (flux <= 0.0) discard;
                 float tanHalf = T2.x;
@@ -336,6 +364,14 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                     float blur = frostBlur + min(0.14, abs(log((zl + 0.5) / focusDist)) * 0.035);
                     vec3 gate = spotGate(row, g, blur);
                     if (gate.r + gate.g + gate.b < 1e-4) continue;
+                    // Ombre de la structure de la scène : départ tiré sur la surface de la lentille (pénombre douce)
+                    if (hasOcc) {
+                        float ang = 6.2831853 * fract(jit * 7.13 + float(i) * 0.618);
+                        float rr = T4.w * sqrt(fract(jit * 3.71 + float(i) * 0.382));
+                        vec3 a = vLens.xyz + (R * cos(ang) + U * sin(ang)) * rr;
+                        vec3 sd = P - a;
+                        if (segBlocked(a, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8)) continue;
+                    }
                     float E = irr0 / (zA * zA);
                     float fade = 1.0 - smoothstep(fadeStart, L, zl);
                     float cosT = dot(lp, -rd) / max(1e-4, length(lp));
@@ -345,7 +381,12 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
 
                 // ── Tache de lumière sur les surfaces (lyres sans lumière réelle) ──
                 float splashW = T4.z;
-                if (hitSurface && splashW > 0.001) {
+                bool splashBlocked = false;
+                if (hitSurface && splashW > 0.001 && hasOcc) {
+                    vec3 sd = sceneP - vLens.xyz;
+                    splashBlocked = segBlocked(vLens.xyz, sd, 1.0 - 0.06 / max(length(sd), 0.1), T8);
+                }
+                if (hitSurface && splashW > 0.001 && !splashBlocked) {
                     vec3 lp = sceneP - apex;
                     float zA = dot(lp, W);
                     vec3 rad = lp - W * zA;

@@ -24,24 +24,54 @@ export class StrobeManager {
         this.renderer = renderer;
 
         this._strobes = new Map(); // Map<id, StrobeLight>
-        this._nextId = 1;
+        this._nextNumber = 1;
+        this._emit = null;         // émission multijoueur (branchée par l'AmbiancePanel)
+    }
+
+    /** Branche l'envoi réseau (les messages reçus sont appliqués sans renvoi) */
+    setSyncEmitter(fn) {
+        this._emit = fn;
+        for (const s of this._strobes.values()) s._emit = fn;
+    }
+
+    /** Identifiant numérique unique entre joueurs (0 est réservé au stroboscope du spawn) */
+    _makeId() {
+        let id;
+        do {
+            id = (Math.floor(Date.now() / 10) % 1e9) * 100 + Math.floor(Math.random() * 100) + 1;
+        } while (this._strobes.has(id));
+        return id;
     }
 
     /**
      * Ajoute un nouveau stroboscope dans la scène
      * @param {THREE.Vector3} [position]
      * @param {object} [params]
+     * @param {number|null} [customId] identifiant imposé (spawn, réseau) — sinon nouveau stroboscope local, annoncé aux autres joueurs
      * @returns {{ id: number, strobe: StrobeLight }}
      */
-    addStrobe(position = new THREE.Vector3(0, 8, -5), params = {}) {
-        const id = this._nextId++;
+    addStrobe(position = new THREE.Vector3(0, 8, -5), params = {}, customId = null) {
+        const isNew = customId === null || customId === undefined;
+        const id = isNew ? this._makeId() : (typeof customId === 'number' ? customId : parseInt(customId, 10));
+        if (this._strobes.has(id)) return { id, strobe: this._strobes.get(id) };
         const strobe = new StrobeLight({
             id,
+            number: this._nextNumber++,
             scene: this.scene,
             position,
-            params
+            params,
+            emit: this._emit
         });
         this._strobes.set(id, strobe);
+
+        // Annonce aux autres joueurs, après les réglages éventuels faits juste après la création
+        if (isNew && this._emit) {
+            queueMicrotask(() => {
+                if (this._strobes.get(id) === strobe && this._emit) {
+                    this._emit({ category: 'strobe_add', data: { id, params: { ...strobe.params } } });
+                }
+            });
+        }
 
         // Warm-up / Précompilation des shaders et géométries sur le GPU
         if (this.renderer && this.camera && typeof this.renderer.compile === 'function') {
@@ -63,6 +93,7 @@ export class StrobeManager {
         if (strobe) {
             strobe.dispose();
             this._strobes.delete(numId);
+            if (this._emit) this._emit({ category: 'strobe_remove', id: numId });
             return true;
         }
         return false;

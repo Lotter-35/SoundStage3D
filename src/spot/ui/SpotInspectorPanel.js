@@ -19,6 +19,9 @@ import {
 } from '../config/spotParams.js';
 import { describeChannels, encode, getFootprint } from '../SpotProfile.js';
 
+/** Réglages propres à chaque lyre : jamais recopiés sur la sélection (sinon toutes au même endroit / même adresse) */
+const PER_FIXTURE_FOLDERS = new Set(['place', 'dmx']);
+
 export class SpotInspectorPanel {
     /**
      * @param {object} o
@@ -38,6 +41,8 @@ export class SpotInspectorPanel {
         this._timer = null;
         this._monitorEl = null;
         this._patchInfoEl = null;
+        this._linkEnabled = true;   // réglages appliqués à toute la sélection de la console
+        this._linkEl = null;
     }
 
     get isOpen() {
@@ -90,13 +95,50 @@ export class SpotInspectorPanel {
         }
     }
 
+    /**
+     * Lyres liées : si la lyre ouverte fait partie de la sélection de la console (Lyres)
+     * et que la sélection en compte plusieurs, les réglages s'appliquent à toutes.
+     * @returns {import('../SpotFixture.js').SpotFixture[]|null}
+     */
+    _linkedSpots() {
+        const P = this.spotManager.programmer;
+        const spot = this._spot;
+        if (!P || !spot || !P.selection.has(spot.id)) return null;
+        const list = P.editable();
+        if (list.length < 2) return null;
+        if (!list.includes(spot)) list.push(spot);
+        return list;
+    }
+
     _setParam(key, value) {
         const spot = this._spot;
         if (!spot) return;
-        spot.setParam(key, value);
-        this._emit({ category: 'spot_update', id: spot.id, data: { [key]: value } });
+        const schema = SPOT_PARAMS_SCHEMA[key];
+        const linked = this._linkEnabled && schema && !PER_FIXTURE_FOLDERS.has(schema.folder) ? this._linkedSpots() : null;
+        if (linked) {
+            // Toute la sélection en un seul message réseau (limité en fréquence pendant un glissé)
+            this.spotManager.programmer.apply({ [key]: value }, { spots: linked, continuous: typeof value === 'number' });
+        } else {
+            spot.setParam(key, value);
+            this._emit({ category: 'spot_update', id: spot.id, data: { [key]: value } });
+        }
         if (key.startsWith('dmx')) this._refreshPatchInfo();
         this._refreshVisibility();
+    }
+
+    /** Bandeau « réglages appliqués à N lyres » (visible seulement si la lyre est dans une sélection multiple) */
+    _refreshLinkBanner() {
+        if (!this._linkEl) return;
+        const P = this.spotManager.programmer;
+        const inSel = Boolean(P && this._spot && P.selection.has(this._spot.id));
+        const n = inSel ? P.editable().length : 0;
+        const show = inSel && n >= 2;
+        this._linkEl.style.display = show ? 'flex' : 'none';
+        if (show) {
+            this._linkText.textContent = `Appliquer à la sélection de la console (${n} lyres)`;
+            this._linkBox.checked = this._linkEnabled;
+            this._linkEl.style.background = this._linkEnabled ? 'rgba(56,189,248,0.16)' : 'rgba(255,255,255,0.04)';
+        }
     }
 
     _addResetButton(ctrl, onReset) {
@@ -119,12 +161,16 @@ export class SpotInspectorPanel {
         const data = {};
         for (const [k, s] of Object.entries(SPOT_PARAMS_SCHEMA)) {
             // La position et le patch DMX sont conservés (« tout reset » = réglages de la machine)
-            if (s.folder === 'place' || s.folder === 'dmx') continue;
-            spot.params[k] = s.value;
+            if (PER_FIXTURE_FOLDERS.has(s.folder)) continue;
             data[k] = s.value;
         }
-        spot.setParams(data);
-        this._emit({ category: 'spot_update', id: spot.id, data });
+        const linked = this._linkEnabled ? this._linkedSpots() : null;
+        if (linked) {
+            this.spotManager.programmer.apply({ ...data }, { spots: linked });
+        } else {
+            spot.setParams(data);
+            this._emit({ category: 'spot_update', id: spot.id, data });
+        }
         this.syncFromSpot();
     }
 
@@ -176,6 +222,21 @@ export class SpotInspectorPanel {
         const title = `🎯 Lyre Spot #${spot.number}`;
         this.gui = new GUI({ container: this.panelContainer, title, autoPlace: false, width: 340 });
         this._buildTitle(title);
+
+        // Bandeau de liaison avec la sélection de la console des lyres
+        this._linkEl = document.createElement('label');
+        this._linkEl.style.cssText = 'display:none;align-items:center;gap:8px;margin:6px 8px;padding:6px 8px;border-radius:6px;border:1px solid rgba(56,189,248,0.45);font-size:11px;color:#e0f2fe;cursor:pointer;';
+        this._linkBox = document.createElement('input');
+        this._linkBox.type = 'checkbox';
+        this._linkBox.checked = this._linkEnabled;
+        this._linkBox.addEventListener('change', () => {
+            this._linkEnabled = this._linkBox.checked;
+            this._refreshLinkBanner();
+        });
+        this._linkText = document.createElement('span');
+        this._linkEl.append('🔗', this._linkBox, this._linkText);
+        this.gui.$children.prepend(this._linkEl);
+        this._refreshLinkBanner();
 
         // Dossiers
         const folders = {};
@@ -273,8 +334,11 @@ export class SpotInspectorPanel {
 
     _reset(mode) {
         if (!this._spot) return;
-        this._spot.reset(mode);
-        this._emit({ category: 'spot_action', id: this._spot.id, action: 'reset', mode, immediate: true });
+        const targets = (this._linkEnabled && this._linkedSpots()) || [this._spot];
+        for (const s of targets) {
+            s.reset(mode);
+            this._emit({ category: 'spot_action', id: s.id, action: 'reset', mode, immediate: true });
+        }
     }
 
     _show(key, visible) {
@@ -334,5 +398,6 @@ export class SpotInspectorPanel {
             this.syncFromSpot();
         }
         this._refreshMonitor();
+        this._refreshLinkBanner();
     }
 }

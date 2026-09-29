@@ -84,6 +84,8 @@ export class SpotConsolePanel {
         this.isOpen = false;
 
         this.programmer = new SpotProgrammer({ spotManager, ambiancePanel, camera });
+        // Le panneau de réglages d'une lyre applique ses changements à toute cette sélection
+        spotManager.programmer = this.programmer;
         this.aimTarget = new SpotAimTarget(scene);
         this.highlight = new SpotSelectionHighlight(scene);
         this.effects = spotManager.effects;

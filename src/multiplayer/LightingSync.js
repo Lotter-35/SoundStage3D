@@ -121,7 +121,7 @@ export class LightingSync {
         }
 
         // Événements continus nécessitant un throttling (sliders, gizmo)
-        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi') {
+        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'strobe_update') {
             const idPart = (id !== undefined && id !== null) ? id : 'global';
             const throttleKey = event.throttleKey || `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
             this._sendThrottled(throttleKey, event);
@@ -223,7 +223,20 @@ export class LightingSync {
                     this._applyLaserResetAll(id);
                     break;
 
-                // ── 6. Lyres Spot ──
+                // ── 6. Stroboscopes ──
+                case 'strobe_add':
+                    this._applyStrobeAdd(data);
+                    break;
+
+                case 'strobe_update':
+                    this._applyStrobeUpdate(id, data);
+                    break;
+
+                case 'strobe_remove':
+                    this._applyStrobeRemove(id);
+                    break;
+
+                // ── 7. Lyres Spot ──
                 case 'spot_add':
                     this._applySpotAdd(data);
                     break;
@@ -727,6 +740,74 @@ export class LightingSync {
     }
 
     // ─────────────────────────────────────────────────────────────────────────
+    // Stroboscopes
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _strobeManager() {
+        return this.ambiancePanel ? this.ambiancePanel.strobeManager : null;
+    }
+
+    _applyStrobeAdd(data) {
+        const sm = this._strobeManager();
+        if (!sm || !data || data.id === undefined || data.id === null) return;
+        const id = parseInt(data.id, 10);
+        if (sm.getStrobe(id)) return;
+        const p = data.params || {};
+        const pos = new THREE.Vector3(p.posX ?? 0, p.posY ?? 8, p.posZ ?? -5);
+        sm.addStrobe(pos, p, id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyStrobeUpdate(id, data) {
+        const sm = this._strobeManager();
+        const strobe = sm && sm.getStrobe(id);
+        if (!strobe || !data) return;
+        const ap = this.ambiancePanel;
+        // Ne pas écraser un stroboscope que le joueur local est en train de déplacer au gizmo
+        if (ap && ap.isDraggingGizmo && ap.selectedStrobe === strobe) return;
+        for (const [k, v] of Object.entries(data)) {
+            if (k === 'posX' || k === 'posY' || k === 'posZ' || k === 'angle' || k === 'tilt' || k === 'roll') continue;
+            strobe.setParam(k, v);
+        }
+        if (data.posX !== undefined || data.posY !== undefined || data.posZ !== undefined) {
+            const p = strobe.params;
+            strobe.setPosition(data.posX ?? p.posX, data.posY ?? p.posY, data.posZ ?? p.posZ);
+        }
+        if (data.angle !== undefined || data.tilt !== undefined || data.roll !== undefined) {
+            const p = strobe.params;
+            strobe.setRotation(data.angle ?? p.angle, data.tilt ?? p.tilt, data.roll ?? p.roll);
+        }
+        const insp = ap && ap._strobeInspectorPanel;
+        if (insp && insp.isOpen && insp._currentStrobe === strobe) insp.syncAllFromStrobe();
+        if (ap && ap.selectedStrobe === strobe && ap.transformControls) ap.transformControls.updateMatrixWorld(true);
+    }
+
+    _applyStrobeRemove(id) {
+        const sm = this._strobeManager();
+        if (!sm || id === undefined || id === null) return;
+        const strobe = sm.getStrobe(id);
+        if (!strobe) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedStrobe === strobe) this.ambiancePanel.deselectStrobe();
+        sm.removeStrobe(strobe.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyStrobesFullState(strobes) {
+        const sm = this._strobeManager();
+        if (!sm || !strobes || typeof strobes !== 'object') return;
+        const serverIds = new Set(Object.keys(strobes).map(k => parseInt(k, 10)));
+        for (const s of sm.getAllStrobes()) {
+            if (!serverIds.has(s.id)) this._applyStrobeRemove(s.id);
+        }
+        for (const [idStr, s] of Object.entries(strobes)) {
+            if (!s) continue;
+            const id = parseInt(idStr, 10);
+            if (sm.getStrobe(id)) this._applyStrobeUpdate(id, s.params || {});
+            else this._applyStrobeAdd({ id, params: s.params || {} });
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
     // Lyres Spot
     // ─────────────────────────────────────────────────────────────────────────
 
@@ -877,7 +958,12 @@ export class LightingSync {
                 }
             }
 
-            // 6. Lyres Spot
+            // 6. Stroboscopes
+            if (state.strobes) {
+                this._applyStrobesFullState(state.strobes);
+            }
+
+            // 7. Lyres Spot
             if (state.spots || state.spotGlobals) {
                 this._applySpotsFullState(state.spots, state.spotGlobals);
             }

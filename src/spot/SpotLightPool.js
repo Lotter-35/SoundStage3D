@@ -17,6 +17,7 @@ import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { createGateMapMaterial } from './SpotShaders.js';
 import { SPOT_BEAM_RANGE } from './SpotFixture.js';
+import { LENS_RADIUS } from './SpotHousing.js';
 
 /** Nombre maximal de lumières réelles (chaque texture de projection occupe 1 unité de texture
  *  dans TOUS les matériaux éclairés : on garde 10 unités pour leurs propres textures et ombres) */
@@ -100,6 +101,9 @@ export class SpotLightPool {
         if (enabled) {
             for (const f of fixtures) {
                 if (f.lightFlux <= 0.002) continue;
+                // Une SpotLight réelle traverserait les murs : si le cône touche la structure de la scène,
+                // la lyre garde sa tache de lumière calculée par le shader (qui gère l'occlusion)
+                if (f.occluderCount > 0) continue;
                 const t = this._throwDistance(f);
                 _throwPt.copy(f.lensPos).addScaledVector(f.axis, t);
                 const d = camera.position.distanceTo(_throwPt);
@@ -155,7 +159,10 @@ export class SpotLightPool {
             light.updateMatrixWorld();
             light.target.updateMatrixWorld();
             light.angle = Math.min(1.25, Math.atan(f.tanLight) * 1.02);
-            light.intensity = LIGHT_SCALE * f.lightFlux * s.weight / (Math.PI * f.tanHalf * f.tanHalf);
+            // Ouverture effective à la distance de projection (la lentille a une taille) : un zoom à 0°
+            // donne une tache de la taille de la lentille, pas une intensité infinie
+            const tanEff = f.tanHalf + LENS_RADIUS / Math.max(1, f._throw || this._throwDistance(f));
+            light.intensity = LIGHT_SCALE * f.lightFlux * s.weight / (Math.PI * tanEff * tanEff);
 
             const u = this._mapMaterial.uniforms;
             const throwDist = f._throw || this._throwDistance(f);

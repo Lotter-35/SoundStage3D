@@ -279,6 +279,10 @@ function defaultLightingState() {
                 pausedOffset: 0,
             }
         },
+        // Stroboscopes : l'id 0 est celui posé au spawn dans src/main.js (params vides = réglages du spawn)
+        strobes: {
+            0: { id: 0, params: {} },
+        },
         spots: {},        // lyres Spot : { id: { id, params } }
         spotGlobals: {},  // réglages communs des lyres (fumée, qualité, éclairage réel)
         spotFx: {},       // effets de la console en cours : { id: définition }
@@ -329,6 +333,19 @@ function applyLightingChange(state, msg) {
         if (state.lasers) delete state.lasers[id];
     } else if (category === 'laser_reset_all') {
         if (state.lasers && state.lasers[id]) state.lasers[id].params = {};
+    } else if (category === 'strobe_add') {
+        if (!state.strobes) state.strobes = {};
+        if (data && data.id !== undefined && data.id !== null) {
+            state.strobes[data.id] = { id: data.id, params: { ...(data.params || {}) } };
+        }
+    } else if (category === 'strobe_update') {
+        if (!state.strobes) state.strobes = {};
+        if (id !== undefined && id !== null && data) {
+            if (!state.strobes[id]) state.strobes[id] = { id, params: {} };
+            Object.assign(state.strobes[id].params, data);
+        }
+    } else if (category === 'strobe_remove') {
+        if (state.strobes) delete state.strobes[id];
     } else if (category === 'spot_add') {
         if (!state.spots) state.spots = {};
         if (data && data.id) state.spots[data.id] = { id: data.id, params: { ...(data.params || {}) } };
@@ -361,7 +378,9 @@ function applyLightingChange(state, msg) {
         state.gi = fresh.gi;
         state.laserPost = fresh.laserPost;
         state.lights = {};
-        state.lasers = {};
+        // Le reset global revient à la scène du spawn (lasers et stroboscope de base conservés)
+        state.lasers = fresh.lasers;
+        state.strobes = fresh.strobes;
         state.spots = {};
         state.spotGlobals = {};
         state.spotFx = {};

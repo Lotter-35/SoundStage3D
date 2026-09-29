@@ -16,11 +16,14 @@ import { defaultSpotParams, SPOT_PARAMS_SCHEMA } from './config/spotParams.js';
 import { SpotMotion } from './SpotMotion.js';
 import { decode, getFootprint } from './SpotProfile.js';
 import { getSpotHousingInstancer, TILT_PIVOT_Y, LENS_OFFSET, LENS_RADIUS } from './SpotHousing.js';
+import { findConeOccluders, OCCLUDERS_PER_SPOT } from './SpotOcclusion.js';
 
 /** Portée de rendu des faisceaux (m) */
 export const SPOT_BEAM_RANGE = 140;
 /** Échelle du flux lumineux des faisceaux (calibrage visuel) */
 const FLUX_SCALE = 25;
+/** Zoom minimal réel : 0° = faisceau quasi parallèle (le flux reste réparti sur la section de la lentille) */
+const MIN_ZOOM_DEG = 0.25;
 const DEG = Math.PI / 180;
 const MAX_FACETS = 9;
 
@@ -88,6 +91,8 @@ export class SpotFixture {
         this.focusDist = 10;
         this.frost = 0;
         this.poolWeight = 0;       // part d'éclairage assurée par une SpotLight réelle (0…1)
+        this.occluders = new Float32Array(OCCLUDERS_PER_SPOT).fill(-1); // obstacles de la scène dans le cône
+        this.occluderCount = 0;
         this.isBeingDragged = false;
         this.dmxDirty = false;     // paramètres modifiés par le DMX (rafraîchir le panneau)
         // Contribution des effets de la console (s'ajoute aux paramètres sans les modifier)
@@ -208,7 +213,7 @@ export class SpotFixture {
         this.lensPos.copy(_lensLocal).applyMatrix4(this._head);
 
         // Optique
-        const tanHalf = Math.tan(m.zoom * 0.5 * DEG);
+        const tanHalf = Math.tan(Math.max(MIN_ZOOM_DEG, m.zoom) * 0.5 * DEG);
         const margin = 0.03 + m.frost * 0.45 + 0.16;
         const tanCone = tanHalf * (m.iris + margin);
         this.tanHalf = tanHalf;
@@ -226,6 +231,9 @@ export class SpotFixture {
         }
         this.tanLight = tanCone + maxOff;
 
+        // Obstacles de la scène touchés par le cône (murs, toit, régie…) : ombres dans le shader
+        this.occluderCount = findConeOccluders(this.lensPos, this.axis, this.tanLight, LENS_RADIUS, SPOT_BEAM_RANGE, this.occluders);
+
         // Ligne de paramètres GPU
         const r = this.batch.paramsRow(this.row);
         r[0] = m.colorA[0]; r[1] = m.colorA[1]; r[2] = m.colorA[2]; r[3] = this.flux;
@@ -236,6 +244,7 @@ export class SpotFixture {
         r[20] = m.blades[0]; r[21] = m.bladeAngles[0]; r[22] = m.blades[1]; r[23] = m.bladeAngles[1];
         r[24] = m.blades[2]; r[25] = m.bladeAngles[2]; r[26] = m.blades[3]; r[27] = m.bladeAngles[3];
         r[28] = m.bladeRot; r[29] = p.lensGlare; r[30] = tanCone; r[31] = LENS_RADIUS / tanCone;
+        r[32] = this.occluders[0]; r[33] = this.occluders[1]; r[34] = this.occluders[2]; r[35] = this.occluders[3];
 
         // Lentille : s'illumine de la couleur du faisceau (bloom)
         const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 5.0;

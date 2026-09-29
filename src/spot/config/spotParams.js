@@ -124,7 +124,7 @@ export const SPOT_PARAMS_SCHEMA = {
 
     // ── 🌫️ Faisceau ──
     frost:        num(0, 0, 100, 1, 'Frost (%)', 'beam'),
-    iris:         num(100, 5, 100, 1, 'Iris (% ouverture)', 'beam'),
+    iris:         num(100, 20, 100, 1, 'Iris (% ouverture)', 'beam'),
 
     // ── 🔍 Optique ──
     zoom:         num(14, 5, 48, 0.1, 'Zoom (° d’ouverture)', 'optics'),

@@ -166,6 +166,8 @@ export class AmbiancePanel {
      */
     setStrobeManager(strobeManager) {
         this.strobeManager = strobeManager;
+        // Toute création / modification / suppression de stroboscope est envoyée aux autres joueurs
+        strobeManager.setSyncEmitter(payload => this._emitSync(payload));
         this._strobeInspectorPanel = new StrobeInspectorPanel({
             strobeManager,
             ambiancePanel: this
@@ -2824,7 +2826,7 @@ export class AmbiancePanel {
         if (!strobe) return null;
         const p = strobe.params;
         return {
-            name: `Stroboscope #${strobe.id}`,
+            name: `Stroboscope #${strobe.number}`,
             type: 'StrobeLight',
             position: {
                 x: Number(p.posX.toFixed(3)),
@@ -4143,7 +4145,7 @@ export class AmbiancePanel {
         if (this.strobeManager) {
             const allStrobes = this.strobeManager.getAllStrobes();
             allStrobes.forEach(strobe => {
-                lightOptions[`⚡ Stroboscope #${strobe.id}`] = `strobe_${strobe.id}`;
+                lightOptions[`⚡ Stroboscope #${strobe.number}`] = `strobe_${strobe.id}`;
             });
         }
 
@@ -4239,7 +4241,7 @@ export class AmbiancePanel {
                 }
             };
 
-            const fStrobeActions = this.fInspector.addFolder(`⚡ Stroboscope #${strobe.id} - Actions`);
+            const fStrobeActions = this.fInspector.addFolder(`⚡ Stroboscope #${strobe.number} - Actions`);
             fStrobeActions.open();
             fStrobeActions.add({ exportStrobe: () => this.exportSelectedStrobe(strobe) }, 'exportStrobe').name('💾 Exporter');
             fStrobeActions.add(strobeActions, 'duplicateStrobe').name('📋 Dupliquer');

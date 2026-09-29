@@ -23,9 +23,13 @@ export class StrobeLight {
      * @param {THREE.Vector3} [options.position]
      * @param {object} [options.params]
      */
-    constructor({ id, scene, position = new THREE.Vector3(0, 8, -5), params = {} }) {
+    constructor({ id, number, scene, position = new THREE.Vector3(0, 8, -5), params = {}, emit = null }) {
         this.id = id;
+        this.number = number !== undefined ? number : id; // numéro d'affichage (local)
         this.scene = scene;
+        // Émission multijoueur (fournie par le StrobeManager) — inactive pendant la construction
+        this._emit = emit;
+        this._ready = false;
 
         // Paramètres par défaut
         this.params = {
@@ -115,6 +119,12 @@ export class StrobeLight {
         this.setRotation(this.params.angle, this.params.tilt, this.params.roll);
 
         this.scene.add(this.group);
+        this._ready = true;
+    }
+
+    /** Envoie une modification aux autres joueurs (ignoré pendant l'application d'un message reçu) */
+    _sync(data) {
+        if (this._ready && this._emit) this._emit({ category: 'strobe_update', id: this.id, data });
     }
 
     /**
@@ -387,8 +397,10 @@ export class StrobeLight {
             case 'posY':
             case 'posZ':
                 this.setPosition(this.params.posX, this.params.posY, this.params.posZ);
-                break;
+                return; // synchronisé par setPosition
         }
+        if (key === 'angle' || key === 'tilt' || key === 'roll') return; // synchronisé par setRotation
+        this._sync({ [key]: value });
     }
 
     /**
@@ -399,6 +411,7 @@ export class StrobeLight {
         this.params.posY = y;
         this.params.posZ = z;
         this.group.position.set(x, y, z);
+        this._sync({ posX: x, posY: y, posZ: z });
     }
 
     /**
@@ -416,6 +429,7 @@ export class StrobeLight {
             'YXZ'
         );
         this.group.quaternion.setFromEuler(euler);
+        this._sync({ angle: angleDeg, tilt: tiltDeg, roll: rollDeg });
     }
 
     /**
@@ -426,6 +440,7 @@ export class StrobeLight {
         this.params.tilt  = Math.round(THREE.MathUtils.radToDeg(euler.x) * 10) / 10;
         this.params.angle = Math.round(THREE.MathUtils.radToDeg(euler.y) * 10) / 10;
         this.params.roll  = Math.round(THREE.MathUtils.radToDeg(euler.z) * 10) / 10;
+        this._sync({ angle: this.params.angle, tilt: this.params.tilt, roll: this.params.roll });
     }
 
     /**
@@ -435,6 +450,7 @@ export class StrobeLight {
         this.params.posX = Math.round(this.group.position.x * 100) / 100;
         this.params.posY = Math.round(this.group.position.y * 100) / 100;
         this.params.posZ = Math.round(this.group.position.z * 100) / 100;
+        this._sync({ posX: this.params.posX, posY: this.params.posY, posZ: this.params.posZ });
     }
 
     /**
