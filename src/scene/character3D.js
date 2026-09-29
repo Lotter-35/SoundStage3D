@@ -10,7 +10,8 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
+import { loadFbxShared, YBOT_PATH } from './fbxCache.js';
 import { getGroundHeight } from './collision.js?v=156';
 import { DanceManager } from './DanceManager.js';
 import { tintAvatarMaterial } from './avatarTint.js?v=3';
@@ -24,7 +25,7 @@ const LOCO_FILES = {
     'standing_up':   ['src/assets/animations/dance/Standing Up.fbx', 'src/assets/animations/Standing Up.fbx'],
 };
 
-const MODEL_PATH = 'src/assets/models/Ybot.fbx';
+const MODEL_PATH = YBOT_PATH;
 
 // Constantes physiques
 const PLAYER_EYE_HEIGHT = 1.7; // hauteur des yeux en mètres (vue 1ère personne)
@@ -121,10 +122,16 @@ export class Character3D {
             let loadedScene, animations = [];
 
             if (isFbx) {
-                const fbxLoader = new FBXLoader();
-                const fbx = await fbxLoader.loadAsync(MODEL_PATH);
+                // Gabarit partagé avec les avatars des autres joueurs : on travaille sur un clone
+                const template = await loadFbxShared(MODEL_PATH);
+                const fbx = skeletonClone(template);
+                fbx.traverse((node) => {
+                    if (node.isMesh && node.material) {
+                        node.material = Array.isArray(node.material) ? node.material.map(m => m.clone()) : node.material.clone();
+                    }
+                });
                 loadedScene = fbx;
-                animations = fbx.animations || [];
+                animations = (template.animations || []).map(c => c.clone());
                 // Dans Three.js, les FBX Mixamo/Blender sont généralement en centimètres (scale 0.01 = 1 mètre)
                 const fbxScale = 0.01 * MODEL_SCALE;
                 loadedScene.scale.set(fbxScale, fbxScale, fbxScale);
@@ -249,13 +256,12 @@ export class Character3D {
     }
 
     async _loadLoco(name, files) {
-        const fbxLoader = new FBXLoader();
         for (const file of files) {
             try {
-                const animFbx = await fbxLoader.loadAsync(file);
+                const animFbx = await loadFbxShared(file); // partagé avec les avatars distants
                 if (!this.model || !this.mixer) return;
                 if (animFbx.animations && animFbx.animations.length > 0) {
-                    const rawClip = animFbx.animations[0];
+                    const rawClip = animFbx.animations[0].clone();
                     const clip = DanceManager._retargetClip(rawClip, this.model, animFbx);
                     clip.name = name;
 

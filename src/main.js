@@ -42,6 +42,7 @@ import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
 import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
+import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { OptionsPanel } from './ui/OptionsPanel.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
@@ -106,6 +107,8 @@ scene.background = new THREE.Color(0x87ceeb);
 await bootStep(0.3, 'Chargement des modèles');
 // Skybox, végétation (herbe instanciée), catalogue d'animations (dances.json) et enceintes de scène
 // (Subwoofers & Line Arrays GLB) sont indépendants : chargés en parallèle au lieu d'à la suite.
+// Personnage : téléchargé dès maintenant, en parallèle des autres modèles (au lieu d'attendre qu'ils soient finis)
+loadFbxShared(YBOT_PATH).catch(() => {});
 const [skybox] = await Promise.all([
     createSkybox(scene),
     createVegetation(scene),
@@ -217,13 +220,66 @@ await bootStep(0.88, 'Compilation des shaders');
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
 if (renderer && typeof renderer.compile === 'function') {
     try {
-        // Les deux variantes (rendu direct / via le composer) : aucun freeze quand on bascule de l'une à l'autre
-        if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
+        // Les deux variantes (rendu direct / via le composer) : aucun freeze quand on bascule de l'une à l'autre.
+        // Compilation parallèle sur le GPU quand c'est possible : l'écran de chargement reste fluide.
+        if (laserManager && typeof laserManager.warmupShadersAsync === 'function') await laserManager.warmupShadersAsync();
         else renderer.compile(scene, camera);
     } catch (_) {}
 }
 
 performance.mark('ss3d:warmup');
+
+// ─── Rendu dès que la scène est prête ─────────────────────────────
+// La suite (connexion multijoueur, téléchargement et décodage de la musique) peut prendre plusieurs
+// secondes : la scène tourne déjà derrière l'écran de chargement, qui disparaît dès que le personnage
+// est prêt. La musique arrive ensuite en arrière-plan. La boucle complète (animate) prend le relais à la fin.
+let _bootReadyFrames = -1;
+function updateBootScreen() {
+    if (_bootFinished) return;
+    const character = listener && listener._character3D;
+    if (character && !character.isLoaded && performance.now() - _bootStart <= 10000) {
+        _boot.set(0.98, 'Chargement du personnage');
+        return;
+    }
+    // Personnage et modèles chargés : préparer leurs shaders pour les deux modes de rendu
+    // (direct / composer) → aucune compilation en jeu lors d'une bascule
+    if (_bootReadyFrames < 0) {
+        if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
+        _bootReadyFrames = 0;
+        return;
+    }
+    // Deux images complètes encore derrière l'écran de chargement : passes de post-traitement compilées
+    if (++_bootReadyFrames >= 2) {
+        _bootFinished = true;
+        performance.mark('ss3d:boot-done');
+        _boot.done();
+    }
+}
+
+let _earlyLoop = true;
+let _earlySweep = 0;
+const _earlyClock = new THREE.Clock();
+function earlyFrame() {
+    if (!_earlyLoop) return;
+    requestAnimationFrame(earlyFrame);
+    const dt = Math.min(_earlyClock.getDelta(), 0.1);
+    try {
+        listener.update(dt);
+        updateSkybox(skybox, camera);
+        updateVegetation(camera);
+        ambiancePanel.update(dt);
+        _earlySweep += dt;
+        laserManager.updateAll(dt, _earlySweep);
+        strobeManager.updateAll(dt);
+        spotManager.update(dt);
+        hazeVolume.update(dt);
+        laserManager.render();
+    } catch (e) {
+        console.warn('[Boot] Image anticipée :', e);
+    }
+    updateBootScreen();
+}
+requestAnimationFrame(earlyFrame);
 await bootStep(0.95, 'Interface et audio');
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
@@ -3550,19 +3606,8 @@ function renderFrame() {
     updateFpsCounter(dt, renderTime);
     if (_debugVisible) updateDebug(dt);
 
-    // Fin du chargement : première image rendue et personnage prêt (ou 10 s de patience au maximum)
-    if (!_bootFinished) {
-        const character = listener && listener._character3D;
-        if (!character || character.isLoaded || performance.now() - _bootStart > 10000) {
-            _bootFinished = true;
-            // Personnage et modèles chargés : préparer leurs shaders pour les deux modes de rendu
-            // (direct / composer) → aucune compilation en jeu lors d'une bascule
-            if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
-            _boot.done();
-        } else {
-            _boot.set(0.98, 'Chargement du personnage');
-        }
-    }
+    // Fin du chargement (si elle n'a pas déjà eu lieu pendant les images anticipées)
+    updateBootScreen();
 }
 
 function animate() {
@@ -3570,4 +3615,6 @@ function animate() {
     renderFrame();
 }
 
+_earlyLoop = false; // la boucle complète prend le relais des images anticipées
+performance.mark('ss3d:ready');
 animate();

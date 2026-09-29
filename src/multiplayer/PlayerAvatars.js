@@ -10,12 +10,13 @@
  */
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
 import { clone as skeletonClone } from 'three/addons/utils/SkeletonUtils.js';
 import { DanceManager } from '../scene/DanceManager.js';
 import { tintAvatarMaterial } from '../scene/avatarTint.js?v=3';
 
-const MODEL_PATH = 'src/assets/models/Ybot.fbx';
+import { loadFbxShared, YBOT_PATH } from '../scene/fbxCache.js';
+
+const MODEL_PATH = YBOT_PATH;
 const MODEL_SCALE = 1.0;
 const EYE_HEIGHT  = 1.7;  // listener position is eye-level; convert to foot position
 
@@ -44,9 +45,9 @@ function loadSharedModel() {
     const isFbx = MODEL_PATH.toLowerCase().endsWith('.fbx');
     if (isFbx) {
         _loadPromise = (async () => {
-            const fbxLoader = new FBXLoader();
-            const fbx = await fbxLoader.loadAsync(MODEL_PATH);
-            const anims = fbx.animations ? [...fbx.animations] : [];
+            // Même gabarit que le joueur local (téléchargé et analysé une seule fois, cloné par avatar)
+            const fbx = await loadFbxShared(MODEL_PATH);
+            const anims = (fbx.animations || []).map(c => c.clone());
 
             // Utiliser l'animation idle intégrée dans Ybot
             if (anims.length > 0) {
@@ -65,9 +66,9 @@ function loadSharedModel() {
             await Promise.all(locoFiles.map(async ({ name, files }) => {
                 for (const file of files) {
                     try {
-                        const animFbx = await fbxLoader.loadAsync(file);
+                        const animFbx = await loadFbxShared(file);
                         if (animFbx.animations && animFbx.animations.length > 0) {
-                            const rawClip = animFbx.animations[0];
+                            const rawClip = animFbx.animations[0].clone();
                             const clip = DanceManager._retargetClip(rawClip, fbx, animFbx);
                             clip.name = name;
                             if (name !== 'sitting') {

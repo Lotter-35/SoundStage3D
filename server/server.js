@@ -283,7 +283,13 @@ function defaultLightingState() {
         strobes: {
             0: { id: 0, params: {} },
         },
-        spots: {},        // lyres Spot : { id: { id, params } }
+        // Lyres Spot : { id: { id, params } }. Les 9 lyres posées au spawn dans src/main.js (spot-stage-1…9)
+        // y figurent d'office (params vides = réglages du spawn), comme les lasers et le stroboscope :
+        // sinon l'état complet envoyé à la connexion, qui retire les lyres inconnues, les supprimerait.
+        spots: Object.fromEntries(Array.from({ length: 9 }, (_, i) => {
+            const id = `spot-stage-${i + 1}`;
+            return [id, { id, params: {} }];
+        })),
         spotGlobals: {},  // réglages communs des lyres (fumée, qualité, éclairage réel)
         spotFx: {},       // effets de la console en cours : { id: définition }
     };
@@ -385,7 +391,7 @@ function applyLightingChange(state, msg) {
         // Le reset global revient à la scène du spawn (lasers et stroboscope de base conservés)
         state.lasers = fresh.lasers;
         state.strobes = fresh.strobes;
-        state.spots = {};
+        state.spots = fresh.spots; // lyres du spawn conservées
         state.spotGlobals = {};
         state.spotFx = {};
         state.haze = {};
@@ -688,10 +694,24 @@ const server = http.createServer((req, res) => {
                 if (stat.isFile()) {
                     const ext = path.extname(filePath).toLowerCase();
                     const contentType = MIME_TYPES[ext] || 'application/octet-stream';
+                    // Cache navigateur avec revalidation : le fichier est gardé en cache et, à chaque
+                    // chargement, le navigateur demande juste s'il a changé (réponse 304 vide sinon).
+                    // Un fichier modifié (taille ou date) est donc toujours repris aussitôt.
+                    const etag = `W/"${stat.size.toString(16)}-${Math.floor(stat.mtimeMs).toString(16)}"`;
+                    const cacheHeaders = {
+                        'Cache-Control': 'no-cache',
+                        'ETag': etag,
+                        'Last-Modified': stat.mtime.toUTCString(),
+                    };
+                    if (req.headers['if-none-match'] === etag) {
+                        res.writeHead(304, cacheHeaders);
+                        res.end();
+                        return;
+                    }
                     res.writeHead(200, {
                         'Content-Type': contentType,
                         'Content-Length': stat.size,
-                        'Cache-Control': 'no-cache, no-store, must-revalidate',
+                        ...cacheHeaders,
                     });
                     fs.createReadStream(filePath).pipe(res);
                     return;

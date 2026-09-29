@@ -874,6 +874,29 @@ export class LaserManager {
         }
     }
 
+    /**
+     * Comme warmupShaders, mais sans bloquer la page : la compilation se fait en parallèle
+     * sur le GPU quand le navigateur le permet (KHR_parallel_shader_compile).
+     */
+    async warmupShadersAsync() {
+        const r = this.renderer;
+        if (!r || typeof r.compileAsync !== 'function') { this.warmupShaders(); return; }
+        const prev = r.getRenderTarget();
+        try {
+            r.setRenderTarget(null);
+            const direct = r.compileAsync(this.scene, this.camera);
+            let composed = null;
+            if (this._finalComposer && this._finalComposer.renderTarget1) {
+                r.setRenderTarget(this._finalComposer.renderTarget1);
+                composed = r.compileAsync(this.scene, this.camera);
+            }
+            r.setRenderTarget(prev);
+            await Promise.all([direct, composed]);
+        } catch (_) {
+            r.setRenderTarget(prev);
+        }
+    }
+
     render() {
         if (this._useComposer && this._finalComposer) {
             // Un bloom sans aucun objet émissif visible ne produit que du noir : on saute toute la passe

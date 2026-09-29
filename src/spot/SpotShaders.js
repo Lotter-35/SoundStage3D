@@ -8,7 +8,8 @@
  *    lyres) rendu en faces arrière. Pour chaque pixel :
  *      - intersection ANALYTIQUE rayon de vue ↔ cône (+ plans lentille / portée)
  *      - arrêt exact sur la scène grâce à la profondeur (DepthTexture)
- *      - intégration de la diffusion le long du rayon (18 pas tramés) :
+ *      - intégration de la diffusion le long du rayon (jusqu'à 18 pas tramés ; répartis selon
+ *        l'éclairement quand on regarde le long du faisceau ; arrêt dès que le pixel est saturé) :
  *          éclairement en 1/d² depuis l'apex optique, fumée volumétrique 3D
  *          animée par le vent, phase de Mie (Henyey-Greenstein : le faisceau est
  *          bien plus brillant quand on regarde vers la lyre)
@@ -75,11 +76,9 @@ float slotImage(float slot, float layerBase, vec2 p, float lod, float edge) {
 }
 
 // Roue de gobos à N emplacements, position continue (le motif glisse dans la fenêtre)
-float wheelMask(float pos, float n, float layerBase, vec2 g, float lod, float edge, float ang) {
+float wheelMask(float pos, float n, float layerBase, vec2 g, float lod, float edge, mat2 rot) {
     float a = floor(pos);
     float f = pos - a;
-    float c = cos(ang), s = sin(ang);
-    mat2 rot = mat2(c, s, -s, c);
     float s0 = mod(a, n);
     float m = slotImage(s0, layerBase, rot * (g + vec2(f * GOBO_SPACING, 0.0)), lod, edge);
     if (f > 0.001) {
@@ -89,64 +88,110 @@ float wheelMask(float pos, float n, float layerBase, vec2 g, float lod, float ed
     return m;
 }
 
-float bladeCut(vec2 g, float ins, float bladeAng, float baseA, float edge) {
+// Réglages optiques d'une lyre, lus et préparés UNE fois (et non à chaque échantillon du faisceau)
+struct Gate {
+    vec4 T0, T1, T2, T3, T4;
+    mat2 rotWheel;      // rotation de la roue de gobos rotatifs
+    mat2 rotAnim;       // rotation de la roue d'animation
+    vec4 blade[4];      // couteau k : centre de coupe (xy), normale (zw)
+    vec4 bladeIns;      // insertion des 4 couteaux
+    bool anyBlade;
+    bool hasFixed;      // gobo fixe inséré
+    bool hasRot;        // gobo rotatif inséré
+    bool hasAnim;       // roue d'animation insérée
+    bool halfCol;       // demi-couleurs
+};
+
+Gate makeGate(vec4 T0, vec4 T1, vec4 T2, vec4 T3, vec4 T4, vec4 T5, vec4 T6, vec4 T7) {
+    Gate G;
+    G.T0 = T0; G.T1 = T1; G.T2 = T2; G.T3 = T3; G.T4 = T4;
+    G.hasFixed = T3.x > 0.001;
+    G.hasRot = T3.y > 0.001;
+    G.hasAnim = T4.x > 0.001 && T3.w > 0.5;
+    G.halfCol = T1.w < 1.9;
+    G.bladeIns = vec4(T5.x, T5.z, T6.x, T6.z);
+    G.anyBlade = max(max(G.bladeIns.x, G.bladeIns.y), max(G.bladeIns.z, G.bladeIns.w)) >= 0.001;
+    // Rotations et couteaux : calculés seulement s'ils servent
+    G.rotWheel = mat2(1.0);
+    G.rotAnim = mat2(1.0);
+    if (G.hasRot) {
+        float c = cos(T3.z), s = sin(T3.z);
+        G.rotWheel = mat2(c, s, -s, c);
+    }
+    if (G.hasAnim) {
+        float c = cos(T4.y), s = sin(T4.y);
+        G.rotAnim = mat2(c, s, -s, c);
+    }
+    for (int k = 0; k < 4; k++) G.blade[k] = vec4(0.0);
+    if (G.anyBlade) {
+        vec4 bladeAng = vec4(T5.y, T5.w, T6.y, T6.w);
+        const float HP = 1.5707963;
+        for (int k = 0; k < 4; k++) {
+            float baseA = T7.x + float(k) * HP;
+            vec2 c0 = vec2(cos(baseA), sin(baseA)) * (1.06 - G.bladeIns[k] * 1.5);
+            float a = baseA + bladeAng[k];
+            G.blade[k] = vec4(c0, cos(a), sin(a));
+        }
+    }
+    return G;
+}
+
+Gate loadGate(int row) {
+    return makeGate(spotParam(row, 0), spotParam(row, 1), spotParam(row, 2), spotParam(row, 3),
+                    spotParam(row, 4), spotParam(row, 5), spotParam(row, 6), spotParam(row, 7));
+}
+
+float bladeCut(vec2 g, float ins, vec4 b, float edge) {
     if (ins < 0.001) return 1.0;
-    vec2 nB = vec2(cos(baseA), sin(baseA));
-    vec2 c = nB * (1.06 - ins * 1.5);
-    float a = baseA + bladeAng;
-    float d = dot(g - c, vec2(cos(a), sin(a)));
+    float d = dot(g - b.xy, b.zw);
     return 1.0 - smoothstep(-edge, edge, d);
 }
 
 // Image de la fenêtre optique en coordonnées de fenêtre g (|g| = 1 : bord du zoom).
 // blur : flou (frost + mise au point) en unités de fenêtre.
-vec3 spotGate(int row, vec2 g, float blur) {
-    vec4 T2 = spotParam(row, 2);
+vec3 gateImage(Gate G, vec2 g, float blur) {
     float r = length(g);
     float edge = 0.012 + blur;
-    float iris = T2.y;
+    float iris = G.T2.y;
     // Diaphragme (iris) puis fenêtre (gate)
     float mask = 1.0 - smoothstep(min(iris, 1.0) - edge, min(iris, 1.0) + edge, r);
     if (mask <= 0.0) return vec3(0.0);
 
     float lod = log2(max(1.0, edge * 110.0));
-    vec4 T3 = spotParam(row, 3);
 
     // Roue de gobos fixes (couches 0…8) et roue de gobos rotatifs (couches 9…15)
-    if (T3.x > 0.001) mask *= wheelMask(T3.x, 9.0, 0.0, g, lod, edge, 0.0);
-    if (T3.y > 0.001) mask *= wheelMask(T3.y, 8.0, 8.0, g, lod, edge, T3.z);
+    if (G.hasFixed) mask *= wheelMask(G.T3.x, 9.0, 0.0, g, lod, edge, mat2(1.0));
+    if (G.hasRot) mask *= wheelMask(G.T3.y, 8.0, 8.0, g, lod, edge, G.rotWheel);
     if (mask <= 0.0) return vec3(0.0);
 
     // Roue d'animation : disque gravé qui tourne hors de l'axe et entre par le bas
-    vec4 T4 = spotParam(row, 4);
-    if (T4.x > 0.001 && T3.w > 0.5) {
-        float ca = cos(T4.y), sa = sin(T4.y);
-        vec2 q = mat2(ca, sa, -sa, ca) * (g - vec2(2.6, 0.0)) * 0.24;
-        float pat = textureLod(uGobos, vec3(q, 15.0 + T3.w), lod).r;
+    if (G.hasAnim) {
+        vec2 q = G.rotAnim * (g - vec2(2.6, 0.0)) * 0.24;
+        float pat = textureLod(uGobos, vec3(q, 15.0 + G.T3.w), lod).r;
         // Le disque entre par le bas de la fenêtre et la recouvre entièrement une fois inséré
-        float cover = 1.0 - smoothstep(T4.x * 2.6 - 1.3 - 0.2, T4.x * 2.6 - 1.3 + 0.2, g.y);
+        float cover = 1.0 - smoothstep(G.T4.x * 2.6 - 1.3 - 0.2, G.T4.x * 2.6 - 1.3 + 0.2, g.y);
         mask *= mix(1.0, clamp(pat * 1.25, 0.0, 1.0), cover);
     }
 
     // Couteaux (framing) : 4 lames + rotation du bloc
-    vec4 T5 = spotParam(row, 5);
-    vec4 T6 = spotParam(row, 6);
-    vec4 T7 = spotParam(row, 7);
-    const float HP = 1.5707963;
-    mask *= bladeCut(g, T5.x, T5.y, T7.x, edge);
-    mask *= bladeCut(g, T5.z, T5.w, T7.x + HP, edge);
-    mask *= bladeCut(g, T6.x, T6.y, T7.x + 2.0 * HP, edge);
-    mask *= bladeCut(g, T6.z, T6.w, T7.x + 3.0 * HP, edge);
+    if (G.anyBlade) {
+        mask *= bladeCut(g, G.bladeIns.x, G.blade[0], edge);
+        mask *= bladeCut(g, G.bladeIns.y, G.blade[1], edge);
+        mask *= bladeCut(g, G.bladeIns.z, G.blade[2], edge);
+        mask *= bladeCut(g, G.bladeIns.w, G.blade[3], edge);
+    }
 
     // Champ légèrement plus chaud au centre (réflecteur + optique)
     mask *= 1.0 - 0.2 * min(r * r, 1.0);
 
     // Demi-couleurs : frontière entre 2 filtres de la roue qui traverse la fenêtre
-    vec4 T0 = spotParam(row, 0);
-    vec4 T1 = spotParam(row, 1);
-    vec3 col = T0.rgb;
-    if (T1.w < 1.9) col = mix(T0.rgb, T1.rgb, smoothstep(T1.w - edge, T1.w + edge, g.x));
+    vec3 col = G.T0.rgb;
+    if (G.halfCol) col = mix(G.T0.rgb, G.T1.rgb, smoothstep(G.T1.w - edge, G.T1.w + edge, g.x));
     return col * mask;
+}
+
+vec3 spotGate(int row, vec2 g, float blur) {
+    return gateImage(loadGate(row), g, blur);
 }
 `;
 
@@ -248,18 +293,25 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
             }
             const float NOISE_UVW = ${SMOKE_NOISE_UVW_SCALE.toFixed(8)};
 
-            float hazeDensity(vec3 p) {
+            // Fumée : 2 octaves de bruit ; 1 seule (amplitude compensée) quand la caméra est dans le
+            // faisceau — le détail fin ne se voit pas dans un faisceau qui éblouit
+            float hazeNoise(vec3 p, bool coarse) {
                 vec3 q = (p * (0.075 / uHazeScale) + uWind * 0.35) * NOISE_UVW;
                 float n = texture(uNoise, q).r;
-                n += 0.5 * texture(uNoise, q * 2.7 + vec3(0.31, 0.17, 0.53) + vec3(uTime * 0.004)).r;
+                if (coarse) n *= 1.12;
+                else n += 0.5 * texture(uNoise, q * 2.7 + vec3(0.31, 0.17, 0.53) + vec3(uTime * 0.004)).r;
+                return n;
+            }
+            float hazeFromNoise(float n) {
                 return uHaze * max(0.05, 1.0 + uHazeContrast * n);
             }
 
             // Phase de diffusion : 35 % Henyey-Greenstein (diffusion avant de la fumée) + 65 % isotrope
-            // normalisée pour valoir ≈ 1 vue de côté
+            // normalisée pour valoir ≈ 1 vue de côté. x^1.5 = x·√x (sans pow)
             float phase(float cosT) {
                 float g = uPhaseG;
-                float hg = (1.0 - g * g) / pow(max(1e-4, 1.0 + g * g - 2.0 * g * cosT), 1.5);
+                float x = max(1e-4, 1.0 + g * g - 2.0 * g * cosT);
+                float hg = (1.0 - g * g) * inversesqrt(x) / x;
                 return 0.65 + 0.35 * hg;
             }
 
@@ -342,42 +394,99 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
 
                 float focusDist = T2.w;
                 float frostBlur = T2.z * 0.42;
+                float logFocus = log(focusDist);
                 float irr0 = flux / (PI * tanHalf * tanHalf);
+                float invTanHalf = 1.0 / tanHalf;
                 float fadeStart = L * 0.7;
 
+                // Réglages optiques lus une seule fois pour tout le rayon
+                Gate G = makeGate(T0, spotParam(row, 1), T2, spotParam(row, 3), T4, spotParam(row, 5), spotParam(row, 6), T7);
+
+                // Faisceau ouvert (ni gobo, ni couteau, ni roue d'animation, ni demi-couleur) : à l'intérieur de
+                // l'iris moins sa marge de flou maximale, l'image de la fenêtre vaut exactement couleur × (1 − 0,2 r²)
+                bool plainGate = !G.hasFixed && !G.hasRot && !G.hasAnim && !G.anyBlade && !G.halfCol;
+                float plainR = min(G.T2.y, 1.0) - (0.012 + frostBlur + 0.14);
+                float plainR2 = plainR > 0.0 ? plainR * plainR : -1.0;
+
+                // Caméra DANS le faisceau (on est visé) : cas le plus coûteux (faisceau plein écran)
+                bool inside = cv > apexDist && cv < apexDist + L && cv * cv >= dot(co, co) * c2;
+
                 // ── Intégration de la diffusion le long du rayon ──
-                // Nombre de pas adapté à la longueur traversée (faisceau vu de côté : peu de pas suffisent)
+                // Distance le long de l'axe aux deux bouts du trajet dans le faisceau
                 float span = tout - tin;
-                float nS = weight < 0.99 ? clamp(ceil(span * 1.6), 4.0, 11.0) : clamp(ceil(span * 2.6), 6.0, 18.0);
+                float zIn = max(cv + dv * tin, 1e-3);
+                float zOut = max(cv + dv * tout, 1e-3);
+                // Rayon qui remonte ou descend le faisceau : l'éclairement (1/z²) varie beaucoup → échantillons
+                // répartis selon la lumière (serrés près de la lyre), moins nombreux pour une qualité équivalente.
+                // Faisceau vu de côté : répartition régulière, inchangée.
+                bool imp = abs(dv) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
+                float nS = weight < 0.99 ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
+                                         : clamp(ceil(span * 2.6), 6.0, imp ? 8.0 : 18.0);
                 float dt = span / nS;
+                float invIn = 1.0 / zIn;
+                float invOut = 1.0 / zOut;
+                float impW = abs(invIn - invOut) / (abs(dv) * nS);
                 float jit = ign(gl_FragCoord.xy);
+
+                // Pixel déjà blanc (saturé) : inutile de continuer à accumuler (sans effet visible).
+                // Seuil large (×64) : reste saturé même derrière le brouillard de salle.
+                // Canaux absents des couleurs de la lyre : seuil nul (déjà « pleins »).
+                vec3 colMask = step(vec3(1e-4), T0.rgb + (G.halfCol ? G.T1.rgb : vec3(0.0)));
+                vec3 satThr = colMask * (64.0 / 0.035);
+
                 vec3 sum = vec3(0.0);
+                bool lastBlocked = false;
+                float lastNoise = 0.0;
+                bool haveNoise = false;
                 for (int i = 0; i < 18; i++) {
                     if (float(i) >= nS) break;
-                    float t = tin + (float(i) + jit) * dt;
+                    float t, w;
+                    if (imp) {
+                        // Tirage uniforme en 1/z : densité d'échantillons ∝ 1/z² (∝ éclairement)
+                        float z = 1.0 / mix(invIn, invOut, (float(i) + jit) / nS);
+                        t = (z - cv) / dv;
+                        w = impW * z * z;
+                    } else {
+                        t = tin + (float(i) + jit) * dt;
+                        w = dt;
+                    }
                     vec3 P = ro + rd * t;
                     vec3 lp = P - apex;
                     float zA = dot(lp, W);
                     vec3 rad = lp - W * zA;
-                    vec2 g = vec2(dot(rad, R), dot(rad, U)) / (zA * tanHalf);
+                    vec2 g = vec2(dot(rad, R), dot(rad, U)) * (invTanHalf / zA);
                     float zl = max(zA - apexDist, 0.0);
-                    float blur = frostBlur + min(0.14, abs(log((zl + 0.5) / focusDist)) * 0.035);
-                    vec3 gate = spotGate(row, g, blur);
-                    if (gate.r + gate.g + gate.b < 1e-4) continue;
-                    // Ombre de la structure de la scène : départ tiré sur la surface de la lentille (pénombre douce)
+                    vec3 gate;
+                    float r2 = dot(g, g);
+                    if (plainGate && r2 < plainR2) {
+                        // Cœur d'un faisceau ouvert (ni gobo, ni couteau, ni demi-couleur) : résultat exact sans calcul
+                        gate = G.T0.rgb * (1.0 - 0.2 * r2);
+                    } else {
+                        float blur = frostBlur + min(0.14, abs(log(zl + 0.5) - logFocus) * 0.035);
+                        gate = gateImage(G, g, blur);
+                        if (gate.r + gate.g + gate.b < 1e-4) continue;
+                    }
+                    // Ombre de la structure de la scène : départ tiré sur la surface de la lentille (pénombre douce).
+                    // Dans le faisceau : testée un échantillon sur deux (le résultat précédent est réutilisé).
                     if (hasOcc) {
-                        float ang = 6.2831853 * fract(jit * 7.13 + float(i) * 0.618);
-                        float rr = T4.w * sqrt(fract(jit * 3.71 + float(i) * 0.382));
-                        vec3 a = vLens.xyz + (R * cos(ang) + U * sin(ang)) * rr;
-                        vec3 sd = P - a;
-                        if (segBlocked(a, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8)) continue;
+                        if (!inside || (i & 1) == 0) {
+                            float ang = 6.2831853 * fract(jit * 7.13 + float(i) * 0.618);
+                            float rr = T4.w * sqrt(fract(jit * 3.71 + float(i) * 0.382));
+                            vec3 a = vLens.xyz + (R * cos(ang) + U * sin(ang)) * rr;
+                            vec3 sd = P - a;
+                            lastBlocked = segBlocked(a, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8);
+                        }
+                        if (lastBlocked) continue;
                     }
                     float E = irr0 / (zA * zA);
                     float fade = 1.0 - smoothstep(fadeStart, L, zl);
                     float cosT = dot(lp, -rd) / max(1e-4, length(lp));
-                    sum += gate * (E * fade * hazeDensity(P) * phase(cosT));
+                    // Dans le faisceau : bruit relu un échantillon sur deux (volutes de ~13 m : même valeur)
+                    if (!inside || !haveNoise || (i & 1) == 0) { lastNoise = hazeNoise(P, inside); haveNoise = true; }
+                    sum += gate * (E * fade * hazeFromNoise(lastNoise) * phase(cosT) * w);
+                    if (all(greaterThanEqual(sum, satThr))) break;
                 }
-                vec3 col = sum * dt * 0.035;
+                vec3 col = sum * 0.035;
 
                 // ── Tache de lumière sur les surfaces (lyres sans lumière réelle) ──
                 float splashW = T4.z;
@@ -397,7 +506,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                     if (dot(n, rd) > 0.0) n = -n;
                     float ndl = max(0.0, dot(n, -normalize(lp)));
                     float E = irr0 / (zA * zA);
-                    col += spotGate(row, g, blur) * (E * ndl * splashW * 0.06 * (1.0 - smoothstep(fadeStart, L, zl)));
+                    col += gateImage(G, g, blur) * (E * ndl * splashW * 0.06 * (1.0 - smoothstep(fadeStart, L, zl)));
                 }
 
                 gl_FragColor = vec4(col, 1.0);

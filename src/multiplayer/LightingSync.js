@@ -885,7 +885,10 @@ export class LightingSync {
         if (globals) this._applySpotGlobal(globals);
         if (!spots || typeof spots !== 'object') return;
         const serverIds = new Set(Object.keys(spots));
+        // Serveur qui ne déclare pas les lyres du spawn (ancienne version) : on les garde
+        const serverKnowsSpawn = [...serverIds].some(id => id.startsWith('spot-stage-'));
         for (const spot of sm.getAllSpots()) {
+            if (!serverKnowsSpawn && String(spot.id).startsWith('spot-stage-')) continue;
             if (!serverIds.has(spot.id)) this._applySpotRemove(spot.id);
         }
         for (const [id, s] of Object.entries(spots)) {
