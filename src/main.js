@@ -36,6 +36,7 @@ import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=13';
 import { SpotManager } from './spot/SpotManager.js';
+import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -160,6 +161,10 @@ strobeManager.addStrobe(new THREE.Vector3(0, 19.49, -9.59), {
 const spotManager = new SpotManager({ scene, camera, renderer, laserManager });
 ambiancePanel.setSpotManager(spotManager);
 window.__SS3D.spotManager = spotManager;
+
+// Console des lyres (sélection matricielle, couleurs, visée, effets) — touche L
+const spotConsole = new SpotConsolePanel({ spotManager, ambiancePanel, scene, camera, renderer, listener });
+window.__SS3D.spotConsole = spotConsole;
 
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
 if (renderer && typeof renderer.compile === 'function') {
@@ -686,6 +691,8 @@ let _mpPlaybackSyncAccum = 0;
 const MP_PLAYBACK_SYNC_INTERVAL = 1.0; // 1 fps master playback sync heartbeat
 let _sharedSweepTime = 0;
 let _hasServerSweepTime = false;
+// Les effets des lyres utilisent la même horloge commune que le balayage des lasers
+spotManager.setClock(() => _sharedSweepTime);
 
 let _pendingPlaybackSync = null;
 
@@ -3009,6 +3016,10 @@ listener.onLockChange((locked) => {
 canvas.addEventListener('click', () => {
     // Si le panneau Ambiance est ouvert ou qu'un gizmo 3D est en cours de manipulation, ne pas verrouiller la souris
     if (ambiancePanel && (ambiancePanel.isOpen || ambiancePanel.isDraggingGizmo)) {
+        return;
+    }
+    // Console des lyres ouverte : les clics servent à sélectionner / viser
+    if (spotConsole && spotConsole.isOpen) {
         return;
     }
     if (!audioReady) {

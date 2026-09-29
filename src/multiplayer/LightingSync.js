@@ -121,9 +121,9 @@ export class LightingSync {
         }
 
         // Événements continus nécessitant un throttling (sliders, gizmo)
-        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global') {
+        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi') {
             const idPart = (id !== undefined && id !== null) ? id : 'global';
-            const throttleKey = `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
+            const throttleKey = event.throttleKey || `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
             this._sendThrottled(throttleKey, event);
             return;
         }
@@ -243,6 +243,20 @@ export class LightingSync {
                 case 'spot_global':
                     this._applySpotGlobal(data);
                     break;
+
+                case 'spot_multi':
+                    // Réglage appliqué par la console à plusieurs lyres : { id: { param: valeur } }
+                    for (const [spotId, changes] of Object.entries(data || {})) this._applySpotUpdate(spotId, changes);
+                    break;
+
+                case 'spot_fx': {
+                    const fxEngine = this._spotManager()?.effects;
+                    if (!fxEngine) break;
+                    if (msg.action === 'start') fxEngine.start(msg.fx);
+                    else if (msg.action === 'stop') fxEngine.stop(msg.id);
+                    else if (msg.action === 'stopAll') fxEngine.stopAll();
+                    break;
+                }
 
                 // ── 6. Reset Global ──
                 case 'reset_all':
@@ -866,6 +880,9 @@ export class LightingSync {
             // 6. Lyres Spot
             if (state.spots || state.spotGlobals) {
                 this._applySpotsFullState(state.spots, state.spotGlobals);
+            }
+            if (state.spotFx && this._spotManager()) {
+                this._spotManager().effects.setAll(state.spotFx);
             }
 
             if (this.ambiancePanel) {

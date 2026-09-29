@@ -90,6 +90,9 @@ export class SpotFixture {
         this.poolWeight = 0;       // part d'éclairage assurée par une SpotLight réelle (0…1)
         this.isBeingDragged = false;
         this.dmxDirty = false;     // paramètres modifiés par le DMX (rafraîchir le panneau)
+        // Contribution des effets de la console (s'ajoute aux paramètres sans les modifier)
+        this.fx = { pan: 0, tilt: 0, dim: 1, color: null };
+        this._eff = {};
         this._lastDmxReset = null;
 
         this.facetCount = 0;
@@ -169,7 +172,16 @@ export class SpotFixture {
 
     // ── Mise à jour par frame ─────────────────────────────────────────────
     update(dt) {
-        const p = this.params;
+        let p = this.params;
+        const fx = this.fx;
+        if (fx.pan !== 0 || fx.tilt !== 0 || fx.dim !== 1 || fx.color) {
+            // Consignes effectives = paramètres de base + effets en cours
+            p = Object.assign(this._eff, this.params);
+            p.pan += fx.pan;
+            p.tilt += fx.tilt;
+            p.dimmer *= fx.dim;
+            if (fx.color) p.color = fx.color;
+        }
         const m = this.motion.update(dt, p);
 
         // Pose articulée

@@ -18,6 +18,7 @@ import { SpotLightPool } from './SpotLightPool.js';
 import { getSpotHousingInstancer } from './SpotHousing.js';
 import { DmxPatch } from '../dmx/DmxPatch.js';
 import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
+import { SpotEffects } from './console/SpotEffects.js';
 
 function makeId() {
     return 'spot-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
@@ -55,6 +56,25 @@ export class SpotManager {
         this._compiled = false;
         this._time = 0;
         this._applyGlobals();
+
+        // Effets de la console (calculés sur l'horloge commune à tous les joueurs)
+        this.effects = new SpotEffects();
+        this._clock = () => this._time;
+        this._updateHooks = [];
+    }
+
+    /** Horloge partagée (même valeur chez tous les joueurs) utilisée par les effets */
+    setClock(fn) {
+        if (typeof fn === 'function') this._clock = fn;
+    }
+
+    clock() {
+        return this._clock();
+    }
+
+    /** Fonction appelée à chaque frame avant la mise à jour des lyres (console, suivi…) */
+    addUpdateHook(fn) {
+        this._updateHooks.push(fn);
     }
 
     // ── Gestion des lyres ─────────────────────────────────────────────────
@@ -186,7 +206,9 @@ export class SpotManager {
             return;
         }
         this._time += dt;
+        for (const hook of this._updateHooks) hook(dt);
         this.patch.update();
+        this.effects.apply(this._spots, this.clock());
         for (const s of this._spots.values()) s.update(dt);
         this.batch.assemble(this._spots.values());
         getSpotHousingInstancer(this.scene).flush();

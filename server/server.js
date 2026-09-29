@@ -261,10 +261,19 @@ function defaultLightingState() {
             fogColor: '#111122',
         },
         lights: {},
+        // Doit correspondre aux lasers posés au spawn dans src/main.js (ids 0 et 1) : params vides
+        // = les clients gardent les réglages de spawn, seules les modifications sont stockées ici.
         lasers: {
             0: {
                 id: 0,
-                position: { x: 0, y: 5.0, z: -4.0 },
+                position: { x: -12, y: 14, z: 0.19 },
+                rotation: { angle: 0, tilt: 0, roll: 0 },
+                params: {},
+                pausedOffset: 0,
+            },
+            1: {
+                id: 1,
+                position: { x: 12, y: 14, z: 0.19 },
                 rotation: { angle: 0, tilt: 0, roll: 0 },
                 params: {},
                 pausedOffset: 0,
@@ -272,6 +281,7 @@ function defaultLightingState() {
         },
         spots: {},        // lyres Spot : { id: { id, params } }
         spotGlobals: {},  // réglages communs des lyres (fumée, qualité, éclairage réel)
+        spotFx: {},       // effets de la console en cours : { id: définition }
     };
 }
 
@@ -330,6 +340,18 @@ function applyLightingChange(state, msg) {
         }
     } else if (category === 'spot_remove') {
         if (state.spots) delete state.spots[id];
+    } else if (category === 'spot_multi') {
+        // Console des lyres : { id: { param: valeur } } en un seul message
+        if (!state.spots) state.spots = {};
+        for (const [spotId, changes] of Object.entries(data || {})) {
+            if (!state.spots[spotId]) state.spots[spotId] = { id: spotId, params: {} };
+            Object.assign(state.spots[spotId].params, changes);
+        }
+    } else if (category === 'spot_fx') {
+        if (!state.spotFx) state.spotFx = {};
+        if (msg.action === 'start' && msg.fx && msg.fx.id) state.spotFx[msg.fx.id] = msg.fx;
+        else if (msg.action === 'stop') delete state.spotFx[msg.id];
+        else if (msg.action === 'stopAll') state.spotFx = {};
     } else if (category === 'spot_global') {
         if (!state.spotGlobals) state.spotGlobals = {};
         if (data) Object.assign(state.spotGlobals, data);
@@ -342,6 +364,7 @@ function applyLightingChange(state, msg) {
         state.lasers = {};
         state.spots = {};
         state.spotGlobals = {};
+        state.spotFx = {};
     }
 }
 
