@@ -525,6 +525,7 @@ export class AmbiancePanel {
                 ambient: { color: '#b0b8c2', intensity: 0.375 },
                 hemi: { skyColor: '#c0c8d2', groundColor: '#4a5442', intensity: 1.725 },
                 dir: { color: '#f0f4f8', intensity: 1.1 },
+                hazeTint: [0.96, 1.0, 1.06], // brouillard gris-bleu froid (le calcul auto donnait du rouge)
                 stage1: { color: '#ff5577', intensity: 0.6, distance: 30 },
                 stage2: { color: '#55aaff', intensity: 0.6, distance: 30 },
             },
@@ -1051,6 +1052,10 @@ export class AmbiancePanel {
      */
     _hazeTintForPreset(preset) {
         const HAZE_ENV_TINT_STRENGTH = 0.35;
+        // Teinte imposée par l'ambiance (multiplicateur R, V, B), prioritaire sur le calcul automatique
+        if (Array.isArray(preset && preset.hazeTint)) {
+            return new THREE.Color(preset.hazeTint[0], preset.hazeTint[1], preset.hazeTint[2]);
+        }
         const day = this.envPresets.day;
         const skyOf = (p) => new THREE.Color((p && p.hemi && p.hemi.skyColor) || (p && p.fogColor) || 0xffffff);
         const norm = (c) => { const m = Math.max(c.r, c.g, c.b, 1e-4); return c.multiplyScalar(1 / m); };
