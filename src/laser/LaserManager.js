@@ -27,6 +27,7 @@ import { LaserBatch } from './LaserBatch.js';
 import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
+import { setLaserDisplayRange } from './LaserShaders.js';
 
 // Layer 1 : Lasers uniquement (Bloom Laser + Aberration Chromatique Laser)
 export const BLOOM_LASER_LAYER = 1;
@@ -176,6 +177,7 @@ export const BLOOM_SCENE_LAYER = BLOOM_LIGHTS_LAYER;
 
 // Paramètres globaux post-traitement avec 2 blooms 100% indépendants
 const AA_STORAGE_KEY = 'soundstage.antialiasing';
+const RANGE_STORAGE_KEY = 'soundstage.laserRange';
 export const globalLaserPostParams = {
     // ── Bloom Laser (Layer 1) ──
     laserBloomEnabled:   true,
@@ -207,6 +209,7 @@ export const globalLaserPostParams = {
     fogDensity:             0.005,
     fogColor:               '#111122',
     playerCollisionEnabled: true, // Interception laser par le corps 3D des joueurs (désactivable)
+    laserRange:             300,  // Distance d'affichage des faisceaux (m, depuis l'émetteur) — réglage local
 };
 
 export class LaserManager {
@@ -281,6 +284,13 @@ export class LaserManager {
             const savedAA = localStorage.getItem(AA_STORAGE_KEY);
             if (savedAA) this.setAntialiasing(savedAA);
         } catch (_) {}
+
+        // Distance d'affichage des lasers : réglage local du joueur
+        try {
+            const savedRange = parseFloat(localStorage.getItem(RANGE_STORAGE_KEY));
+            if (savedRange > 0) globalLaserPostParams.laserRange = savedRange;
+        } catch (_) {}
+        setLaserDisplayRange(globalLaserPostParams.laserRange);
 
         // Préalloué pour éviter new THREE.Color() à chaque frame dans render()
         this._origClearColor = new THREE.Color();
@@ -897,6 +907,10 @@ export class LaserManager {
                 break;
             case 'fogColor':
                 if (this._laserFog) this._laserFog.color.set(value);
+                break;
+            case 'laserRange':
+                setLaserDisplayRange(value);
+                try { localStorage.setItem(RANGE_STORAGE_KEY, String(value)); } catch (e) { /* stockage indisponible */ }
                 break;
             case 'playerCollisionEnabled':
                 globalLaserPostParams.playerCollisionEnabled = Boolean(value);

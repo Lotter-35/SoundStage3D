@@ -7,7 +7,7 @@
  */
 
 export const HAZE_MODES = ['Strobes prioritaires', 'La plus forte gagne'];
-export const HAZE_RESOLUTIONS = ['Quart de résolution', 'Demi-résolution', 'Pleine résolution'];
+export const HAZE_RESOLUTIONS = ['1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'];
 export const HAZE_BEAM_LINK = ['Indépendante', 'Liée au brouillard de salle'];
 
 const num = (value, min, max, step, label, folder) => ({ value, min, max, step, label, folder });
@@ -42,25 +42,27 @@ export const HAZE_PARAMS_SCHEMA = {
     useStrobes:   bool(true, 'Stroboscopes', 'light'),
     useSpots:     bool(true, 'Lyres Spot', 'light'),
     useLasers:    bool(true, 'Lumière des lasers', 'light'),
+    useScene:     bool(true, 'Lampes posées (point, spot, panneau)', 'light'),
     useSun:       bool(true, 'Soleil / lune', 'light'),
     strobeGain:   num(2, 0, 8, 0.05, 'Gain stroboscopes', 'light'),
     spotGain:     num(1, 0, 5, 0.05, 'Gain lyres', 'light'),
     laserGain:    num(1, 0, 5, 0.05, 'Gain lasers', 'light'),
+    sceneGain:    num(1, 0, 10, 0.05, 'Gain lampes posées', 'light'),
     occlusion:    bool(true, 'Ombres de la structure de la scène', 'light'),
 
     // ── Boîte (espace public + scène par défaut) ──
     boxX:         num(0, -150, 150, 0.5, 'Centre X', 'box'),
-    boxY:         num(15, -10, 80, 0.5, 'Centre Y', 'box'),
-    boxZ:         num(24, -150, 150, 0.5, 'Centre Z', 'box'),
-    sizeX:        num(60, 1, 300, 0.5, 'Largeur (X)', 'box'),
-    sizeY:        num(30, 1, 120, 0.5, 'Hauteur (Y)', 'box'),
-    sizeZ:        num(72, 1, 300, 0.5, 'Profondeur (Z)', 'box'),
+    boxY:         num(45, -10, 80, 0.5, 'Centre Y', 'box'),
+    boxZ:         num(80, -150, 150, 0.5, 'Centre Z', 'box'),
+    sizeX:        num(100, 1, 300, 0.5, 'Largeur (X)', 'box'),
+    sizeY:        num(90, 1, 120, 0.5, 'Hauteur (Y)', 'box'),
+    sizeZ:        num(200, 1, 300, 0.5, 'Profondeur (Z)', 'box'),
     edge:         num(8, 0, 20, 0.1, 'Bords doux (m)', 'box'),
 
     // ── Qualité ──
-    resolution:   opt(HAZE_RESOLUTIONS, 'Demi-résolution', 'Résolution', 'perf'),
+    resolution:   opt(HAZE_RESOLUTIONS, 'Quart de résolution', 'Résolution', 'perf'),
     maxLights:    num(6, 1, 8, 1, 'Nombre de lumières max', 'perf'),
-    segments:     num(6, 1, 8, 1, 'Tranches de calcul', 'perf'),
+    segments:     num(2, 1, 8, 1, 'Tranches de calcul', 'perf'),
 };
 
 /** Réglages locaux à chaque machine (jamais synchronisés) */

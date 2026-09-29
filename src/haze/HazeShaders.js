@@ -114,12 +114,25 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
             }
 
             // Densité sans variations : bords doux (côtés + dessus) × nappe au sol
-            float densityShape(vec3 p) {
+            // Dissipation sur les bords (côtés + dessus, jamais au sol) : la fumée s'effiloche.
+            // Bord irrégulier (déformé par le bruit et le vent), coins arrondis (produit par axe),
+            // profil de concentration en s (comme une diffusion) plutôt qu'une coupure.
+            float edgeFade(vec3 p) {
                 vec3 dmin = p - uBoxMin;
                 vec3 dmax = uBoxMax - p;
-                // Bords doux sur les côtés et le dessus seulement : la fumée repose sur le sol (pas de fondu en bas)
-                float e = min(min(min(dmin.x, dmax.x), dmax.y), min(dmin.z, dmax.z));
-                float d = uDensity * (uEdge > 0.0 ? smoothstep(0.0, uEdge, e) : step(0.0, e));
+                if (uEdge <= 0.0) return step(0.0, min(min(min(dmin.x, dmax.x), dmax.y), min(dmin.z, dmax.z)));
+                float wisp = texture(uNoiseTex, (p * 0.03 + uWind * 0.2) * NOISE_UVW).r;
+                float off = wisp * uEdge * 0.7; // volutes : le bord avance/recule
+                float fx = smoothstep(0.0, uEdge, dmin.x + off) * smoothstep(0.0, uEdge, dmax.x + off);
+                float fz = smoothstep(0.0, uEdge, dmin.z + off) * smoothstep(0.0, uEdge, dmax.z + off);
+                float fy = smoothstep(0.0, uEdge, dmax.y + off);
+                float f = fx * fz * fy;
+                return f * f * (3.0 - 2.0 * f);
+            }
+
+            float densityShape(vec3 p) {
+                vec3 dmin = p - uBoxMin;
+                float d = uDensity * edgeFade(p);
                 // Nappe au sol : densité maximale au sol, décroissance exponentielle avec la hauteur
                 if (uHeight > 0.0) d *= exp(-max(0.0, dmin.y) / uHeight);
                 return d;
@@ -188,7 +201,8 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
                     float a = tIn + float(s) * segLen;
                     float tm = a + 0.5 * segLen;
                     vec3 pm = ro + rd * tm;
-                    float shapeNoLayer = densityShape(pm) / max(1e-6, uHeight > 0.0 ? exp(-max(0.0, pm.y - uBoxMin.y) / uHeight) : 1.0);
+                    // Dissipation des bords moyennée sur la tranche (début, milieu, fin) : fondu progressif même avec peu de tranches
+                    float shapeNoLayer = uDensity * (edgeFade(ro + rd * a) + 2.0 * edgeFade(pm) + edgeFade(ro + rd * (a + segLen))) * 0.25;
                     float nm = noiseAt(pm);
                     float d = shapeNoLayer * layerAverage(ro.y + rd.y * a, ro.y + rd.y * (a + segLen)) * nm;
                     dens[s] = d;
@@ -215,7 +229,9 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
                     float range = uLPos[i].w;
                     vec3 v = Lp - ro;
                     float tc = dot(v, rd);
-                    float h2 = max(dot(v, v) - tc * tc, 0.09);
+                    // Sources omni : uLCol.w = rayon d'étalement (pas de point lumineux net dans la fumée)
+                    float blur = uLDir[i].w > -0.5 ? 0.0 : uLCol[i].w;
+                    float h2 = max(dot(v, v) - tc * tc, 0.09) + blur * blur;
                     float h = sqrt(h2);
                     float hs = sqrt(h2 + uMSReach * uMSReach);
                     vec3 col = uLCol[i].rgb;
@@ -256,12 +272,20 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
     });
 }
 
-/** Composition : scène × transmittance + lumière diffusée (sur-échantillonnée) */
+/**
+ * Composition : scène × transmittance + lumière diffusée.
+ * Sur-échantillonnage BILATÉRAL : parmi les 4 texels basse résolution voisins, seuls ceux à la même
+ * profondeur que le pixel comptent → pas de halo/escalier du brouillard sur les bords des objets.
+ */
 export function createHazeCompositeMaterial() {
     return new THREE.ShaderMaterial({
         uniforms: {
             tDiffuse: { value: null },
             tHaze:    { value: null },
+            uDepth:   { value: null },
+            uNear:    { value: 0.1 },
+            uFar:     { value: 1000 },
+            uHazeSize: { value: new THREE.Vector2(1, 1) },
         },
         vertexShader: /* glsl */`
             varying vec2 vUv;
@@ -272,11 +296,39 @@ export function createHazeCompositeMaterial() {
         `,
         fragmentShader: /* glsl */`
             uniform sampler2D tDiffuse;
+            #include <packing>
             uniform sampler2D tHaze;
+            uniform highp sampler2D uDepth;
+            uniform float uNear, uFar;
+            uniform vec2 uHazeSize;
             varying vec2 vUv;
+            float linDepth(vec2 uv) {
+                float d = texture2D(uDepth, uv).r;
+                return d >= 1.0 ? uFar : -perspectiveDepthToViewZ(d, uNear, uFar);
+            }
             void main() {
                 vec4 base = texture2D(tDiffuse, vUv);
-                vec4 hz = texture2D(tHaze, vUv);
+                float dc = linDepth(vUv);
+                vec2 p = vUv * uHazeSize - 0.5;
+                vec2 i0 = floor(p);
+                vec2 f = p - i0;
+                vec4 acc = vec4(0.0);
+                float wsum = 0.0;
+                vec4 nearest = vec4(0.0, 0.0, 0.0, 1.0);
+                float bestDiff = 1e20;
+                for (int j = 0; j < 2; j++) {
+                    for (int i = 0; i < 2; i++) {
+                        vec2 uv = (i0 + vec2(float(i), float(j)) + 0.5) / uHazeSize;
+                        vec4 h = texture2D(tHaze, uv);
+                        float diff = abs(linDepth(uv) - dc) / max(dc, 0.1);
+                        float wb = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
+                        float w = wb * exp(-diff * 30.0) + 1e-5 * wb;
+                        acc += h * w;
+                        wsum += w;
+                        if (diff < bestDiff) { bestDiff = diff; nearest = h; }
+                    }
+                }
+                vec4 hz = bestDiff > 0.1 && wsum < 0.05 ? nearest : acc / max(wsum, 1e-6);
                 gl_FragColor = vec4(base.rgb * hz.a + hz.rgb, base.a);
             }
         `,

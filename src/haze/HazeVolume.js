@@ -19,6 +19,7 @@
 import * as THREE from 'three';
 import { getSmokeNoiseTexture } from '../laser/LaserSmokeNoise.js';
 import { occluderUniforms } from '../spot/SpotOcclusion.js';
+import { getStageObstacles } from '../laser/LaserSceneIntersector.js';
 import { createHazeMaterial, HAZE_MAX_LIGHTS } from './HazeShaders.js';
 import { HazePass } from './HazePass.js';
 import { defaultHazeParams, HAZE_PARAMS_SCHEMA } from './hazeParams.js';
@@ -27,11 +28,36 @@ import { defaultHazeParams, HAZE_PARAMS_SCHEMA } from './hazeParams.js';
 const STROBE_K = 1.0;
 const SPOT_K = 12.0;
 const LASER_K = 1.0;
+const SCENE_K = 1.0;
+const BEAM_MAX = 40;    // longueur (m) de faisceau de lyre prise en compte dans la fumée
+const BEAM_POINTS = 3;  // une lyre = 3 sources réparties le long de son faisceau
+const _obstacles = getStageObstacles();
+
+/** Longueur libre d'un faisceau (sol, structure de la scène), bornée à BEAM_MAX */
+function beamFreeLength(o, d) {
+    let tMax = BEAM_MAX;
+    if (d.y < -1e-3) tMax = Math.min(tMax, o.y / -d.y);
+    const ix = 1 / (Math.abs(d.x) < 1e-6 ? 1e-6 : d.x);
+    const iy = 1 / (Math.abs(d.y) < 1e-6 ? 1e-6 : d.y);
+    const iz = 1 / (Math.abs(d.z) < 1e-6 ? 1e-6 : d.z);
+    for (const b of _obstacles) {
+        let a = (b.minX - o.x) * ix, c = (b.maxX - o.x) * ix;
+        let t0 = Math.min(a, c), t1 = Math.max(a, c);
+        a = (b.minY - o.y) * iy; c = (b.maxY - o.y) * iy;
+        t0 = Math.max(t0, Math.min(a, c)); t1 = Math.min(t1, Math.max(a, c));
+        a = (b.minZ - o.z) * iz; c = (b.maxZ - o.z) * iz;
+        t0 = Math.max(t0, Math.min(a, c)); t1 = Math.min(t1, Math.max(a, c));
+        // Obstacle devant la lyre (on ignore celui dans lequel elle est accrochée)
+        if (t0 <= t1 && t0 > 0.3 && t0 < tMax) tMax = t0;
+    }
+    return Math.max(0.5, tMax);
+}
+const LOCAL_R = 7; // rayon (m) d'influence locale pour le choix des sources
 const SUN_K = 0.25;
 const AMBIENT_K = 0.12;
 const LINK_K = 30; // densité du brouillard (m⁻¹) → densité de fumée des faisceaux des lyres
 
-const RES_SCALE = { 'Quart de résolution': 0.25, 'Demi-résolution': 0.5, 'Pleine résolution': 1.0 };
+const RES_SCALE = { '1/16 de résolution': 1 / 16, '1/8 de résolution': 0.125, 'Quart de résolution': 0.25, 'Demi-résolution': 0.5, 'Pleine résolution': 1.0 };
 
 const _pos = new THREE.Vector3();
 const _tgt = new THREE.Vector3();
@@ -83,13 +109,14 @@ export class HazeVolume {
         for (let i = 0; i < 64; i++) this._pool.push(this._newCand());
         this._directional = null;
         this._ambientLights = [];
+        this._sceneLights = [];
         this._scanTimer = 0;
         this._levels = new WeakMap(); // persistance par source
         this._applyAll();
     }
 
     _newCand() {
-        return { x: 0, y: 0, z: 0, range: 0, r: 0, g: 0, b: 0, dx: 0, dy: 0, dz: 0, cos: -1, cosIn: 1, power: 0, score: 0, strobe: false, n: 1 };
+        return { x: 0, y: 0, z: 0, range: 0, r: 0, g: 0, b: 0, dx: 0, dy: 0, dz: 0, cos: -1, cosIn: 1, soft: 0, power: 0, score: 0, strobe: false, n: 1 };
     }
 
     // ── Réglages ──────────────────────────────────────────────────────────
@@ -151,6 +178,15 @@ export class HazeVolume {
     _scanSceneLights() {
         this._directional = null;
         this._ambientLights.length = 0;
+        this._sceneLights.length = 0;
+        // Lampes posées dans le moteur (panneau Ambiance, y compris celles reçues du multijoueur)
+        const entries = this.ambiancePanel && this.ambiancePanel.lights;
+        if (entries) {
+            for (const e of entries) {
+                const l = e.light;
+                if (l && (l.isPointLight || l.isSpotLight || l.isRectAreaLight)) this._sceneLights.push(l);
+            }
+        }
         let best = 0;
         this.scene.traverse(o => {
             if (!o.isLight) return;
@@ -199,29 +235,37 @@ export class HazeVolume {
                 c.r = _col.r * power; c.g = _col.g * power; c.b = _col.b * power;
                 c.power = power;
                 c.strobe = true;
+                c.soft = 0;
                 c.n = 1;
                 out.push(c);
             }
         }
 
-        // 2. Lyres : la fumée s'éclaire le long du faisceau (source placée au milieu du trajet)
+        // 2. Lyres : la fumée s'éclaire LE LONG du faisceau (sources réparties jusqu'au sol / à la structure),
+        //    donc la lumière suit le rayon quand la lyre balaie (gauche/droite, haut/bas)
         if (p.useSpots && this.spotManager) {
             for (const s of this.spotManager.getAllSpots()) {
                 const lv = this._level(s, s.lightFlux || 0, dt);
                 if (lv <= 0.002) continue;
-                const power = lv * p.spotGain * SPOT_K;
                 const ax = s.axis, lp = s.lensPos;
-                const thr = ax.y < -0.05 ? Math.min(20, lp.y / -ax.y) : 20;
-                const dist = Math.max(1.5, thr * 0.5);
+                const len = beamFreeLength(lp, ax);
+                // La fumée s'éclaire en proportion de la longueur de faisceau qui la traverse :
+                // un faisceau coupé court (plafond, mur) éclaire MOINS, sans concentrer sa lumière à l'impact
+                const power = lv * p.spotGain * SPOT_K * (len / BEAM_MAX) / BEAM_POINTS;
                 const col = s.motion.out.colorA;
-                const c = take();
-                c.x = lp.x + ax.x * dist; c.y = lp.y + ax.y * dist; c.z = lp.z + ax.z * dist;
-                c.dx = 0; c.dy = 0; c.dz = 0; c.cos = -1; c.range = 0;
-                c.r = col[0] * power; c.g = col[1] * power; c.b = col[2] * power;
-                c.power = power * (col[0] + col[1] + col[2]) / 3;
-                c.strobe = false;
-                c.n = 1;
-                out.push(c);
+                for (let j = 0; j < BEAM_POINTS; j++) {
+                    const dist = len * (j + 0.5) / BEAM_POINTS;
+                    const c = take();
+                    c.x = lp.x + ax.x * dist; c.y = lp.y + ax.y * dist; c.z = lp.z + ax.z * dist;
+                    c.dx = 0; c.dy = 0; c.dz = 0; c.cos = -1; c.range = 0;
+                    c.r = col[0] * power; c.g = col[1] * power; c.b = col[2] * power;
+                    c.power = power * (col[0] + col[1] + col[2]) / 3;
+                    c.strobe = false;
+                    // Source « étalée » sur son tronçon de faisceau : pas de point lumineux visible dans la fumée
+                    c.soft = Math.max(1.5, 0.7 * len / BEAM_POINTS);
+                    c.n = 1;
+                    out.push(c);
+                }
             }
         }
 
@@ -237,6 +281,39 @@ export class HazeVolume {
                 c.r = l.color.r * power; c.g = l.color.g * power; c.b = l.color.b * power;
                 c.power = power;
                 c.strobe = false;
+                c.soft = 0;
+                c.n = 1;
+                out.push(c);
+            }
+        }
+
+        // 4. Lampes posées (point, spot, panneau) : même la plus faible éclaire la fumée autour d'elle
+        if (p.useScene) {
+            for (const l of this._sceneLights) {
+                if (!l.visible || !l.parent || !(l.intensity > 0.001)) continue;
+                let power = l.intensity * p.sceneGain * SCENE_K;
+                if (l.isRectAreaLight) power *= l.width * l.height * 0.3; // luminance → intensité équivalente
+                if (power <= 0.001) continue;
+                l.getWorldPosition(_pos);
+                const c = take();
+                c.x = _pos.x; c.y = _pos.y; c.z = _pos.z;
+                c.dx = 0; c.dy = 0; c.dz = 0; c.cos = -1; c.cosIn = 1;
+                if (l.isSpotLight) {
+                    l.target.getWorldPosition(_tgt);
+                    _tgt.sub(_pos).normalize();
+                    c.dx = _tgt.x; c.dy = _tgt.y; c.dz = _tgt.z;
+                    c.cos = Math.cos(l.angle);
+                    c.cosIn = Math.cos(l.angle * (1 - l.penumbra));
+                } else if (l.isRectAreaLight) {
+                    _tgt.set(0, 0, -1).transformDirection(l.matrixWorld); // un panneau éclaire devant lui
+                    c.dx = _tgt.x; c.dy = _tgt.y; c.dz = _tgt.z;
+                    c.cos = 0.0; c.cosIn = 0.7;
+                }
+                c.range = l.distance > 0 ? l.distance : 0;
+                c.r = l.color.r * power; c.g = l.color.g * power; c.b = l.color.b * power;
+                c.power = power * (l.color.r + l.color.g + l.color.b) / 3;
+                c.strobe = false;
+                c.soft = 0;
                 c.n = 1;
                 out.push(c);
             }
@@ -252,22 +329,51 @@ export class HazeVolume {
         return out;
     }
 
-    /** Regroupe les sources au-delà du maximum (énergie et couleur conservées, centre pondéré) */
+    /**
+     * Choisit K sources par IMPORTANCE LOCALE : une lampe faible mais isolée domine la fumée
+     * autour d'elle (les grosses sources lointaines y sont atténuées en 1/d²) → elle garde sa place.
+     * Les sources couvertes par une source retenue proche y sont fusionnées (énergie conservée) ;
+     * celles qui ne dominent nulle part sont négligées.
+     */
     _cluster(cands, K) {
         if (cands.length <= K) return cands;
-        const seeds = cands.slice(0, K);
+        const strobeFirst = this.params.mode === 'Strobes prioritaires';
+        const R2 = LOCAL_R * LOCAL_R;
+        const seeds = [];
+        for (const c of cands) { c._cov = 0; c._taken = false; }
+        while (seeds.length < K) {
+            let best = null, bk = -1;
+            for (const c of cands) {
+                if (c._taken) continue;
+                // Part de la lumière locale (autour de c) qui vient de c lui-même
+                const imp = c.power / (c.power + c._cov);
+                const key = imp * Math.pow(c.score + 1e-6, 0.25) * (strobeFirst && c.strobe ? 1e4 : 1);
+                if (key > bk) { bk = key; best = c; }
+            }
+            if (!best) break;
+            best._taken = true;
+            seeds.push(best);
+            for (const c of cands) {
+                if (c._taken) continue;
+                const d2 = (best.x - c.x) ** 2 + (best.y - c.y) ** 2 + (best.z - c.z) ** 2;
+                c._cov += best.power * R2 / (R2 + d2);
+            }
+        }
         for (const s of seeds) { s._wx = s.x * s.power; s._wy = s.y * s.power; s._wz = s.z * s.power; s._w = s.power; }
-        for (let i = K; i < cands.length; i++) {
-            const c = cands[i];
-            let best = seeds[0], bd = Infinity;
+        const maxD2 = (LOCAL_R * 1.5) ** 2;
+        for (const c of cands) {
+            if (c._taken) continue;
+            let best = null, bd = Infinity;
             for (const s of seeds) {
                 const d = (s.x - c.x) ** 2 + (s.y - c.y) ** 2 + (s.z - c.z) ** 2;
                 if (d < bd) { bd = d; best = s; }
             }
+            if (!best || bd > maxD2) continue; // trop loin : la fusionner déplacerait sa lumière ailleurs
             best.r += c.r; best.g += c.g; best.b += c.b;
             best._wx += c.x * c.power; best._wy += c.y * c.power; best._wz += c.z * c.power; best._w += c.power;
             best.power += c.power;
             if (best.cos > -0.5 && (c.cos < -0.5 || best.dx * c.dx + best.dy * c.dy + best.dz * c.dz < 0.9)) best.cos = -1;
+            if (c.soft > best.soft) best.soft = c.soft;
             best.n++;
         }
         for (const s of seeds) {
@@ -284,7 +390,7 @@ export class HazeVolume {
         if (!active) return;
 
         this._scanTimer -= dt;
-        if (this._scanTimer <= 0) { this._scanTimer = 2; this._scanSceneLights(); }
+        if (this._scanTimer <= 0) { this._scanTimer = 1; this._scanSceneLights(); }
 
         const u = this.material.uniforms;
         const K = Math.max(1, Math.min(HAZE_MAX_LIGHTS, Math.round(p.maxLights)));
@@ -293,7 +399,7 @@ export class HazeVolume {
         for (let i = 0; i < n; i++) {
             const c = lights[i];
             u.uLPos.value[i].set(c.x, c.y, c.z, c.range);
-            u.uLCol.value[i].set(c.r, c.g, c.b, c.cosIn);
+            u.uLCol.value[i].set(c.r, c.g, c.b, c.cos > -0.5 ? c.cosIn : c.soft); // w : pénombre (projecteur) ou rayon d'étalement (source omni)
             u.uLDir.value[i].set(c.dx, c.dy, c.dz, c.cos);
         }
         u.uLCount.value = n;

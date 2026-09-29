@@ -22,7 +22,7 @@ import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
 
 // Réglages propres à chaque machine : jamais synchronisés via le serveur
-const LOCAL_ONLY_POST_KEYS = new Set(['antialiasing']);
+const LOCAL_ONLY_POST_KEYS = new Set(['antialiasing', 'laserRange']);
 const LOCAL_ONLY_LIGHT_KEYS = new Set(['shadowMapSize', 'mapSize']);
 
 
@@ -4183,6 +4183,11 @@ export class AmbiancePanel {
                 this.laserManager.setPostProcessingParam('playerCollisionEnabled', v);
             });
             this._setupController(cPlayerColEn, () => true, v => this.laserManager.setPostProcessingParam('playerCollisionEnabled', v));
+
+            const cLaserRange = fLaser.add(globalLaserPostParams, 'laserRange', 20, 3000, 10).name('📏 Distance d\'affichage (m)').onChange(v => {
+                this.laserManager.setPostProcessingParam('laserRange', v);
+            });
+            this._setupController(cLaserRange, () => 300, v => this.laserManager.setPostProcessingParam('laserRange', v));
 
             // Bloom Laser
             const fLaserBloom = fLaser.addFolder('✨ Bloom Laser');

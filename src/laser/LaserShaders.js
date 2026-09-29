@@ -25,8 +25,16 @@ import { SMOKE_NOISE_UVW_SCALE } from './LaserSmokeNoise.js';
 // Intensité relative minimale de la nappe PAN au loin (atteinte vers 270 m ; de près rien ne change)
 const PAN_FAR_FLOOR = 0.035;
 
-// Fondu de fin de portée (rayons partant dans le ciel) : pas d'arrêt net
-const _RANGE_FADE = `(1.0 - smoothstep(${LASER_FADE_START.toFixed(1)}, ${LASER_MAX_RANGE.toFixed(1)}, `;
+// Fondu de fin de portée (rayons partant dans le ciel) : pas d'arrêt net.
+// Uniform PARTAGÉ par tous les matériaux laser (x = début du fondu, y = fin) : réglable en direct.
+export const LASER_RANGE_UNIFORM = { value: new THREE.Vector2(LASER_FADE_START, LASER_MAX_RANGE) };
+const _RANGE_FADE = `(1.0 - smoothstep(uRangeFade.x, uRangeFade.y, `;
+
+/** Portée d'affichage des faisceaux (m, depuis l'émetteur) : fondu sur le dernier tiers */
+export function setLaserDisplayRange(meters) {
+    const end = Math.max(1, Math.min(LASER_MAX_RANGE, meters));
+    LASER_RANGE_UNIFORM.value.set(end * (LASER_FADE_START / LASER_MAX_RANGE), end);
+}
 
 // ── Disposition de la texture de paramètres (1 ligne = 1 laser, texels RGBA float) ──
 // T0  : satColor(1.35).rgb, beamPower (atténuation PAN incluse)
@@ -66,7 +74,8 @@ export function createBeamMaterial(paramsTexture) {
     return new THREE.ShaderMaterial({
         uniforms: {
             uLaserParams:    { value: paramsTexture },
-            uBeamDivergence: { value: BEAM_DIVERGENCE }
+            uBeamDivergence: { value: BEAM_DIVERGENCE },
+            uRangeFade:      LASER_RANGE_UNIFORM
         },
         vertexShader: `
             ${_PARAMS_GLSL}
@@ -124,6 +133,7 @@ export function createBeamMaterial(paramsTexture) {
             }
         `,
         fragmentShader: `
+            uniform vec2  uRangeFade;
             varying vec2  vUv;
             varying float vMeterDist;
             flat varying vec4 vColorPower;
@@ -184,6 +194,7 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
         uniforms: {
             uLaserParams: { value: paramsTexture },
             uSmokeNoise:  { value: noiseTexture },
+            uRangeFade:   LASER_RANGE_UNIFORM,
             uTime:        { value: 0.0 },
             uWind:        { value: new THREE.Vector3() }
         },
@@ -230,6 +241,7 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
             uniform highp sampler2D uLaserParams;
             uniform float uTime;
             uniform vec3  uWind;
+            uniform vec2  uRangeFade;
 
             varying float vMeterDist;
             varying vec3  vWorldPos3D;

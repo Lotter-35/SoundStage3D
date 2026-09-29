@@ -25,7 +25,7 @@ export class HazePass extends Pass {
         this.camera = camera;
         this.sceneDepth = sceneDepth;
         this.needsSwap = true;
-        this.resolutionScale = 0.5;
+        this.resolutionScale = 0.25;
         this._w = 1;
         this._h = 1;
         this.target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false });
@@ -63,7 +63,12 @@ export class HazePass extends Pass {
         this._quad.render(renderer);
 
         this._composite.uniforms.tDiffuse.value = readBuffer.texture;
-        this._composite.uniforms.tHaze.value = this.target.texture;
+        const cu = this._composite.uniforms;
+        cu.tHaze.value = this.target.texture;
+        cu.uDepth.value = depth;
+        cu.uNear.value = cam.near;
+        cu.uFar.value = cam.far;
+        cu.uHazeSize.value.set(this.target.width, this.target.height);
         renderer.setRenderTarget(this.renderToScreen ? null : writeBuffer);
         this._compQuad.render(renderer);
     }

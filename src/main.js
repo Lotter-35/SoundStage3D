@@ -25,7 +25,7 @@ import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
-import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=155';
+import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=156';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=5';
 import { LightingSync } from './multiplayer/LightingSync.js?v=10';
 import { DanceManager } from './scene/DanceManager.js';
@@ -205,6 +205,7 @@ ambiancePanel.spotConsole = spotConsole;
 // ─── Brouillard de salle (fumée éclairée par les strobes / lyres, après leurs faisceaux) ───
 const hazeVolume = new HazeVolume({ scene, camera, laserManager, strobeManager, spotManager });
 ambiancePanel.hazeVolume = hazeVolume;
+hazeVolume.ambiancePanel = ambiancePanel;
 ambiancePanel.setHazePanel(new HazePanel({ haze: hazeVolume, ambiancePanel }));
 window.__SS3D.hazeVolume = hazeVolume;
 
@@ -1441,9 +1442,9 @@ try {
                 setTimeout(() => { try { probe.close(); } catch (_) {} finish(false); }, 2500);
             } catch (_) { finish(false); }
         });
+        // Aucun rechargement automatique : la page ne change jamais sans action de l'utilisateur
         if (reachable) {
-            try { sessionStorage.setItem('ss-invite-after-reload', '1'); } catch (_) {}
-            window.location.reload();
+            alert('Le serveur multijoueur est de nouveau disponible. Rechargez la page (F5) quand vous le souhaitez pour créer une salle, puis cliquez sur Inviter.');
         } else {
             alert('Serveur multijoueur indisponible : vous restez en mode solo. Relancez le serveur puis cliquez de nouveau sur Inviter.');
         }
