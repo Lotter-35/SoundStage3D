@@ -2178,6 +2178,41 @@ export class AmbiancePanel {
         probeObjectAdded(type, lightsCount, shadowsCount, laserCount, meshesCount);
     }
 
+    /**
+     * Supprime l'élément actuellement sélectionné (touche Suppr).
+     * Reprend exactement les actions des boutons « 🗑️ Supprimer » de l'inspecteur.
+     * @returns {boolean} true si quelque chose a été supprimé
+     */
+    _deleteSelectedWithKey() {
+        if (this.selectedLaser && this.laserManager) {
+            const id = this.selectedLaser.laserId;
+            if (this._laserInspectorPanel && this._laserInspectorPanel.isOpen) this._laserInspectorPanel.close();
+            this.laserManager.removeLaser(id);
+            this.deselectLaser();
+            this._buildGui();
+            this._emitSync({ category: 'laser_remove', id });
+            return true;
+        }
+        if (this.selectedSpot && this.spotManager) {
+            this.deleteSelectedSpot(this.selectedSpot);
+            return true;
+        }
+        if (this.selectedStrobe && this.strobeManager) {
+            const id = this.selectedStrobe.id;
+            if (this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen) this._strobeInspectorPanel.close();
+            this.strobeManager.removeStrobe(id);
+            this.deselectStrobe();
+            this._rebuildInspectorGui();
+            return true;
+        }
+        const entry = this.selectedEntry;
+        if (entry && !entry.isBuiltin) {
+            this.removeLight(entry);
+            return true;
+        }
+        return false;
+    }
+
     removeLight(entry) {
         if (!entry || entry.isBuiltin) return;
 
@@ -5019,6 +5054,16 @@ export class AmbiancePanel {
 
         // Raccourcis clavier (Échap pour quitter le mode Gizmo ou fermer le panneau)
         window.addEventListener('keydown', (e) => {
+            // Suppr : supprime l'élément sélectionné (mêmes actions que les boutons « 🗑️ Supprimer »)
+            if (e.code === 'Delete' && this.isOpen && !this._importModalOpen && !this._exportModalOpen) {
+                const t = e.target;
+                const typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
+                if (!typing && this._deleteSelectedWithKey()) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    return;
+                }
+            }
             if (e.code === 'Escape') {
                 if (this._importModalOpen) {
                     this._hideImportModal();
