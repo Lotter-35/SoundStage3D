@@ -210,7 +210,10 @@ class Speaker {
             this._proxOut.gain.value = 1;
             this._applyProxCurve(PROX_DRIVE_MAX); // Pre-computed once with max drive (never reallocated per-frame)
 
-            this.highShelf.connect(this._proxShaper);
+            // Le waveshaper n'est alimenté que lorsque la saturation de proximité est > 0
+            // (voir _setProxActive) : au-delà de la distance « prox-far », il calculait pour rien (wet = 0).
+            this._proxConnected = false;
+            this._proxOffTimer = null;
             this._proxShaper.connect(this._proxWet);
             this._proxWet.connect(this._proxOut);
             this.highShelf.connect(this._proxDry);
@@ -258,8 +261,34 @@ class Speaker {
         if (this._isSub) {
             const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
             const prox = t0 * t0 * (3 - 2 * t0); // smoothstep S-curve
+            if (prox > 0) this._setProxActive(true);
             this._proxWet.gain.setTargetAtTime(prox, t, smooth);
             this._proxDry.gain.setTargetAtTime(1 - prox, t, smooth);
+            if (!(prox > 0)) this._setProxActive(false);
+        }
+    }
+
+    /**
+     * Branche / débranche le waveshaper de proximité.
+     * Le seuil suit toujours PROX_FAR / PROX_NEAR courants (curseurs), car il découle de « prox > 0 ».
+     * Débranchement différé (1 s) pour laisser le fondu wet → 0 se terminer. Le waveshaper est
+     * sans état (oversample 'none') : rebrancher/débrancher ne produit aucun artefact.
+     */
+    _setProxActive(active) {
+        if (active) {
+            if (this._proxOffTimer) { clearTimeout(this._proxOffTimer); this._proxOffTimer = null; }
+            if (!this._proxConnected) {
+                this.highShelf.connect(this._proxShaper);
+                this._proxConnected = true;
+            }
+        } else if (this._proxConnected && !this._proxOffTimer) {
+            this._proxOffTimer = setTimeout(() => {
+                this._proxOffTimer = null;
+                if (this._proxConnected) {
+                    try { this.highShelf.disconnect(this._proxShaper); } catch (_) {}
+                    this._proxConnected = false;
+                }
+            }, 1000);
         }
     }
 
@@ -271,8 +300,10 @@ class Speaker {
         const t0 = Math.max(0, Math.min(1, (PROX_FAR - distance) / (PROX_FAR - PROX_NEAR)));
         const prox = t0 * t0 * (3 - 2 * t0);
         this._applyProxCurve(PROX_DRIVE_MAX);
+        if (prox > 0) this._setProxActive(true);
         this._proxWet.gain.setTargetAtTime(prox, t, 0.04);
         this._proxDry.gain.setTargetAtTime(1 - prox, t, 0.04);
+        if (!(prox > 0)) this._setProxActive(false);
     }
 
     /**
