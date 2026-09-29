@@ -376,7 +376,7 @@ export function createStage(scene) {
         const bus = def.bus;
         if (!coneGroups[bus]) {
             coneGroups[bus] = new THREE.Group();
-            coneGroups[bus].visible = true;
+            coneGroups[bus].visible = false; // chaque bus caché par défaut : seul le bus coché dans le menu Cônes s'affiche
             coneContainer.add(coneGroups[bus]);
         }
         const group = coneGroups[bus];
