@@ -588,8 +588,24 @@ export class Listener {
             } else if (audioListener.setOrientation) {
                 audioListener.setOrientation(forward.x, forward.y, forward.z, up.x, up.y, up.z);
             }
+            this._lastAudioListenerState = new Float64Array([p.x, p.y, p.z, forward.x, forward.y, forward.z, up.x, up.y, up.z]);
             return;
         }
+
+        // Dirty check : n'envoyer de nouvelles automations que si l'écouteur a réellement bougé/tourné.
+        // Sinon, les 9 setTargetAtTime par image forcent Chrome à recalculer les 28 PannerNodes
+        // échantillon par échantillon en permanence (Render Capacity proche de 100 %).
+        const last = this._lastAudioListenerState || (this._lastAudioListenerState = new Float64Array(9));
+        const EPS_POS = 1e-3;   // 1 mm
+        const EPS_DIR = 1e-3;   // ~0.06°
+        if (Math.abs(p.x - last[0]) < EPS_POS && Math.abs(p.y - last[1]) < EPS_POS && Math.abs(p.z - last[2]) < EPS_POS &&
+            Math.abs(forward.x - last[3]) < EPS_DIR && Math.abs(forward.y - last[4]) < EPS_DIR && Math.abs(forward.z - last[5]) < EPS_DIR &&
+            Math.abs(up.x - last[6]) < EPS_DIR && Math.abs(up.y - last[7]) < EPS_DIR && Math.abs(up.z - last[8]) < EPS_DIR) {
+            return;
+        }
+        last[0] = p.x; last[1] = p.y; last[2] = p.z;
+        last[3] = forward.x; last[4] = forward.y; last[5] = forward.z;
+        last[6] = up.x; last[7] = up.y; last[8] = up.z;
 
         const tc = 0.04; // 40ms smoothing
 
