@@ -21,6 +21,7 @@ import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
 import { HAZE_PARAMS_SCHEMA } from '../haze/hazeParams.js';
+import { LENS_FLARE_DEFAULTS } from '../scene/SunLensFlare.js';
 
 // Réglages propres à chaque machine : jamais synchronisés via le serveur
 const LOCAL_ONLY_POST_KEYS = new Set(['antialiasing', 'laserRange']);
@@ -1078,23 +1079,35 @@ export class AmbiancePanel {
         const f = this.gui.addFolder('☀️ Lens flare du soleil');
         f.close();
         const set = (k) => (v) => flare.setParam(k, v);
-        f.add(p, 'enabled').name('Activer').onChange(set('enabled'));
-        f.add(p, 'intensity', 0, 3, 0.05).name('Intensité').onChange(set('intensity'));
-        f.add(p, 'resolution', ['Pleine résolution', 'Demi-résolution', 'Quart de résolution']).name('Résolution').onChange(set('resolution'));
-        f.add(p, 'glareSize', 0.01, 1.5, 0.01).name('Taille de l\'éblouissement').onChange(set('glareSize'));
-        f.add(p, 'starPoints', 0, 32, 1).name('Branches de l\'étoile').onChange(set('starPoints'));
-        f.add(p, 'flareSize', 0.001, 0.05, 0.001).name('Taille du flare').onChange(set('flareSize'));
-        f.add(p, 'flareSpeed', 0, 2, 0.01).name('Vitesse du flare').onChange(set('flareSpeed'));
-        f.add(p, 'flareShape', 0.01, 2, 0.01).name('Forme du flare').onChange(set('flareShape'));
-        f.add(p, 'animated').name('Animé').onChange(set('animated'));
-        f.add(p, 'anamorphic').name('Anamorphique').onChange(set('anamorphic'));
-        f.addColor(p, 'color').name('Couleur').onChange(set('color'));
-        f.add(p, 'colorGain', 0, 150, 1).name('Gain de couleur').onChange(set('colorGain'));
-        f.add(p, 'haloScale', 0.1, 2, 0.01).name('Échelle du halo').onChange(set('haloScale'));
-        f.add(p, 'secondaryGhosts').name('Reflets secondaires').onChange(set('secondaryGhosts'));
-        f.add(p, 'aditionalStreaks').name('Traînées supplémentaires').onChange(set('aditionalStreaks'));
-        f.add(p, 'ghostScale', 0, 2, 0.01).name('Taille des reflets').onChange(set('ghostScale'));
-        f.add(p, 'starBurst').name('Starburst (saleté d\'objectif)').onChange(set('starBurst'));
+        // Bouton ↺ (même style que les autres réglages) — réglages locaux : aucune synchronisation réseau
+        const withReset = (ctrl) => {
+            const k = ctrl.property;
+            const btn = document.createElement('button');
+            btn.className = 'lil-reset-btn';
+            btn.title = 'Réinitialiser ce paramètre (↺)';
+            btn.innerHTML = '↺';
+            btn.addEventListener('click', (e) => { e.stopPropagation(); ctrl.setValue(LENS_FLARE_DEFAULTS[k]); });
+            const widget = ctrl.domElement.querySelector('.widget');
+            (widget || ctrl.domElement).appendChild(btn);
+            return ctrl;
+        };
+        withReset(f.add(p, 'enabled').name('Activer').onChange(set('enabled')));
+        withReset(f.add(p, 'intensity', 0, 3, 0.05).name('Intensité').onChange(set('intensity')));
+        withReset(f.add(p, 'resolution', ['Pleine résolution', 'Demi-résolution', 'Quart de résolution']).name('Résolution').onChange(set('resolution')));
+        withReset(f.add(p, 'glareSize', 0.01, 1.5, 0.01).name('Taille de l\'éblouissement').onChange(set('glareSize')));
+        withReset(f.add(p, 'starPoints', 0, 32, 1).name('Branches de l\'étoile').onChange(set('starPoints')));
+        withReset(f.add(p, 'flareSize', 0.001, 0.05, 0.001).name('Taille du flare').onChange(set('flareSize')));
+        withReset(f.add(p, 'flareSpeed', 0, 2, 0.01).name('Vitesse du flare').onChange(set('flareSpeed')));
+        withReset(f.add(p, 'flareShape', 0.01, 2, 0.01).name('Forme du flare').onChange(set('flareShape')));
+        withReset(f.add(p, 'animated').name('Animé').onChange(set('animated')));
+        withReset(f.add(p, 'anamorphic').name('Anamorphique').onChange(set('anamorphic')));
+        withReset(f.addColor(p, 'color').name('Couleur').onChange(set('color')));
+        withReset(f.add(p, 'colorGain', 0, 150, 1).name('Gain de couleur').onChange(set('colorGain')));
+        withReset(f.add(p, 'haloScale', 0.1, 2, 0.01).name('Échelle du halo').onChange(set('haloScale')));
+        withReset(f.add(p, 'secondaryGhosts').name('Reflets secondaires').onChange(set('secondaryGhosts')));
+        withReset(f.add(p, 'aditionalStreaks').name('Traînées supplémentaires').onChange(set('aditionalStreaks')));
+        withReset(f.add(p, 'ghostScale', 0, 2, 0.01).name('Taille des reflets').onChange(set('ghostScale')));
+        withReset(f.add(p, 'starBurst').name('Starburst (saleté d\'objectif)').onChange(set('starBurst')));
         f.add({ reset: () => {
             flare.resetParams();
             f.controllersRecursive().forEach(c => { try { c.updateDisplay(); } catch (_) {} });
