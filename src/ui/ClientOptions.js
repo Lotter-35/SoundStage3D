@@ -43,6 +43,8 @@ export const CLIENT_OPTIONS_SCHEMA = {
     spotRealLights:   bool(true, 'Lyres : éclairage réel de la scène', 'effects'),
     spotShadows:      bool(false, 'Lyres : ombres portées (2 max)', 'effects'),
     laserRange:       num(300, 20, 3000, 10, 'Lasers : distance d\'affichage (m)', 'effects'),
+    laserFanQuality:  opt(['Demi-résolution', 'Pleine résolution'], 'Demi-résolution', 'Lasers : qualité des nappes', 'effects', 'Demi-résolution : 4× moins de pixels à calculer pour la fumée des nappes'),
+    laserSharedSmoke: bool(true, 'Lasers : fumée partagée (nappes superposées)', 'effects', 'La fumée des nappes superposées n\'est calculée qu\'une fois par pixel'),
     grassDistance:    num(0, 0, 60, 1, 'Herbe : distance d\'affichage (m)', 'effects', '0 = pas d\'herbe'),
 
     // ── Son ──

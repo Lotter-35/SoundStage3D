@@ -51,6 +51,8 @@ export class SpotManager {
         this.volumePass = new SpotVolumePass(this.batch, camera);
         this.volumePass.enabled = false;
         this._hasPass = Boolean(laserManager && typeof laserManager.addScenePass === 'function' && laserManager.addScenePass(this.volumePass));
+        // Profondeur de la SCÈNE (et non celle de l'image précédente : une passe placée avant peut échanger les cibles)
+        if (this._hasPass) this.volumePass.sceneDepth = laserManager.sceneDepth;
         if (!this._hasPass) console.warn('[SpotManager] Pas de chaîne de post-traitement : faisceaux volumétriques désactivés.');
 
         this._compiled = false;

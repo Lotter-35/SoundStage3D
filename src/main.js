@@ -1926,6 +1926,8 @@ clientOptions.bind('spotBeamQuality', (v) => spotManager.setGlobal('beamQuality'
 clientOptions.bind('spotRealLights', (v) => spotManager.setGlobal('realLights', v));
 clientOptions.bind('spotShadows', (v) => spotManager.setGlobal('lightShadows', v));
 clientOptions.bind('laserRange', (v) => laserManager && laserManager.setPostProcessingParam('laserRange', v));
+clientOptions.bind('laserFanQuality', (v) => laserManager && laserManager.setFanQuality(v === 'Pleine résolution' ? 1.0 : 0.5));
+clientOptions.bind('laserSharedSmoke', (v) => laserManager && laserManager.setSharedSmoke(v));
 clientOptions.bind('grassDistance', (v) => {
     controls.state.user['grass-distance'] = v;
     setGrassQuality(v);

@@ -50,7 +50,7 @@ export function setLaserDisplayRange(meters) {
 // T9  : turbulence     — actif, force, échelle, vitesse
 // T10 : rayons radiaux — actif, intensité, nombre de stries, vitesse
 // T11 : poches géantes — actif, contraste, taille, densité
-// T12 : poches géantes vitesse, intensité visuelle de la fumée, -, -
+// T12 : poches géantes vitesse, intensité visuelle de la fumée, signature du bruit de fumée (partage B), -
 export const PARAM_TEXELS = 13;
 
 const _PARAMS_GLSL = `
@@ -189,16 +189,20 @@ export function createBeamMaterial(paramsTexture) {
 }
 
 // ── 2. Plan Laser PAN (nappe volumétrique + fumée 3D espace monde) ───────
-export function createFanMaterial(paramsTexture, noiseTexture) {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            uLaserParams: { value: paramsTexture },
-            uSmokeNoise:  { value: noiseTexture },
-            uRangeFade:   LASER_RANGE_UNIFORM,
-            uTime:        { value: 0.0 },
-            uWind:        { value: new THREE.Vector3() }
-        },
-        vertexShader: `
+//
+// Optimisations (voir LaserFanPass.js) :
+//  A. Les nappes sont rendues en demi-résolution par LaserFanPass (test de profondeur manuel contre la
+//     scène, puis recomposition sensible à la profondeur).
+//  B. Le bruit de fumée (volutes, poches, poches géantes) n'est calculé qu'UNE fois par pixel par une
+//     pré-passe (createFanMaskMaterial) pour la nappe la plus proche : les nappes superposées dans le
+//     même plan sont éliminées par le test de profondeur avant d'exécuter le shader. Chaque nappe relit
+//     ce masque si elle est au même endroit (même profondeur, à quelques cm près) avec les mêmes
+//     réglages de bruit (signature T12.z) ; sinon elle calcule sa fumée elle-même, comme avant.
+
+// Encodage de la pré-passe : alpha = signature × FAN_MASK_SIG_SCALE + profondeur de vue (m)
+export const FAN_MASK_SIG_SCALE = 8192.0;
+
+const FAN_VERTEX = `
             ${_PARAMS_GLSL}
             attribute float aCorner;  // 0 = origine, 1 = h0, 2 = h1
             attribute vec4  aTriA;    // h0.xyz, ligne laser
@@ -206,6 +210,8 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
 
             varying float vMeterDist;
             varying vec3  vWorldPos3D;
+            varying float vViewZ;          // profondeur de vue (m)
+            varying vec4  vClipPos;        // position écran (lecture du masque de fumée partagé)
             flat varying vec4 vColorPan;   // satColor.rgb, panPower
             flat varying vec4 vGlow;       // sourceGlow, glowIntensity, fogDensity, fogGlowCoupling
             flat varying vec4 vOriginSmk;  // origin.xyz, smokeEnabled
@@ -233,10 +239,18 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
                 vMeterDist  = length(position3 - origin);
                 vWorldPos3D = position3;
 
-                gl_Position = projectionMatrix * viewMatrix * vec4(position3, 1.0);
+                vec4 mv = viewMatrix * vec4(position3, 1.0);
+                vViewZ = -mv.z;
+                gl_Position = projectionMatrix * mv;
+                vClipPos = gl_Position;
+                #ifdef FAN_MASK_PASS
+                // Pré-passe : nappes sans fumée ou éteintes → triangle hors écran (ne masque rien)
+                if (t4.w < 0.5 || t3.z <= 0.001) gl_Position = vec4(2.0, 2.0, 2.0, 1.0);
+                #endif
             }
-        `,
-        fragmentShader: `
+`;
+
+const FAN_FRAGMENT_COMMON = `
             uniform highp sampler3D uSmokeNoise;
             uniform highp sampler2D uLaserParams;
             uniform float uTime;
@@ -245,6 +259,8 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
 
             varying float vMeterDist;
             varying vec3  vWorldPos3D;
+            varying float vViewZ;
+            varying vec4  vClipPos;
             flat varying vec4 vColorPan;
             flat varying vec4 vGlow;
             flat varying vec4 vOriginSmk;
@@ -261,6 +277,136 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
                 return texelFetch(uLaserParams, ivec2(texel, int(vPatch.w + 0.5)), 0);
             }
 
+            // Position d'échantillonnage de la fumée (compression perpendiculaire au plan du laser)
+            vec3 smokeWorldPos() {
+                vec3 relPos = vWorldPos3D - vOriginSmk.xyz;
+                float perpDist = dot(relPos, vNormalPerp.xyz);
+                vec3 inPlanePos = relPos - vNormalPerp.xyz * perpDist;
+                return vOriginSmk.xyz + inPlanePos + vNormalPerp.xyz * (perpDist * clamp(vNormalPerp.w, 0.005, 1.0));
+            }
+
+            // Partie coûteuse de la fumée (lectures de bruit 3D) :
+            // x = forme des volutes, y = masque des poches, z = masque des poches géantes
+            vec3 smokeMasks(vec3 effectiveWorldPos) {
+                vec3 sampleCoord = effectiveWorldPos * vSmoke.x + uWind;
+
+                // Turbulence (torsion supplémentaire des volutes, avant leur calcul)
+                vec4 Lt = layerParam(9);
+                if (Lt.x > 0.5) {
+                    vec3 tc = sampleCoord * Lt.z + vec3(uTime * Lt.w * 0.3, uTime * Lt.w * 0.2, -uTime * Lt.w * 0.25);
+                    float ta = snoise(tc + vec3(7.1, 2.3, 5.9));
+                    float tb = snoise(tc * 1.17 + vec3(3.3, 8.1, 1.7));
+                    sampleCoord += vec3(ta, tb, ta - tb) * Lt.y;
+                }
+
+                // Léger tourbillon fluide 3D (swirl domain-warp très léger et rapide)
+                float swirl = snoise(sampleCoord * 1.3 + vec3(1.2, 3.4, 5.6)) * 0.22;
+                vec3 warpedCoord = sampleCoord + vec3(swirl, swirl * 0.5, -swirl * 0.7);
+
+                // 2 octaves 3D complètes et continues
+                float rawNoise = snoise(warpedCoord) * 0.65 + snoise(warpedCoord * 2.08 + vec3(2.3, 1.1, 4.7)) * 0.35;
+                float smokeShape = smoothstep(0.18, 0.82, clamp(rawNoise * 0.5 + 0.5, 0.0, 1.0));
+
+                // Poches / amas hétérogènes (macro-densité 3D monde continue)
+                float patchMask = 0.0;
+                if (vSmoke.w > 0.001) {
+                    float ps = vPatch.z;
+                    vec3 patchWind = uWind * (ps * 2.5) + vec3(uTime * 0.035 * ps, uTime * 0.015 * ps, -uTime * 0.025 * ps);
+                    vec3 patchCoord = effectiveWorldPos * vPatch.x + patchWind;
+                    float rawPatch = snoise(patchCoord) * 0.70 + snoise(patchCoord * 2.15 + vec3(4.1, 1.7, 5.3)) * 0.30;
+                    rawPatch = clamp(rawPatch * 0.5 + 0.5, 0.0, 1.0);
+                    float edgeLow  = max(0.0, (1.0 - vPatch.y) * 0.75 - 0.15);
+                    float edgeHigh = min(1.0, edgeLow + 0.45);
+                    patchMask = smoothstep(edgeLow, edgeHigh, rawPatch);
+                }
+
+                // Poches & amas géants (macro-densité à très grande échelle)
+                float gMask = 0.0;
+                vec4 Lg = layerParam(11);
+                if (Lg.x > 0.5) {
+                    float gs = layerParam(12).x;
+                    vec3 gWind = uWind * (gs * 2.5) + vec3(uTime * 0.035 * gs, uTime * 0.015 * gs, -uTime * 0.025 * gs);
+                    vec3 gc = effectiveWorldPos * Lg.z + gWind + vec3(11.3, 5.7, 2.1);
+                    float rawG = snoise(gc) * 0.70 + snoise(gc * 2.15 + vec3(6.1, 2.9, 8.3)) * 0.30;
+                    rawG = clamp(rawG * 0.5 + 0.5, 0.0, 1.0);
+                    float gLow  = max(0.0, (1.0 - Lg.w) * 0.75 - 0.15);
+                    gMask = smoothstep(gLow, min(1.0, gLow + 0.45), rawG);
+                }
+                return vec3(smokeShape, patchMask, gMask);
+            }
+`;
+
+/** Pré-passe B : masque de fumée partagé (nappe la plus proche, 1 calcul de bruit par pixel). */
+export function createFanMaskMaterial(paramsTexture, noiseTexture) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uLaserParams: { value: paramsTexture },
+            uSmokeNoise:  { value: noiseTexture },
+            uRangeFade:   LASER_RANGE_UNIFORM,
+            uTime:        { value: 0.0 },
+            uWind:        { value: new THREE.Vector3() }
+        },
+        defines: { FAN_MASK_PASS: 1 },
+        vertexShader: FAN_VERTEX,
+        fragmentShader: FAN_FRAGMENT_COMMON + `
+            void main() {
+                // Pas de discard : le test de profondeur anticipé élimine les nappes superposées dans le
+                // même plan AVANT l'exécution du shader (c'est tout l'intérêt de cette pré-passe).
+                float sig = layerParam(12).z;
+                float z = clamp(vViewZ, 0.0, ${(FAN_MASK_SIG_SCALE - 1).toFixed(1)});
+                vec3 masks = vec3(0.0);
+                // Fragments invisibles (trop loin / trop faibles) : pas de bruit, masque inutilisable
+                float meterDist = max(0.0, vMeterDist);
+                float distanceFalloff = max(1.0 / (1.0 + pow(meterDist / 38.0, 1.75)), ${PAN_FAR_FLOOR.toFixed(3)}) * ${_RANGE_FADE}meterDist));
+                if (distanceFalloff < 0.0005 || sig < 0.5) {
+                    gl_FragColor = vec4(0.0, 0.0, 0.0, z);
+                } else {
+                    masks = smokeMasks(smokeWorldPos());
+                    gl_FragColor = vec4(masks, sig * ${FAN_MASK_SIG_SCALE.toFixed(1)} + z);
+                }
+            }
+        `,
+        transparent: false,
+        blending: THREE.NoBlending,
+        depthTest: true,
+        depthWrite: true,
+        // Strictement « plus proche » : une nappe dans le même plan (même profondeur) qu'une nappe déjà
+        // écrite échoue au test anticipé et son shader n'est pas exécuté (défaut three.js : LessEqual)
+        depthFunc: THREE.LessDepth,
+        side: THREE.DoubleSide
+    });
+}
+
+export function createFanMaterial(paramsTexture, noiseTexture) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uLaserParams: { value: paramsTexture },
+            uSmokeNoise:  { value: noiseTexture },
+            uRangeFade:   LASER_RANGE_UNIFORM,
+            uTime:        { value: 0.0 },
+            uWind:        { value: new THREE.Vector3() },
+            // B. Masque de fumée partagé (pré-passe)
+            uMask:          { value: null },
+            uUseMask:       { value: 0.0 },
+            // A. Rendu demi-résolution : test de profondeur manuel contre la scène
+            uSceneDepth:    { value: null },
+            uUseSceneDepth: { value: 0.0 },
+            uInvRes:        { value: new THREE.Vector2(1, 1) },
+            uNear:          { value: 0.1 },
+            uFar:           { value: 1000.0 }
+        },
+        vertexShader: FAN_VERTEX,
+        fragmentShader: `
+            #include <packing>
+            ` + FAN_FRAGMENT_COMMON + `
+            uniform highp sampler2D uMask;
+            uniform float uUseMask;
+            uniform highp sampler2D uSceneDepth;
+            uniform float uUseSceneDepth;
+            uniform vec2  uInvRes;
+            uniform float uNear;
+            uniform float uFar;
+
             // Applique une couche de fumée : m = masque [0,1], k = intensité
             void applyLayer(float m, float k, float dark, float boost, float white, float bright,
                             inout float smokeMod, inout float smokeScatter) {
@@ -269,6 +415,12 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
             }
 
             void main() {
+                // A. Rendu demi-résolution (sans tampon de profondeur) : arrêt de la nappe sur la scène
+                if (uUseSceneDepth > 0.5) {
+                    float sceneZ = -perspectiveDepthToViewZ(texture(uSceneDepth, gl_FragCoord.xy * uInvRes).r, uNear, uFar);
+                    if (vViewZ > sceneZ * 1.001 + 0.02) discard;
+                }
+
                 float uPanPower = vColorPan.w;
                 if (uPanPower <= 0.001) discard;
 
@@ -276,17 +428,10 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
                 float uGlowIntensity     = vGlow.y;
                 float uFogDensity        = vGlow.z;
                 float uFogGlowCoupling   = vGlow.w;
-                vec3  uOrigin            = vOriginSmk.xyz;
                 float uSmokeEnabled      = vOriginSmk.w;
-                vec3  nrm                = vNormalPerp.xyz;
-                float uSmokePerpSpeed    = vNormalPerp.w;
-                float uSmokeScale        = vSmoke.x;
                 float uSmokeContrast     = vSmoke.y;
                 float uSmokeBrightness   = vSmoke.z;
                 float uSmokePatchContrast= vSmoke.w;
-                float uSmokePatchScale   = vPatch.x;
-                float uSmokePatchDensity = vPatch.y;
-                float uSmokePatchSpeed   = vPatch.z;
 
                 // ── Atténuation physique en mètres réels ──
                 // De près identique à l'original ; au-delà de ~270 m elle se stabilise sur un
@@ -313,73 +458,52 @@ export function createFanMaterial(paramsTexture, noiseTexture) {
                 float smokeScatter = 0.0;
 
                 if (uSmokeEnabled > 0.5) {
-                    // Décomposition spatiale : déplacement dans le plan laser vs perpendiculaire au plan
-                    vec3 relPos = vWorldPos3D - uOrigin;
-                    float perpDist = dot(relPos, nrm);
-                    vec3 inPlanePos = relPos - nrm * perpDist;
-
-                    vec3 effectiveWorldPos = uOrigin + inPlanePos + nrm * (perpDist * clamp(uSmokePerpSpeed, 0.005, 1.0));
-                    vec3 sampleCoord = effectiveWorldPos * uSmokeScale + uWind;
                     float bright = uSmokeBrightness;
 
-                    // ── Couche : Turbulence (torsion supplémentaire des volutes, avant leur calcul) ──
-                    vec4 Lt = layerParam(9);
-                    if (Lt.x > 0.5) {
-                        vec3 tc = sampleCoord * Lt.z + vec3(uTime * Lt.w * 0.3, uTime * Lt.w * 0.2, -uTime * Lt.w * 0.25);
-                        float ta = snoise(tc + vec3(7.1, 2.3, 5.9));
-                        float tb = snoise(tc * 1.17 + vec3(3.3, 8.1, 1.7));
-                        sampleCoord += vec3(ta, tb, ta - tb) * Lt.y;
+                    // B. Masque partagé : même endroit (profondeur) + mêmes réglages de bruit → réutilisé
+                    vec3 masks;
+                    bool haveMask = false;
+                    if (uUseMask > 0.5) {
+                        vec2 suv = vClipPos.xy / vClipPos.w * 0.5 + 0.5;
+                        vec4 m = texture(uMask, suv);
+                        float sigW = floor(m.a / ${FAN_MASK_SIG_SCALE.toFixed(1)});
+                        float zW = m.a - sigW * ${FAN_MASK_SIG_SCALE.toFixed(1)};
+                        float mySig = layerParam(12).z;
+                        if (mySig > 0.5 && abs(sigW - mySig) < 0.5 && abs(zW - vViewZ) < 0.25 + 0.01 * vViewZ) {
+                            masks = m.rgb;
+                            haveMask = true;
+                        }
                     }
+                    if (!haveMask) masks = smokeMasks(smokeWorldPos());
 
-                    // Léger tourbillon fluide 3D (swirl domain-warp très léger et rapide)
-                    float swirl = snoise(sampleCoord * 1.3 + vec3(1.2, 3.4, 5.6)) * 0.22;
-                    vec3 warpedCoord = sampleCoord + vec3(swirl, swirl * 0.5, -swirl * 0.7);
-
-                    // 2 octaves 3D complètes et continues
-                    float rawNoise = snoise(warpedCoord) * 0.65 + snoise(warpedCoord * 2.08 + vec3(2.3, 1.1, 4.7)) * 0.35;
-                    float smokeShape = smoothstep(0.18, 0.82, clamp(rawNoise * 0.5 + 0.5, 0.0, 1.0));
-
+                    float smokeShape = masks.x;
                     smokeMod     = mix(1.0 - uSmokeContrast * 0.70, 1.0 + uSmokeContrast * 0.85, smokeShape);
                     smokeScatter = pow(smokeShape, 2.2) * 0.45 * uSmokeContrast * uSmokeBrightness;
 
-                    // ── Surcouche Poches / Amas Hétérogènes de Fumée (Macro-Densité 3D Monde continue) ──
+                    // ── Surcouche Poches / Amas Hétérogènes de Fumée ──
                     if (uSmokePatchContrast > 0.001) {
-                        vec3 patchWind = uWind * (uSmokePatchSpeed * 2.5) + vec3(uTime * 0.035 * uSmokePatchSpeed, uTime * 0.015 * uSmokePatchSpeed, -uTime * 0.025 * uSmokePatchSpeed);
-                        vec3 patchCoord = effectiveWorldPos * uSmokePatchScale + patchWind;
-
-                        float rawPatch = snoise(patchCoord) * 0.70 + snoise(patchCoord * 2.15 + vec3(4.1, 1.7, 5.3)) * 0.30;
-                        rawPatch = clamp(rawPatch * 0.5 + 0.5, 0.0, 1.0);
-
-                        float edgeLow  = max(0.0, (1.0 - uSmokePatchDensity) * 0.75 - 0.15);
-                        float edgeHigh = min(1.0, edgeLow + 0.45);
-                        float patchMask = smoothstep(edgeLow, edgeHigh, rawPatch);
-
+                        float patchMask = masks.y;
                         float patchMultiplier = mix(1.0 - uSmokePatchContrast * 0.85, 1.0 + uSmokePatchContrast * 1.25, patchMask);
                         patchMultiplier = max(0.02, patchMultiplier);
-
                         smokeMod *= patchMultiplier;
                         smokeScatter = smokeScatter * patchMultiplier + pow(patchMask, 2.0) * 0.40 * uSmokePatchContrast * uSmokeBrightness;
                     }
 
-                    // ── Couche : Poches & amas géants (macro-densité à très grande échelle) ──
+                    // ── Couche : Poches & amas géants ──
                     vec4 Lg = layerParam(11);
                     vec4 L12 = layerParam(12);
                     if (Lg.x > 0.5) {
-                        float gs = L12.x;
-                        vec3 gWind = uWind * (gs * 2.5) + vec3(uTime * 0.035 * gs, uTime * 0.015 * gs, -uTime * 0.025 * gs);
-                        vec3 gc = effectiveWorldPos * Lg.z + gWind + vec3(11.3, 5.7, 2.1);
-                        float rawG = snoise(gc) * 0.70 + snoise(gc * 2.15 + vec3(6.1, 2.9, 8.3)) * 0.30;
-                        rawG = clamp(rawG * 0.5 + 0.5, 0.0, 1.0);
-                        float gLow  = max(0.0, (1.0 - Lg.w) * 0.75 - 0.15);
-                        float gMask = smoothstep(gLow, min(1.0, gLow + 0.45), rawG);
+                        float gMask = masks.z;
                         float gMult = max(0.02, mix(1.0 - Lg.y * 0.85, 1.0 + Lg.y * 1.25, gMask));
                         smokeMod *= gMult;
                         smokeScatter = smokeScatter * gMult + gMask * gMask * 0.40 * Lg.y * bright;
                     }
 
-                    // ── Couche : Rayons radiaux (stries qui partent de la source) ──
+                    // ── Couche : Rayons radiaux (stries qui partent de la source : propres à chaque laser) ──
                     vec4 Lr = layerParam(10);
                     if (Lr.x > 0.5) {
+                        vec3 relPos = vWorldPos3D - vOriginSmk.xyz;
+                        vec3 inPlanePos = relPos - vNormalPerp.xyz * dot(relPos, vNormalPerp.xyz);
                         float dl = length(inPlanePos);
                         vec3 dn = inPlanePos / max(dl, 0.001);
                         float n = snoise(dn * Lr.z + vec3(0.0, 0.0, uTime * Lr.w * 0.3) + vec3(dl * 0.004));

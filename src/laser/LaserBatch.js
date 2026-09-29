@@ -23,6 +23,7 @@ import {
     PARAM_TEXELS,
     createBeamMaterial,
     createFanMaterial,
+    createFanMaskMaterial,
     createPodGlowMaterial,
     createImpactMaterial,
     createPanImpactMaterial
@@ -187,10 +188,12 @@ export class LaserBatch {
         // ── Matériaux (1 seul jeu pour toute la scène) ──────────────────────
         this.beamMaterial      = createBeamMaterial(this.paramsTexture);
         this.fanMaterial       = createFanMaterial(this.paramsTexture, noise);
+        this.fanMaskMaterial   = createFanMaskMaterial(this.paramsTexture, noise); // pré-passe fumée partagée
         this.podGlowMaterial   = createPodGlowMaterial(this.paramsTexture);
         this.impactMaterial    = createImpactMaterial(this.paramsTexture);
         this.panImpactMaterial = createPanImpactMaterial(this.paramsTexture);
-        this._materials = [this.beamMaterial, this.fanMaterial, this.podGlowMaterial, this.impactMaterial, this.panImpactMaterial];
+        this._materials = [this.beamMaterial, this.fanMaterial, this.fanMaskMaterial, this.podGlowMaterial, this.impactMaterial, this.panImpactMaterial];
+        this._smokeSigs = new Map(); // signature des réglages de bruit de fumée → identifiant (1..63)
 
         // ── 1. Faisceaux ──
         const beamGeo = makeQuadGeometry(true);
@@ -318,12 +321,18 @@ export class LaserBatch {
         this.panImpacts.end();
         this.glows.end();
 
+        // Signature du bruit de fumée (T12.z) : les lasers aux réglages de bruit identiques partagent le
+        // masque de fumée calculé une seule fois par pixel (voir createFanMaskMaterial)
+        this._writeSmokeSignatures(lasers);
+
         // Paramètres par laser (≈ 150 octets / laser)
         this.paramsTexture.needsUpdate = true;
 
         if (smokeState) {
-            this.fanMaterial.uniforms.uTime.value = smokeState.time || 0;
-            if (smokeState.wind) this.fanMaterial.uniforms.uWind.value.copy(smokeState.wind);
+            for (const m of [this.fanMaterial, this.fanMaskMaterial]) {
+                m.uniforms.uTime.value = smokeState.time || 0;
+                if (smokeState.wind) m.uniforms.uWind.value.copy(smokeState.wind);
+            }
         }
 
         this.beamsMesh.visible     = this.beams.count > 0;
@@ -331,6 +340,36 @@ export class LaserBatch {
         this.fanMesh.visible       = this.fans.count > 0;
         this.panImpactMesh.visible = this.panImpacts.count > 0;
         this.glowMesh.visible      = this.glows.count > 0;
+    }
+
+    /**
+     * Écrit en T12.z de chaque laser l'identifiant de ses réglages de BRUIT de fumée (ceux qui
+     * déterminent les masques partagés : échelle, turbulence, poches, poches géantes, vitesses).
+     * Contraste, brillance, intensité et rayons radiaux restent appliqués par chaque laser.
+     */
+    _writeSmokeSignatures(lasers) {
+        const sigs = this._smokeSigs;
+        sigs.clear();
+        for (const laser of lasers) {
+            if (!laser.renderable || laser.row === undefined) continue;
+            const p = laser.params;
+            let id = 0;
+            if (p.panSmokeEnabled !== false) {
+                const patchOn = (p.panSmokePatchContrast ?? 0.4) > 0.001;
+                const key = [
+                    p.panSmokeScale, p.panSmokePerpSpeed,
+                    p.smkTurbEnabled ? 1 : 0, p.smkTurbStrength, p.smkTurbScale, p.smkTurbSpeed,
+                    patchOn ? 1 : 0, patchOn ? p.panSmokePatchScale : 0, patchOn ? p.panSmokePatchDensity : 0, patchOn ? p.panSmokePatchSpeed : 0,
+                    p.smkGiantEnabled ? 1 : 0, p.smkGiantScale, p.smkGiantDensity, p.smkGiantSpeed,
+                ].join('|');
+                id = sigs.get(key) || 0;
+                if (!id && sigs.size < 63) {
+                    id = sigs.size + 1;
+                    sigs.set(key, id);
+                }
+            }
+            this.paramsRow(laser.row)[12 * 4 + 2] = id;
+        }
     }
 
     /** Objets de rendu du batch (pour le masquage dans les passes de bloom) */
@@ -346,6 +385,14 @@ export class LaserBatch {
             try { renderer.compile(m, camera); } catch (_) {}
             m.visible = wasVisible;
         }
+        // Pré-passe de fumée partagée
+        const fan = this.fanMesh;
+        const wasVisible = fan.visible, mat = fan.material;
+        fan.visible = true;
+        fan.material = this.fanMaskMaterial;
+        try { renderer.compile(fan, camera); } catch (_) {}
+        fan.material = mat;
+        fan.visible = wasVisible;
     }
 
     dispose() {

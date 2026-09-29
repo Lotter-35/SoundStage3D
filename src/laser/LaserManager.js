@@ -24,6 +24,7 @@ import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
 import { Pass } from 'three/addons/postprocessing/Pass.js';
 import { LaserShow } from './LaserShow.js?v=29';
 import { LaserBatch } from './LaserBatch.js';
+import { LaserFanPass } from './LaserFanPass.js';
 import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
@@ -533,6 +534,16 @@ export class LaserManager {
 
             this._composer = this._finalComposer;
 
+            // Nappes PAN : rendu demi-résolution + fumée calculée une fois par pixel (LaserFanPass).
+            // Première passe de scène (avant lyres et brouillard, comme lorsqu'elles étaient dans la scène).
+            const fanPass = new LaserFanPass(this._batch, this.camera, null);
+            if (this.addScenePass(fanPass)) {
+                fanPass.sceneDepth = this.sceneDepth;
+                this._fanPass = fanPass;
+                // La nappe quitte le rendu principal (layer 0) ; elle reste sur le layer bloom laser
+                this._batch.fanMesh.layers.disable(0);
+            }
+
         } catch (e) {
             console.warn('[LaserManager] EffectComposer init failed:', e);
             this._laserBloomComposer  = null;
@@ -831,6 +842,17 @@ export class LaserManager {
         return true;
     }
 
+    /** Résolution des nappes PAN (0.5 = demi-résolution, 1 = pleine) — option locale du joueur */
+    setFanQuality(scale) {
+        if (this._fanPass) this._fanPass.setResolutionScale(scale);
+    }
+
+    /** Fumée des nappes calculée une fois par pixel (masque partagé) — option locale du joueur */
+    setSharedSmoke(enabled) {
+        this._sharedSmoke = Boolean(enabled);
+        if (!this._sharedSmoke && this._batch) this._batch.fanMaterial.uniforms.uUseMask.value = 0;
+    }
+
     /**
      * Précompile les shaders pour les DEUX modes de rendu (direct à l'écran et via le composer) :
      * basculer de l'un à l'autre (ex. premier laser posé) ne provoque pas de recompilation.
@@ -858,6 +880,8 @@ export class LaserManager {
             const renderLaser = Boolean(globalLaserPostParams.laserBloomEnabled && this._laserBloomComposer) && layerHasVisibleObject(BLOOM_LASER_LAYER);
             const renderLights = Boolean(globalLaserPostParams.lightsBloomEnabled && this._lightsBloomComposer) && layerHasVisibleObject(BLOOM_LIGHTS_LAYER);
 
+            if (this._fanPass) this._fanPass.enabled = this._fanPass.hasFans;
+
             // Aucun effet actif : rendu direct à l'écran (même image, beaucoup moins de travail GPU)
             if (this._canRenderDirect(renderLaser, renderLights)) {
                 this.renderer.setRenderTarget(null);
@@ -869,6 +893,12 @@ export class LaserManager {
             this.scene.updateMatrixWorld();
             const oldMatrixAuto = this.scene.matrixWorldAutoUpdate;
             this.scene.matrixWorldAutoUpdate = false;
+
+            // Fumée des nappes : masque partagé calculé une fois par pixel, AVANT le bloom (qui le relit)
+            if (this._fanPass && this._fanPass.enabled) {
+                if (this._sharedSmoke !== false) this._fanPass.renderMask(this.renderer);
+                else this._batch.fanMaterial.uniforms.uUseMask.value = 0;
+            }
 
             let origBg = null;
             let origFog = null;

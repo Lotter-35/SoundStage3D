@@ -250,10 +250,11 @@ export class SpotVolumePass extends Pass {
     render(renderer, writeBuffer, readBuffer) {
         const u = this.batch.volumeMaterial.uniforms;
         const cam = this.camera;
-        const hasDepth = Boolean(readBuffer.depthTexture);
+        const depth = (this.sceneDepth && this.sceneDepth.texture) || readBuffer.depthTexture;
+        const hasDepth = Boolean(depth);
 
         if (hasDepth && this.batch.volumeMesh.visible) {
-            u.uDepth.value = readBuffer.depthTexture;
+            u.uDepth.value = depth;
             u.uNear.value = cam.near;
             u.uFar.value = cam.far;
             cam.getWorldDirection(this._fwd);
@@ -274,7 +275,7 @@ export class SpotVolumePass extends Pass {
             renderer.autoClear = oldAutoClear;
             shadowMap.autoUpdate = oldShadowAuto;
             this._composite.uniforms.tVolume.value = this.volumeTarget.texture;
-            this._composite.uniforms.tDepth.value = readBuffer.depthTexture;
+            this._composite.uniforms.tDepth.value = depth;
             this._composite.uniforms.uNear.value = cam.near;
             this._composite.uniforms.uFar.value = cam.far;
             this._composite.uniforms.uUseDepth.value = this.resolutionScale < 0.999 ? 1 : 0;
