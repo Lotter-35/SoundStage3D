@@ -255,7 +255,10 @@ export class InputStage {
         this.eqHigh.connect(this.compInput);
 
         // Branching compresseur (wet/dry bypass)
-        this.compInput.connect(this.compNode);
+        // Le compresseur n'est alimenté que lorsqu'il est actif (sinon il calculait pour rien, sortie × 0)
+        this._compConnected = false;
+        this._compDisconnectTimer = null;
+        if (this.compEnabled) this._connectComp();
         this.compNode.connect(this.wetCompGain);
         this.wetCompGain.connect(this.compOutput);
 
@@ -265,6 +268,27 @@ export class InputStage {
         // compOutput → limiterNode → output
         this.compOutput.connect(this.limiterNode);
         this.limiterNode.connect(this.output);
+    }
+
+    /** Branche le compresseur d'entrée (annule un débranchement en attente). */
+    _connectComp() {
+        if (this._compDisconnectTimer) { clearTimeout(this._compDisconnectTimer); this._compDisconnectTimer = null; }
+        if (!this._compConnected) {
+            this.compInput.connect(this.compNode);
+            this._compConnected = true;
+        }
+    }
+
+    /** Débranche le compresseur une fois le fondu wet → 0 terminé (≈ 10 constantes de temps). */
+    _scheduleCompDisconnect() {
+        if (this._compDisconnectTimer) clearTimeout(this._compDisconnectTimer);
+        this._compDisconnectTimer = setTimeout(() => {
+            this._compDisconnectTimer = null;
+            if (!this.compEnabled && this._compConnected) {
+                try { this.compInput.disconnect(this.compNode); } catch (_) {}
+                this._compConnected = false;
+            }
+        }, 400);
     }
 
     /**
@@ -377,8 +401,10 @@ export class InputStage {
 
             case 'comp-enabled':
                 this.compEnabled = Boolean(value);
+                if (this.compEnabled) this._connectComp();
                 this.wetCompGain.gain.setTargetAtTime(this.compEnabled ? 1.0 : 0.0, t, 0.03);
                 this.dryCompGain.gain.setTargetAtTime(this.compEnabled ? 0.0 : 1.0, t, 0.03);
+                if (!this.compEnabled) this._scheduleCompDisconnect();
                 break;
 
             case 'comp-threshold':

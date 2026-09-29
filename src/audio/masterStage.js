@@ -75,7 +75,10 @@ export class MasterStage {
         this.compOutput.gain.value = 1.0;
 
         // Routage compresseur (Wet / Dry bypass)
-        this.eqHigh.connect(this.compNode);
+        // Compresseur alimenté uniquement lorsqu'il est actif (bypass = sortie × 0, calcul inutile)
+        this._compConnected = false;
+        this._compDisconnectTimer = null;
+        if (this._compEnabled) this._connectComp();
         this.compNode.connect(this.compMakeup);
         this.compMakeup.connect(this.compWet);
         this.compWet.connect(this.compOutput);
@@ -116,6 +119,25 @@ export class MasterStage {
         this.limiterDry.connect(this.output);
     }
 
+    _connectComp() {
+        if (this._compDisconnectTimer) { clearTimeout(this._compDisconnectTimer); this._compDisconnectTimer = null; }
+        if (!this._compConnected) {
+            this.eqHigh.connect(this.compNode);
+            this._compConnected = true;
+        }
+    }
+
+    _scheduleCompDisconnect() {
+        if (this._compDisconnectTimer) clearTimeout(this._compDisconnectTimer);
+        this._compDisconnectTimer = setTimeout(() => {
+            this._compDisconnectTimer = null;
+            if (!this._compEnabled && this._compConnected) {
+                try { this.eqHigh.disconnect(this.compNode); } catch (_) {}
+                this._compConnected = false;
+            }
+        }, 300);
+    }
+
     /**
      * Mise à jour des paramètres de l'étage Master.
      * @param {string} param
@@ -141,8 +163,10 @@ export class MasterStage {
             // Étape 2 : Compresseur de Bus
             case 'comp-enabled':
                 this._compEnabled = !!value;
+                if (this._compEnabled) this._connectComp();
                 this.compWet.gain.setTargetAtTime(this._compEnabled ? 1.0 : 0.0, t, 0.02);
                 this.compDry.gain.setTargetAtTime(this._compEnabled ? 0.0 : 1.0, t, 0.02);
+                if (!this._compEnabled) this._scheduleCompDisconnect();
                 break;
             case 'comp-threshold':
                 this.compNode.threshold.setTargetAtTime(value, t, 0.02);
