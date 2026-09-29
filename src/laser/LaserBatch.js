@@ -321,11 +321,6 @@ export class LaserBatch {
         // Paramètres par laser (≈ 150 octets / laser)
         this.paramsTexture.needsUpdate = true;
 
-        // Hauteur du rendu en pixels (largeur minimale du halo des faisceaux à l'écran)
-        if (typeof window !== 'undefined') {
-            this.beamMaterial.uniforms.uViewportH.value = window.innerHeight * Math.min(window.devicePixelRatio || 1, 1.5);
-        }
-
         if (smokeState) {
             this.fanMaterial.uniforms.uTime.value = smokeState.time || 0;
             if (smokeState.wind) this.fanMaterial.uniforms.uWind.value.copy(smokeState.wind);

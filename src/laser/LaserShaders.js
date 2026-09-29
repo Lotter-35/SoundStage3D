@@ -66,8 +66,7 @@ export function createBeamMaterial(paramsTexture) {
     return new THREE.ShaderMaterial({
         uniforms: {
             uLaserParams:    { value: paramsTexture },
-            uBeamDivergence: { value: BEAM_DIVERGENCE },
-            uViewportH:      { value: 1080.0 }   // hauteur du rendu en pixels (mise à jour par LaserBatch)
+            uBeamDivergence: { value: BEAM_DIVERGENCE }
         },
         vertexShader: `
             ${_PARAMS_GLSL}
@@ -76,9 +75,6 @@ export function createBeamMaterial(paramsTexture) {
             attribute vec3  aBeamB;   // point d'impact
 
             uniform float uBeamDivergence;
-            uniform float uViewportH;
-            varying float vWiden;     // largeur affichée / largeur physique (≥ 1)
-            varying float vHalfPx;    // demi-largeur affichée en pixels
 
             varying vec2  vUv;
             varying float vMeterDist;
@@ -122,15 +118,7 @@ export function createBeamMaterial(paramsTexture) {
                 float divergenceFactor = 1.0 + (currentDist * 0.008) * uBeamDivergence;
                 float baseWidth = (0.012 + 0.016 * beamWidth);
                 float width = baseWidth * divergenceFactor;
-
-                // Largeur minimale à l'écran : au loin le faisceau devient plus fin qu'un pixel
-                // et son halo (dessiné dans la même bande) disparaissait. On garde une bande
-                // d'au moins MIN_HALO_PX pixels ; le cœur reste à sa taille physique (≥ 1 px).
-                float pxWorld = 2.0 * max(-vPos.z, 0.01) / (projectionMatrix[1][1] * uViewportH);
-                float drawWidth = max(width, 3.0 * pxWorld);
-                vWiden  = drawWidth / width;
-                vHalfPx = drawWidth / pxWorld;
-                vec3 finalViewPos = vPos + vSide * aSide * drawWidth;
+                vec3 finalViewPos = vPos + vSide * aSide * width;
 
                 gl_Position = projectionMatrix * vec4(finalViewPos, 1.0);
             }
@@ -141,8 +129,6 @@ export function createBeamMaterial(paramsTexture) {
             flat varying vec4 vColorPower;
             flat varying vec4 vGlowA;
             flat varying vec4 vGlowB;
-            varying float vWiden;
-            varying float vHalfPx;
 
             void main() {
                 float uBeamPower       = vColorPower.w;
@@ -157,9 +143,7 @@ export function createBeamMaterial(paramsTexture) {
                 if (uBeamPower <= 0.001 || uBeamWidth <= 0.001) discard;
 
                 float distFromCenter = abs(vUv.x - 0.5) * 2.0;
-                // Cœur : taille physique, mais jamais sous ~1 px de demi-largeur
-                float coreScale = min(vWiden, max(1.0, vHalfPx));
-                float baseAlpha = clamp(1.0 - distFromCenter * coreScale, 0.0, 1.0);
+                float baseAlpha = (1.0 - distFromCenter);
 
                 float scatter = clamp(uGlowScattering, 0.0, 3.0);
 
@@ -172,8 +156,6 @@ export function createBeamMaterial(paramsTexture) {
 
                 // Atténuation physique atmosphérique le long du faisceau
                 float beamDistFalloff = 1.0 / (1.0 + pow(max(0.0, vMeterDist) / 65.0, 1.35));
-                // Le halo s'atténue plus lentement que le cœur : il reste visible au loin
-                float haloDistFalloff = 1.0 / (1.0 + pow(max(0.0, vMeterDist) / 160.0, 1.35));
 
                 // Cœur blanc éclatant et diffusion dans les traits de laser
                 float beamCoreWhite = pow(baseAlpha, 4.0) * 0.85 * scatter;
@@ -187,9 +169,7 @@ export function createBeamMaterial(paramsTexture) {
                 // Fondu en bout de portée (rayons partant dans le ciel) : pas d'arrêt net
                 float skyFade = ${_RANGE_FADE}vMeterDist));
 
-                float alpha = clamp(baseAlpha * beamDistFalloff
-                                  + halo * (0.35 + 0.50 * scatter) * haloDistFalloff
-                                  + sourceWhite * 0.8 * beamDistFalloff, 0.0, 1.0) * uBeamPower * skyFade;
+                float alpha = clamp(baseAlpha + halo * (0.35 + 0.50 * scatter) + sourceWhite * 0.8, 0.0, 1.0) * uBeamPower * beamDistFalloff * skyFade;
 
                 gl_FragColor = vec4(col, alpha);
             }
