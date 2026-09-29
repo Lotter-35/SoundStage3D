@@ -153,6 +153,31 @@ function createBloomDepthCopyMaterial() {
     });
 }
 
+/** Ajout (fusion additive) d'une image déjà calculée dans la cible du bloom */
+function createBloomAddMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: { tSource: { value: null } },
+        vertexShader: /* glsl */`
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position.xy, 0.0, 1.0);
+            }
+        `,
+        fragmentShader: /* glsl */`
+            uniform sampler2D tSource;
+            varying vec2 vUv;
+            void main() {
+                gl_FragColor = vec4(texture2D(tSource, vUv).rgb, 1.0);
+            }
+        `,
+        blending: THREE.AdditiveBlending,
+        transparent: true,
+        depthTest: false,
+        depthWrite: false,
+    });
+}
+
 /**
  * Passe de rendu sélectif d'un layer de bloom (remplace RenderPass + traverse de la scène) :
  * 1. Occulteurs : profondeur de la scène recopiée (rendu principal déjà fait), ou à défaut toute la
@@ -174,6 +199,13 @@ class SelectiveLayerPass extends Pass {
         this.depthSource = null;
         this._depthCopy = null;
         this._depthQuad = null;
+        /**
+         * Objet du layer dont l'image est déjà calculée ailleurs (nappes laser) :
+         * { mesh, texture: () => Texture|null } → le mesh n'est pas redessiné, l'image est ajoutée
+         */
+        this.precomputed = null;
+        this._addMat = null;
+        this._addQuad = null;
     }
 
     _copySceneDepth(renderer, depthTexture) {
@@ -227,10 +259,23 @@ class SelectiveLayerPass extends Pass {
         }
 
         // 2. Objets émissifs du layer uniquement
+        const pre = this.precomputed;
+        const preTex = pre && pre.mesh.visible ? pre.texture() : null;
+        if (preTex) pre.mesh.visible = false;
         const oldMask = camera.layers.mask;
         camera.layers.set(this.layer);
         renderer.render(scene, camera);
         camera.layers.mask = oldMask;
+        if (preTex) {
+            // Image déjà calculée (même test de profondeur contre la scène) : simple ajout, sans la redessiner
+            pre.mesh.visible = true;
+            if (!this._addMat) {
+                this._addMat = createBloomAddMaterial();
+                this._addQuad = new FullScreenQuad(this._addMat);
+            }
+            this._addMat.uniforms.tSource.value = preTex;
+            this._addQuad.render(renderer);
+        }
 
         renderer.autoClear = oldAutoClear;
         shadowMap.autoUpdate = oldShadowAuto;
@@ -459,6 +504,7 @@ export class LaserManager {
             this._bloomDepth = { texture: null };
             const renderLaserScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LASER_LAYER, [BLOOM_LASER_LAYER], this._darkMaterial);
             renderLaserScene.depthSource = this._bloomDepth;
+            this._laserSelectPass = renderLaserScene;
             // Les deux blooms sont floutés : ils sont calculés à demi-résolution (4× moins de pixels à remplir)
             const bloomSize = this.renderer.getSize(new THREE.Vector2());
             const bloomPR = this.renderer.getPixelRatio();
@@ -603,6 +649,16 @@ export class LaserManager {
                 this._fanPass = fanPass;
                 // La nappe quitte le rendu principal (layer 0) ; elle reste sur le layer bloom laser
                 this._batch.fanMesh.layers.disable(0);
+                // Bloom laser : l'image des nappes (déjà calculée par leur passe) est ajoutée au lieu d'être redessinée
+                if (this._laserSelectPass) {
+                    this._laserSelectPass.precomputed = {
+                        mesh: this._batch.fanMesh,
+                        texture: () => {
+                            const o = fanPass.enabled ? fanPass.deferredOutput() : null;
+                            return o ? o.texture : null;
+                        },
+                    };
+                }
             }
 
         } catch (e) {
