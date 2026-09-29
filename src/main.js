@@ -115,8 +115,29 @@ const laserManager = new LaserManager({ scene, renderer, camera });
 laserManager.setPlayerCollider(playerLaserCollider);
 ambiancePanel.setLaserManager(laserManager);
 
-// Laser de base présent dès le spawn (au centre du pont scénique au-dessus de la régie DJ)
-laserManager.addLaser(new THREE.Vector3(0, 5.0, -4.0), {}, 0);
+// Lasers de base présents dès le spawn (réglages de scène, n'affectent pas les valeurs par défaut)
+const SPAWN_LASER_PARAMS = {
+    count: 19, beamWidth: 3, spread: 50, color: '#0400ff', laserPan: true,
+    masterPower: 0.8, beamPower: 0.8, panPower: 0.05, strobe: false, strobeSpeed: 12,
+    patternShape: 'Horizontal', curveAmplitude: 0.3, curveFrequency: 1, pauseMotion: false,
+    pitchSweepAmp: 0, pitchSweepSpeed: 0, yawSweepAmp: 0, yawSweepSpeed: 0,
+    rollContinuous: false, rollSweepAmp: 0, rollSweepSpeed: 0,
+    beamYawOffset: 0, beamPitchOffset: 0, beamRollOffset: 0,
+    panSmokeEnabled: true, panSmokeIntensity: 0.3, panSmokeSpeed: 0.3, panSmokeScale: 0.35,
+    panSmokeContrast: 0.5, panSmokeBrightness: 2, panSmokeWindChange: 1, panSmokeSpeedVariation: 1,
+    panSmokePerpSpeed: 0.15, panSmokePatchContrast: 0.35, panSmokePatchScale: 0.09,
+    panSmokePatchDensity: 0.5, panSmokePatchSpeed: 0.04,
+    smkTurbEnabled: true, smkTurbStrength: 0.5, smkTurbScale: 0.3, smkTurbSpeed: 0.2,
+    smkGiantEnabled: true, smkGiantContrast: 0.5, smkGiantScale: 0.032, smkGiantDensity: 0.5, smkGiantSpeed: 0.04,
+    smkRayEnabled: false, smkRayIntensity: 2, smkRayScale: 5, smkRaySpeed: 0.3,
+    sourceEmissionPower: 4, sourceGlowRadius: 0.4, giIntensity: 10, giDistance: 60, giWallOffset: 5.6,
+    enableImpactLights: false, giImpactIntensity: 2, giImpactDistance: 16, giBounceColor: true,
+    angle: 0, tilt: 0, roll: 0,
+    glowIntensity: 1, glowScattering: 0.5, sourceWhitePower: 1, glowFalloff: 2,
+    fogDensity: 0.015, fogGlowCoupling: 1, impactGlowIntensity: 1, impactGlowRadius: 1,
+};
+laserManager.addLaser(new THREE.Vector3(-12, 14, 0.19), { ...SPAWN_LASER_PARAMS }, 0);
+laserManager.addLaser(new THREE.Vector3(12, 14, 0.19), { ...SPAWN_LASER_PARAMS }, 1);
 
 // Poignée de debug / benchmark (console : __SS3D.laserManager, __SS3D.renderer.info...)
 window.__SS3D = { scene, camera, renderer, laserManager, ambiancePanel };
@@ -126,7 +147,12 @@ const strobeManager = new StrobeManager({ scene, camera, renderer });
 ambiancePanel.setStrobeManager(strobeManager);
 
 // Stroboscope de base présent dès le spawn (fixé sur le pont scénique au-dessus de la scène)
-strobeManager.addStrobe(new THREE.Vector3(0, 6.5, -4.2), { angle: 0, tilt: 0, roll: 0 });
+strobeManager.addStrobe(new THREE.Vector3(0, 19.49, -9.59), {
+    power: 45, color: '#ffefcc', emissivePower: 3.5, castShadow: true, shadowIntensity: 1,
+    distanceFactor: 10, showHousing: true, width: 1.2, height: 0.38, depth: 0.24,
+    strobeEnabled: false, strobeSpeed: 12, pulseWidth: 50, strobeRandom: false,
+    posX: 0, posY: 19.49, posZ: -9.59, angle: 0, tilt: 45, roll: 0,
+});
 
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
 if (renderer && typeof renderer.compile === 'function') {
