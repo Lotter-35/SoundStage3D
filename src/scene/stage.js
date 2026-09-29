@@ -24,11 +24,58 @@ export function createStage(scene) {
     grassTex.wrapT = THREE.RepeatWrapping;
     grassTex.repeat.set(80, 80);
     grassTex.colorSpace = THREE.SRGBColorSpace;
+    // Filtrage anisotrope : herbe nette vue en biais jusqu'à l'horizon (three.js plafonne au max du GPU)
+    grassTex.anisotropy = 16;
     const groundMat = new THREE.MeshStandardMaterial({
         map: grassTex,
         roughness: 0.95,
         metalness: 0,
     });
+    // Anti-répétition : chaque tuile reçoit un décalage / une orientation aléatoires, fondus entre tuiles
+    // (technique « texture no-tile » d'Inigo Quilez, 4 lectures), + grandes taches de variation de couleur
+    // (herbe plus jaune / plus sombre sur ~30 m) : plus de quadrillage visible de loin.
+    groundMat.onBeforeCompile = (shader) => {
+        shader.fragmentShader = shader.fragmentShader
+            .replace('#include <common>', `#include <common>
+                vec4 ss3dHash4(vec2 p) {
+                    vec4 p4 = fract(vec4(p.xyxy) * vec4(0.1031, 0.1030, 0.0973, 0.1099));
+                    p4 += dot(p4, p4.wzxy + 33.33);
+                    return fract((p4.xxyz + p4.yzzw) * p4.zywx);
+                }
+                float ss3dNoise(vec2 p) {
+                    vec2 i = floor(p), f = fract(p);
+                    vec2 u = f * f * (3.0 - 2.0 * f);
+                    float a = ss3dHash4(i).x, b = ss3dHash4(i + vec2(1.0, 0.0)).x;
+                    float c = ss3dHash4(i + vec2(0.0, 1.0)).x, d = ss3dHash4(i + vec2(1.0, 1.0)).x;
+                    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+                }
+                vec4 ss3dNoTile(sampler2D samp, vec2 uv) {
+                    vec2 iuv = floor(uv), fuv = fract(uv);
+                    vec4 ofa = ss3dHash4(iuv + vec2(0.0, 0.0));
+                    vec4 ofb = ss3dHash4(iuv + vec2(1.0, 0.0));
+                    vec4 ofc = ss3dHash4(iuv + vec2(0.0, 1.0));
+                    vec4 ofd = ss3dHash4(iuv + vec2(1.0, 1.0));
+                    vec2 ddx = dFdx(uv), ddy = dFdy(uv);
+                    ofa.zw = sign(ofa.zw - 0.5); ofb.zw = sign(ofb.zw - 0.5);
+                    ofc.zw = sign(ofc.zw - 0.5); ofd.zw = sign(ofd.zw - 0.5);
+                    vec2 uva = uv * ofa.zw + ofa.xy; vec2 uvb = uv * ofb.zw + ofb.xy;
+                    vec2 uvc = uv * ofc.zw + ofc.xy; vec2 uvd = uv * ofd.zw + ofd.xy;
+                    vec2 b = smoothstep(0.25, 0.75, fuv);
+                    return mix(mix(textureGrad(samp, uva, ddx * ofa.zw, ddy * ofa.zw),
+                                   textureGrad(samp, uvb, ddx * ofb.zw, ddy * ofb.zw), b.x),
+                               mix(textureGrad(samp, uvc, ddx * ofc.zw, ddy * ofc.zw),
+                                   textureGrad(samp, uvd, ddx * ofd.zw, ddy * ofd.zw), b.x), b.y);
+                }`)
+            .replace('#include <map_fragment>', `vec4 sampledDiffuseColor = ss3dNoTile( map, vMapUv );
+                // Variation de couleur à grande échelle (1 unité de vMapUv = 5 m)
+                float ss3dN1 = ss3dNoise(vMapUv * 0.16) * 0.65 + ss3dNoise(vMapUv * 0.41 + 7.3) * 0.35;
+                float ss3dN2 = ss3dNoise(vMapUv * 0.09 + 3.1);
+                vec3 ss3dTint = mix(vec3(1.0), vec3(1.10, 1.04, 0.72), smoothstep(0.45, 0.85, ss3dN1) * 0.55);
+                ss3dTint *= mix(0.86, 1.08, ss3dN2);
+                sampledDiffuseColor.rgb *= ss3dTint;
+                diffuseColor *= sampledDiffuseColor;`);
+    };
+    groundMat.customProgramCacheKey = () => 'ss3d-ground-notile-v2';
     const ground = new THREE.Mesh(groundGeo, groundMat);
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = 0;
