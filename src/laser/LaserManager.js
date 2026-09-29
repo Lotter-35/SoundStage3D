@@ -439,7 +439,12 @@ export class LaserManager {
             const pixelRatio = this.renderer.getPixelRatio();
             const width = Math.max(1, Math.round(size.width * pixelRatio));
             const height = Math.max(1, Math.round(size.height * pixelRatio));
-            const initialSamples = (this._msaaSamples !== undefined) ? this._msaaSamples : 4;
+            // Toujours ≥ 1 échantillon : sans MSAA, la DepthTexture est attachée directement aux cibles
+            // du composer et les passes lyres/brouillard la lisent pendant que l'autre cible (qui
+            // porte aussi une DepthTexture) est écrite → boucle de rétroaction WebGL → écran noir.
+            // Avec 1 échantillon (rendu multisample à 1 sample = pas de lissage), la profondeur est
+            // résolue dans la texture et la lecture est sûre.
+            const initialSamples = Math.max(1, (this._msaaSamples !== undefined) ? this._msaaSamples : 4);
 
             const finalRT = new THREE.WebGLRenderTarget(width, height, {
                 type: THREE.HalfFloatType,
@@ -992,6 +997,8 @@ export class LaserManager {
             samples = 0;
         }
 
+        // Minimum 1 échantillon (voir création du finalRT) : évite l'écran noir sans MSAA
+        samples = Math.max(1, samples);
         this._msaaSamples = samples;
         if (this._fxaaPass) this._fxaaPass.enabled = enableFxaa;
         if (this._smaaPass) this._smaaPass.enabled = enableSmaa;
