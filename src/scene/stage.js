@@ -271,7 +271,7 @@ export function createStage(scene) {
     const markerGeoCache = {};
     const markerMatCache = {};
 
-    // Groupe dédié aux bulles / ronds d'émission sonore et marqueur FOH (masquable en mode F1)
+    // Groupe dédié aux bulles / ronds d'émission sonore (masquable en mode F1)
     const soundMarkersGroup = new THREE.Group();
     soundMarkersGroup.name = 'sound-markers-group';
     soundMarkersGroup.visible = false; // Masqué par défaut (bouton « Ronds émission son » dans Ambiance)
@@ -328,7 +328,8 @@ export function createStage(scene) {
     });
     const fohMarker = new THREE.Mesh(fohGeo, fohMat);
     fohMarker.position.set(0, 0.03, 50);
-    soundMarkersGroup.add(fohMarker);
+    // Point de spawn (FOH) : toujours visible, indépendant du bouton « Ronds émission son »
+    scene.add(fohMarker);
 
     // --- Lighting ---
     const ambientLight = new THREE.AmbientLight(0x98ddbc, 0.1);
