@@ -20,7 +20,7 @@ import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
 import { SMAAPass } from 'three/addons/postprocessing/SMAAPass.js';
 import { OutputPass } from 'three/addons/postprocessing/OutputPass.js';
-import { Pass } from 'three/addons/postprocessing/Pass.js';
+import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { LaserShow } from './LaserShow.js?v=29';
 import { LaserBatch } from './LaserBatch.js';
 import { LaserFanPass } from './LaserFanPass.js';
@@ -106,9 +106,57 @@ export function disableLightsBloom(obj) {
 }
 
 /**
+ * Copie de la profondeur de la scène (déjà calculée par le rendu principal) dans la cible réduite d'un
+ * bloom : remplace le rendu de toute la scène en noir qui servait d'occulteur. Pour chaque pixel du bloom,
+ * la profondeur la plus lointaine des pixels de la scène qu'il couvre, légèrement reculée : une source
+ * lumineuse n'est jamais masquée par sa propre surface (pas de scintillement).
+ */
+function createBloomDepthCopyMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            tDepth:    { value: null },
+            uSrcTexel: { value: new THREE.Vector2(1, 1) },
+            uNear:     { value: 0.1 },
+            uFar:      { value: 1000 },
+        },
+        vertexShader: /* glsl */`
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position.xy, 0.0, 1.0);
+            }
+        `,
+        fragmentShader: /* glsl */`
+            #include <packing>
+            uniform highp sampler2D tDepth;
+            uniform vec2 uSrcTexel;
+            uniform float uNear;
+            uniform float uFar;
+            varying vec2 vUv;
+            void main() {
+                vec2 o = uSrcTexel * 0.5;
+                float d = max(
+                    max(texture2D(tDepth, vUv + vec2(-o.x, -o.y)).r, texture2D(tDepth, vUv + vec2(o.x, -o.y)).r),
+                    max(texture2D(tDepth, vUv + vec2(-o.x, o.y)).r, texture2D(tDepth, vUv + vec2(o.x, o.y)).r));
+                if (d < 1.0) {
+                    float vz = perspectiveDepthToViewZ(d, uNear, uFar);
+                    d = min(1.0, viewZToPerspectiveDepth(vz * 1.01 - 0.03, uNear, uFar));
+                }
+                gl_FragDepth = d;
+                gl_FragColor = vec4(0.0);
+            }
+        `,
+        depthTest: true,
+        depthWrite: true,
+        depthFunc: THREE.AlwaysDepth,
+        colorWrite: false,
+    });
+}
+
+/**
  * Passe de rendu sélectif d'un layer de bloom (remplace RenderPass + traverse de la scène) :
- * 1. Occulteurs : toute la scène en noir via scene.overrideMaterial (profondeur correcte),
- *    en masquant uniquement les objets émissifs enregistrés (lasers, et le layer rendu)
+ * 1. Occulteurs : profondeur de la scène recopiée (rendu principal déjà fait), ou à défaut toute la
+ *    scène en noir via scene.overrideMaterial, en masquant les objets émissifs enregistrés
  * 2. Objets du layer seuls (camera.layers), avec leurs propres matériaux
  * Les ombres ne sont pas recalculées dans ces passes (inutiles : matériaux non éclairés).
  */
@@ -122,6 +170,23 @@ class SelectiveLayerPass extends Pass {
         this.darkMaterial = darkMaterial;
         this.needsSwap = false;
         this._hidden = [];
+        /** Profondeur de la scène déjà rendue ({ texture }) : si présente, sert d'occulteur */
+        this.depthSource = null;
+        this._depthCopy = null;
+        this._depthQuad = null;
+    }
+
+    _copySceneDepth(renderer, depthTexture) {
+        if (!this._depthCopy) {
+            this._depthCopy = createBloomDepthCopyMaterial();
+            this._depthQuad = new FullScreenQuad(this._depthCopy);
+        }
+        const u = this._depthCopy.uniforms;
+        u.tDepth.value = depthTexture;
+        u.uSrcTexel.value.set(1 / depthTexture.image.width, 1 / depthTexture.image.height);
+        u.uNear.value = this.camera.near;
+        u.uFar.value = this.camera.far;
+        this._depthQuad.render(renderer);
     }
 
     render(renderer, writeBuffer, readBuffer) {
@@ -139,22 +204,27 @@ class SelectiveLayerPass extends Pass {
         renderer.clear(true, true, false);
 
         // 1. Occulteurs (sans les objets émissifs)
-        const hidden = this._hidden;
-        hidden.length = 0;
-        for (const layer of this.hideLayers) {
-            for (const obj of _bloomRegistry[layer]) {
-                // Un objet dont le layer a été désactivé (ex. écran de stroboscope éteint) reste un occulteur
-                if (obj.visible && obj.layers.isEnabled(layer)) {
-                    obj.visible = false;
-                    hidden.push(obj);
+        const sceneDepth = this.depthSource && this.depthSource.texture;
+        if (sceneDepth) {
+            this._copySceneDepth(renderer, sceneDepth);
+        } else {
+            const hidden = this._hidden;
+            hidden.length = 0;
+            for (const layer of this.hideLayers) {
+                for (const obj of _bloomRegistry[layer]) {
+                    // Un objet dont le layer a été désactivé (ex. écran de stroboscope éteint) reste un occulteur
+                    if (obj.visible && obj.layers.isEnabled(layer)) {
+                        obj.visible = false;
+                        hidden.push(obj);
+                    }
                 }
             }
+            scene.overrideMaterial = this.darkMaterial;
+            renderer.render(scene, camera);
+            scene.overrideMaterial = null;
+            for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
+            hidden.length = 0;
         }
-        scene.overrideMaterial = this.darkMaterial;
-        renderer.render(scene, camera);
-        scene.overrideMaterial = null;
-        for (let i = 0; i < hidden.length; i++) hidden[i].visible = true;
-        hidden.length = 0;
 
         // 2. Objets émissifs du layer uniquement
         const oldMask = camera.layers.mask;
@@ -385,7 +455,10 @@ export class LaserManager {
             });
             // ── 1. Laser Bloom Composer (Rendu isolé des lasers avec Bloom + Aberration Chromatique) ──
             // Lasers seuls, occultés par le décor (les lampes font partie des occulteurs noirs)
+            // Occulteurs des deux blooms : profondeur de la scène (rendue AVANT les blooms), recopiée à leur résolution
+            this._bloomDepth = { texture: null };
             const renderLaserScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LASER_LAYER, [BLOOM_LASER_LAYER], this._darkMaterial);
+            renderLaserScene.depthSource = this._bloomDepth;
             // Les deux blooms sont floutés : ils sont calculés à demi-résolution (4× moins de pixels à remplir)
             const bloomSize = this.renderer.getSize(new THREE.Vector2());
             const bloomPR = this.renderer.getPixelRatio();
@@ -446,6 +519,7 @@ export class LaserManager {
             // ── 2. Lights Bloom Composer (Rendu isolé des lampes de scène : Bloom PUR SANS aberration) ──
             // Lampes seules : les lasers (transparents additifs) ne doivent pas les occulter
             const renderLightsScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LIGHTS_LAYER, [BLOOM_LIGHTS_LAYER, BLOOM_LASER_LAYER], this._darkMaterial);
+            renderLightsScene.depthSource = this._bloomDepth;
             this._lightsBloomComposer = new EffectComposer(this.renderer, makeBloomTarget());
             this._lightsBloomComposer.renderToScreen = false;
             this._lightsBloomComposer.addPass(renderLightsScene);
@@ -917,76 +991,77 @@ export class LaserManager {
                 else this._batch.fanMaterial.uniforms.uUseMask.value = 0;
             }
 
-            let origBg = null;
-            let origFog = null;
-            let origClearAlpha = 1;
+            // 1. Scène (cible MSAA) + effets qui produisent leur image réduite (nappes, lyres, brouillard)
+            this._chainBegin();
+            this._chainRun(0, this._finalPassIndex());
+            // La profondeur de la scène sert d'occulteur aux deux blooms
+            if (this._bloomDepth) this._bloomDepth.texture = this._sceneRT.depthTexture;
 
             if (renderLaser || renderLights) {
-                // 1. Sauvegarder fond, fog et clear color
-                origBg  = this.scene.background;
-                origFog = this.scene.fog;
+                // 2. Blooms : fond, fog et clear color neutralisés pendant leur rendu
+                const origBg  = this.scene.background;
+                const origFog = this.scene.fog;
                 this.scene.background = null;
                 this.scene.fog = null;
-
                 this.renderer.getClearColor(this._origClearColor);
-                origClearAlpha = this.renderer.getClearAlpha();
+                const origClearAlpha = this.renderer.getClearAlpha();
                 this.renderer.setClearColor(0x000000, 0);
 
-                // Le gizmo d'édition (TransformControls) est posé sur le boîtier du laser : repeint en noir avec
-                // profondeur dans les passes de bloom, il masquerait l'origine du rayon. On le cache pendant ces passes.
+                // Le gizmo d'édition (TransformControls) est posé sur le boîtier du laser : on le cache
+                // pendant les passes de bloom pour qu'il ne masque pas l'origine du rayon.
                 for (const child of this.scene.children) {
                     if (child.isTransformControls && child.visible) {
                         this._hiddenGizmos.push(child);
                         child.visible = false;
                     }
                 }
-            }
 
-            // 2. Bloom Laser (Layer 1) avec aberration chromatique
-            if (renderLaser) {
-                this._laserBloomComposer.render();
-                this._mixPass.material.uniforms.laserBloomTexture.value = this._laserBloomComposer.readBuffer.texture;
-                this._mixPass.material.uniforms.uLaserBloomEnabled.value = 1.0;
-            } else {
-                this._mixPass.material.uniforms.uLaserBloomEnabled.value = 0.0;
-            }
+                // Bloom Laser (Layer 1) avec aberration chromatique
+                if (renderLaser) {
+                    this._laserBloomComposer.render();
+                    this._mixPass.material.uniforms.laserBloomTexture.value = this._laserBloomComposer.readBuffer.texture;
+                    this._mixPass.material.uniforms.uLaserBloomEnabled.value = 1.0;
+                }
+                // Bloom Lampes & Scène (Layer 2) pur, sans aberration chromatique
+                if (renderLights) {
+                    this._lightsBloomComposer.render();
+                    this._mixPass.material.uniforms.lightsBloomTexture.value = this._lightsBloomComposer.readBuffer.texture;
+                    this._mixPass.material.uniforms.uLightsBloomEnabled.value = 1.0;
+                }
 
-            // 3. Bloom Lampes & Scène (Layer 2) pur, sans aberration chromatique
-            if (renderLights) {
-                this._lightsBloomComposer.render();
-                this._mixPass.material.uniforms.lightsBloomTexture.value = this._lightsBloomComposer.readBuffer.texture;
-                this._mixPass.material.uniforms.uLightsBloomEnabled.value = 1.0;
-            } else {
-                this._mixPass.material.uniforms.uLightsBloomEnabled.value = 0.0;
-            }
-
-            if (renderLaser || renderLights) {
-                // 4. Restaurer le fond, le fog et le clear color pour le rendu de la scène normale
                 this.scene.background = origBg;
                 this.scene.fog = origFog;
                 this.renderer.setClearColor(this._origClearColor, origClearAlpha);
                 for (const gizmo of this._hiddenGizmos) gizmo.visible = true;
                 this._hiddenGizmos.length = 0;
             }
+            if (!renderLaser) this._mixPass.material.uniforms.uLaserBloomEnabled.value = 0.0;
+            if (!renderLights) this._mixPass.material.uniforms.uLightsBloomEnabled.value = 0.0;
+            if (this._bloomDepth) this._bloomDepth.texture = null;
 
-            // 5. Rendu final de la scène normale + mixage additif des deux blooms + OutputPass
-            this._renderChain();
+            // 3. Passe finale unique (+ anticrénelage / netteté éventuels) → écran
+            this._chainRun(this._finalPassIndex(), this._finalComposer.passes.length);
             this.scene.matrixWorldAutoUpdate = oldMatrixAuto;
         } else {
             this.renderer.render(this.scene, this.camera);
         }
     }
 
+    /** Index de la passe finale dans la chaîne (les passes avant elle produisent l'image de la scène et des effets) */
+    _finalPassIndex() {
+        const i = this._finalComposer.passes.indexOf(this._mixPass);
+        return i >= 0 ? i : this._finalComposer.passes.length;
+    }
+
     /**
-     * Exécute la chaîne du composer final (remplace EffectComposer.render) :
-     * la scène est rendue dans sa cible MSAA, puis chaque effet lit l'image précédente et écrit
-     * dans l'une des deux cibles simples du composer — jamais dans la cible MSAA de la scène.
+     * Chaîne du composer final (remplace EffectComposer.render), exécutée en deux temps autour des blooms :
+     * la scène est rendue dans sa cible MSAA, puis chaque effet lit l'image précédente et écrit dans l'une
+     * des deux cibles simples du composer — jamais dans la cible MSAA de la scène.
      * La dernière passe active écrit à l'écran.
      */
-    _renderChain() {
+    _chainBegin() {
         const composer = this._finalComposer;
         const passes = composer.passes;
-        const renderer = this.renderer;
         // La passe finale écrit directement à l'écran sauf si un anticrénelage ou la netteté la suit
         if (this._outputPass) {
             this._outputPass.enabled = Boolean((this._smaaPass && this._smaaPass.enabled) ||
@@ -994,15 +1069,23 @@ export class LaserManager {
         }
         let last = -1;
         for (let i = 0; i < passes.length; i++) if (passes[i].enabled) last = i;
+        this._chainLast = last;
+        this._chainRead = this._sceneRT;
+        this._chainWrite = composer.renderTarget1;
+    }
 
+    _chainRun(from, to) {
+        const composer = this._finalComposer;
+        const passes = composer.passes;
+        const renderer = this.renderer;
         const rtA = composer.renderTarget1;
         const rtB = composer.renderTarget2;
-        let read = this._sceneRT;
-        let write = rtA;
-        for (let i = 0; i < passes.length; i++) {
+        let read = this._chainRead;
+        let write = this._chainWrite;
+        for (let i = from; i < to; i++) {
             const pass = passes[i];
             if (!pass.enabled) continue;
-            pass.renderToScreen = (i === last);
+            pass.renderToScreen = (i === this._chainLast);
             pass.render(renderer, write, read, 0, false);
             if (pass === this._scenePass) {
                 read = this._sceneRT;
@@ -1011,7 +1094,15 @@ export class LaserManager {
                 write = (write === rtA) ? rtB : rtA;
             }
         }
+        this._chainRead = read;
+        this._chainWrite = write;
         renderer.setRenderTarget(null);
+    }
+
+    /** Chaîne complète d'un seul tenant (sans blooms) */
+    _renderChain() {
+        this._chainBegin();
+        this._chainRun(0, this._finalComposer.passes.length);
     }
 
     /** Applique les réglages globaux post-processing */
