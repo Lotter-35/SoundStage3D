@@ -165,6 +165,9 @@ export const SPOT_GLOBAL_SCHEMA = {
     lightShadows: { value: false, label: 'Ombres portées (2 lyres max)' },
 };
 
+/** Réglages de rendu propres à chaque joueur (menu ⚙️ Options, jamais synchronisés) */
+export const SPOT_LOCAL_GLOBALS = new Set(['beamQuality', 'realLights', 'lightShadows']);
+
 export function defaultSpotGlobals() {
     const out = {};
     for (const [k, s] of Object.entries(SPOT_GLOBAL_SCHEMA)) out[k] = s.value;

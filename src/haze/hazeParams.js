@@ -48,7 +48,6 @@ export const HAZE_PARAMS_SCHEMA = {
     spotGain:     num(1, 0, 5, 0.05, 'Gain lyres', 'light'),
     laserGain:    num(1, 0, 5, 0.05, 'Gain lasers', 'light'),
     sceneGain:    num(1, 0, 10, 0.05, 'Gain lampes posées', 'light'),
-    occlusion:    bool(true, 'Ombres de la structure de la scène', 'light'),
 
     // ── Boîte (espace public + scène par défaut) ──
     boxX:         num(0, -150, 150, 0.5, 'Centre X', 'box'),
@@ -66,6 +65,7 @@ export const HAZE_PARAMS_SCHEMA = {
 };
 
 /** Réglages locaux à chaque machine (jamais synchronisés) */
+// Réglages de qualité propres à chaque joueur (menu ⚙️ Options, jamais synchronisés)
 export const HAZE_LOCAL_KEYS = new Set(['resolution', 'maxLights', 'segments']);
 
 export function defaultHazeParams() {

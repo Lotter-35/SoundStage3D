@@ -40,6 +40,8 @@ import { SpotManager } from './spot/SpotManager.js?v=3';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
+import { clientOptions } from './ui/ClientOptions.js';
+import { OptionsPanel } from './ui/OptionsPanel.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -1905,12 +1907,44 @@ listener.onCameraModeChange((mode, isFlying) => {
     controls.setCameraModeLabel(mode, isFlying);
 });
 controls.setCameraModeLabel(listener.cameraMode, listener.isFlying);
-listener.setSensitivity((controls.state.user?.['mouse-sensitivity'] ?? 60) / 100);
-listener.setInvertPitch(controls.state.user?.['invert-y'] ?? false);
-listener.setInvertYaw(controls.state.user?.['invert-x'] ?? false);
-if (controls.state.user?.['grass-distance'] !== undefined) {
-    setGrassQuality(controls.state.user['grass-distance']);
-}
+// ─── ⚙️ Options du joueur (locales, sauvegardées dans le navigateur, jamais synchronisées) ───
+// Chaque option est appliquée tout de suite puis à chaque changement dans le menu.
+const _baseDpr = () => Math.min(window.devicePixelRatio || 1, 1.5);
+clientOptions.bind('renderScale', (pct) => {
+    renderer.setPixelRatio(Math.max(0.1, _baseDpr() * pct / 100));
+    if (laserManager) laserManager.resize(window.innerWidth, window.innerHeight);
+});
+clientOptions.bind('sharpness', (v) => laserManager && laserManager.setSharpness(v));
+clientOptions.bind('antialiasing', (mode) => laserManager && laserManager.setAntialiasing(mode));
+clientOptions.bind('hazeResolution', (v) => hazeVolume.setParam('resolution', v));
+clientOptions.bind('hazeSegments', (v) => hazeVolume.setParam('segments', v));
+clientOptions.bind('hazeMaxLights', (v) => hazeVolume.setParam('maxLights', v));
+clientOptions.bind('spotBeamQuality', (v) => spotManager.setGlobal('beamQuality', v));
+clientOptions.bind('spotRealLights', (v) => spotManager.setGlobal('realLights', v));
+clientOptions.bind('spotShadows', (v) => spotManager.setGlobal('lightShadows', v));
+clientOptions.bind('laserRange', (v) => laserManager && laserManager.setPostProcessingParam('laserRange', v));
+clientOptions.bind('grassDistance', (v) => {
+    controls.state.user['grass-distance'] = v;
+    setGrassQuality(v);
+});
+clientOptions.bind('localVolume', (v) => {
+    controls.state.user['local-volume'] = v;
+    if (audioReady && speakerSystem) speakerSystem.setLocalVolume(v);
+});
+clientOptions.bind('mouseSensitivity', (v) => {
+    controls.state.user['mouse-sensitivity'] = v;
+    listener.setSensitivity(v / 100);
+});
+clientOptions.bind('invertY', (v) => {
+    controls.state.user['invert-y'] = v;
+    listener.setInvertPitch(v);
+});
+clientOptions.bind('invertX', (v) => {
+    controls.state.user['invert-x'] = v;
+    listener.setInvertYaw(v);
+});
+const optionsPanel = new OptionsPanel(document.getElementById('options-btn'));
+window.__SS3D.optionsPanel = optionsPanel;
 
 controls.onEnter(async (file) => {
     await initAudio(file, true);
@@ -2947,16 +2981,6 @@ function spectrumStop() {
 
 controls.onSpectrumToggle((enabled) => {
     if (enabled) spectrumStart(); else spectrumStop();
-});
-
-controls.onHrtfToggle((enabled) => {
-    if (!audioReady) return;
-    speakerSystem.setPanningModel(enabled ? 'HRTF' : 'equalpower');
-});
-
-controls.onHrtfBrightness((db) => {
-    if (!audioReady) return;
-    speakerSystem.setHrtfBrightness(db);
 });
 
 controls.onConesToggle((bus, visible) => {

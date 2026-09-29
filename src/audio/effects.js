@@ -104,7 +104,7 @@ export function createCompressor(ctx, defaults = {}) {
  * @param {AudioContext} ctx
  * @param {{x:number,y:number,z:number}} speakerPos — original speaker position
  * @param {object} [options]
- * @param {string} [options.panningModel='HRTF'] — 'HRTF' or 'equalpower'
+ * @param {string} [options.panningModel='equalpower']
  * @returns {{ input: GainNode, panner: PannerNode }}
  *   input  – connect the same signal feeding the direct-path speaker
  *   panner – the final node, connect to ctx.destination
@@ -135,7 +135,7 @@ export function createGroundReflection(ctx, speakerPos, options = {}) {
 
     // Spatialize from reflected position
     const panner = ctx.createPanner();
-    panner.panningModel = options.panningModel || 'HRTF';
+    panner.panningModel = options.panningModel || 'equalpower';
     panner.distanceModel = 'inverse';
     panner.refDistance = 1;
     panner.maxDistance = 500;

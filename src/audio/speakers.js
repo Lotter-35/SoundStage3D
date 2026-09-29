@@ -509,11 +509,8 @@ export class SpeakerSystem {
         this.masterStage = new MasterStage(ctx, DSP_DEFAULTS.master || {});
         this.masterOutput.connect(this.masterStage.input);
 
-        // HRTF brightness compensation
-        this.hrtfShelf = ctx.createBiquadFilter();
-        this.hrtfShelf.type = 'highshelf';
-        this.hrtfShelf.frequency.value = 2500;
-        this.hrtfShelf.gain.value = 0; // off by default (equalpower mode)
+        // Point de départ commun : chemin direct + départ réverbération
+        this.acousticSplit = ctx.createGain();
 
         // Réverbération Acoustique Environnementale
         this._reverbDecay = DSP_DEFAULTS.env?.['reverb-decay'] ?? 2.5;
@@ -534,10 +531,10 @@ export class SpeakerSystem {
         this.reverbSend.gain.value = initReverbWet > 0 ? 1 : 0;
 
         // Routage : Master Comp -> acoustique/reverb -> Master Limiteur
-        this.masterStage.compOutput.connect(this.hrtfShelf);
-        this.hrtfShelf.connect(this.masterStage.limiterInput); // chemin direct
+        this.masterStage.compOutput.connect(this.acousticSplit);
+        this.acousticSplit.connect(this.masterStage.limiterInput); // chemin direct
 
-        this.hrtfShelf.connect(this.reverbSend);               // départ réverbération
+        this.acousticSplit.connect(this.reverbSend);           // départ réverbération
         this.reverbSend.connect(this.reverbPreDelay);
         this.reverbPreDelay.connect(this.reverbDamping);
         this.reverbDamping.connect(this.reverbConvolver);
@@ -685,27 +682,6 @@ export class SpeakerSystem {
             this.speakers[i].update(listenerPos);
         }
         this._debugStats.updatedSpeakers = this.speakers.length;
-    }
-
-    /**
-     * Switch panning model for all speakers.
-     * @param {'equalpower'|'HRTF'} model
-     */
-    setPanningModel(model) {
-        for (const speaker of this.speakers) {
-            speaker.panner.panningModel = model;
-            if (speaker.reflection.panner) {
-                speaker.reflection.panner.panningModel = model;
-            }
-        }
-    }
-
-    /**
-     * Set HRTF high-shelf brightness compensation.
-     * @param {number} db — boost in dB (0 = no compensation)
-     */
-    setHrtfBrightness(db) {
-        this.hrtfShelf.gain.setTargetAtTime(db, this.ctx.currentTime, 0.05);
     }
 
     /**

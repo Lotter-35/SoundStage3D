@@ -176,8 +176,6 @@ export const disableBloom = disableLightsBloom;
 export const BLOOM_SCENE_LAYER = BLOOM_LIGHTS_LAYER;
 
 // Paramètres globaux post-traitement avec 2 blooms 100% indépendants
-const AA_STORAGE_KEY = 'soundstage.antialiasing';
-const RANGE_STORAGE_KEY = 'soundstage.laserRange';
 export const globalLaserPostParams = {
     // ── Bloom Laser (Layer 1) ──
     laserBloomEnabled:   true,
@@ -210,6 +208,41 @@ export const globalLaserPostParams = {
     fogColor:               '#111122',
     playerCollisionEnabled: true, // Interception laser par le corps 3D des joueurs (désactivable)
     laserRange:             300,  // Distance d'affichage des faisceaux (m, depuis l'émetteur) — réglage local
+};
+
+// Netteté : masque flou adaptatif (renforce les détails fins, limité pour éviter les halos)
+const SHARPEN_SHADER = {
+    uniforms: {
+        tDiffuse: { value: null },
+        uTexel:   { value: new THREE.Vector2(1, 1) },
+        uAmount:  { value: 0 },
+    },
+    vertexShader: `
+        varying vec2 vUv;
+        void main() {
+            vUv = uv;
+            gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+        }
+    `,
+    fragmentShader: `
+        uniform sampler2D tDiffuse;
+        uniform vec2 uTexel;
+        uniform float uAmount;
+        varying vec2 vUv;
+        void main() {
+            vec4 c = texture2D(tDiffuse, vUv);
+            vec3 n = texture2D(tDiffuse, vUv + vec2(0.0, uTexel.y)).rgb;
+            vec3 s = texture2D(tDiffuse, vUv - vec2(0.0, uTexel.y)).rgb;
+            vec3 e = texture2D(tDiffuse, vUv + vec2(uTexel.x, 0.0)).rgb;
+            vec3 w = texture2D(tDiffuse, vUv - vec2(uTexel.x, 0.0)).rgb;
+            vec3 mn = min(c.rgb, min(min(n, s), min(e, w)));
+            vec3 mx = max(c.rgb, max(max(n, s), max(e, w)));
+            vec3 blur = (n + s + e + w) * 0.25;
+            vec3 sharp = c.rgb + (c.rgb - blur) * uAmount * 2.0;
+            // Pas de dépassement au-delà du voisinage : pas de halo clair/sombre autour des contours
+            gl_FragColor = vec4(clamp(sharp, mn, mx), c.a);
+        }
+    `,
 };
 
 export class LaserManager {
@@ -279,17 +312,7 @@ export class LaserManager {
         this._initPostProcessing();
         this._useComposer = !!(this._finalComposer && (this._laserBloomComposer || this._lightsBloomComposer));
 
-        // Anti-crénelage : réglage local du joueur (MSAA 4x par défaut)
-        try {
-            const savedAA = localStorage.getItem(AA_STORAGE_KEY);
-            if (savedAA) this.setAntialiasing(savedAA);
-        } catch (_) {}
-
-        // Distance d'affichage des lasers : réglage local du joueur
-        try {
-            const savedRange = parseFloat(localStorage.getItem(RANGE_STORAGE_KEY));
-            if (savedRange > 0) globalLaserPostParams.laserRange = savedRange;
-        } catch (_) {}
+        // Anticrénelage, distance des lasers, échelle de rendu, netteté : réglés par le menu ⚙️ Options
         setLaserDisplayRange(globalLaserPostParams.laserRange);
 
         // Préalloué pour éviter new THREE.Color() à chaque frame dans render()
@@ -488,6 +511,12 @@ export class LaserManager {
             this._fxaaPass.material.uniforms['resolution'].value.y = 1 / height;
             this._fxaaPass.enabled = false;
             this._finalComposer.addPass(this._fxaaPass);
+
+            // Netteté (accentuation des contours, désactivée à 0)
+            this._sharpenPass = new ShaderPass(SHARPEN_SHADER);
+            this._sharpenPass.material.uniforms.uTexel.value.set(1 / width, 1 / height);
+            this._sharpenPass.enabled = false;
+            this._finalComposer.addPass(this._sharpenPass);
 
             // OutputPass (Tone mapping & Color space de Three.js)
             this._outputPass = new OutputPass();
@@ -910,7 +939,6 @@ export class LaserManager {
                 break;
             case 'laserRange':
                 setLaserDisplayRange(value);
-                try { localStorage.setItem(RANGE_STORAGE_KEY, String(value)); } catch (e) { /* stockage indisponible */ }
                 break;
             case 'playerCollisionEnabled':
                 globalLaserPostParams.playerCollisionEnabled = Boolean(value);
@@ -944,7 +972,6 @@ export class LaserManager {
     setAntialiasing(mode) {
         if (!mode) return;
         globalLaserPostParams.antialiasing = mode;
-        try { localStorage.setItem(AA_STORAGE_KEY, mode); } catch (_) {}
 
         let samples = 0;
         let enableFxaa = false;
@@ -997,12 +1024,14 @@ export class LaserManager {
         const bloomH = Math.max(1, Math.round(height * this.renderer.getPixelRatio() * BLOOM_RESOLUTION_SCALE));
         if (this._laserBloomComposer) this._laserBloomComposer.setSize(bloomW, bloomH);
         if (this._lightsBloomComposer) this._lightsBloomComposer.setSize(bloomW, bloomH);
-        if (this._finalComposer) this._finalComposer.setSize(width, height);
         if (this._laserBloomPass) this._laserBloomPass.setSize(width, height);
         if (this._lightsBloomPass) this._lightsBloomPass.setSize(width, height);
         const pixelRatio = this.renderer.getPixelRatio();
         const renderW = Math.max(1, Math.round(width * pixelRatio));
         const renderH = Math.max(1, Math.round(height * pixelRatio));
+        // Le composer final travaille en pixels réels (cible créée à la taille × pixelRatio, pixelRatio interne = 1)
+        if (this._finalComposer) this._finalComposer.setSize(renderW, renderH);
+        if (this._sharpenPass) this._sharpenPass.material.uniforms.uTexel.value.set(1 / renderW, 1 / renderH);
         if (this._fxaaPass) {
             this._fxaaPass.material.uniforms['resolution'].value.x = 1 / renderW;
             this._fxaaPass.material.uniforms['resolution'].value.y = 1 / renderH;
@@ -1010,6 +1039,14 @@ export class LaserManager {
         if (this._smaaPass) {
             this._smaaPass.setSize(renderW, renderH);
         }
+    }
+
+    /** Netteté en post-traitement (0 = désactivée, 1 = maximum) */
+    setSharpness(amount) {
+        const a = Math.max(0, Math.min(1, Number(amount) || 0));
+        if (!this._sharpenPass) return;
+        this._sharpenPass.enabled = a > 0.001;
+        this._sharpenPass.material.uniforms.uAmount.value = a;
     }
 
     /** Retourne tous les groupes 3D des lasers (pour le raycasting) */

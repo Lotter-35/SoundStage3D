@@ -4184,11 +4184,6 @@ export class AmbiancePanel {
             });
             this._setupController(cPlayerColEn, () => true, v => this.laserManager.setPostProcessingParam('playerCollisionEnabled', v));
 
-            const cLaserRange = fLaser.add(globalLaserPostParams, 'laserRange', 20, 3000, 10).name('📏 Distance d\'affichage (m)').onChange(v => {
-                this.laserManager.setPostProcessingParam('laserRange', v);
-            });
-            this._setupController(cLaserRange, () => 300, v => this.laserManager.setPostProcessingParam('laserRange', v));
-
             // Bloom Laser
             const fLaserBloom = fLaser.addFolder('✨ Bloom Laser');
             const cLaserBloomEn = fLaserBloom.add(globalLaserPostParams, 'laserBloomEnabled').name('Activer Bloom').onChange(v => {

@@ -2,7 +2,6 @@
  * DspPanels — lil-gui control panels for all audio processing stages:
  * - Master Out (EQ Global, Compresseur, Limiteur)
  * - Environnement Acoustique (Atmosphère, Réverbération)
- * - Contrôles Utilisateur (Écoute, Environnement, Caméra)
  * - Input Stage (LUFS, Trim, EQ 3 Bandes, Compresseur, Micro Direct)
  * - Pipelines TOP, MID, FILL, SUB (Crossover, Compresseur, Saturation, Volume Bus, Acoustique)
  * - Générateur Sinus (Actif, Fréquence, Volume, Presets)
@@ -19,7 +18,6 @@ export class DspPanels {
 
         this.dspPanels = document.getElementById('dsp-panels');
         this.envPanelWrap = document.getElementById('env-panel-wrap');
-        this.userPanelWrap = document.getElementById('user-panel-wrap');
         this.sinePanelWrap = document.getElementById('sine-panel-wrap');
 
         this._dspVisible = false;
@@ -87,15 +85,6 @@ export class DspPanels {
                 });
             } else {
                 gui.reset(true);
-            }
-            if (busKey === 'user') {
-                try {
-                    localStorage.setItem('soundstage3d:user-settings', JSON.stringify({
-                        'local-volume': DSP_DEFAULTS.user['local-volume'] ?? 100,
-                        'grass-distance': DSP_DEFAULTS.user['grass-distance'] ?? 0,
-                        'mouse-sensitivity': DSP_DEFAULTS.user['mouse-sensitivity'] ?? 60,
-                    }));
-                } catch (_) {}
             }
         };
 
@@ -176,7 +165,6 @@ export class DspPanels {
     _initGuis() {
         const cMaster  = document.getElementById('dsp-panel-master');
         const cEnv     = document.getElementById('dsp-panel-env');
-        const cUser    = document.getElementById('dsp-panel-user');
         const cInput   = document.getElementById('dsp-panel-input');
         const cTop     = document.getElementById('dsp-panel-top');
         const cMid     = document.getElementById('dsp-panel-mid');
@@ -185,7 +173,7 @@ export class DspPanels {
         const cSine    = document.getElementById('sine-panel');
 
         const stopProp = (e) => e.stopPropagation();
-        [cMaster, cEnv, cUser, cInput, cTop, cMid, cFill, cSub, cSine].forEach(container => {
+        [cMaster, cEnv, cInput, cTop, cMid, cFill, cSub, cSine].forEach(container => {
             if (container) {
                 container.addEventListener('click', stopProp);
                 container.addEventListener('mousedown', stopProp);
@@ -280,49 +268,7 @@ export class DspPanels {
             this._addGuiResetButton(gui, 'env');
         }
 
-        // ─── 1.3 CONTRÔLES Utilisateur GUI ───
-        if (cUser) {
-            const gui = new GUI({ container: cUser, title: 'Contrôles Utilisateur', closeFolders: false, width: 300 });
-            this.guis.user = gui;
-
-            const _saveUser = () => {
-                try {
-                    localStorage.setItem('soundstage3d:user-settings', JSON.stringify({
-                        'local-volume': this.state.user['local-volume'],
-                        'grass-distance': this.state.user['grass-distance'],
-                        'mouse-sensitivity': this.state.user['mouse-sensitivity'],
-                    }));
-                } catch (_) {}
-            };
-
-            const fAudio = gui.addFolder('Écoute');
-            this._addFolderResetButton(fAudio, DSP_DEFAULTS.user, () => _saveUser());
-            const cVol = fAudio.add(this.state.user, 'local-volume', 0, 1000, 1).name('Volume local').onChange(v => {
-                _saveUser();
-                if (this.callbacks.onUserDsp) this.callbacks.onUserDsp('local-volume', v);
-            });
-            this._setupController(cVol, 'user-local-volume', DSP_DEFAULTS.user['local-volume'], false);
-
-            const fEnv = gui.addFolder('Environnement');
-            this._addFolderResetButton(fEnv, DSP_DEFAULTS.user, () => _saveUser());
-            const cGrass = fEnv.add(this.state.user, 'grass-distance', 0, 60, 1).name('Afficher herbe (m)').onChange(v => {
-                _saveUser();
-                if (this.callbacks.onGrassChange) this.callbacks.onGrassChange(v);
-                if (this.callbacks.onUserDsp) this.callbacks.onUserDsp('grass-distance', v);
-            });
-            this._setupController(cGrass, 'user-grass-distance', 0, false);
-
-            const fControls = gui.addFolder('Caméra');
-            this._addFolderResetButton(fControls, DSP_DEFAULTS.user, () => _saveUser());
-            const cSens = fControls.add(this.state.user, 'mouse-sensitivity', 0, 200, 1).name('Sensibilité (%)').onChange(v => {
-                _saveUser();
-                if (this.callbacks.onUserDsp) this.callbacks.onUserDsp('mouse-sensitivity', v);
-            });
-            cSens.max(Infinity);
-            this._setupController(cSens, 'user-mouse-sensitivity', DSP_DEFAULTS.user['mouse-sensitivity'] ?? 60, false);
-
-            this._addGuiResetButton(gui, 'user');
-        }
+        // (Contrôles Utilisateur : déplacés dans le menu ⚙️ Options — voir OptionsPanel.js)
 
         // ─── 1.5 INPUT Stage GUI ───
         if (cInput) {
@@ -676,7 +622,6 @@ export class DspPanels {
         if (this.guis.fill?.$title)   makeDraggable(document.getElementById('dsp-panel-fill'), this.guis.fill.$title, 'fill');
         if (this.guis.sub?.$title)    makeDraggable(document.getElementById('dsp-panel-sub'), this.guis.sub.$title, 'sub');
         if (this.guis.env?.$title)    makeDraggable(document.getElementById('env-panel-wrap'), this.guis.env.$title, 'env');
-        if (this.guis.user?.$title)   makeDraggable(document.getElementById('user-panel-wrap'), this.guis.user.$title, 'user');
         if (this.guis.sine?.$title)   makeDraggable(document.getElementById('sine-panel-wrap'), this.guis.sine.$title, 'sine');
     }
 
@@ -766,7 +711,6 @@ export class DspPanels {
         this._dspVisible = force !== undefined ? force : !this._dspVisible;
         if (this.dspPanels) this.dspPanels.classList.toggle('hidden', !this._dspVisible);
         if (this.envPanelWrap) this.envPanelWrap.classList.toggle('hidden', !this._dspVisible);
-        if (this.userPanelWrap) this.userPanelWrap.classList.toggle('hidden', !this._dspVisible);
         return this._dspVisible;
     }
 

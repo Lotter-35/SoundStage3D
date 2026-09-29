@@ -15,7 +15,7 @@
 import GUI from 'lil-gui';
 import { makeDraggable } from '../../ui/draggable.js';
 import {
-    SPOT_PARAMS_SCHEMA, SPOT_FOLDERS, SPOT_GLOBAL_SCHEMA
+    SPOT_PARAMS_SCHEMA, SPOT_FOLDERS, SPOT_GLOBAL_SCHEMA, SPOT_LOCAL_GLOBALS
 } from '../config/spotParams.js';
 import { describeChannels, encode, getFootprint } from '../SpotProfile.js';
 
@@ -305,6 +305,7 @@ export class SpotInspectorPanel {
         fGlobal.close();
         const g = this.spotManager.globals;
         for (const [key, s] of Object.entries(SPOT_GLOBAL_SCHEMA)) {
+            if (SPOT_LOCAL_GLOBALS.has(key)) continue; // qualité : menu ⚙️ Options
             let ctrl;
             if (s.options) ctrl = fGlobal.add(g, key, s.options);
             else if (typeof s.value === 'boolean') ctrl = fGlobal.add(g, key);

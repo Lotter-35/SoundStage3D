@@ -111,14 +111,6 @@
                 </div>
             </div>
 
-            <!-- 8. HRTF -->
-            <div id="hrtf-wrapper">
-                <button id="hrtf-btn" class="hud-btn">🎧 HRTF: OFF</button>
-                <div id="hrtf-comp" class="hud-slider-drop hidden">
-                    <label>✨ Brillance <input type="range" id="hrtf-brightness" min="0" max="12" step="0.5" value="4" data-default="4"><span id="hrtf-brightness-val">+4 dB</span></label>
-                </div>
-            </div>
-
             <!-- 9. Changer MP3 -->
             <button id="change-mp3-btn" class="hud-btn">📂 Changer MP3</button>
 
@@ -128,7 +120,10 @@
             <!-- 11. Debug -->
             <button id="debug-btn" class="hud-btn">🐛 Debug</button>
 
-            <!-- 12. Hitbox -->
+            <!-- 12. Options (préférences locales du joueur) -->
+            <button id="options-btn" class="hud-btn" title="Options du joueur : affichage, qualité, son, contrôles (sauvegardées sur cet ordinateur)">⚙️ Options</button>
+
+            <!-- 13. Hitbox -->
             <button id="hitbox-btn" class="hud-btn" title="Afficher / Masquer les hitboxes de collision (Raccourci: H)">📦 Hitbox: OFF</button>
         </div>
         <!-- FFT Frequency Spectrum Visualizer (Headphone Output) -->
@@ -172,11 +167,6 @@
     <!-- ─── Environnement Panel (en haut à droite) ─── -->
     <div id="env-panel-wrap" class="hidden">
         <div id="dsp-panel-env"></div>
-    </div>
-
-    <!-- ─── Contrôles Utilisateur Panel (en haut à droite, indépendant) ─── -->
-    <div id="user-panel-wrap" class="hidden">
-        <div id="dsp-panel-user"></div>
     </div>
 
     <!-- ─── Panneau Ambiance & Éclairage 3D ─── -->
@@ -348,6 +338,6 @@
     <div id="dazzle-overlay"    style="display:none"></div>
     <div id="afterimage-overlay" style="display:none"></div>
 
-    <script type="module" src="src/main.js?v=352"></script>
+    <script type="module" src="src/main.js?v=353"></script>
 </body>
 </html>

@@ -113,7 +113,7 @@ export class HazePanel {
 
     _resetKeys(keys) {
         const data = {};
-        for (const k of keys) data[k] = HAZE_PARAMS_SCHEMA[k].value;
+        for (const k of keys) if (!HAZE_LOCAL_KEYS.has(k)) data[k] = HAZE_PARAMS_SCHEMA[k].value;
         this.haze.setParams(data);
         this._emit(data);
         this.syncFromVolume();
@@ -149,11 +149,13 @@ export class HazePanel {
 
         const folders = {};
         for (const f of HAZE_FOLDERS) {
+            if (f.id === 'perf') continue; // qualité : menu ⚙️ Options
             folders[f.id] = this.gui.addFolder(f.title);
             if (f.id !== 'main') folders[f.id].close();
         }
 
         for (const [key, s] of Object.entries(HAZE_PARAMS_SCHEMA)) {
+            if (HAZE_LOCAL_KEYS.has(key)) continue;
             const folder = folders[s.folder];
             let ctrl;
             if (s.options) ctrl = folder.add(p, key, s.options);

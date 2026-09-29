@@ -487,13 +487,7 @@ export class MultiplayerClient {
                 this.serverTime = msg.serverTime || Date.now();
                 this.sweepTime = msg.sweepTime || 0;
                 console.log(`[MP] Room created: ${this.roomId} (id: ${this.clientId}, color: ${this.color}, public IP: ${this.publicIp || 'unknown'})`);
-                try {
-                    const u = new URL(window.location.href);
-                    if (u.searchParams.get('room') !== this.roomId) {
-                        u.searchParams.set('room', this.roomId);
-                        window.history.replaceState({}, '', u.toString());
-                    }
-                } catch (_) {}
+                // L'adresse de la page n'est jamais modifiée : le lien d'invitation est généré à la demande (getInviteUrl)
                 if (this._onPlaylistsSync && this.playlists.length > 0) this._onPlaylistsSync(this.playlists);
                 if (this._onQueueStateSync) {
                     this._onQueueStateSync({
@@ -539,13 +533,7 @@ export class MultiplayerClient {
                 this.serverTime = msg.serverTime || Date.now();
                 this.sweepTime = msg.sweepTime || 0;
                 console.log(`[MP] Joined room: ${this.roomId} (id: ${this.clientId}, color: ${this.color}, public IP: ${this.publicIp || 'unknown'})`);
-                try {
-                    const u = new URL(window.location.href);
-                    if (u.searchParams.get('room') !== this.roomId) {
-                        u.searchParams.set('room', this.roomId);
-                        window.history.replaceState({}, '', u.toString());
-                    }
-                } catch (_) {}
+                // L'adresse de la page n'est jamais modifiée : le lien d'invitation est généré à la demande (getInviteUrl)
                 if (this._onPlaylistsSync && this.playlists.length > 0) this._onPlaylistsSync(this.playlists);
                 if (this._onQueueStateSync) {
                     this._onQueueStateSync({

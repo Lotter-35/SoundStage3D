@@ -4,6 +4,7 @@ server/node_modules/
 musics/
 *.zip
 .plan-festivalSoundSystemSimulator.prompt.md
+auto-pull.ps1
 
 # Server persistent storage (uploaded audio files, metadata, playlists)
 server/storage/

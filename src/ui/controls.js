@@ -35,15 +35,7 @@ export class Controls {
             }
         };
 
-        // Load saved user preferences
-        try {
-            const savedUser = JSON.parse(localStorage.getItem('soundstage3d:user-settings'));
-            if (savedUser && typeof savedUser === 'object') {
-                if (typeof savedUser['local-volume'] === 'number') this.state.user['local-volume'] = savedUser['local-volume'];
-                if (typeof savedUser['grass-distance'] === 'number') this.state.user['grass-distance'] = savedUser['grass-distance'];
-                if (typeof savedUser['mouse-sensitivity'] === 'number') this.state.user['mouse-sensitivity'] = savedUser['mouse-sensitivity'];
-            }
-        } catch (_) {}
+        // Préférences du joueur (volume local, souris, herbe) : gérées par le menu ⚙️ Options (ClientOptions.js)
 
         // Multi-player flag
         this._suppressMpSend = false;
@@ -110,8 +102,6 @@ export class Controls {
             onCameraToggle:   ()      => this._callbacks.onCameraToggle && this._callbacks.onCameraToggle(),
             onInvite:         ()      => this._callbacks.onInvite && this._callbacks.onInvite(),
             onSpectrumToggle: (on)    => this._callbacks.onSpectrumToggle && this._callbacks.onSpectrumToggle(on),
-            onHrtfToggle:     (on)    => this._callbacks.onHrtfToggle && this._callbacks.onHrtfToggle(on),
-            onHrtfBrightness: (db)    => this._callbacks.onHrtfBrightness && this._callbacks.onHrtfBrightness(db),
             onConesToggle:    (b, v)  => this._callbacks.onConesToggle && this._callbacks.onConesToggle(b, v),
             onSineBtnClick:   ()      => {
                 const vis = this.dspPanels.toggleSine();
@@ -351,8 +341,6 @@ export class Controls {
     onCameraToggle(cb)          { this._callbacks.onCameraToggle = cb; }
     onGrassChange(cb)           { this._callbacks.onGrassChange = cb; }
     onSpectrumToggle(cb)        { this._callbacks.onSpectrumToggle = cb; }
-    onHrtfToggle(cb)            { this._callbacks.onHrtfToggle = cb; }
-    onHrtfBrightness(cb)        { this._callbacks.onHrtfBrightness = cb; }
     onConesToggle(cb)           { this._callbacks.onConesToggle = cb; }
     onInvite(cb)                { this._callbacks.onInvite = cb; }
 

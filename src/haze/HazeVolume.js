@@ -18,7 +18,6 @@
 
 import * as THREE from 'three';
 import { getSmokeNoiseTexture } from '../laser/LaserSmokeNoise.js';
-import { occluderUniforms } from '../spot/SpotOcclusion.js';
 import { getStageObstacles } from '../laser/LaserSceneIntersector.js';
 import { createHazeMaterial, HAZE_MAX_LIGHTS } from './HazeShaders.js';
 import { HazePass } from './HazePass.js';
@@ -80,9 +79,7 @@ export class HazeVolume {
         this.spotManager = spotManager;
         this.params = defaultHazeParams();
 
-        const occ = occluderUniforms();
-        this.material = createHazeMaterial(getSmokeNoiseTexture(), occ.mins, occ.maxs);
-        this.material.uniforms.uOccCount.value = occ.count;
+        this.material = createHazeMaterial(getSmokeNoiseTexture());
 
         this.pass = new HazePass(this.material, camera, null);
         this.pass.enabled = false;
@@ -146,7 +143,6 @@ export class HazeVolume {
         u.uHeight.value = p.layerHeight;
         u.uNoise.value = p.noise;
         u.uSegments.value = Math.round(p.segments);
-        u.uOcclusion.value = p.occlusion ? 1 : 0;
         this.pass.setResolutionScale(RES_SCALE[p.resolution] || 0.5);
         this.boxHelper.position.set(p.boxX, p.boxY, p.boxZ);
         this.boxHelper.scale.set(p.sizeX, p.sizeY, p.sizeZ);

@@ -25,9 +25,8 @@ import * as THREE from 'three';
 import { SMOKE_NOISE_UVW_SCALE } from '../laser/LaserSmokeNoise.js';
 
 export const HAZE_MAX_LIGHTS = 8;
-export const HAZE_MAX_OCCLUDERS = 16;
 
-export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
+export function createHazeMaterial(noiseTexture) {
     const v4 = () => Array.from({ length: HAZE_MAX_LIGHTS }, () => new THREE.Vector4());
     return new THREE.ShaderMaterial({
         uniforms: {
@@ -58,10 +57,6 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
             uLPos:         { value: v4() },   // xyz, portée
             uLCol:         { value: v4() },   // rgb × puissance, cos du cône intérieur (pénombre)
             uLDir:         { value: v4() },   // direction, cos du cône (< −0.5 = omnidirectionnelle)
-            uOcclusion:    { value: 1 },
-            uOccCount:     { value: occMins.length },
-            uOccMin:       { value: occMins },
-            uOccMax:       { value: occMaxs },
         },
         vertexShader: /* glsl */`
             varying vec2 vUv;
@@ -99,10 +94,6 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
             uniform vec4 uLPos[${HAZE_MAX_LIGHTS}];
             uniform vec4 uLCol[${HAZE_MAX_LIGHTS}];
             uniform vec4 uLDir[${HAZE_MAX_LIGHTS}];
-            uniform int uOcclusion;
-            uniform int uOccCount;
-            uniform vec3 uOccMin[${HAZE_MAX_OCCLUDERS}];
-            uniform vec3 uOccMax[${HAZE_MAX_OCCLUDERS}];
             varying vec2 vUv;
 
             const float NOISE_UVW = ${SMOKE_NOISE_UVW_SCALE.toFixed(8)};
@@ -150,24 +141,6 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
                 if (uNoise <= 0.0) return 1.0;
                 float n = texture(uNoiseTex, (p * 0.05 + uWind * 0.3) * NOISE_UVW).r;
                 return max(0.0, 1.0 + uNoise * 1.2 * n);
-            }
-
-            // Le segment a → b est-il bloqué par un obstacle de la scène ?
-            bool blocked(vec3 a, vec3 b) {
-                vec3 dir = b - a;
-                vec3 dd = mix(vec3(1e-7), dir, step(1e-7, abs(dir)));
-                vec3 inv = 1.0 / dd;
-                for (int i = 0; i < ${HAZE_MAX_OCCLUDERS}; i++) {
-                    if (i >= uOccCount) break;
-                    vec3 t0 = (uOccMin[i] - a) * inv;
-                    vec3 t1 = (uOccMax[i] - a) * inv;
-                    vec3 tl = min(t0, t1);
-                    vec3 th = max(t0, t1);
-                    float tn = max(max(tl.x, tl.y), tl.z);
-                    float tf = min(min(th.x, th.y), th.z);
-                    if (tn <= tf && tf > 0.0 && tn < 0.985) return true;
-                }
-                return false;
             }
 
             void main() {
@@ -236,9 +209,7 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
                     float hs = sqrt(h2 + uMSReach * uMSReach);
                     vec3 col = uLCol[i].rgb;
 
-                    // Ombre de la structure : projecteurs directionnels (strobes) seulement, testée tranche par tranche
-                    // (lumière directe seulement : la lumière diffusée contourne les obstacles)
-                    bool occl = uOcclusion == 1 && uLDir[i].w > -0.5;
+                    // Pas d'ombres portées du décor dans la fumée (volontaire : coût de calcul)
 
                     for (int s = 0; s < MAXS; s++) {
                         if (s >= N) break;
@@ -259,8 +230,7 @@ export function createHazeMaterial(noiseTexture, occMins, occMaxs) {
                         float direct = (atan((b - tc) / h) - atan((a - tc) / h)) / h;
                         float soft = (atan((b - tc) / hs) - atan((a - tc) / hs)) / hs;
                         float ext = exp(-ds * dl);
-                        float vis = (occl && cone > 0.0 && blocked(Lp, Ps)) ? 0.0 : 1.0;
-                        L += col * win * (direct * ph * cone * vis + uMS * soft * coneSoft) * ds * tcam[s] * ext;
+                        L += col * win * (direct * ph * cone + uMS * soft * coneSoft) * ds * tcam[s] * ext;
                     }
                 }
 

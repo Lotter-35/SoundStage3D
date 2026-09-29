@@ -1,6 +1,6 @@
 /**
  * HudBar — Manages top HUD buttons, level meters, position display,
- * dropdowns (cones, HRTF), microphone, camera mode, and overlays.
+ * dropdowns (cones), microphone, camera mode, and overlays.
  */
 import { makeDraggable } from './draggable.js';
 
@@ -29,13 +29,6 @@ export class HudBar {
         // Cones dropdown
         this.conesBtn = document.getElementById('cones-btn');
         this.conesMenu = document.getElementById('cones-menu');
-
-        // HRTF controls
-        this._hrtfOn = false;
-        this.hrtfBtn = document.getElementById('hrtf-btn');
-        this.hrtfComp = document.getElementById('hrtf-comp');
-        this.hrtfBrightnessSlider = document.getElementById('hrtf-brightness');
-        this.hrtfBrightnessVal = document.getElementById('hrtf-brightness-val');
 
         // Spectrum state
         this._spectrumOn = false;
@@ -173,26 +166,6 @@ export class HudBar {
                 if (!this.dspConfirmDrop.contains(e.target) && e.target !== this.dspResetAllBtn) {
                     this.dspConfirmDrop.classList.add('hidden');
                 }
-            });
-        }
-
-        // HRTF button & brightness slider
-        if (this.hrtfBtn) {
-            this.hrtfBtn.addEventListener('click', () => {
-                this._hrtfOn = !this._hrtfOn;
-                this.hrtfBtn.textContent = this._hrtfOn ? '🎧 HRTF: ON' : '🎧 HRTF: OFF';
-                if (this.hrtfComp) this.hrtfComp.classList.toggle('hidden', !this._hrtfOn);
-                if (this.callbacks.onHrtfToggle) this.callbacks.onHrtfToggle(this._hrtfOn);
-                const db = this._hrtfOn && this.hrtfBrightnessSlider ? Number(this.hrtfBrightnessSlider.value) : 0;
-                if (this.callbacks.onHrtfBrightness) this.callbacks.onHrtfBrightness(db);
-            });
-        }
-
-        if (this.hrtfBrightnessSlider) {
-            this.hrtfBrightnessSlider.addEventListener('input', () => {
-                const db = Number(this.hrtfBrightnessSlider.value);
-                if (this.hrtfBrightnessVal) this.hrtfBrightnessVal.textContent = '+' + db + ' dB';
-                if (this._hrtfOn && this.callbacks.onHrtfBrightness) this.callbacks.onHrtfBrightness(db);
             });
         }
 

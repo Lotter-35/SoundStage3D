@@ -17,6 +17,8 @@
 
 import * as THREE from 'three';
 import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=2';
+import { SPOT_LOCAL_GLOBALS } from '../spot/config/spotParams.js';
+import { HAZE_LOCAL_KEYS } from '../haze/hazeParams.js';
 
 export class LightingSync {
     /**
@@ -751,7 +753,9 @@ export class LightingSync {
     _applyHaze(data) {
         const haze = this.ambiancePanel && this.ambiancePanel.hazeVolume;
         if (!haze || !data) return;
-        haze.setParams(data);
+        const shared = {};
+        for (const [k, v] of Object.entries(data)) if (!HAZE_LOCAL_KEYS.has(k)) shared[k] = v; // qualité : réglage local
+        haze.setParams(shared);
         const panel = this.ambiancePanel.hazePanel;
         if (panel && panel.isOpen) panel.syncFromVolume();
     }
@@ -870,7 +874,7 @@ export class LightingSync {
     _applySpotGlobal(data) {
         const sm = this._spotManager();
         if (!sm || !data) return;
-        for (const [k, v] of Object.entries(data)) sm.setGlobal(k, v);
+        for (const [k, v] of Object.entries(data)) if (!SPOT_LOCAL_GLOBALS.has(k)) sm.setGlobal(k, v); // qualité : réglage local
         const insp = this.ambiancePanel?._spotInspectorPanel;
         if (insp && insp.isOpen) insp.syncFromSpot();
     }
