@@ -44,6 +44,7 @@ import { HazePanel } from './haze/ui/HazePanel.js';
 import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
+import { DirShadowCache } from './render/dirShadowCache.js';
 import { OptionsPanel } from './ui/OptionsPanel.js';
 
 // Nettoyage des clés orphelines / doublons du localStorage
@@ -225,6 +226,10 @@ lightPoolGate.addPool([...strobeManager.lightPool.shadowSlots, ...strobeManager.
 lightPoolGate.addPool(spotManager.pool.slots.map(s => s.light));
 window.__SS3D.lightPoolGate = lightPoolGate;
 
+// Ombre du soleil : décor fixe mis en cache, seuls les personnages sont redessinés à chaque image
+const dirShadowCache = dirLight && dirLight.castShadow ? new DirShadowCache(renderer, scene, dirLight) : null;
+window.__SS3D.dirShadowCache = dirShadowCache;
+
 performance.mark('ss3d:managers');
 await bootStep(0.88, 'Compilation des shaders');
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
@@ -288,6 +293,7 @@ function earlyFrame() {
         spotManager.update(dt);
         hazeVolume.update(dt);
         lightPoolGate.update();
+        if (dirShadowCache) dirShadowCache.update(camera);
         laserManager.render();
     } catch (e) {
         console.warn('[Boot] Image anticipée :', e);
@@ -3398,6 +3404,7 @@ const _shadowFwd = new THREE.Vector3();
 const _shadowRight = new THREE.Vector3();
 const _shadowUp = new THREE.Vector3();
 const _lastShadowTarget = new THREE.Vector3(NaN, NaN, NaN);
+const SHADOW_RECENTER_STEP = 4; // m
 let _shadowMovedThisFrame = true;
 
 function renderFrame() {
@@ -3552,9 +3559,12 @@ function renderFrame() {
             _shadowTarget.addScaledVector(_shadowRight, Math.round(rC / texel) * texel - rC);
             _shadowTarget.addScaledVector(_shadowUp, Math.round(uC / texel) * texel - uC);
         }
-        _shadowMovedThisFrame = !_shadowTarget.equals(_lastShadowTarget);
-        _lastShadowTarget.copy(_shadowTarget);
-        const stx = _shadowTarget.x, sty = _shadowTarget.y, stz = _shadowTarget.z;
+        // Recentrage par paliers de 4 m : entre deux paliers la carte d'ombre du décor fixe reste en cache
+        // (DirShadowCache) ; chaque palier reste calé sur la grille des texels (pas de saut des bords)
+        const recenter = !(_lastShadowTarget.x === _lastShadowTarget.x) || _shadowTarget.distanceToSquared(_lastShadowTarget) > SHADOW_RECENTER_STEP * SHADOW_RECENTER_STEP;
+        if (recenter) _lastShadowTarget.copy(_shadowTarget);
+        _shadowMovedThisFrame = recenter;
+        const stx = _lastShadowTarget.x, sty = _lastShadowTarget.y, stz = _lastShadowTarget.z;
         dirLight.target.position.set(stx, sty, stz);
         dirLight.target.updateMatrixWorld();
         if (ambiancePanel && ambiancePanel.selectedEntry && ambiancePanel.selectedEntry.light === dirLight && (ambiancePanel.isDraggingGizmo || ambiancePanel.isOpen)) {
@@ -3602,10 +3612,10 @@ function renderFrame() {
         hitboxVisualizer.update(listener.feetPosition);
     }
 
-    // Ombre du soleil : recalculée à chaque image dès que le soleil a suivi le joueur (sinon l'ancienne
-    // carte d'ombre était projetée depuis la nouvelle position → ombre qui saute / clignote) ;
-    // une image sur deux seulement quand rien ne bouge (économie).
-    if (dirLight && dirLight.shadow) dirLight.shadow.autoUpdate = _shadowMovedThisFrame || ((_shadowFrame++) & 1) === 0;
+    // Ombre du soleil : décor fixe en cache (recalculé au recentrage ou si le décor change),
+    // personnages redessinés à chaque image
+    if (dirShadowCache) dirShadowCache.update(camera);
+    else if (dirLight && dirLight.shadow) dirLight.shadow.autoUpdate = _shadowMovedThisFrame || ((_shadowFrame++) & 1) === 0;
 
     // Pools de lumières inutilisés masqués (aucun appareil de ce type dans la scène)
     lightPoolGate.update();
