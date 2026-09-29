@@ -1117,7 +1117,20 @@ export class LaserManager {
         const renderW = Math.max(1, Math.round(width * pixelRatio));
         const renderH = Math.max(1, Math.round(height * pixelRatio));
         // Le composer final travaille en pixels réels (cible créée à la taille × pixelRatio, pixelRatio interne = 1)
-        if (this._finalComposer) this._finalComposer.setSize(renderW, renderH);
+        if (this._finalComposer) {
+            this._finalComposer.setSize(renderW, renderH);
+            // three.js r160 ne redimensionne pas la DepthTexture d'une cible (RenderTarget.setSize) :
+            // profondeur et couleur de tailles différentes → « Attachments are not all the same size »
+            for (const rt of [this._finalComposer.renderTarget1, this._finalComposer.renderTarget2]) {
+                const dt = rt && rt.depthTexture;
+                if (dt && (dt.image.width !== rt.width || dt.image.height !== rt.height)) {
+                    dt.image.width = rt.width;
+                    dt.image.height = rt.height;
+                    dt.dispose();
+                    rt.dispose();
+                }
+            }
+        }
         if (this._sharpenPass) this._sharpenPass.material.uniforms.uTexel.value.set(1 / renderW, 1 / renderH);
         if (this._fxaaPass) {
             this._fxaaPass.material.uniforms['resolution'].value.x = 1 / renderW;
