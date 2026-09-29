@@ -1262,9 +1262,14 @@ export class LaserManager {
         let samples = 0;
         let enableFxaa = false;
         let enableSmaa = false;
+        this._aaAuto = mode.includes('auto');
 
-        if (mode.includes('8x')) {
+        if (this._aaAuto) {
+            samples = this._autoSamples();
+        } else if (mode.includes('8x')) {
             samples = 8;
+        } else if (mode.includes('MSAA 2x')) {
+            samples = 2;
         } else if (mode.includes('MSAA 4x + FXAA')) {
             samples = 4;
             enableFxaa = true;
@@ -1288,6 +1293,16 @@ export class LaserManager {
             rt.samples = samples;
             rt.dispose();
         }
+    }
+
+    /**
+     * MSAA automatique : 2 échantillons quand l'image fait au moins 3000 pixels de large (4K) — les pixels
+     * y sont assez petits pour que le crénelage reste discret — 4 sinon.
+     */
+    _autoSamples() {
+        const rt = this._sceneRT;
+        const w = rt ? rt.width : 0;
+        return w >= 3000 ? 2 : 4;
     }
 
     /** Applique/retire le fog scénique */
@@ -1318,6 +1333,12 @@ export class LaserManager {
         const rt = this._sceneRT;
         if (rt) {
             rt.setSize(renderW, renderH);
+            // MSAA automatique : le nombre d'échantillons suit la résolution
+            if (this._aaAuto) {
+                const samples = this._autoSamples();
+                this._msaaSamples = samples;
+                if (rt.samples !== samples) { rt.samples = samples; rt.dispose(); }
+            }
             // three.js r160 ne redimensionne pas la DepthTexture d'une cible (RenderTarget.setSize) :
             // profondeur et couleur de tailles différentes → « Attachments are not all the same size »
             const dt = rt.depthTexture;

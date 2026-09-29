@@ -9,7 +9,9 @@
 const STORAGE_KEY = 'soundstage3d:options';
 
 export const AA_MODES = [
+    'MSAA auto (4x, 2x en 4K)',
     'MSAA 4x (Matériel - Recommandé)',
+    'MSAA 2x (Matériel - Rapide)',
     'MSAA 8x (Matériel - Haute qualité)',
     'SMAA (Post-process net)',
     'FXAA (Post-process rapide)',
@@ -112,7 +114,16 @@ class ClientOptionsStore {
             const clean = sanitize(k, v);
             if (clean !== undefined) this.values[k] = clean;
         }
-        if (!saved) this._save();
+        // Une seule fois : l'ancien réglage par défaut (MSAA 4x) passe au mode automatique (2x en 4K)
+        let migrated = false;
+        if (saved && saved._aaAuto) {
+            this.values._aaAuto = true;
+        } else {
+            if (this.values.antialiasing === 'MSAA 4x (Matériel - Recommandé)') this.values.antialiasing = AA_MODES[0];
+            this.values._aaAuto = true;
+            migrated = true;
+        }
+        if (!saved || migrated) this._save();
     }
 
     get(key) { return this.values[key]; }
