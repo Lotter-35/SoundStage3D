@@ -15,7 +15,6 @@
 
 import * as THREE from 'three';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
-import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { ShaderPass } from 'three/addons/postprocessing/ShaderPass.js';
 import { FXAAShader } from 'three/addons/shaders/FXAAShader.js';
@@ -165,6 +164,30 @@ class SelectiveLayerPass extends Pass {
         renderer.autoClear = oldAutoClear;
         shadowMap.autoUpdate = oldShadowAuto;
         shadowMap.needsUpdate = oldShadowNeeds;
+    }
+}
+
+/**
+ * Rendu de la scène dans SA cible multi-échantillonnée (MSAA), résolue une seule fois (couleur + profondeur).
+ * Les passes d'effets qui suivent écrivent dans les cibles simples du composer : une passe plein écran
+ * écrite dans une cible MSAA coûte ~6× plus cher (4 échantillons par pixel + résolution) pour une image identique.
+ */
+class SceneMSAAPass extends Pass {
+    constructor(scene, camera, target) {
+        super();
+        this.scene = scene;
+        this.camera = camera;
+        this.target = target;
+        this.needsSwap = false;
+    }
+
+    render(renderer) {
+        const oldAutoClear = renderer.autoClear;
+        renderer.autoClear = false;
+        renderer.setRenderTarget(this.target);
+        renderer.clear(true, true, false);
+        renderer.render(this.scene, this.camera);
+        renderer.autoClear = oldAutoClear;
     }
 }
 
@@ -439,24 +462,29 @@ export class LaserManager {
             this._chromaPass    = this._laserChromaPass;
 
             // ── 3. Final Composer (Scène complète normale nette + mélange additif des deux blooms) ──
-            const renderFinalScene = new RenderPass(this.scene, this.camera);
             const size = this.renderer.getSize(new THREE.Vector2());
             const pixelRatio = this.renderer.getPixelRatio();
             const width = Math.max(1, Math.round(size.width * pixelRatio));
             const height = Math.max(1, Math.round(size.height * pixelRatio));
-            // Toujours ≥ 1 échantillon : sans MSAA, la DepthTexture est attachée directement aux cibles
-            // du composer et les passes lyres/brouillard la lisent pendant que l'autre cible (qui
-            // porte aussi une DepthTexture) est écrite → boucle de rétroaction WebGL → écran noir.
-            // Avec 1 échantillon (rendu multisample à 1 sample = pas de lissage), la profondeur est
-            // résolue dans la texture et la lecture est sûre.
-            const initialSamples = Math.max(1, (this._msaaSamples !== undefined) ? this._msaaSamples : 4);
+            const initialSamples = (this._msaaSamples !== undefined) ? this._msaaSamples : 4;
 
-            const finalRT = new THREE.WebGLRenderTarget(width, height, {
+            // Scène : cible MSAA dédiée avec profondeur (lue par les nappes, les lyres et le brouillard).
+            // Elle n'est jamais réécrite par les effets : pas de boucle de rétroaction, même sans MSAA.
+            this._sceneRT = new THREE.WebGLRenderTarget(width, height, {
                 type: THREE.HalfFloatType,
                 samples: initialSamples
             });
+            this._sceneRT.depthTexture = new THREE.DepthTexture(width, height);
+            this._sceneRT.depthTexture.type = THREE.FloatType; // profondeur 32 bits (far = 5000 m)
+
+            // Cibles du composer : SANS MSAA (les effets n'en ont pas besoin)
+            const finalRT = new THREE.WebGLRenderTarget(width, height, {
+                type: THREE.HalfFloatType,
+                samples: 0
+            });
             this._finalComposer = new EffectComposer(this.renderer, finalRT);
-            this._finalComposer.addPass(renderFinalScene);
+            this._scenePass = new SceneMSAAPass(this.scene, this.camera, this._sceneRT);
+            this._finalComposer.addPass(this._scenePass);
 
             // Texture factice noire pour initialiser les slots de sampler2D
             const dummyTexture = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
@@ -555,29 +583,22 @@ export class LaserManager {
     }
 
     /**
-     * Insère une passe juste après le rendu de la scène (avant les blooms) et donne une
-     * DepthTexture aux cibles du composer, pour que la passe puisse lire la profondeur
-     * (faisceaux volumétriques des lyres). La profondeur MSAA est résolue par three.js.
+     * Insère une passe juste après le rendu de la scène (avant les blooms). La passe lit la profondeur
+     * de la scène (faisceaux volumétriques des lyres, brouillard…) dans `sceneDepth.texture` :
+     * profondeur de la cible de la scène, résolue par three.js après le rendu MSAA.
      * @returns {boolean} false si la chaîne de post-traitement n'existe pas
      */
     addScenePass(pass) {
         const composer = this._finalComposer;
         if (!composer) return false;
-        for (const rt of [composer.renderTarget1, composer.renderTarget2]) {
-            if (rt.depthTexture) continue;
-            const depth = new THREE.DepthTexture(rt.width, rt.height);
-            depth.type = THREE.FloatType; // profondeur 32 bits (far = 5000 m)
-            rt.depthTexture = depth;
-            rt.dispose();
-        }
-        // Passe « témoin » juste après le rendu de la scène : mémorise la cible qui contient la profondeur
-        // de la scène (après une passe qui permute les cibles, readBuffer.depthTexture n'est plus la bonne)
+        // Passe « témoin » juste après le rendu de la scène : publie la profondeur de la scène
         if (!this._sceneDepthTap) {
             this.sceneDepth = { texture: null };
             const shared = this.sceneDepth;
+            const sceneRT = () => this._sceneRT;
             this._sceneDepthTap = new (class extends Pass {
                 constructor() { super(); this.needsSwap = false; }
-                render(renderer, writeBuffer, readBuffer) { shared.texture = readBuffer.depthTexture || null; }
+                render() { shared.texture = sceneRT().depthTexture || null; }
             })();
             composer.insertPass(this._sceneDepthTap, 1);
             this._scenePassCount = 0;
@@ -864,8 +885,8 @@ export class LaserManager {
         try {
             r.setRenderTarget(null);
             r.compile(this.scene, this.camera);
-            if (this._finalComposer && this._finalComposer.renderTarget1) {
-                r.setRenderTarget(this._finalComposer.renderTarget1);
+            if (this._sceneRT) {
+                r.setRenderTarget(this._sceneRT);
                 r.compile(this.scene, this.camera);
             }
         } catch (_) {
@@ -886,8 +907,8 @@ export class LaserManager {
             r.setRenderTarget(null);
             const direct = r.compileAsync(this.scene, this.camera);
             let composed = null;
-            if (this._finalComposer && this._finalComposer.renderTarget1) {
-                r.setRenderTarget(this._finalComposer.renderTarget1);
+            if (this._sceneRT) {
+                r.setRenderTarget(this._sceneRT);
                 composed = r.compileAsync(this.scene, this.camera);
             }
             r.setRenderTarget(prev);
@@ -976,11 +997,43 @@ export class LaserManager {
             }
 
             // 5. Rendu final de la scène normale + mixage additif des deux blooms + OutputPass
-            this._finalComposer.render();
+            this._renderChain();
             this.scene.matrixWorldAutoUpdate = oldMatrixAuto;
         } else {
             this.renderer.render(this.scene, this.camera);
         }
+    }
+
+    /**
+     * Exécute la chaîne du composer final (remplace EffectComposer.render) :
+     * la scène est rendue dans sa cible MSAA, puis chaque effet lit l'image précédente et écrit
+     * dans l'une des deux cibles simples du composer — jamais dans la cible MSAA de la scène.
+     * La dernière passe active écrit à l'écran.
+     */
+    _renderChain() {
+        const composer = this._finalComposer;
+        const passes = composer.passes;
+        const renderer = this.renderer;
+        let last = -1;
+        for (let i = 0; i < passes.length; i++) if (passes[i].enabled) last = i;
+
+        const rtA = composer.renderTarget1;
+        const rtB = composer.renderTarget2;
+        let read = this._sceneRT;
+        let write = rtA;
+        for (let i = 0; i < passes.length; i++) {
+            const pass = passes[i];
+            if (!pass.enabled) continue;
+            pass.renderToScreen = (i === last);
+            pass.render(renderer, write, read, 0, false);
+            if (pass === this._scenePass) {
+                read = this._sceneRT;
+            } else if (pass.needsSwap) {
+                read = write;
+                write = (write === rtA) ? rtB : rtA;
+            }
+        }
+        renderer.setRenderTarget(null);
     }
 
     /** Applique les réglages globaux post-processing */
@@ -1100,19 +1153,15 @@ export class LaserManager {
             samples = 0;
         }
 
-        // Minimum 1 échantillon (voir création du finalRT) : évite l'écran noir sans MSAA
-        samples = Math.max(1, samples);
         this._msaaSamples = samples;
         if (this._fxaaPass) this._fxaaPass.enabled = enableFxaa;
         if (this._smaaPass) this._smaaPass.enabled = enableSmaa;
 
-        if (this._finalComposer && this._finalComposer.renderTarget1) {
-            if (this._finalComposer.renderTarget1.samples !== samples) {
-                this._finalComposer.renderTarget1.samples = samples;
-                this._finalComposer.renderTarget2.samples = samples;
-                this._finalComposer.renderTarget1.dispose();
-                this._finalComposer.renderTarget2.dispose();
-            }
+        // Seule la cible de la scène est multi-échantillonnée (les effets écrivent dans des cibles simples)
+        const rt = this._sceneRT;
+        if (rt && rt.samples !== samples) {
+            rt.samples = samples;
+            rt.dispose();
         }
     }
 
@@ -1140,18 +1189,18 @@ export class LaserManager {
         const renderW = Math.max(1, Math.round(width * pixelRatio));
         const renderH = Math.max(1, Math.round(height * pixelRatio));
         // Le composer final travaille en pixels réels (cible créée à la taille × pixelRatio, pixelRatio interne = 1)
-        if (this._finalComposer) {
-            this._finalComposer.setSize(renderW, renderH);
+        if (this._finalComposer) this._finalComposer.setSize(renderW, renderH);
+        const rt = this._sceneRT;
+        if (rt) {
+            rt.setSize(renderW, renderH);
             // three.js r160 ne redimensionne pas la DepthTexture d'une cible (RenderTarget.setSize) :
             // profondeur et couleur de tailles différentes → « Attachments are not all the same size »
-            for (const rt of [this._finalComposer.renderTarget1, this._finalComposer.renderTarget2]) {
-                const dt = rt && rt.depthTexture;
-                if (dt && (dt.image.width !== rt.width || dt.image.height !== rt.height)) {
-                    dt.image.width = rt.width;
-                    dt.image.height = rt.height;
-                    dt.dispose();
-                    rt.dispose();
-                }
+            const dt = rt.depthTexture;
+            if (dt && (dt.image.width !== rt.width || dt.image.height !== rt.height)) {
+                dt.image.width = rt.width;
+                dt.image.height = rt.height;
+                dt.dispose();
+                rt.dispose();
             }
         }
         if (this._sharpenPass) this._sharpenPass.material.uniforms.uTexel.value.set(1 / renderW, 1 / renderH);
