@@ -731,6 +731,19 @@ export class LaserManager {
         return true;
     }
 
+    /**
+     * Insère une passe d'image juste avant la passe finale (FinalCompositePass) : elle lit l'image de
+     * la scène (linéaire) et écrit image + effet dans une cible du composer, que la passe finale reprend.
+     * @returns {boolean} false si la chaîne de post-traitement n'existe pas
+     */
+    addPostPass(pass) {
+        const composer = this._finalComposer;
+        if (!composer || !this._mixPass) return false;
+        const idx = composer.passes.indexOf(this._mixPass);
+        composer.insertPass(pass, idx >= 0 ? idx : composer.passes.length);
+        return true;
+    }
+
     /** Ajoute un nouveau laser dans la scène */
     addLaser(position = new THREE.Vector3(0, 12, -4), paramOverrides = {}, customId = null) {
         const id = (customId !== null && customId !== undefined) ? customId : this._nextId++;

@@ -40,6 +40,8 @@ import { StrobeManager } from './strobe/StrobeManager.js?v=17';
 import { SpotManager } from './spot/SpotManager.js?v=3';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';
+import { SunLensFlarePass } from './scene/SunLensFlare.js';
+import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
 import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
@@ -217,6 +219,20 @@ ambiancePanel.hazeVolume = hazeVolume;
 hazeVolume.ambiancePanel = ambiancePanel;
 ambiancePanel.setHazePanel(new HazePanel({ haze: hazeVolume, ambiancePanel }));
 window.__SS3D.hazeVolume = hazeVolume;
+
+// ─── Soleil : lens flare (post-traitement, réglages locaux) · Nuit : lune ───
+const sunFlare = new SunLensFlarePass(camera, laserManager.sceneDepth || null);
+if (!laserManager.addPostPass(sunFlare)) sunFlare.enabled = false;
+ambiancePanel.sunFlare = sunFlare;
+if (typeof ambiancePanel._buildGui === 'function') ambiancePanel._buildGui();
+const skyMoon = new SkyMoon(scene);
+window.__SS3D.sunFlare = sunFlare;
+window.__SS3D.skyMoon = skyMoon;
+const _isNightAmbiance = () => {
+    const env = ambiancePanel && ambiancePanel.envState;
+    const preset = env && ambiancePanel.envPresets && ambiancePanel.envPresets[env.presetKey];
+    return Boolean(preset && preset.hasStars);
+};
 
 // Pools de lumières masqués quand la scène n'a aucun appareil (variante préparée au chargement, sans gel)
 const lightPoolGate = new LightPoolGate(renderer, scene, camera, () => laserManager._sceneRT || null,
@@ -3572,6 +3588,13 @@ function renderFrame() {
         } else {
             dirLight.position.set(stx + _dirLightOffset.x, sty + _dirLightOffset.y, stz + _dirLightOffset.z);
         }
+    }
+
+    // Soleil (lens flare) et lune, selon l'ambiance
+    {
+        const night = _isNightAmbiance();
+        sunFlare.update(sunFlare.sceneDepth ? dirLight : null, dt, night);
+        skyMoon.update(camera, dirLight, night);
     }
 
     // Update Ambiance light markers animation

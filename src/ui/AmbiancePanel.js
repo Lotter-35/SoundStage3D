@@ -1071,6 +1071,36 @@ export class AmbiancePanel {
         }
     }
 
+    /** Dossier « ☀️ Lens flare du soleil » : tous les réglages de l'effet (portage R3F-Ultimate-Lens-Flare) */
+    _buildSunFlareFolder() {
+        const flare = this.sunFlare;
+        const p = flare.params;
+        const f = this.gui.addFolder('☀️ Lens flare du soleil');
+        f.close();
+        const set = (k) => (v) => flare.setParam(k, v);
+        f.add(p, 'enabled').name('Activer').onChange(set('enabled'));
+        f.add(p, 'intensity', 0, 3, 0.05).name('Intensité').onChange(set('intensity'));
+        f.add(p, 'resolution', ['Pleine résolution', 'Demi-résolution', 'Quart de résolution']).name('Résolution').onChange(set('resolution'));
+        f.add(p, 'glareSize', 0.01, 1.5, 0.01).name('Taille de l\'éblouissement').onChange(set('glareSize'));
+        f.add(p, 'starPoints', 0, 32, 1).name('Branches de l\'étoile').onChange(set('starPoints'));
+        f.add(p, 'flareSize', 0.001, 0.05, 0.001).name('Taille du flare').onChange(set('flareSize'));
+        f.add(p, 'flareSpeed', 0, 2, 0.01).name('Vitesse du flare').onChange(set('flareSpeed'));
+        f.add(p, 'flareShape', 0.01, 2, 0.01).name('Forme du flare').onChange(set('flareShape'));
+        f.add(p, 'animated').name('Animé').onChange(set('animated'));
+        f.add(p, 'anamorphic').name('Anamorphique').onChange(set('anamorphic'));
+        f.addColor(p, 'color').name('Couleur').onChange(set('color'));
+        f.add(p, 'colorGain', 0, 150, 1).name('Gain de couleur').onChange(set('colorGain'));
+        f.add(p, 'haloScale', 0.1, 2, 0.01).name('Échelle du halo').onChange(set('haloScale'));
+        f.add(p, 'secondaryGhosts').name('Reflets secondaires').onChange(set('secondaryGhosts'));
+        f.add(p, 'aditionalStreaks').name('Traînées supplémentaires').onChange(set('aditionalStreaks'));
+        f.add(p, 'ghostScale', 0, 2, 0.01).name('Taille des reflets').onChange(set('ghostScale'));
+        f.add(p, 'starBurst').name('Starburst (saleté d\'objectif)').onChange(set('starBurst'));
+        f.add({ reset: () => {
+            flare.resetParams();
+            f.controllersRecursive().forEach(c => { try { c.updateDisplay(); } catch (_) {} });
+        } }, 'reset').name('↺ Réglages par défaut');
+    }
+
     /**
      * Teinte du brouillard pour une ambiance : rapport de couleur (teinte seule, luminosité conservée)
      * entre le ciel de l'ambiance et celui du jour par défaut, appliqué à HAZE_ENV_TINT_STRENGTH.
@@ -3940,6 +3970,9 @@ export class AmbiancePanel {
 
         const fEnv = this.gui.addFolder('🌌 Ambiance & Ciel');
         fEnv.open();
+
+        // Lens flare du soleil (réglages locaux au joueur, sauvegardés dans le navigateur)
+        if (this.sunFlare) this._buildSunFlareFolder();
 
         // 1. Menu déroulant des 23 ambiances classées
         const presetOptions = {
