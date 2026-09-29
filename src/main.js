@@ -3316,6 +3316,13 @@ let _lastFrameTime = performance.now();
 let _lastRealFrameMs = 16; // suivi du dernier frame time (pour détection lagspike dans heartbeat)
 let _lastLagSpikeAt = 0;   // timestamp du dernier lagspike détecté (cooldown correction audio)
 const _dirLightOffset = new THREE.Vector3(32, 40, 38);
+// Ombre du soleil : suivi calé sur la grille des texels de la carte d'ombre (pas de scintillement)
+const _shadowTarget = new THREE.Vector3();
+const _shadowFwd = new THREE.Vector3();
+const _shadowRight = new THREE.Vector3();
+const _shadowUp = new THREE.Vector3();
+const _lastShadowTarget = new THREE.Vector3(NaN, NaN, NaN);
+let _shadowMovedThisFrame = true;
 
 function renderFrame() {
     const now = performance.now();
@@ -3453,12 +3460,31 @@ function renderFrame() {
         const targetX = lp.x * 0.4;
         const targetY = Math.min(5.0, Math.max(1.0, lp.y * 0.5 + 1.5));
         const targetZ = -5.0 + (lp.z - (-5.0)) * 0.45;
-        dirLight.target.position.set(targetX, targetY, targetZ);
+        // Caler la cible sur la grille des texels de l'ombre, dans le repère de la lumière :
+        // l'ombre ne « nage » plus d'une fraction de pixel à chaque pas (bords qui scintillent)
+        _shadowTarget.set(targetX, targetY, targetZ);
+        const sc = dirLight.shadow && dirLight.shadow.camera;
+        if (sc && sc.isOrthographicCamera && _dirLightOffset.lengthSq() > 1e-6) {
+            const texel = (sc.right - sc.left) / Math.max(1, dirLight.shadow.mapSize.x);
+            _shadowFwd.copy(_dirLightOffset).normalize();
+            _shadowRight.set(0, 1, 0).cross(_shadowFwd);
+            if (_shadowRight.lengthSq() < 1e-6) _shadowRight.set(1, 0, 0);
+            _shadowRight.normalize();
+            _shadowUp.crossVectors(_shadowFwd, _shadowRight).normalize();
+            const rC = _shadowTarget.dot(_shadowRight);
+            const uC = _shadowTarget.dot(_shadowUp);
+            _shadowTarget.addScaledVector(_shadowRight, Math.round(rC / texel) * texel - rC);
+            _shadowTarget.addScaledVector(_shadowUp, Math.round(uC / texel) * texel - uC);
+        }
+        _shadowMovedThisFrame = !_shadowTarget.equals(_lastShadowTarget);
+        _lastShadowTarget.copy(_shadowTarget);
+        const stx = _shadowTarget.x, sty = _shadowTarget.y, stz = _shadowTarget.z;
+        dirLight.target.position.set(stx, sty, stz);
         dirLight.target.updateMatrixWorld();
         if (ambiancePanel && ambiancePanel.selectedEntry && ambiancePanel.selectedEntry.light === dirLight && (ambiancePanel.isDraggingGizmo || ambiancePanel.isOpen)) {
             _dirLightOffset.copy(dirLight.position).sub(dirLight.target.position);
         } else {
-            dirLight.position.set(targetX + _dirLightOffset.x, targetY + _dirLightOffset.y, targetZ + _dirLightOffset.z);
+            dirLight.position.set(stx + _dirLightOffset.x, sty + _dirLightOffset.y, stz + _dirLightOffset.z);
         }
     }
 
@@ -3500,8 +3526,10 @@ function renderFrame() {
         hitboxVisualizer.update(listener.feetPosition);
     }
 
-    // Ombre du soleil : recalculée une image sur deux (le décor est statique, les joueurs bougent peu entre deux images)
-    if (dirLight && dirLight.shadow) dirLight.shadow.autoUpdate = ((_shadowFrame++) & 1) === 0;
+    // Ombre du soleil : recalculée à chaque image dès que le soleil a suivi le joueur (sinon l'ancienne
+    // carte d'ombre était projetée depuis la nouvelle position → ombre qui saute / clignote) ;
+    // une image sur deux seulement quand rien ne bouge (économie).
+    if (dirLight && dirLight.shadow) dirLight.shadow.autoUpdate = _shadowMovedThisFrame || ((_shadowFrame++) & 1) === 0;
 
     // Render via l'EffectComposer (bloom laser, aberration chromatique, FXAA)
     // LaserManager.render() bascule automatiquement sur le composer quand des lasers
