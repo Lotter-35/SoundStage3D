@@ -112,12 +112,21 @@ export function createHazeMaterial(noiseTexture) {
                 vec3 dmin = p - uBoxMin;
                 vec3 dmax = uBoxMax - p;
                 if (uEdge <= 0.0) return step(0.0, min(min(min(dmin.x, dmax.x), dmax.y), min(dmin.z, dmax.z)));
+                // Distances aux parois (côtés + dessus ; jamais le sol)
+                float dx = min(dmin.x, dmax.x);
+                float dz = min(dmin.z, dmax.z);
+                float dy = dmax.y;
+                // Coins arrondis (rayon ~1,5 × largeur du fondu) : plus d'angle droit visible
+                float r = uEdge * 1.5;
+                vec2 qh = max(vec2(r) - vec2(dx, dz), 0.0);
+                float dh = min(dx, dz) >= r ? min(dx, dz) : r - length(qh);
+                vec2 qv = max(vec2(r) - vec2(dh, dy), 0.0);
+                float dist = min(dh, dy) >= r ? min(dh, dy) : r - length(qv);
+                // Volutes : le bord ondule UNIQUEMENT vers l'intérieur → densité nulle sur la paroi
+                // (avant, il pouvait déborder : fine « paroi » de fumée d'1 px visible sur la face de la boîte)
                 float wisp = texture(uNoiseTex, (p * 0.03 + uWind * 0.2) * NOISE_UVW).r;
-                float off = wisp * uEdge * 0.7; // volutes : le bord avance/recule
-                float fx = smoothstep(0.0, uEdge, dmin.x + off) * smoothstep(0.0, uEdge, dmax.x + off);
-                float fz = smoothstep(0.0, uEdge, dmin.z + off) * smoothstep(0.0, uEdge, dmax.z + off);
-                float fy = smoothstep(0.0, uEdge, dmax.y + off);
-                float f = fx * fz * fy;
+                float off = (clamp(wisp, -1.0, 1.0) - 1.0) * 0.35 * uEdge;
+                float f = smoothstep(0.0, uEdge, dist + off) * step(0.0, dist);
                 return f * f * (3.0 - 2.0 * f);
             }
 

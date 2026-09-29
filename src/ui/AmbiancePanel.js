@@ -498,6 +498,7 @@ export class AmbiancePanel {
                 fogFar: 440,
                 ambient: { color: '#a2ccf0', intensity: 0.345 },
                 hemi: { skyColor: '#8ec5f5', groundColor: '#4a8228', intensity: 1.755 },
+                hazeTint: [1.00, 1.00, 1.05], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#fffdf0', intensity: 2.1 },
                 stage1: { color: '#ff3366', intensity: 0.4, distance: 28 },
                 stage2: { color: '#3366ff', intensity: 0.4, distance: 28 },
@@ -511,6 +512,7 @@ export class AmbiancePanel {
                 fogFar: 410,
                 ambient: { color: '#9ee0db', intensity: 0.33 },
                 hemi: { skyColor: '#72d2e8', groundColor: '#528522', intensity: 1.67 },
+                hazeTint: [0.98, 1.03, 1.04], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#fff4cc', intensity: 2.3 },
                 stage1: { color: '#ff0066', intensity: 0.45, distance: 30 },
                 stage2: { color: '#00d4ff', intensity: 0.45, distance: 30 },
@@ -524,8 +526,8 @@ export class AmbiancePanel {
                 fogFar: 330,
                 ambient: { color: '#b0b8c2', intensity: 0.375 },
                 hemi: { skyColor: '#c0c8d2', groundColor: '#4a5442', intensity: 1.725 },
+                hazeTint: [0.96, 1.00, 1.06], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#f0f4f8', intensity: 1.1 },
-                hazeTint: [0.96, 1.0, 1.06], // brouillard gris-bleu froid (le calcul auto donnait du rouge)
                 stage1: { color: '#ff5577', intensity: 0.6, distance: 30 },
                 stage2: { color: '#55aaff', intensity: 0.6, distance: 30 },
             },
@@ -538,6 +540,7 @@ export class AmbiancePanel {
                 fogFar: 390,
                 ambient: { color: '#b5d5ed', intensity: 0.315 },
                 hemi: { skyColor: '#9ecbf0', groundColor: '#4f802e', intensity: 1.585 },
+                hazeTint: [1.03, 1.00, 1.02], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#fff9ea', intensity: 1.7 },
                 stage1: { color: '#ff4081', intensity: 0.5, distance: 30 },
                 stage2: { color: '#00e5ff', intensity: 0.5, distance: 30 },
@@ -551,6 +554,7 @@ export class AmbiancePanel {
                 fogFar: 350,
                 ambient: { color: '#d8c29d', intensity: 0.33 },
                 hemi: { skyColor: '#e0c99f', groundColor: '#705428', intensity: 1.62 },
+                hazeTint: [1.10, 1.02, 0.86], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#fff1d0', intensity: 2.2 },
                 stage1: { color: '#ff2200', intensity: 0.5, distance: 30 },
                 stage2: { color: '#2255ff', intensity: 0.5, distance: 30 },
@@ -568,6 +572,7 @@ export class AmbiancePanel {
                 fogFar: 390,
                 ambient: { color: '#7a4218', intensity: 0.225 },
                 hemi: { skyColor: '#9e521b', groundColor: '#2b1507', intensity: 1.225 },
+                hazeTint: [1.18, 0.98, 0.80], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ffaa33', intensity: 1.85 },
                 stage1: { color: '#ff0055', intensity: 1.4, distance: 35 },
                 stage2: { color: '#0099ff', intensity: 1.4, distance: 35 },
@@ -581,6 +586,7 @@ export class AmbiancePanel {
                 fogFar: 370,
                 ambient: { color: '#662d14', intensity: 0.21 },
                 hemi: { skyColor: '#8a3c18', groundColor: '#240d05', intensity: 1.14 },
+                hazeTint: [1.20, 0.92, 0.76], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff7722', intensity: 1.6 },
                 stage1: { color: '#ff2266', intensity: 1.6, distance: 35 },
                 stage2: { color: '#2266ff', intensity: 1.6, distance: 35 },
@@ -594,6 +600,7 @@ export class AmbiancePanel {
                 fogFar: 380,
                 ambient: { color: '#593246', intensity: 0.195 },
                 hemi: { skyColor: '#78405b', groundColor: '#1f1019', intensity: 1.105 },
+                hazeTint: [1.12, 0.95, 1.02], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff9e80', intensity: 1.45 },
                 stage1: { color: '#e040fb', intensity: 1.6, distance: 35 },
                 stage2: { color: '#00e5ff', intensity: 1.6, distance: 35 },
@@ -607,6 +614,7 @@ export class AmbiancePanel {
                 fogFar: 360,
                 ambient: { color: '#5c3614', intensity: 0.21 },
                 hemi: { skyColor: '#784618', groundColor: '#261405', intensity: 1.14 },
+                hazeTint: [1.14, 1.00, 0.80], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ffb347', intensity: 1.7 },
                 stage1: { color: '#d00000', intensity: 1.5, distance: 35 },
                 stage2: { color: '#03045e', intensity: 1.5, distance: 35 },
@@ -620,6 +628,7 @@ export class AmbiancePanel {
                 fogFar: 350,
                 ambient: { color: '#611a09', intensity: 0.225 },
                 hemi: { skyColor: '#8a240c', groundColor: '#210702', intensity: 1.225 },
+                hazeTint: [1.22, 0.88, 0.74], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff5722', intensity: 1.9 },
                 stage1: { color: '#ff0077', intensity: 1.8, distance: 36 },
                 stage2: { color: '#00d2ff', intensity: 1.8, distance: 36 },
@@ -637,6 +646,7 @@ export class AmbiancePanel {
                 fogFar: 380,
                 ambient: { color: '#4a2b38', intensity: 0.15 },
                 hemi: { skyColor: '#b34d3d', groundColor: '#221318', intensity: 0.85 },
+                hazeTint: [1.14, 0.92, 0.92], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff7733', intensity: 1.2 },
                 stage1: { color: '#ff2255', intensity: 1.6, distance: 35 },
                 stage2: { color: '#3355ee', intensity: 1.6, distance: 35 },
@@ -650,6 +660,7 @@ export class AmbiancePanel {
                 fogFar: 370,
                 ambient: { color: '#162b55', intensity: 0.135 },
                 hemi: { skyColor: '#1c366a', groundColor: '#081122', intensity: 0.765 },
+                hazeTint: [0.86, 0.96, 1.20], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#4488ee', intensity: 0.8 },
                 stage1: { color: '#ff3366', intensity: 2.2, distance: 38 },
                 stage2: { color: '#00ffcc', intensity: 2.2, distance: 38 },
@@ -663,6 +674,7 @@ export class AmbiancePanel {
                 fogFar: 350,
                 ambient: { color: '#42161f', intensity: 0.15 },
                 hemi: { skyColor: '#5c1b27', groundColor: '#17060a', intensity: 0.85 },
+                hazeTint: [1.18, 0.86, 0.90], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff3344', intensity: 1.1 },
                 stage1: { color: '#ff8800', intensity: 2.4, distance: 40 },
                 stage2: { color: '#ff0055', intensity: 2.4, distance: 40 },
@@ -676,6 +688,7 @@ export class AmbiancePanel {
                 fogFar: 360,
                 ambient: { color: '#42173a', intensity: 0.165 },
                 hemi: { skyColor: '#6e1d5e', groundColor: '#1a0717', intensity: 0.935 },
+                hazeTint: [1.12, 0.84, 1.14], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff2299', intensity: 1.2 },
                 stage1: { color: '#ff00a0', intensity: 2.7, distance: 42 },
                 stage2: { color: '#00f5d4', intensity: 2.7, distance: 42 },
@@ -689,6 +702,7 @@ export class AmbiancePanel {
                 fogFar: 340,
                 ambient: { color: '#542d13', intensity: 0.15 },
                 hemi: { skyColor: '#783e18', groundColor: '#211005', intensity: 0.85 },
+                hazeTint: [1.16, 0.98, 0.82], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff9933', intensity: 1.25 },
                 stage1: { color: '#ff4400', intensity: 2.3, distance: 38 },
                 stage2: { color: '#ffcc00', intensity: 2.3, distance: 38 },
@@ -702,6 +716,7 @@ export class AmbiancePanel {
                 fogFar: 310,
                 ambient: { color: '#38222c', intensity: 0.135 },
                 hemi: { skyColor: '#4d2d3c', groundColor: '#140c10', intensity: 0.765 },
+                hazeTint: [1.08, 0.94, 0.94], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#e88866', intensity: 1.0 },
                 stage1: { color: '#e63946', intensity: 2.2, distance: 36 },
                 stage2: { color: '#457b9d', intensity: 2.2, distance: 36 },
@@ -719,6 +734,7 @@ export class AmbiancePanel {
                 fogFar: 360,
                 ambient: { color: '#141d2e', intensity: 0.075 },
                 hemi: { skyColor: '#0e1626', groundColor: '#070a10', intensity: 0.375 },
+                hazeTint: [0.90, 0.97, 1.14], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#7ba7e8', intensity: 0.45 },
                 stage1: { color: '#ff1166', intensity: 2.8, distance: 45 },
                 stage2: { color: '#00ccff', intensity: 2.8, distance: 45 },
@@ -732,6 +748,7 @@ export class AmbiancePanel {
                 fogFar: 380,
                 ambient: { color: '#090d18', intensity: 0.045 },
                 hemi: { skyColor: '#0b1122', groundColor: '#030508', intensity: 0.255 },
+                hazeTint: [0.88, 0.94, 1.16], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#6888c0', intensity: 0.3 },
                 stage1: { color: '#ff0055', intensity: 3.2, distance: 48 },
                 stage2: { color: '#00e5ff', intensity: 3.2, distance: 48 },
@@ -745,6 +762,7 @@ export class AmbiancePanel {
                 fogFar: 340,
                 ambient: { color: '#08252a', intensity: 0.09 },
                 hemi: { skyColor: '#093a38', groundColor: '#030d0d', intensity: 0.56 },
+                hazeTint: [0.86, 1.12, 1.02], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#44ffcc', intensity: 0.55 },
                 stage1: { color: '#00ffaa', intensity: 3.0, distance: 45 },
                 stage2: { color: '#aa00ff', intensity: 3.0, distance: 45 },
@@ -758,6 +776,7 @@ export class AmbiancePanel {
                 fogFar: 420,
                 ambient: { color: '#162238', intensity: 0.105 },
                 hemi: { skyColor: '#1d2e4d', groundColor: '#09101c', intensity: 0.595 },
+                hazeTint: [0.94, 0.99, 1.08], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#b8d5ff', intensity: 0.85 },
                 stage1: { color: '#ff3388', intensity: 2.6, distance: 42 },
                 stage2: { color: '#3388ff', intensity: 2.6, distance: 42 },
@@ -771,6 +790,7 @@ export class AmbiancePanel {
                 fogFar: 320,
                 ambient: { color: '#250f38', intensity: 0.12 },
                 hemi: { skyColor: '#3d1252', groundColor: '#07020d', intensity: 0.68 },
+                hazeTint: [1.06, 0.84, 1.18], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#ff00aa', intensity: 0.6 },
                 stage1: { color: '#ff0077', intensity: 3.5, distance: 50 },
                 stage2: { color: '#00f0ff', intensity: 3.5, distance: 50 },
@@ -784,6 +804,7 @@ export class AmbiancePanel {
                 fogFar: 280,
                 ambient: { color: '#141428', intensity: 0.075 },
                 hemi: { skyColor: '#1e1c3a', groundColor: '#05050a', intensity: 0.425 },
+                hazeTint: [0.92, 0.94, 1.14], // albédo du brouillard de salle (R, V, B)
                 dir: { color: '#9d88ff', intensity: 0.7 },
                 stage1: { color: '#ffea00', intensity: 3.4, distance: 48 },
                 stage2: { color: '#7700ff', intensity: 3.4, distance: 48 },
