@@ -228,7 +228,7 @@ function restoreContextQueueOrder(contextQueue, playlistTracks) {
 // Convert a track from playlist or raw format to a standard queue item
 function formatPlaylistTrackForQueue(t) {
     if (!t) return null;
-    const isDecoded = _decodedAudioBuffers.has(t.id) || _decodedAudioBuffers.has(t.name);
+    const isDecoded = _isTrackReady(t);
     return {
         id: t.id,
         name: t.name,
@@ -281,6 +281,55 @@ function setBufferOnEngine(buf) {
     controls.setHasTrack(Boolean(buf));
 }
 
+// ─── Budget mémoire des morceaux décodés ─────────────────────────
+// Un morceau décodé pèse ~10 Mo par minute (stéréo float32). On ne garde décodés que le morceau
+// en cours + les DECODE_AHEAD suivants de la file. Les autres restent en cache sous forme de
+// fichier compressé (téléchargé) et sont décodés à la demande.
+const DECODE_AHEAD = 4;
+
+function _isTrackDecoded(t) {
+    return Boolean(t) && (_decodedAudioBuffers.has(t.id) || _decodedAudioBuffers.has(t.name));
+}
+
+function _hasTrackFile(t) {
+    return Boolean(t) && Boolean(t.file || (t.id && _localAudioFileCache.has(t.id)) || (t.name && _localAudioFileCache.has(t.name)));
+}
+
+/** Prêt côté interface (pas de spinner) : décodé, ou fichier déjà présent localement. */
+function _isTrackReady(t) {
+    return _isTrackDecoded(t) || _hasTrackFile(t);
+}
+
+/**
+ * Le préchargement doit-il traiter ce morceau (position idx dans la file) ?
+ * - Dans la fenêtre DECODE_AHEAD : oui s'il n'est pas décodé.
+ * - Au-delà : seulement s'il n'est pas encore téléchargé (on garde le fichier compressé, sans décoder).
+ */
+function _needsPrefetch(item, idx) {
+    if (!item) return false;
+    if (idx < DECODE_AHEAD) return !_isTrackDecoded(item);
+    return !_hasTrackFile(item) && Boolean(item.url || item.id);
+}
+
+/** Libère les buffers décodés hors fenêtre (jamais le morceau en cours ni le buffer du moteur). */
+function _evictDecodedBuffers() {
+    const keep = new Set();
+    const tracks = [_currentPlayingTrack, ...getUpcomingPlaybackQueue().slice(0, DECODE_AHEAD)];
+    for (const t of tracks) {
+        if (!t) continue;
+        if (t.id) keep.add(t.id);
+        if (t.name) keep.add(t.name);
+    }
+    for (const [k, buf] of _decodedAudioBuffers) {
+        if (keep.has(k) || buf === audioEngine.buffer) continue;
+        _decodedAudioBuffers.delete(k);
+    }
+}
+
+// Contexte de décodage unique si le moteur audio n'est pas encore initialisé
+// (avant : un nouvel AudioContext par décodage, jamais fermé)
+let _decodeFallbackCtx = null;
+
 async function getOrDecodeAudioBuffer(file, trackId = null) {
     if (!file) return null;
     const key = trackId || file.name;
@@ -296,13 +345,20 @@ async function getOrDecodeAudioBuffer(file, trackId = null) {
 
     const promise = (async () => {
         try {
-            const AudioCtx = window.AudioContext || window.webkitAudioContext;
-            const ctx = audioEngine.ctx || new AudioCtx();
+            let ctx = audioEngine.ctx;
+            if (!ctx) {
+                if (!_decodeFallbackCtx) {
+                    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+                    _decodeFallbackCtx = new AudioCtx();
+                }
+                ctx = _decodeFallbackCtx;
+            }
             const arrayBuf = await file.arrayBuffer();
             const audioBuf = await ctx.decodeAudioData(arrayBuf);
             if (trackId) _decodedAudioBuffers.set(trackId, audioBuf);
             _decodedAudioBuffers.set(file.name, audioBuf);
             console.log(`[Audio] Pre-decoded track in memory: ${file.name}`);
+            _evictDecodedBuffers();
 
             const allTracks = [_currentPlayingTrack, ..._manualQueue, ..._contextQueue].filter(Boolean);
             for (const item of allTracks) {
@@ -334,7 +390,9 @@ async function getOrDecodeAudioBuffer(file, trackId = null) {
 }
 
 function preloadAndDecodeAudio(file, trackId = null) {
-    getOrDecodeAudioBuffer(file, trackId);
+    // Le décodage est confié au préchargement, qui ne décode que la fenêtre DECODE_AHEAD
+    // (le fichier est déjà en cache local, donc l'interface ne montre pas de chargement).
+    setTimeout(() => startBackgroundPrefetch(), 0);
 }
 
 // ─── Dynamic Priority Queue Audio Downloader & Prefetcher ─────────
@@ -434,10 +492,7 @@ function startBackgroundPrefetch() {
             _currentPrefetchItem = null;
         } else {
             // Le morceau est toujours dans la file, mais un autre morceau a-t-il été placé devant lui ?
-            const firstNeeded = queue.find(item => {
-                if (!item) return false;
-                return !(_decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name));
-            });
+            const firstNeeded = queue.find((item, idx) => _needsPrefetch(item, idx));
 
             if (firstNeeded && ((firstNeeded.id && firstNeeded.id !== _currentPrefetchItem.id) || firstNeeded.name !== _currentPrefetchItem.name)) {
                 // L'ordre a changé : un autre morceau doit être joué avant, interruption et bascule immédiate
@@ -450,6 +505,8 @@ function startBackgroundPrefetch() {
             }
         }
     }
+
+    _evictDecodedBuffers();
 
     // 2. Réveiller la boucle de téléchargement si elle est en pause
     if (_prefetchWakeupResolver) {
@@ -482,13 +539,12 @@ async function _runPrefetchLoop() {
             }
 
             const queue = getUpcomingPlaybackQueue();
+            _evictDecodedBuffers();
 
-            // Trouver le tout premier morceau dans l'ordre strict de lecture qui n'est pas encore décodé en mémoire
-            const nextItem = queue.find(item => {
-                if (!item) return false;
-                const isDecoded = _decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name);
-                return !isDecoded;
-            });
+            // Premier morceau (ordre strict de lecture) à traiter : décodage dans la fenêtre
+            // DECODE_AHEAD, simple téléchargement du fichier compressé au-delà
+            const nextIdx = queue.findIndex((item, idx) => _needsPrefetch(item, idx));
+            const nextItem = nextIdx >= 0 ? queue[nextIdx] : null;
 
             // Si tous les morceaux à venir sont prêts, se mettre en attente
             if (!nextItem) {
@@ -499,10 +555,7 @@ async function _runPrefetchLoop() {
                 _prefetchWakeupResolver = null;
 
                 // Re-vérifier : si toujours rien à charger, mettre fin à la boucle
-                const recheck = getUpcomingPlaybackQueue().find(item => {
-                    if (!item) return false;
-                    return !(_decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name));
-                });
+                const recheck = getUpcomingPlaybackQueue().find((item, idx) => _needsPrefetch(item, idx));
                 if (!recheck) break;
                 continue;
             }
@@ -565,6 +618,13 @@ async function _runPrefetchLoop() {
                     _currentPrefetchAbortController = null;
                     _currentPrefetchItem = null;
                 }
+            }
+
+            // Hors fenêtre : fichier compressé téléchargé, pas de décodage (économie mémoire)
+            if (file && nextIdx >= DECODE_AHEAD) {
+                nextItem.loading = false;
+                syncQueueToUI();
+                file = null;
             }
 
             // Décoder le buffer audio
@@ -755,7 +815,7 @@ try {
 
         if (state.currentTrack) {
             const cur = state.currentTrack;
-            const isDecoded = _decodedAudioBuffers.has(cur.id) || _decodedAudioBuffers.has(cur.name);
+            const isDecoded = _isTrackReady(cur);
             _currentPlayingTrack = {
                 id: cur.id,
                 name: cur.name,
@@ -778,7 +838,7 @@ try {
 
         // Priority manual queue ("À suivre dans la file d'attente")
         _manualQueue = (state.manualQueue || []).map(item => {
-            const isDecoded = _decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name);
+            const isDecoded = _isTrackReady(item);
             return {
                 id: item.id,
                 name: item.name,
@@ -791,7 +851,7 @@ try {
 
         // Context upcoming queue ("À suivre")
         _contextQueue = (state.contextQueue || []).map(item => {
-            const isDecoded = _decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name);
+            const isDecoded = _isTrackReady(item);
             return {
                 id: item.id,
                 name: item.name,
@@ -827,7 +887,7 @@ try {
     mp.onQueueSync((queue, currentIndex, addedTrack, loadedPlaylistId, loadedPlaylistName, isNewPlaylistLoad) => {
         if (_localQueueVersion === 0 && queue && queue.length > 0) {
             const mapped = queue.map(item => {
-                const isDecoded = _decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name);
+                const isDecoded = _isTrackReady(item);
                 return {
                     id: item.id,
                     name: item.name,
@@ -1585,7 +1645,7 @@ if (_mpReady) {
     if (hasRoomTrack) {
         if (mp.currentTrack) {
             const cur = mp.currentTrack;
-            const isDecoded = _decodedAudioBuffers.has(cur.id) || _decodedAudioBuffers.has(cur.name);
+            const isDecoded = _isTrackReady(cur);
             _currentPlayingTrack = {
                 id: cur.id,
                 name: cur.name,
@@ -1601,7 +1661,7 @@ if (_mpReady) {
         }
         if (mp.manualQueue && mp.manualQueue.length > 0) {
             _manualQueue = mp.manualQueue.map(item => {
-                const isDecoded = _decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name);
+                const isDecoded = _isTrackReady(item);
                 return {
                     id: item.id,
                     name: item.name,
@@ -1616,7 +1676,7 @@ if (_mpReady) {
         }
         if (mp.contextQueue && mp.contextQueue.length > 0) {
             _contextQueue = mp.contextQueue.map(item => {
-                const isDecoded = _decodedAudioBuffers.has(item.id) || _decodedAudioBuffers.has(item.name);
+                const isDecoded = _isTrackReady(item);
                 return {
                     id: item.id,
                     name: item.name,
@@ -2067,7 +2127,7 @@ async function addFilesToQueue(files, playImmediatelyIfEmpty = false) {
             id: trackId,
             name: f.name,
             file: f,
-            loading: !(_decodedAudioBuffers.has(trackId) || _decodedAudioBuffers.has(f.name))
+            loading: false // fichier local : prêt (décodé à la demande)
         };
     });
 
@@ -2233,7 +2293,7 @@ controls.onPlaylistTrackPlay(async (playlistId, trackIndex, track) => {
 
 // 3. Bouton ➕ sur un morceau de playlist -> ajout UNIQUEMENT de ce morceau à la file manuelle prioritaire
 controls.onPlaylistTrackAdd(async (track) => {
-    const isDecoded = _decodedAudioBuffers.has(track.id) || _decodedAudioBuffers.has(track.name);
+    const isDecoded = _isTrackReady(track);
     const item = {
         id: track.id,
         name: track.name,
@@ -2549,7 +2609,7 @@ controls.onPlaylistQueueAll(async (playlistId) => {
 
     const itemsToAdd = [];
     for (const track of pl.tracks) {
-        const isDecoded = _decodedAudioBuffers.has(track.id) || _decodedAudioBuffers.has(track.name);
+        const isDecoded = _isTrackReady(track);
         itemsToAdd.push({
             id: track.id,
             name: track.name,
