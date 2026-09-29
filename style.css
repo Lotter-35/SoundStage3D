@@ -3440,8 +3440,3 @@ body.cinematic-mode .emote-menu,
 body.cinematic-mode #debug-container {
     display: none !important;
 }
-
-/* Jauges de niveau (debug) : jamais affichées */
-#meters {
-    display: none !important;
-}
