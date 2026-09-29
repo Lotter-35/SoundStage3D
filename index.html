@@ -17,6 +17,46 @@
     </script>
 </head>
 <body>
+    <!-- ─── Écran de chargement (noir, barre blanche en bas, texte de l'étape en cours) ─── -->
+    <div id="boot-screen">
+        <div id="boot-text">Chargement du code…</div>
+        <div id="boot-bar"><div id="boot-bar-fill"></div></div>
+    </div>
+    <style>
+        #boot-screen { position: fixed; inset: 0; background: #000; z-index: 2147483647; opacity: 1; transition: opacity 0.4s ease; }
+        #boot-text { position: absolute; left: 0; right: 0; bottom: 34px; text-align: center; color: #fff;
+            font: 12px/1.2 'Segoe UI', system-ui, sans-serif; letter-spacing: 0.02em; }
+        #boot-bar { position: absolute; left: 50%; bottom: 24px; width: min(420px, 60vw); height: 3px; transform: translateX(-50%);
+            background: rgba(255, 255, 255, 0.15); overflow: hidden; }
+        #boot-bar-fill { width: 3%; height: 100%; background: #fff; transition: width 0.25s ease-out; }
+    </style>
+    <script>
+        (function () {
+            var screen = document.getElementById('boot-screen');
+            var fill = document.getElementById('boot-bar-fill');
+            var text = document.getElementById('boot-text');
+            var cur = 0.03;
+            var finished = false;
+            window.__boot = {
+                set: function (fraction, label) {
+                    if (finished) return;
+                    if (fraction > cur) cur = fraction;
+                    fill.style.width = Math.min(100, cur * 100) + '%';
+                    if (label) text.textContent = label;
+                },
+                done: function () {
+                    if (finished) return;
+                    finished = true;
+                    fill.style.width = '100%';
+                    screen.style.opacity = '0';
+                    setTimeout(function () { if (screen.parentNode) screen.parentNode.removeChild(screen); }, 500);
+                }
+            };
+            function fail() { if (!finished) text.textContent = 'Erreur au chargement (voir la console, F12)'; }
+            window.addEventListener('error', fail);
+            window.addEventListener('unhandledrejection', fail);
+        })();
+    </script>
     <div id="hud">
         <div id="hud-center">
         </div>
@@ -308,6 +348,6 @@
     <div id="dazzle-overlay"    style="display:none"></div>
     <div id="afterimage-overlay" style="display:none"></div>
 
-    <script type="module" src="src/main.js?v=340"></script>
+    <script type="module" src="src/main.js?v=352"></script>
 </body>
 </html>

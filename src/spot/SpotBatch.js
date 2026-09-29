@@ -16,7 +16,7 @@ import { enableLightsBloom } from '../laser/LaserManager.js';
 import { getGoboTexture } from './SpotGoboLibrary.js';
 import {
     SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial
-} from './SpotShaders.js';
+} from './SpotShaders.js?v=2';
 
 export const VOLUME_STRIDE = 12; // lentille.xyz, ligne | axe.xyz, longueur | droite.xyz, poids
 export const GLARE_STRIDE = 8;   // lentille.xyz, ligne | axe.xyz, poids
@@ -244,6 +244,7 @@ export class SpotVolumePass extends Pass {
         const h = Math.max(1, Math.round(height * this.resolutionScale));
         this.volumeTarget.setSize(w, h);
         this.batch.volumeMaterial.uniforms.uInvRes.value.set(1 / w, 1 / h);
+        this._composite.uniforms.uVolRes.value.set(w, h);
     }
 
     render(renderer, writeBuffer, readBuffer) {
@@ -273,7 +274,12 @@ export class SpotVolumePass extends Pass {
             renderer.autoClear = oldAutoClear;
             shadowMap.autoUpdate = oldShadowAuto;
             this._composite.uniforms.tVolume.value = this.volumeTarget.texture;
+            this._composite.uniforms.tDepth.value = readBuffer.depthTexture;
+            this._composite.uniforms.uNear.value = cam.near;
+            this._composite.uniforms.uFar.value = cam.far;
+            this._composite.uniforms.uUseDepth.value = this.resolutionScale < 0.999 ? 1 : 0;
         } else {
+            this._composite.uniforms.uUseDepth.value = 0;
             // Rien à ajouter : simple recopie
             this._composite.uniforms.tVolume.value = this._black;
         }

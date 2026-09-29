@@ -31,7 +31,7 @@ function addSolid(kind, x0, x1, y0, y1, z0, z1) {
 addSolid('stage', -15, 15, 0, 3, -10, 0);
 
 // Mur de fond : BoxGeometry(30, 20, 1.5) en (0, 10, -10.75)
-addSolid('wall', -15, 15, 0, 20, -11.5, -10);
+addSolid('wall', -15, 15, 0, 20, -11.5, -9.95);
 
 // Toit : BoxGeometry(34, 0.3, 14) en (0, 20, -3)
 addSolid('roof', -17, 17, 19.85, 20.15, -10, 4);

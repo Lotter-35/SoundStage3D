@@ -17,7 +17,7 @@
 
 import * as THREE from 'three';
 import { makeDraggable } from '../../ui/draggable.js';
-import { SpotProgrammer, GROUP_COUNT } from './SpotProgrammer.js';
+import { SpotProgrammer, GROUP_COUNT } from './SpotProgrammer.js?v=2';
 import { SpotAimTarget } from './SpotAimTarget.js';
 import { SpotSelectionHighlight } from './SpotSelectionHighlight.js';
 import { FX_TYPES, FX_ORDERS } from './SpotEffects.js';

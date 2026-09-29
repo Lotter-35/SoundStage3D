@@ -113,7 +113,6 @@ export class PlayerAvatars {
         this._avatars = new Map();
         this._colorIdx = 0;
 
-        loadSharedModel().catch(err => console.warn('[PlayerAvatars] preload failed:', err));
     }
 
     /**

@@ -15,7 +15,7 @@ import * as THREE from 'three';
 import { defaultSpotParams, SPOT_PARAMS_SCHEMA } from './config/spotParams.js';
 import { SpotMotion } from './SpotMotion.js';
 import { decode, getFootprint } from './SpotProfile.js';
-import { getSpotHousingInstancer, TILT_PIVOT_Y, LENS_OFFSET, LENS_RADIUS } from './SpotHousing.js';
+import { getSpotHousingInstancer, TILT_PIVOT_Y, LENS_OFFSET, LENS_RADIUS } from './SpotHousing.js?v=2';
 import { findConeOccluders, OCCLUDERS_PER_SPOT } from './SpotOcclusion.js';
 
 /** Portée de rendu des faisceaux (m) */

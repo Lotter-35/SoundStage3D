@@ -11,9 +11,18 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
-import { getGroundHeight } from './collision.js?v=155';
+import { getGroundHeight } from './collision.js?v=156';
 import { DanceManager } from './DanceManager.js';
 import { tintAvatarMaterial } from './avatarTint.js?v=3';
+
+// Animations de locomotion, chargées à la première utilisation
+const LOCO_FILES = {
+    'walk':          ['src/assets/animations/Standard Walk.fbx', 'src/assets/animations/locomotion/walking.fbx'],
+    'run':           ['src/assets/animations/Running.fbx', 'src/assets/animations/locomotion/running.fbx'],
+    'walk-backward': ['src/assets/animations/locomotion/walking-backward.fbx', 'src/assets/animations/walking-backward.fbx'],
+    'sitting':       ['src/assets/animations/locomotion/sitting.fbx'],
+    'standing_up':   ['src/assets/animations/dance/Standing Up.fbx', 'src/assets/animations/Standing Up.fbx'],
+};
 
 const MODEL_PATH = 'src/assets/models/Ybot.fbx';
 
@@ -202,79 +211,7 @@ export class Character3D {
                 this.actions['idle'] = idleAction;
             }
 
-            // Charger les animations de locomotion : marche (Standard Walk), course (Running) et marche arrière (walking-backward)
-            const fbxLoader = new FBXLoader();
-            const locoFiles = [
-                {
-                    name: 'walk',
-                    files: [
-                        'src/assets/animations/Standard Walk.fbx',
-                        'src/assets/animations/locomotion/walking.fbx'
-                    ]
-                },
-                {
-                    name: 'run',
-                    files: [
-                        'src/assets/animations/Running.fbx',
-                        'src/assets/animations/locomotion/running.fbx'
-                    ]
-                },
-                {
-                    name: 'walk-backward',
-                    files: [
-                        'src/assets/animations/locomotion/walking-backward.fbx',
-                        'src/assets/animations/walking-backward.fbx'
-                    ]
-                },
-                {
-                    name: 'sitting',
-                    files: [
-                        'src/assets/animations/locomotion/sitting.fbx'
-                    ]
-                },
-                {
-                    name: 'standing_up',
-                    files: [
-                        'src/assets/animations/dance/Standing Up.fbx',
-                        'src/assets/animations/Standing Up.fbx'
-                    ]
-                }
-            ];
-
-            await Promise.all(locoFiles.map(async ({ name, files }) => {
-                for (const file of files) {
-                    try {
-                        const animFbx = await fbxLoader.loadAsync(file);
-                        if (animFbx.animations && animFbx.animations.length > 0) {
-                            const rawClip = animFbx.animations[0];
-                            const clip = DanceManager._retargetClip(rawClip, this.model, animFbx);
-                            clip.name = name;
-
-                            // IMPÉRATIF : Supprimer les pistes de position sur la marche et la course (Root Motion).
-                            // Pour 'sitting' et 'standing_up', DanceManager._retargetClip conserve déjà uniquement la hauteur Y des Hips
-                            // et recentre X et Z, ce qui permet au personnage d'être au niveau du sol sans glisser ni flotter !
-                            if (name !== 'sitting' && name !== 'standing_up') {
-                                clip.tracks = clip.tracks.filter(t => !t.name.toLowerCase().includes('position'));
-                            }
-
-                            const action = this.mixer.clipAction(clip);
-                            if (name === 'sitting' || name === 'standing_up') {
-                                action.clampWhenFinished = true;
-                                if (name === 'standing_up') {
-                                    action.setLoop(THREE.LoopOnce, 1);
-                                }
-                            }
-                            const animSpeed = (name === 'walk') ? WALK_ANIM_SPEED : (name === 'run') ? RUN_ANIM_SPEED : (name === 'walk-backward') ? WALK_BACKWARD_ANIM_SPEED : 1.0;
-                            action.setEffectiveTimeScale(animSpeed);
-                            this.actions[name] = action;
-                            console.log(`[Character3D] Animation locomotion '${name}' chargée (${clip.tracks.length} pistes, vitesse ${animSpeed}x) depuis ${file}`);
-                            break;
-                        }
-                    } catch (e) {
-                        console.warn(`[Character3D] Erreur chargement animation locomotion '${name}' depuis ${file} :`, e);
-                    }
-                }
-            }));
+            // Les animations de locomotion (marche, course, assis, relevage) sont chargées à la demande (_ensureLoco)
 
             // Démarrer l'animation idle par défaut
             const defaultAnim = this.actions['idle'] || Object.values(this.actions)[0];
@@ -295,6 +232,57 @@ export class Character3D {
             }
         } catch (err) {
             console.error('[Character3D] Erreur de chargement du modèle 3D :', err);
+        }
+    }
+
+    /**
+     * Charge une animation de locomotion la première fois qu'elle est nécessaire (marche, course, assis, relevage).
+     * Tant qu'elle n'est pas prête, le personnage reste sur l'animation courante.
+     * @param {string} name 'walk' | 'run' | 'walk-backward' | 'sitting' | 'standing_up'
+     */
+    _ensureLoco(name) {
+        if (!this.model || !this.mixer || this.actions[name]) return;
+        const files = LOCO_FILES[name];
+        if (!files) return;
+        if (!this._locoRequested) this._locoRequested = new Set();
+        if (this._locoRequested.has(name)) return;
+        this._locoRequested.add(name);
+        this._loadLoco(name, files);
+    }
+
+    async _loadLoco(name, files) {
+        const fbxLoader = new FBXLoader();
+        for (const file of files) {
+            try {
+                const animFbx = await fbxLoader.loadAsync(file);
+                if (!this.model || !this.mixer) return;
+                if (animFbx.animations && animFbx.animations.length > 0) {
+                    const rawClip = animFbx.animations[0];
+                    const clip = DanceManager._retargetClip(rawClip, this.model, animFbx);
+                    clip.name = name;
+
+                    // Supprimer les pistes de position sur la marche et la course (Root Motion).
+                    // Pour 'sitting' et 'standing_up', DanceManager._retargetClip conserve déjà uniquement la hauteur Y des Hips
+                    // et recentre X et Z, ce qui permet au personnage d'être au niveau du sol sans glisser ni flotter.
+                    if (name !== 'sitting' && name !== 'standing_up') {
+                        clip.tracks = clip.tracks.filter(t => !t.name.toLowerCase().includes('position'));
+                    }
+
+                    const action = this.mixer.clipAction(clip);
+                    if (name === 'sitting' || name === 'standing_up') {
+                        action.clampWhenFinished = true;
+                        if (name === 'standing_up') {
+                            action.setLoop(THREE.LoopOnce, 1);
+                        }
+                    }
+                    const animSpeed = (name === 'walk') ? WALK_ANIM_SPEED : (name === 'run') ? RUN_ANIM_SPEED : (name === 'walk-backward') ? WALK_BACKWARD_ANIM_SPEED : 1.0;
+                    action.setEffectiveTimeScale(animSpeed);
+                    this.actions[name] = action;
+                    return;
+                }
+            } catch (e) {
+                console.warn(`[Character3D] Erreur chargement animation locomotion '${name}' depuis ${file} :`, e);
+            }
         }
     }
 
@@ -484,6 +472,7 @@ export class Character3D {
         }
 
         // Mettre à jour l'identifiant de la danse immédiatement pour que l'UI reflète le choix sans délai
+        this._ensureLoco('standing_up');
         const previousDanceId = this.currentDanceId;
         this.currentDanceId = normId;
         this.currentActionName = normId;
@@ -736,6 +725,13 @@ export class Character3D {
 
             // ── 4. Machine à états d'animations ──────────────────────
             if (this.mixer) {
+                // Animations chargées à la première utilisation
+                if (isMoving && currentSpeed > 0.1) {
+                    this._ensureLoco('walk');
+                    if (currentSpeed > 6.0 || this.isFlying) this._ensureLoco('run');
+                }
+                if (!this.onGround && !this.isFlying) { this._ensureLoco('walk'); this._ensureLoco('run'); }
+                if (this.isSitting) { this._ensureLoco('sitting'); this._ensureLoco('standing_up'); }
                 // Détecter l'impact au sol lors de Dying pour bloquer le mouvement après 0.5s de chute (15 frames à 30fps)
                 if (this.isDead && this.currentDanceId && this.currentDanceId.toLowerCase().includes('dying')) {
                     const dyingAction = this.actions[this.currentDanceId];

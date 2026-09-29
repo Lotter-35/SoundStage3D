@@ -12,7 +12,8 @@ export async function loadStageSpeakers(scene) {
     scene.add(stageSpeakersGroup);
 
     const gltfLoader = new GLTFLoader();
-    const cacheBust = Date.now();
+    // Version fixe (à incrémenter quand un modèle change) : un horodatage forçait le re-téléchargement de ~17 Mo à chaque chargement
+    const cacheBust = 1;
 
     // ─────────────────────────────────────────────────────────────────
     // 1. SUBWOOFERS (subwoofer.glb)
@@ -95,8 +96,9 @@ export async function loadStageSpeakers(scene) {
             for (const xPos of subXPositions) {
                 // Pile de 3 caissons superposés
                 for (let stackIndex = 0; stackIndex < 3; stackIndex++) {
-                    const posY = groundOffsetY + stackIndex * subHeight;
-                    dummy.position.set(xPos, posY, backAlignZ);
+                    // Léger chevauchement (sol, caisson du dessus, face avant de la scène) : pas de fente de lumière
+                    const posY = groundOffsetY - 0.01 + stackIndex * (subHeight - 0.012);
+                    dummy.position.set(xPos, posY, backAlignZ - 0.02);
                     dummy.rotation.set(Math.PI, Math.PI, Math.PI);
                     dummy.scale.setScalar(subScale);
                     dummy.updateMatrix();

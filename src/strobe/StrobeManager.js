@@ -9,7 +9,8 @@
  */
 
 import * as THREE from 'three';
-import { StrobeLight } from './StrobeLight.js?v=10';
+import { StrobeLight } from './StrobeLight.js?v=13';
+import { StrobeLightPool } from './StrobeLightPool.js?v=4';
 
 export class StrobeManager {
     /**
@@ -23,6 +24,7 @@ export class StrobeManager {
         this.camera   = camera;
         this.renderer = renderer;
 
+        this.lightPool = new StrobeLightPool(scene); // lumières réelles à nombre constant (aucune recompilation à la pose)
         this._strobes = new Map(); // Map<id, StrobeLight>
         this._nextNumber = 1;
         this._emit = null;         // émission multijoueur (branchée par l'AmbiancePanel)
@@ -73,13 +75,6 @@ export class StrobeManager {
             });
         }
 
-        // Warm-up / Précompilation des shaders et géométries sur le GPU
-        if (this.renderer && this.camera && typeof this.renderer.compile === 'function') {
-            try {
-                this.renderer.compile(strobe.group, this.camera);
-            } catch (_) {}
-        }
-
         return { id, strobe };
     }
 
@@ -91,6 +86,7 @@ export class StrobeManager {
         const numId = typeof id === 'number' ? id : parseInt(id, 10);
         const strobe = this._strobes.get(numId);
         if (strobe) {
+            this.lightPool.release(strobe);
             strobe.dispose();
             this._strobes.delete(numId);
             if (this._emit) this._emit({ category: 'strobe_remove', id: numId });
@@ -181,6 +177,7 @@ export class StrobeManager {
         for (const strobe of this._strobes.values()) {
             strobe.update(dt);
         }
+        this.lightPool.update(this._strobes.values(), this.camera, dt);
     }
 
     /**
@@ -191,5 +188,6 @@ export class StrobeManager {
             strobe.dispose();
         }
         this._strobes.clear();
+        this.lightPool.dispose();
     }
 }

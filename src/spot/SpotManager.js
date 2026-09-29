@@ -12,10 +12,10 @@
  * ─────────────────────────────────────────────────────────────
  */
 
-import { SpotBatch, SpotVolumePass } from './SpotBatch.js';
-import { SpotFixture } from './SpotFixture.js';
-import { SpotLightPool } from './SpotLightPool.js';
-import { getSpotHousingInstancer } from './SpotHousing.js';
+import { SpotBatch, SpotVolumePass } from './SpotBatch.js?v=2';
+import { SpotFixture } from './SpotFixture.js?v=2';
+import { SpotLightPool } from './SpotLightPool.js?v=2';
+import { getSpotHousingInstancer } from './SpotHousing.js?v=2';
 import { DmxPatch } from '../dmx/DmxPatch.js';
 import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
 import { SpotEffects } from './console/SpotEffects.js';

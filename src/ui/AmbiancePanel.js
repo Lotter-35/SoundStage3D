@@ -15,7 +15,7 @@ import { RectAreaLightHelper } from 'three/addons/helpers/RectAreaLightHelper.js
 import { makeDraggable } from './draggable.js';
 import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js?v=298';
 import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=200';
-import { StrobeInspectorPanel } from '../strobe/ui/StrobeInspectorPanel.js?v=7';
+import { StrobeInspectorPanel } from '../strobe/ui/StrobeInspectorPanel.js?v=8';
 import { SpotInspectorPanel } from '../spot/ui/SpotInspectorPanel.js';
 import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
@@ -476,7 +476,7 @@ export class AmbiancePanel {
                 fogFar: 400,
                 ambient: { color: '#98ddbc', intensity: 0.1, enabled: true },
                 hemi: { skyColor: '#87ceeb', groundColor: '#4a7a2a', intensity: 1.0, enabled: true },
-                dir: { color: '#fff5e0', intensity: 3.0, shadowMapSize: 4096, enabled: true },
+                dir: { color: '#fff5e0', intensity: 3.0, shadowMapSize: 2048, enabled: true },
                 stage1: { color: '#ff3366', intensity: 0.5, distance: 30 },
                 stage2: { color: '#3366ff', intensity: 0.5, distance: 30 },
             },
@@ -1891,11 +1891,21 @@ export class AmbiancePanel {
         }
     }
 
+    /** Vrai (une seule fois) si le dernier clic vient de sélectionner un projecteur : main.js ne doit pas reverrouiller la souris. */
+    consumeFixturePick() {
+        const picked = performance.now() - (this._lastFixturePick || -1e9) < 2000;
+        this._lastFixturePick = 0;
+        return picked;
+    }
+
     handleCanvasClick(event) {
         const isLaserOpen = Boolean(this._laserInspectorPanel && this._laserInspectorPanel.isOpen);
         const isStrobeOpen = Boolean(this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen);
         const isSpotOpen = Boolean(this._spotInspectorPanel && this._spotInspectorPanel.isOpen);
-        if ((!this.isOpen && !isLaserOpen && !isStrobeOpen && !isSpotOpen) || this.isDraggingGizmo) return;
+        // Mode curseur (Tab / Échap) : le clic sur une lampe ouvre directement ses réglages, même panneau Ambiance fermé
+        const cursorMode = Boolean(!this.isOpen && this.listener && this.listener.controls && !this.listener.controls.isLocked
+            && !(this.spotConsole && this.spotConsole.isOpen));
+        if ((!this.isOpen && !isLaserOpen && !isStrobeOpen && !isSpotOpen && !cursorMode) || this.isDraggingGizmo) return;
         // Si un drag de Gizmo vient tout juste de se terminer, ne pas interpréter comme un clic
         if (performance.now() - (this._dragEndTime || 0) < 120) return;
         // Si la souris survole ou manipule une flèche du Gizmo, ignorer la sélection
@@ -1915,6 +1925,7 @@ export class AmbiancePanel {
                 const hitObj = laserIntersects[0].object;
                 const laser = this.laserManager.getLaserFromObject(hitObj);
                 if (laser) {
+                    this._lastFixturePick = performance.now();
                     this.selectLaser(laser);
                     return;
                 }
@@ -1929,6 +1940,7 @@ export class AmbiancePanel {
                 const hitObj = strobeIntersects[0].object;
                 const strobe = this.strobeManager.getStrobeFromObject(hitObj);
                 if (strobe) {
+                    this._lastFixturePick = performance.now();
                     this.selectStrobe(strobe);
                     return;
                 }
@@ -1941,10 +1953,21 @@ export class AmbiancePanel {
             if (spotHits.length > 0) {
                 const spot = this.spotManager.getSpotFromObject(spotHits[0].object);
                 if (spot) {
+                    this._lastFixturePick = performance.now();
                     this.selectSpot(spot);
                     return;
                 }
             }
+        }
+
+        // Panneau Ambiance fermé : seuls les projecteurs sont sélectionnables (les repères de lumière sont masqués)
+        if (!this.isOpen) {
+            if (this.selectedLaser || this.selectedStrobe || this.selectedSpot) {
+                this.deselectLaser();
+                this.deselectStrobe();
+                this.deselectSpot();
+            }
+            return;
         }
 
         // Tester l'intersection avec tous les repères de lumière
@@ -2246,7 +2269,7 @@ export class AmbiancePanel {
                 castShadow: false,
             };
         } else if (light.isDirectionalLight || name.includes('Soleil')) {
-            const dir = preset?.dir || { color: '#fff5e0', intensity: 3.0, enabled: true, shadowMapSize: 4096 };
+            const dir = preset?.dir || { color: '#fff5e0', intensity: 3.0, enabled: true, shadowMapSize: 2048 };
             return {
                 color: dir.color,
                 intensity: dir.intensity,
@@ -2254,7 +2277,7 @@ export class AmbiancePanel {
                 position: { x: 32, y: 45, z: 38 },
                 target: { x: 0, y: 0, z: 0 },
                 castShadow: true,
-                shadowMapSize: dir.shadowMapSize || 4096,
+                shadowMapSize: dir.shadowMapSize || 2048,
                 shadowBias: -0.0003,
                 shadowNormalBias: 0.02,
             };
@@ -2868,30 +2891,41 @@ export class AmbiancePanel {
     exportAllLasersAndStrobes() {
         const lasers = this.laserManager ? this.laserManager.getAllLasers() : [];
         const strobes = this.strobeManager ? this.strobeManager.getAllStrobes() : [];
+        const spots = this.spotManager ? this.spotManager.getAllSpots() : [];
 
-        if (lasers.length === 0 && strobes.length === 0) {
-            alert('Aucun laser ou stroboscope placé dans la scène à exporter.');
+        if (lasers.length === 0 && strobes.length === 0 && spots.length === 0) {
+            alert('Aucun laser, stroboscope ou lyre placé dans la scène à exporter.');
             return;
         }
 
         const lasersData = lasers.map(l => this.exportLaserData(l)).filter(Boolean);
         const strobesData = strobes.map(s => this.exportStrobeData(s)).filter(Boolean);
+        const spotsData = spots.map(sp => ({
+            id: sp.id,
+            name: `Lyre #${sp.number}`,
+            type: 'SpotFixture',
+            position: { x: sp.params.posX, y: sp.params.posY, z: sp.params.posZ },
+            params: { ...sp.params }
+        }));
 
         const fullExport = {
+            format: 'soundstage-scene',
             exportDate: new Date().toISOString(),
-            totalLights: lasersData.length + strobesData.length,
+            totalLights: lasersData.length + strobesData.length + spotsData.length,
             lasersCount: lasersData.length,
             strobesCount: strobesData.length,
+            spotsCount: spotsData.length,
             lasers: lasersData,
-            strobes: strobesData
+            strobes: strobesData,
+            spots: spotsData
         };
 
         const jsonStr = JSON.stringify(fullExport, null, 2);
 
         const lines = [
             `// ==========================================`,
-            `// Export Global SoundStage3D (Lasers & Stroboscopes)`,
-            `// Total lumières : ${lasersData.length + strobesData.length} (Lasers: ${lasersData.length}, Strobes: ${strobesData.length})`,
+            `// Export Scène SoundStage3D (Lasers, Stroboscopes & Lyres)`,
+            `// Total : ${lasersData.length + strobesData.length + spotsData.length} (Lasers: ${lasersData.length}, Strobes: ${strobesData.length}, Lyres: ${spotsData.length})`,
             `// Date : ${new Date().toLocaleString()}`,
             `// ==========================================`,
             ``
@@ -2924,9 +2958,18 @@ export class AmbiancePanel {
             });
         }
 
+        if (spotsData.length > 0) {
+            lines.push(`// ── LYRES (${spotsData.length}) ─────────────────────────────`);
+            spotsData.forEach((sd) => {
+                lines.push(`// ${sd.name}`);
+                lines.push(`spotManager.addSpot(null, ${JSON.stringify(sd.params, null, 4)}, ${JSON.stringify(sd.id)});`);
+                lines.push(``);
+            });
+        }
+
         const jsCode = lines.join('\n');
         const mockEntry = {
-            name: `Export Global (${lasersData.length} Lasers, ${strobesData.length} Strobes)`,
+            name: `Export Scène (${lasersData.length} Lasers, ${strobesData.length} Strobes, ${spotsData.length} Lyres)`,
             type: 'GlobalExport',
             light: null
         };
@@ -3191,15 +3234,15 @@ export class AmbiancePanel {
                 <div class="ambiance-export-header">
                     <div class="ambiance-export-title-wrap">
                         <span class="ambiance-export-title-icon">📥</span>
-                        <span class="ambiance-export-title-text">Importer Configuration Lumière (JSON / JS)</span>
-                        <span class="ambiance-export-badge" style="background:rgba(34, 197, 94, 0.15); color:#4ade80; border:1px solid rgba(34, 197, 94, 0.35);">Lasers, Strobes & Lampes</span>
+                        <span class="ambiance-export-title-text">Importer une scène (JSON / JS)</span>
+                        <span class="ambiance-export-badge" style="background:rgba(34, 197, 94, 0.15); color:#4ade80; border:1px solid rgba(34, 197, 94, 0.35);">Lasers, Strobes, Lyres & Lampes</span>
                     </div>
                     <button class="ambiance-export-close-btn" id="ambiance-import-close-btn" title="Fermer (Échap)">✕</button>
                 </div>
 
                 <div class="ambiance-export-content" style="padding-top:10px;">
                     <div style="font-size:12.5px; color:#94a3b8; line-height:1.5; margin-bottom:10px;">
-                        Collez ci-dessous le code JSON ou le code JavaScript (Three.js) exporté d'un laser, d'un stroboscope ou d'un export global. Tous les projecteurs seront créés dans la scène avec leur position 3D, orientation et réglages.
+                        Collez ci-dessous le code JSON ou JavaScript issu de « Exporter scène » (ou d'un export de laser, stroboscope, lyre ou lampe). Une scène complète remplace les lasers, stroboscopes et lyres en place ; chaque projecteur est recréé avec sa position 3D, son orientation et ses réglages.
                     </div>
 
                     <div class="ambiance-export-code-box" style="padding:0; overflow:hidden; border:1px solid #334155;">
@@ -3333,8 +3376,10 @@ export class AmbiancePanel {
         let createdLasersCount = 0;
         let createdStrobesCount = 0;
         let createdLightsCount = 0;
+        let createdSpotsCount = 0;
         let lastCreatedLaser = null;
         let lastCreatedStrobe = null;
+        let lastCreatedSpot = null;
 
         const nextFrame = () => new Promise(resolve => requestAnimationFrame(resolve));
 
@@ -3409,8 +3454,16 @@ export class AmbiancePanel {
                     removeStrobe: (id) => this.strobeManager?.removeStrobe(id)
                 };
 
-                const fn = new Function('THREE', 'laserManager', 'strobeManager', 'scene', input);
-                fn(THREE, laserManagerAdapter, strobeManagerAdapter, this.scene);
+                const spotManagerAdapter = {
+                    addSpot: (pos, params, id) => {
+                        const res = this._importSpot(params || {}, id || null);
+                        if (res) createdSpotsCount++;
+                        return res;
+                    }
+                };
+
+                const fn = new Function('THREE', 'laserManager', 'strobeManager', 'scene', 'spotManager', input);
+                fn(THREE, laserManagerAdapter, strobeManagerAdapter, this.scene, spotManagerAdapter);
 
             } catch (jsErr) {
                 if (this.importStatusEl) {
@@ -3429,12 +3482,15 @@ export class AmbiancePanel {
             const lasersToCreate = [];
             const strobesToCreate = [];
             const lightsToCreate = [];
+            const spotsToCreate = [];
 
             if (Array.isArray(parsed)) {
                 parsed.forEach(item => {
                     if (!item || typeof item !== 'object') return;
                     const type = item.type || '';
-                    if (type === 'LaserPod' || type.includes('Laser') || item.beamCount !== undefined || item.laserId !== undefined) {
+                    if (type === 'SpotFixture') {
+                        spotsToCreate.push(item);
+                    } else if (type === 'LaserPod' || type.includes('Laser') || item.beamCount !== undefined || item.laserId !== undefined) {
                         lasersToCreate.push(item);
                     } else if (type === 'StrobeLight' || type.includes('Strobe') || item.strobeSpeed !== undefined || (item.params && item.params.strobeSpeed !== undefined)) {
                         strobesToCreate.push(item);
@@ -3452,10 +3508,15 @@ export class AmbiancePanel {
                 if (Array.isArray(parsed.lights)) {
                     lightsToCreate.push(...parsed.lights);
                 }
+                if (Array.isArray(parsed.spots)) {
+                    spotsToCreate.push(...parsed.spots);
+                }
 
-                if (lasersToCreate.length === 0 && strobesToCreate.length === 0 && lightsToCreate.length === 0) {
+                if (lasersToCreate.length === 0 && strobesToCreate.length === 0 && lightsToCreate.length === 0 && spotsToCreate.length === 0) {
                     const type = parsed.type || '';
-                    if (type === 'LaserPod' || type.includes('Laser') || parsed.beamCount !== undefined) {
+                    if (type === 'SpotFixture') {
+                        spotsToCreate.push(parsed);
+                    } else if (type === 'LaserPod' || type.includes('Laser') || parsed.beamCount !== undefined) {
                         lasersToCreate.push(parsed);
                     } else if (type === 'StrobeLight' || type.includes('Strobe') || parsed.strobeSpeed !== undefined || (parsed.params && parsed.params.strobeSpeed !== undefined)) {
                         strobesToCreate.push(parsed);
@@ -3465,8 +3526,33 @@ export class AmbiancePanel {
                 }
             }
 
-            const totalQueue = lasersToCreate.length + strobesToCreate.length + lightsToCreate.length;
+            const totalQueue = lasersToCreate.length + strobesToCreate.length + lightsToCreate.length + spotsToCreate.length;
             let processed = 0;
+
+            // Import d'une scène complète : elle REMPLACE les lasers, stroboscopes et lyres en place (pas de doublons)
+            if (!Array.isArray(parsed) && parsed.format === 'soundstage-scene') {
+                this.deselectLaser();
+                this.deselectStrobe();
+                this.deselectSpot();
+                if (this.laserManager) {
+                    for (const l of this.laserManager.getAllLasers()) {
+                        const id = l.laserId;
+                        this.laserManager.removeLaser(id);
+                        this._emitSync({ category: 'laser_remove', id });
+                    }
+                }
+                if (this.strobeManager) {
+                    for (const st of this.strobeManager.getAllStrobes()) this.strobeManager.removeStrobe(st.id);
+                }
+                if (this.spotManager) {
+                    const keep = new Set(spotsToCreate.map(sd => sd.id).filter(Boolean));
+                    for (const sp of this.spotManager.getAllSpots()) {
+                        if (keep.has(sp.id)) continue;
+                        this.spotManager.removeSpot(sp.id);
+                        this._emitSync({ category: 'spot_remove', id: sp.id });
+                    }
+                }
+            }
 
             const updateProgress = () => {
                 if (this.importStatusEl && totalQueue > 1) {
@@ -3542,7 +3628,30 @@ export class AmbiancePanel {
                 }
             }
 
-            // 3. Création des lumières classiques Three.js
+            // 3. Lyres Spot (une lyre déjà présente avec le même identifiant est mise à jour)
+            if (this.spotManager && spotsToCreate.length > 0) {
+                for (let i = 0; i < spotsToCreate.length; i++) {
+                    const sd = spotsToCreate[i];
+                    const params = { ...(sd.params || {}) };
+                    if (sd.position && params.posX === undefined) {
+                        params.posX = sd.position.x;
+                        params.posY = sd.position.y;
+                        params.posZ = sd.position.z;
+                    }
+                    const res = this._importSpot(params, sd.id || null);
+                    if (res) {
+                        createdSpotsCount++;
+                        lastCreatedSpot = res.spot;
+                    }
+                    processed++;
+                    updateProgress();
+                    if ((i + 1) % 3 === 0 && (i + 1) < spotsToCreate.length) {
+                        await nextFrame();
+                    }
+                }
+            }
+
+            // 4. Création des lumières classiques Three.js
             if (lightsToCreate.length > 0) {
                 for (let i = 0; i < lightsToCreate.length; i++) {
                     const lightData = lightsToCreate[i];
@@ -3557,7 +3666,7 @@ export class AmbiancePanel {
             }
         }
 
-        const totalCreated = createdLasersCount + createdStrobesCount + createdLightsCount;
+        const totalCreated = createdLasersCount + createdStrobesCount + createdLightsCount + createdSpotsCount;
 
         if (totalCreated === 0) {
             if (this.importStatusEl) {
@@ -3579,6 +3688,7 @@ export class AmbiancePanel {
         const parts = [];
         if (createdLasersCount > 0) parts.push(`${createdLasersCount} laser(s)`);
         if (createdStrobesCount > 0) parts.push(`${createdStrobesCount} stroboscope(s)`);
+        if (createdSpotsCount > 0) parts.push(`${createdSpotsCount} lyre(s)`);
         if (createdLightsCount > 0) parts.push(`${createdLightsCount} lampe(s)`);
         const statusMsg = `✅ Succès : ${parts.join(', ')} créé(s) dans la scène !`;
 
@@ -3594,8 +3704,25 @@ export class AmbiancePanel {
             totalCreated,
             createdLasersCount,
             createdStrobesCount,
+            createdSpotsCount,
             createdLightsCount
         };
+    }
+
+    /** Crée une lyre importée, ou met à jour celle qui porte déjà le même identifiant ; synchronise le réseau. */
+    _importSpot(params, id) {
+        if (!this.spotManager) return null;
+        const existing = id ? this.spotManager.getSpot(id) : null;
+        if (existing) {
+            existing.setParams(params);
+            this._emitSync({ category: 'spot_update', id: existing.id, data: { ...existing.params } });
+            return { id: existing.id, spot: existing };
+        }
+        const res = this.spotManager.addSpot(null, params, id);
+        if (res && res.spot) {
+            this._emitSync({ category: 'spot_add', data: { id: res.id, params: { ...res.spot.params } } });
+        }
+        return res;
     }
 
     _createLightFromExportData(data) {
@@ -3936,8 +4063,8 @@ export class AmbiancePanel {
             this.setGizmoMode(mode);
         });
 
-        fTools.add(toolsState, 'exportAll').name('💾 Exporter Lasers & Strobes');
-        fTools.add(toolsState, 'importJson').name('📥 Importer Config JSON');
+        fTools.add(toolsState, 'exportAll').name('💾 Exporter scène');
+        fTools.add(toolsState, 'importJson').name('📥 Importer scène');
 
         // ── Dossier Ajouter une lumière ──
         const fAdd = this.gui.addFolder('➕ Poser une Lumière');
@@ -4873,9 +5000,7 @@ export class AmbiancePanel {
         // Clic sur le canvas pour la sélection 3D de lumière et laser
         const dom = this.renderer.domElement;
         dom.addEventListener('pointerdown', (e) => {
-            if (this.isOpen || (this._laserInspectorPanel && this._laserInspectorPanel.isOpen)) {
-                this.handleCanvasClick(e);
-            }
+            this.handleCanvasClick(e);
         });
 
         // Raccourcis clavier (Échap pour quitter le mode Gizmo ou fermer le panneau)

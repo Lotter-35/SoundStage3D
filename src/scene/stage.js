@@ -95,7 +95,8 @@ export function createStage(scene) {
     }
 
     // --- Stage platform ---
-    const stageGeo = new THREE.BoxGeometry(30, 3, 10);
+    // Enfoncée de 5 cm dans le sol (dessus inchangé à y = 3) pour qu'aucune lumière ne passe sous la plateforme
+    const stageGeo = new THREE.BoxGeometry(30, 3.05, 10);
     if (stageGeo.attributes.uv) stageGeo.setAttribute('uv2', stageGeo.attributes.uv.clone());
     const stageMatSidesX = createSceneMaterial(3.33, 1.0);
     const stageMatTop = createSceneMaterial(10.0, 3.33);
@@ -104,7 +105,7 @@ export function createStage(scene) {
         stageMatSidesX, stageMatSidesX, stageMatTop, stageMatTop, stageMatSidesZ, stageMatSidesZ
     ]);
     stageMesh.name = 'stagePlatform';
-    stageMesh.position.set(0, 1.5, -5);
+    stageMesh.position.set(0, 1.475, -5);
     stageMesh.castShadow = true;
     stageMesh.receiveShadow = true;
     scene.add(stageMesh);
@@ -134,9 +135,11 @@ export function createStage(scene) {
         for (let i = 0; i < numSteps; i++) {
             const h = (i + 1) * stepHeightY;
             const x = isLeft ? (startX + (i + 0.5) * stepWidthX) : (startX - (i + 0.5) * stepWidthX);
-            const stepGeo = new THREE.BoxGeometry(stepWidthX, h, stairDepthZ);
+            // Chaque marche s'enfonce de 5 cm dans le sol et de 5 cm dans la marche voisine (côté scène)
+            const overlap = 0.05;
+            const stepGeo = new THREE.BoxGeometry(stepWidthX + overlap, h + overlap, stairDepthZ);
             const stepMesh = new THREE.Mesh(stepGeo, stepMat);
-            stepMesh.position.set(x, h / 2, centerZ);
+            stepMesh.position.set(x + (isLeft ? overlap / 2 : -overlap / 2), (h - overlap) / 2, centerZ);
             stepMesh.castShadow = true;
             stepMesh.receiveShadow = true;
             group.add(stepMesh);
@@ -190,9 +193,10 @@ export function createStage(scene) {
     // --- DJ Booth Table on Stage ---
     const djGroup = new THREE.Group();
     const djTableMat = createSceneMaterial(1.5, 1.0, { roughness: 0.55 });
-    const djTableGeo = new THREE.BoxGeometry(3.6, 0.95, 1.0);
+    // Enfoncée de 5 cm dans la scène (dessus inchangé à y = 3.95)
+    const djTableGeo = new THREE.BoxGeometry(3.6, 1.0, 1.0);
     const djTable = new THREE.Mesh(djTableGeo, djTableMat);
-    djTable.position.set(0, 3.0 + 0.95 / 2, -5.0);
+    djTable.position.set(0, 3.0 + 0.95 - 0.5, -5.0);
     djTable.castShadow = true;
     djTable.receiveShadow = true;
     djGroup.add(djTable);
@@ -225,7 +229,8 @@ export function createStage(scene) {
     scene.add(djGroup);
 
     // --- Stage back wall (1.5m d'épaisseur pour blocage physique total de la lumière sans fuite) ---
-    const backWallGeo = new THREE.BoxGeometry(30, 20, 1.5);
+    // Enfoncé de 5 cm dans le sol et dans la scène (face avant inchangée à y > 3)
+    const backWallGeo = new THREE.BoxGeometry(30, 20.05, 1.55);
     if (backWallGeo.attributes.uv) backWallGeo.setAttribute('uv2', backWallGeo.attributes.uv.clone());
     const wallMatSidesX = createSceneMaterial(0.5, 6.67);
     const wallMatTopBottom = createSceneMaterial(10.0, 0.5);
@@ -234,7 +239,7 @@ export function createStage(scene) {
         wallMatSidesX, wallMatSidesX, wallMatTopBottom, wallMatTopBottom, wallMatFace, wallMatFace
     ]);
     backWall.name = 'stageBackWall';
-    backWall.position.set(0, 10, -10.75);
+    backWall.position.set(0, 9.975, -10.725);
     backWall.castShadow = true;
     backWall.receiveShadow = true;
     scene.add(backWall);
@@ -254,10 +259,10 @@ export function createStage(scene) {
     scene.add(roof);
 
     // --- Side truss columns ---
-    const trussGeo = new THREE.BoxGeometry(0.4, 20, 0.4);
+    const trussGeo = new THREE.BoxGeometry(0.4, 20.05, 0.4);
     if (trussGeo.attributes.uv) trussGeo.setAttribute('uv2', trussGeo.attributes.uv.clone());
     const trussMat = createSceneMaterial(0.3, 6.67, { roughness: 0.6, normalScale: 1.0 });
-    [[-17, 10, 0], [17, 10, 0], [-17, 10, -10], [17, 10, -10]].forEach(([x, y, z]) => {
+    [[-17, 9.975, 0], [17, 9.975, 0], [-17, 9.975, -10], [17, 9.975, -10]].forEach(([x, y, z]) => {
         const truss = new THREE.Mesh(trussGeo, trussMat);
         truss.position.set(x, y, z);
         truss.castShadow = true;
@@ -346,8 +351,8 @@ export function createStage(scene) {
     dirLight.name = 'Soleil Principal';
     dirLight.position.set(32, 45, 38);
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.width = 4096;
-    dirLight.shadow.mapSize.height = 4096;
+    dirLight.shadow.mapSize.width = 2048;
+    dirLight.shadow.mapSize.height = 2048;
     dirLight.shadow.camera.near = 10;
     dirLight.shadow.camera.far = 200;
     dirLight.shadow.camera.left = -60;

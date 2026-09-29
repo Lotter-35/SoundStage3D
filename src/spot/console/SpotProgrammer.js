@@ -15,7 +15,7 @@
  */
 
 import * as THREE from 'three';
-import { TILT_PIVOT_Y } from '../SpotHousing.js';
+import { TILT_PIVOT_Y } from '../SpotHousing.js?v=2';
 import { PAN_RANGE, TILT_RANGE } from '../config/spotParams.js';
 
 const GROUPS_KEY = 'soundstage3d:spot-groups';

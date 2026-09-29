@@ -163,7 +163,6 @@ class SpotHousingInstancer {
             im.count = 0;
             // Ombres portées : seulement les gros volumes (les petits détails sont rendus 5× par frame sinon)
             if (matKey !== 'lens' && matKey !== 'lcd') im.receiveShadow = true;
-            if (matKey === 'body') im.castShadow = true;
             if (matKey === 'lens') {
                 im.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(capacity * 3), 3);
                 im.instanceColor.setUsage(THREE.DynamicDrawUsage);

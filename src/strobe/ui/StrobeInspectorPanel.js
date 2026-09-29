@@ -20,6 +20,7 @@ export const STROBE_DEFAULTS = {
     emissivePower:   3.5,
     castShadow:      true,
     shadowIntensity: 1.0,
+    shadowSoftness:  0.5,
     distanceFactor:  10.0,
     width:           1.20,
     height:          0.38,
@@ -297,6 +298,12 @@ export class StrobeInspectorPanel {
             fLight.add(p, 'shadowIntensity', 0.0, 1.0, 0.05).name('Intensité Ombres').onChange(v => strobe.setParam('shadowIntensity', v)),
             'shadowIntensity',
             STROBE_DEFAULTS.shadowIntensity
+        );
+
+        this.controllers.shadowSoftness = this._setupController(
+            fLight.add(p, 'shadowSoftness', 0.0, 1.0, 0.05).name('Douceur Ombres').onChange(v => strobe.setParam('shadowSoftness', v)),
+            'shadowSoftness',
+            STROBE_DEFAULTS.shadowSoftness
         );
 
         if (p.distanceFactor === undefined) {

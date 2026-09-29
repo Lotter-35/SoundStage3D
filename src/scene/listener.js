@@ -13,8 +13,8 @@
  */
 import * as THREE from 'three';
 import { PointerLockControls } from 'three/addons/controls/PointerLockControls.js';
-import { Character3D } from './character3D.js?v=6';
-import { resolveCollision } from './collision.js?v=155';
+import { Character3D } from './character3D.js?v=7';
+import { resolveCollision } from './collision.js?v=156';
 import { EmoteMenu } from '../ui/EmoteMenu.js';
 import { DanceManager } from './DanceManager.js';
 

@@ -4,8 +4,8 @@
  * Projecteur Stroboscope 3D professionnel pour SoundStage3D :
  * - Boîtier physique 3D réaliste (châssis métallique noir de scène, étrier de fixation, cadre avant).
  * - Écran frontal émissif ultra-lumineux (blanc pur par défaut, bloom layer).
- * - RectAreaLight 3D positionnée sur la face avant du boîtier.
- * - SpotLight compagnon optionnel pour les ombres portées dynamiques (castShadow).
+ * - Éclairage réel de la scène délégué au StrobeLightPool (pool fixe de SpotLight partagé) :
+ *   ce fichier ne crée aucune lumière, il fournit l'état du flash et la géométrie du faisceau.
  * - Normalisation de la puissance : la puissance lumineuse reste constante quelle que soit la taille du boîtier !
  * - Animation stroboscopique temps réel fluide (fréquence Hz, durée de flash, mode aléatoire).
  * - Orientation complète (Angle, Tilt, Roll) et compatibilité Gizmo TransformControls.
@@ -39,6 +39,7 @@ export class StrobeLight {
             emissivePower:   3.5,         // Éclat de l'écran frontal (Bloom, 0 à 100)
             castShadow:      true,        // Ombres portées dynamiques
             shadowIntensity: 1.0,         // Intensité des ombres (obscurité du noir)
+            shadowSoftness:  0.5,         // Douceur des bords d'ombre (0 = net, 1 = très flou)
             distanceFactor:  10.0,        // Facteur multiplicateur de portée (la portée s'adapte à la taille du stroboscope)
 
             // ── Dimensions du boîtier ──
@@ -65,7 +66,7 @@ export class StrobeLight {
 
         // État interne de l'animation
         this._strobeTimer = 0;
-        this._isFlashing = false;
+        this.flash = false;
         this._randomNextFlash = 0;
         this._randomFlashDuration = 0;
 
@@ -105,13 +106,9 @@ export class StrobeLight {
         this.screenMesh  = null;
         this.bracketGroup = null;
 
-        // Sources de lumière (SpotLight principal avec ombre + FillLight sans ombre pour moduler l'intensité)
-        this.spotLight = null;
-        this.fillLight = null;
-        this.spotTarget = null;
+        this._screenColor = new THREE.Color();
 
         // Construction initiale
-        this._initLights();
         this._buildMeshes();
 
         // Position & Orientation initiales
@@ -125,48 +122,6 @@ export class StrobeLight {
     /** Envoie une modification aux autres joueurs (ignoré pendant l'application d'un message reçu) */
     _sync(data) {
         if (this._ready && this._emit) this._emit({ category: 'strobe_update', id: this.id, data });
-    }
-
-    /**
-     * Initialise le SpotLight grand-angle (avec ombre portée saine) et son FillLight de modulation
-     */
-    _initLights() {
-        const col = new THREE.Color(this.params.color);
-
-        // SpotTarget pour orienter les faisceaux droit devant (+Z) vers la scène
-        this.spotTarget = new THREE.Object3D();
-        this.group.add(this.spotTarget);
-
-        // 1. SpotLight principal (grand-angle 160° total, angle = 1.40 rad) :
-        // Un angle de Math.PI/2 (180° FOV) brisait mathématiquement la caméra de projection d'ombres (tan(90°)=∞).
-        // Avec 1.40 rad (~80.2° demi-angle), la projection d'ombre est 100% saine, stable et nette !
-        this.spotLight = new THREE.SpotLight(col, 0);
-        this.spotLight.target = this.spotTarget;
-        this.spotLight.angle = 1.40;
-        this.spotLight.penumbra = 0.8;
-        this.spotLight.decay = 1.0;
-        this.spotLight.castShadow = Boolean(this.params.castShadow);
-        this.spotLight.shadow.bias = -0.0005;
-        this.spotLight.shadow.normalBias = 0.05;
-        this.spotLight.shadow.camera.near = 0.2;
-        this.spotLight.shadow.camera.far = Math.max(100.0, this.getEffectiveLightDistance());
-        this.spotLight.shadow.mapSize.set(2048, 2048);
-        this.spotLight.visible = true;
-        this.group.add(this.spotLight);
-
-        // 2. FillLight complémentaire (même faisceau, sans ombre) :
-        // Permet de doser l'intensité réelle des ombres (shadowIntensity) de 0.0 (fardeau annulé)
-        // à 1.0 (noir profond) sans rupture de flux lumineux total dans la scène.
-        this.fillLight = new THREE.SpotLight(col, 0);
-        this.fillLight.target = this.spotTarget;
-        this.fillLight.angle = 1.40;
-        this.fillLight.penumbra = 0.8;
-        this.fillLight.decay = 1.0;
-        this.fillLight.castShadow = false;
-        this.fillLight.visible = true;
-        this.group.add(this.fillLight);
-
-        this._updateLightShapes();
     }
 
     /**
@@ -208,35 +163,19 @@ export class StrobeLight {
     }
 
     /**
-     * Ajuste la position des SpotLights et de leur cible devant la face émissive
+     * Position monde de la source du faisceau (devant la face émissive) et de sa cible, pour le pool de lumières
+     * @param {THREE.Vector3} outPos
+     * @param {THREE.Vector3} outTarget
      */
-    _updateLightShapes() {
+    getLightSetup(outPos, outTarget) {
         const w = this.params.width;
         const isFlat = (this.params.showHousing === false) || (w <= 0.05);
         const d = isFlat ? 0.01 : this.params.depth;
-        const dist = this.getEffectiveLightDistance();
         const frameThick = isFlat ? 0.0 : 0.035;
         const zFront = d * 0.5 + frameThick + 0.01;
-
-        if (this.spotLight) {
-            this.spotLight.position.set(0, 0, zFront);
-            this.spotLight.angle = 1.40;
-            this.spotLight.penumbra = 0.8;
-            this.spotLight.distance = dist;
-            if (this.spotLight.shadow && this.spotLight.shadow.camera) {
-                this.spotLight.shadow.camera.far = Math.max(100.0, dist);
-                this.spotLight.shadow.camera.updateProjectionMatrix();
-            }
-        }
-        if (this.fillLight) {
-            this.fillLight.position.set(0, 0, zFront);
-            this.fillLight.angle = 1.40;
-            this.fillLight.penumbra = 0.8;
-            this.fillLight.distance = dist;
-        }
-        if (this.spotTarget) {
-            this.spotTarget.position.set(0, 0, zFront + dist);
-        }
+        this.group.updateWorldMatrix(true, false);
+        outPos.set(0, 0, zFront).applyMatrix4(this.group.matrixWorld);
+        outTarget.set(0, 0, zFront + this.getEffectiveLightDistance()).applyMatrix4(this.group.matrixWorld);
     }
 
     /**
@@ -285,7 +224,6 @@ export class StrobeLight {
             const chassisGeo = new THREE.BoxGeometry(w, h, d);
             this.chassisMesh = new THREE.Mesh(chassisGeo, this._chassisMat);
             this.chassisMesh.position.set(0, 0, 0);
-            this.chassisMesh.castShadow = true;
             this.chassisMesh.receiveShadow = true;
             this.chassisMesh.userData.strobeInstance = this;
             this.group.add(this.chassisMesh);
@@ -295,7 +233,6 @@ export class StrobeLight {
             const frameGeo = new THREE.BoxGeometry(w + 0.03, h + 0.03, frameThick);
             this.frameMesh = new THREE.Mesh(frameGeo, this._frameMat);
             this.frameMesh.position.set(0, 0, d * 0.5 + frameThick * 0.5);
-            this.frameMesh.castShadow = true;
             this.frameMesh.userData.strobeInstance = this;
             this.group.add(this.frameMesh);
 
@@ -336,15 +273,11 @@ export class StrobeLight {
 
             this.bracketGroup.traverse(c => {
                 if (c.isMesh) {
-                    c.castShadow = true;
                     c.userData.strobeInstance = this;
                 }
             });
             this.group.add(this.bracketGroup);
         }
-
-        // Met à jour la position et la divergence des faisceaux lumineux
-        this._updateLightShapes();
     }
 
     /**
@@ -354,13 +287,9 @@ export class StrobeLight {
         this.params[key] = value;
 
         switch (key) {
-            case 'color': {
-                const col = new THREE.Color(value);
-                if (this.spotLight) this.spotLight.color.copy(col);
-                if (this.fillLight) this.fillLight.color.copy(col);
-                if (this._screenMat) this._screenMat.color.copy(col);
+            case 'color':
+                if (this._screenMat) this._screenMat.color.set(value);
                 break;
-            }
 
             case 'width':
             case 'height':
@@ -370,21 +299,11 @@ export class StrobeLight {
                 break;
 
             case 'castShadow':
-                if (this.spotLight) {
-                    this.spotLight.castShadow = Boolean(value);
-                    if (this.spotLight.shadow) {
-                        this.spotLight.shadow.needsUpdate = true;
-                    }
-                }
-                break;
-
             case 'shadowIntensity':
-                // La modulation par fillLight est calculée en temps réel dans update(dt)
-                break;
-
+            case 'shadowSoftness':
             case 'distanceFactor':
             case 'lightDistance':
-                this._updateLightShapes();
+                // Lus en temps réel par le StrobeLightPool
                 break;
 
             case 'angle':
@@ -486,51 +405,19 @@ export class StrobeLight {
             }
         }
 
-        this._isFlashing = isFlash;
+        this.flash = isFlash;
 
+        // L'éclairage réel (intensité, ombre) est appliqué par le StrobeLightPool à partir de `flash`
         if (isFlash) {
-            const totalPower = this.getEffectiveIntensity();
-            const doShadow = Boolean(this.params.castShadow);
-            const shadowWeight = THREE.MathUtils.clamp(
-                this.params.shadowIntensity !== undefined ? this.params.shadowIntensity : 1.0,
-                0.0,
-                1.0
-            );
-
-            // SpotLight principal (qui projette l'ombre sur la scène)
-            if (this.spotLight) {
-                this.spotLight.visible = true;
-                this.spotLight.castShadow = doShadow;
-                // La fraction de lumière avec ombre correspond à shadowWeight
-                this.spotLight.intensity = doShadow ? (totalPower * shadowWeight) : totalPower;
-            }
-
-            // FillLight complémentaire (faisceau identique mais sans ombre)
-            // Éclaire les zones d'ombres pour en atténuer la noirceur selon (1 - shadowWeight)
-            if (this.fillLight) {
-                const fillPower = doShadow ? (totalPower * (1.0 - shadowWeight)) : 0.0;
-                this.fillLight.visible = fillPower > 0.001;
-                this.fillLight.intensity = fillPower;
-            }
-
             if (this._screenMat) {
-                const screenCol = new THREE.Color(p.color);
-                screenCol.multiplyScalar(Math.max(1.0, p.emissivePower || 2.0));
-                this._screenMat.color.copy(screenCol);
+                this._screenColor.set(p.color).multiplyScalar(Math.max(1.0, p.emissivePower || 2.0));
+                this._screenMat.color.copy(this._screenColor);
             }
             if (this.screenMesh) {
                 this.screenMesh.layers.enable(2);
             }
         } else {
             // Éteint : 0 émission
-            if (this.spotLight) {
-                this.spotLight.visible = false;
-                this.spotLight.intensity = 0;
-            }
-            if (this.fillLight) {
-                this.fillLight.visible = false;
-                this.fillLight.intensity = 0;
-            }
             if (this._screenMat) {
                 this._screenMat.color.set(0x18181a); // Réflecteur éteint
             }

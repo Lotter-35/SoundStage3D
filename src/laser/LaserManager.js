@@ -162,6 +162,8 @@ class SelectiveLayerPass extends Pass {
     }
 }
 
+const BLOOM_RESOLUTION_SCALE = 0.5;
+
 // Nombre de lumières ponctuelles émises par les lasers : créées dès le départ (éteintes) et
 // jamais retirées → le nombre de lumières de la scène ne change pas quand on pose un laser
 // (pas de recompilation de tous les shaders éclairés).
@@ -320,7 +322,13 @@ export class LaserManager {
             // ── 1. Laser Bloom Composer (Rendu isolé des lasers avec Bloom + Aberration Chromatique) ──
             // Lasers seuls, occultés par le décor (les lampes font partie des occulteurs noirs)
             const renderLaserScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LASER_LAYER, [BLOOM_LASER_LAYER], this._darkMaterial);
-            this._laserBloomComposer = new EffectComposer(this.renderer);
+            // Les deux blooms sont floutés : ils sont calculés à demi-résolution (4× moins de pixels à remplir)
+            const bloomSize = this.renderer.getSize(new THREE.Vector2());
+            const bloomPR = this.renderer.getPixelRatio();
+            const bloomW = Math.max(1, Math.round(bloomSize.x * bloomPR * BLOOM_RESOLUTION_SCALE));
+            const bloomH = Math.max(1, Math.round(bloomSize.y * bloomPR * BLOOM_RESOLUTION_SCALE));
+            const makeBloomTarget = () => new THREE.WebGLRenderTarget(bloomW, bloomH, { type: THREE.HalfFloatType });
+            this._laserBloomComposer = new EffectComposer(this.renderer, makeBloomTarget());
             this._laserBloomComposer.renderToScreen = false;
             this._laserBloomComposer.addPass(renderLaserScene);
 
@@ -374,7 +382,7 @@ export class LaserManager {
             // ── 2. Lights Bloom Composer (Rendu isolé des lampes de scène : Bloom PUR SANS aberration) ──
             // Lampes seules : les lasers (transparents additifs) ne doivent pas les occulter
             const renderLightsScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LIGHTS_LAYER, [BLOOM_LIGHTS_LAYER, BLOOM_LASER_LAYER], this._darkMaterial);
-            this._lightsBloomComposer = new EffectComposer(this.renderer);
+            this._lightsBloomComposer = new EffectComposer(this.renderer, makeBloomTarget());
             this._lightsBloomComposer.renderToScreen = false;
             this._lightsBloomComposer.addPass(renderLightsScene);
 
@@ -957,8 +965,10 @@ export class LaserManager {
 
     /** Redimensionnement de la fenêtre */
     resize(width, height) {
-        if (this._laserBloomComposer) this._laserBloomComposer.setSize(width, height);
-        if (this._lightsBloomComposer) this._lightsBloomComposer.setSize(width, height);
+        const bloomW = Math.max(1, Math.round(width * this.renderer.getPixelRatio() * BLOOM_RESOLUTION_SCALE));
+        const bloomH = Math.max(1, Math.round(height * this.renderer.getPixelRatio() * BLOOM_RESOLUTION_SCALE));
+        if (this._laserBloomComposer) this._laserBloomComposer.setSize(bloomW, bloomH);
+        if (this._lightsBloomComposer) this._lightsBloomComposer.setSize(bloomW, bloomH);
         if (this._finalComposer) this._finalComposer.setSize(width, height);
         if (this._laserBloomPass) this._laserBloomPass.setSize(width, height);
         if (this._lightsBloomPass) this._lightsBloomPass.setSize(width, height);

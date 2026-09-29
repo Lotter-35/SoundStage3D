@@ -2,10 +2,11 @@
  * main.js — Entry point. Orchestrates Three.js scene, audio engine, and render loop.
  */
 import * as THREE from 'three';
+import './scene/softShadows.js?v=3';
 
-import { createStage } from './scene/stage.js?v=188';
+import { createStage } from './scene/stage.js?v=190';
 import { Listener } from './scene/listener.js?v=160';
-import { createHitboxVisualizer } from './scene/collision.js?v=155';
+import { createHitboxVisualizer } from './scene/collision.js?v=156';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
 
@@ -19,24 +20,24 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=160';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=302';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=306';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=155';
-import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=4';
+import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=5';
 import { LightingSync } from './multiplayer/LightingSync.js?v=10';
 import { DanceManager } from './scene/DanceManager.js';
-import { loadStageSpeakers } from './scene/speakerModels.js?v=184';
-import { LaserManager } from './laser/LaserManager.js?v=306';
+import { loadStageSpeakers } from './scene/speakerModels.js?v=186';
+import { LaserManager } from './laser/LaserManager.js?v=307';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
-import { StrobeManager } from './strobe/StrobeManager.js?v=13';
-import { SpotManager } from './spot/SpotManager.js';
-import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js';
+import { StrobeManager } from './strobe/StrobeManager.js?v=17';
+import { SpotManager } from './spot/SpotManager.js?v=3';
+import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 
 // Nettoyage des clés orphelines / doublons du localStorage
 try {
@@ -45,6 +46,25 @@ try {
     localStorage.removeItem('soundstage_dance_loop_settings');
     localStorage.removeItem('soundstage_user_render_settings_v1');
 } catch (e) {}
+
+// ─── Écran de chargement ─────────────────────────────────────────
+const _boot = window.__boot || { set() {}, done() {} };
+// Met à jour la barre puis laisse le navigateur peindre avant le travail synchrone suivant
+const bootStep = (fraction, label) => {
+    _boot.set(fraction, label);
+    return new Promise(resolve => {
+        requestAnimationFrame(() => setTimeout(resolve, 0));
+        setTimeout(resolve, 80); // onglet en arrière-plan : requestAnimationFrame est suspendu
+    });
+};
+THREE.DefaultLoadingManager.onProgress = (url, loaded, total) => {
+    const file = decodeURIComponent(String(url).split('?')[0].split('/').pop() || '');
+    _boot.set(0.30 + 0.36 * (loaded / Math.max(1, total)), 'Chargement : ' + file);
+};
+let _bootFinished = false;
+const _bootStart = performance.now();
+let _shadowFrame = 0;
+await bootStep(0.08, 'Initialisation du rendu');
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
@@ -60,37 +80,41 @@ renderer.toneMapping = THREE.NoToneMapping;
 renderer.toneMappingExposure = 1.0;
 renderer.outputColorSpace = THREE.SRGBColorSpace;
 
+performance.mark('ss3d:renderer');
 const scene = new THREE.Scene();
 // far = 5000 : les faisceaux laser partant dans le ciel portent jusqu'à 3 km (LASER_MAX_RANGE)
 const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 5000);
 
+await bootStep(0.2, 'Construction de la scène');
 // Build 3D stage
 const { coneContainer, coneGroups, dirLight, lights, soundMarkersGroup } = createStage(scene);
 if (dirLight && dirLight.shadow) {
     const maxTex = renderer.capabilities.maxTextureSize || 4096;
-    const shadowRes = Math.min(4096, maxTex);
+    const shadowRes = Math.min(2048, maxTex);
     dirLight.shadow.mapSize.set(shadowRes, shadowRes);
 }
 
+performance.mark('ss3d:stage');
 // ─── Skybox ───────────────────────────────────────────────────────
 // Fond couleur fallback (avant que le GLB soit prêt)
 scene.background = new THREE.Color(0x87ceeb);
-let skybox = null;
-skybox = await createSkybox(scene);
-
-// ─── Vegetation (instanced grass) ────────────────────────────────
-await createVegetation(scene);
-
-// ─── Animations Catalog (chargement initial de dances.json) ─────
-await DanceManager.refreshCatalog(true);
-
-// ─── Stage Speakers (Subwoofers GLB & Line Arrays GLB) ──────────
-await loadStageSpeakers(scene);
+await bootStep(0.3, 'Chargement des modèles');
+// Skybox, végétation (herbe instanciée), catalogue d'animations (dances.json) et enceintes de scène
+// (Subwoofers & Line Arrays GLB) sont indépendants : chargés en parallèle au lieu d'à la suite.
+const [skybox] = await Promise.all([
+    createSkybox(scene),
+    createVegetation(scene),
+    DanceManager.refreshCatalog(true),
+    loadStageSpeakers(scene),
+]);
+performance.mark('ss3d:assets');
+await bootStep(0.68, 'Personnage et collisions');
 
 // ─── Listener (FPS controls + 3D Animated Character) ─────────────
 const listener = new Listener(camera, document.body, scene);
 
 // ─── Player Laser Collider (Dynamic 3D body collision) ────────────
+performance.mark('ss3d:listener');
 const playerLaserCollider = new PlayerLaserCollider();
 playerLaserCollider.setLocalPlayer(listener);
 registerPlayerCollider(playerLaserCollider);
@@ -101,6 +125,8 @@ initModelDropLoader({ scene, camera });
 // ─── Static Global Illumination (0 lag) ──────────────────────────
 const staticGI = new StaticGlobalIllumination({ scene, renderer });
 
+performance.mark('ss3d:gi');
+await bootStep(0.76, 'Éclairage, lasers, stroboscopes et lyres');
 // ─── Ambiance & Éclairage 3D ─────────────────────────────────────
 const ambiancePanel = new AmbiancePanel({
     scene,
@@ -162,10 +188,20 @@ const spotManager = new SpotManager({ scene, camera, renderer, laserManager });
 ambiancePanel.setSpotManager(spotManager);
 window.__SS3D.spotManager = spotManager;
 
+// 9 lyres de base posées sur la scène, sur le bord avant (z = -0.6), alignées sur les line arrays (x = ±12) et les subs.
+// Identifiants fixes : chaque client crée les mêmes lyres sans doublon avec l'état réseau.
+for (let i = 0; i < 9; i++) {
+    const { spot } = spotManager.addSpot(new THREE.Vector3(-12 + i * 3, 3.0, -0.6), {}, `spot-stage-${i + 1}`);
+    spotManager._autoPatch(spot);
+}
+
 // Console des lyres (sélection matricielle, couleurs, visée, effets) — touche L
 const spotConsole = new SpotConsolePanel({ spotManager, ambiancePanel, scene, camera, renderer, listener });
 window.__SS3D.spotConsole = spotConsole;
+ambiancePanel.spotConsole = spotConsole;
 
+performance.mark('ss3d:managers');
+await bootStep(0.88, 'Compilation des shaders');
 // ─── Warmup Global du Rendu (Élimine le freeze au 1er changement de preset/ambiance) ──
 if (renderer && typeof renderer.compile === 'function') {
     try {
@@ -173,6 +209,8 @@ if (renderer && typeof renderer.compile === 'function') {
     } catch (_) {}
 }
 
+performance.mark('ss3d:warmup');
+await bootStep(0.95, 'Interface et audio');
 // ─── Audio ───────────────────────────────────────────────────────
 const audioEngine = new AudioEngine();
 let inputStage = null;
@@ -3028,6 +3066,10 @@ canvas.addEventListener('click', () => {
     if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
         audioEngine.ctx.resume();
     }
+    // Clic sur un projecteur en mode curseur : on ouvre ses réglages sans reprendre la souris
+    if (ambiancePanel && ambiancePanel.consumeFixturePick()) {
+        return;
+    }
     if (!listener.isLocked) {
         listener.lock();
     }
@@ -3436,6 +3478,9 @@ function renderFrame() {
         hitboxVisualizer.update(listener.feetPosition);
     }
 
+    // Ombre du soleil : recalculée une image sur deux (le décor est statique, les joueurs bougent peu entre deux images)
+    if (dirLight && dirLight.shadow) dirLight.shadow.autoUpdate = ((_shadowFrame++) & 1) === 0;
+
     // Render via l'EffectComposer (bloom laser, aberration chromatique, FXAA)
     // LaserManager.render() bascule automatiquement sur le composer quand des lasers
     // sont actifs, sinon fait un rendu direct renderer.render() comme fallback.
@@ -3449,6 +3494,17 @@ function renderFrame() {
     // Debug overlay (throttled internally)
     updateFpsCounter(dt, renderTime);
     if (_debugVisible) updateDebug(dt);
+
+    // Fin du chargement : première image rendue et personnage prêt (ou 10 s de patience au maximum)
+    if (!_bootFinished) {
+        const character = listener && listener._character3D;
+        if (!character || character.isLoaded || performance.now() - _bootStart > 10000) {
+            _bootFinished = true;
+            _boot.done();
+        } else {
+            _boot.set(0.98, 'Chargement du personnage');
+        }
+    }
 }
 
 function animate() {

@@ -15,9 +15,9 @@
 
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { createGateMapMaterial } from './SpotShaders.js';
-import { SPOT_BEAM_RANGE } from './SpotFixture.js';
-import { LENS_RADIUS } from './SpotHousing.js';
+import { createGateMapMaterial } from './SpotShaders.js?v=2';
+import { SPOT_BEAM_RANGE } from './SpotFixture.js?v=2';
+import { LENS_RADIUS } from './SpotHousing.js?v=2';
 
 /** Nombre maximal de lumières réelles (chaque texture de projection occupe 1 unité de texture
  *  dans TOUS les matériaux éclairés : on garde 10 unités pour leurs propres textures et ombres) */

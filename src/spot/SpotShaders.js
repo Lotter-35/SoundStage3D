@@ -419,6 +419,11 @@ export function createCompositeMaterial() {
         uniforms: {
             tDiffuse: { value: null },
             tVolume:  { value: null },
+            tDepth:   { value: null },
+            uVolRes:  { value: new THREE.Vector2(1, 1) },
+            uNear:    { value: 0.1 },
+            uFar:     { value: 1000 },
+            uUseDepth: { value: 0 },
         },
         vertexShader: /* glsl */`
             varying vec2 vUv;
@@ -428,12 +433,46 @@ export function createCompositeMaterial() {
             }
         `,
         fragmentShader: /* glsl */`
+            #include <packing>
             uniform sampler2D tDiffuse;
             uniform sampler2D tVolume;
+            uniform highp sampler2D tDepth;
+            uniform vec2 uVolRes;
+            uniform float uNear;
+            uniform float uFar;
+            uniform float uUseDepth;
             varying vec2 vUv;
+
+            float linZ(vec2 uv) {
+                return -perspectiveDepthToViewZ(texture2D(tDepth, uv).r, uNear, uFar);
+            }
+
             void main() {
                 vec4 base = texture2D(tDiffuse, vUv);
-                vec3 beams = texture2D(tVolume, vUv).rgb;
+                vec3 beams;
+                if (uUseDepth > 0.5) {
+                    // Sur-échantillonnage sensible à la profondeur : chaque texel du volume (demi-résolution)
+                    // n'est repris que s'il se trouve à la même profondeur que le pixel plein format.
+                    // Évite l'escalier et le halo autour des silhouettes (personnage devant les faisceaux).
+                    vec2 pos = vUv * uVolRes - 0.5;
+                    vec2 base0 = floor(pos);
+                    vec2 f = pos - base0;
+                    float z0 = linZ(vUv);
+                    vec3 acc = vec3(0.0);
+                    float wSum = 0.0;
+                    for (int i = 0; i < 4; i++) {
+                        vec2 o = vec2(float(i & 1), float(i >> 1));
+                        vec2 uv = (base0 + o + 0.5) / uVolRes;
+                        float bw = (o.x > 0.5 ? f.x : 1.0 - f.x) * (o.y > 0.5 ? f.y : 1.0 - f.y);
+                        float dz = abs(linZ(uv) - z0) / max(z0, 0.25);
+                        float w = bw / (0.002 + dz);
+                        acc += texture2D(tVolume, uv).rgb * w;
+                        wSum += w;
+                    }
+                    beams = acc / max(wSum, 1e-6);
+                } else {
+                    beams = texture2D(tVolume, vUv).rgb;
+                }
                 gl_FragColor = vec4(base.rgb + beams, base.a);
             }
         `,
