@@ -74,8 +74,9 @@ await bootStep(0.08, 'Initialisation du rendu');
 
 // ─── Three.js setup ──────────────────────────────────────────────
 const canvas = document.getElementById('canvas');
-// Antialiasing matériel activé par défaut (MSAA 4x direct du canvas)
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance', stencil: false });
+// Canvas SANS MSAA : l'anticrénelage est fait dans la cible de la scène (LaserManager), puis la passe
+// finale écrit l'image à l'écran. Un canvas MSAA ne lisserait qu'un quad plein écran (mémoire + résolution perdues).
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: false, powerPreference: 'high-performance', stencil: false });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.5));
 renderer.shadowMap.enabled = true;

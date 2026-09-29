@@ -335,6 +335,8 @@ export class LaserManager {
 
         this._hiddenGizmos  = [];
         this._msaaSamples   = 4;
+        const ctxAttrs = renderer && renderer.getContextAttributes ? renderer.getContextAttributes() : null;
+        this._canvasAA      = Boolean(ctxAttrs && ctxAttrs.antialias);
         this._useComposer   = false;
         this._playerCollider = null;
 
@@ -815,6 +817,8 @@ export class LaserManager {
      * Évite la cible HDR MSAA 4x, la recopie de profondeur et 2 passes plein écran par image.
      */
     _canRenderDirect(renderLaser, renderLights) {
+        // Canvas sans MSAA (cas normal) : le rendu direct perdrait l'anticrénelage → toujours la chaîne
+        if (!this._canvasAA) return false;
         if (renderLaser || renderLights) return false;
         if (this._msaaSamples !== 4) return false;
         const composer = this._finalComposer;
@@ -846,8 +850,11 @@ export class LaserManager {
         if (!r || typeof r.compile !== 'function') return;
         const prev = r.getRenderTarget();
         try {
-            r.setRenderTarget(null);
-            r.compile(this.scene, this.camera);
+            // Variante « rendu direct à l'écran » inutile quand le canvas n'a pas de MSAA (toujours la chaîne)
+            if (this._canvasAA || !this._sceneRT) {
+                r.setRenderTarget(null);
+                r.compile(this.scene, this.camera);
+            }
             if (this._sceneRT) {
                 r.setRenderTarget(this._sceneRT);
                 r.compile(this.scene, this.camera);
@@ -867,8 +874,11 @@ export class LaserManager {
         if (!r || typeof r.compileAsync !== 'function') { this.warmupShaders(); return; }
         const prev = r.getRenderTarget();
         try {
-            r.setRenderTarget(null);
-            const direct = r.compileAsync(this.scene, this.camera);
+            let direct = null;
+            if (this._canvasAA || !this._sceneRT) {
+                r.setRenderTarget(null);
+                direct = r.compileAsync(this.scene, this.camera);
+            }
             let composed = null;
             if (this._sceneRT) {
                 r.setRenderTarget(this._sceneRT);
