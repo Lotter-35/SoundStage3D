@@ -279,7 +279,7 @@ export class SpotManager {
         else u.uWind.value.set(this._time * 0.18, this._time * 0.04, this._time * 0.13);
         u.uTime.value = this._time;
 
-        this.volumePass.enabled = this._hasPass && this.batch.volumes.count > 0;
+        this.volumePass.enabled = this._hasPass && this.batch.volumeCount > 0;
 
         // Résolution réduite tant que la caméra est dans un faisceau (maintenue 0,5 s : pas de va-et-vient)
         if (this.volumePass.enabled && this._cameraInsideBeam()) this._insideHold = 0.5;

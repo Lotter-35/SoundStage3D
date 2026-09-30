@@ -4,8 +4,11 @@
  * Shaders des lyres Spot :
  *
  * 1. FAISCEAU VOLUMÉTRIQUE (createVolumeMaterial)
- *    Cône instancié (1 instance par facette de prisme, 1 draw call pour toutes les
- *    lyres) rendu en faces arrière. Pour chaque pixel :
+ *    Cône instancié (1 instance par lyre, 1 draw call pour toutes les lyres) rendu en
+ *    faces arrière. Avec un prisme, le cône est l'ENVELOPPE des facettes : chaque pixel
+ *    n'est calculé qu'une fois et additionne l'image de fenêtre de toutes les facettes
+ *    (fumée, ombre et profondeur lues une seule fois au lieu d'une fois par facette).
+ *    Pour chaque pixel :
  *      - intersection ANALYTIQUE rayon de vue ↔ cône (+ plans lentille / portée)
  *      - arrêt exact sur la scène grâce à la profondeur (DepthTexture)
  *      - intégration de la diffusion le long du rayon (jusqu'à 18 pas tramés ; répartis selon
@@ -39,7 +42,7 @@ import { SMOKE_NOISE_UVW_SCALE } from '../laser/LaserSmokeNoise.js';
 import { occluderUniforms, MAX_OCCLUDERS } from './SpotOcclusion.js';
 
 /** Texels RGBA par lyre dans la texture de paramètres */
-export const SPOT_TEXELS = 9;
+export const SPOT_TEXELS = 12;
 /*
  * T0 : couleur A (rgb)            , flux (intensité × dimmer × obturateur)
  * T1 : couleur B (rgb)            , position de la frontière des demi-couleurs (2 = aucune)
@@ -50,6 +53,20 @@ export const SPOT_TEXELS = 9;
  * T6 : couteau 3 (ins, angle)     , couteau 4 (ins, angle)
  * T7 : rotation bloc couteaux     , éblouissement , tan(demi-angle du cône) , distance apex → lentille
  * T8 : indices des 4 obstacles de la scène à tester (−1 = aucun) — voir SpotOcclusion.js
+ * T9 : nombre de facettes du prisme (0…8) , tan(demi-angle de l'enveloppe) , poids du faisceau central , poids d'une facette
+ * T10: décalage de la 1re facette (xy, unités de fenêtre) , passage d'une facette à la suivante : rotation (cos, sin)
+ * T11: passage d'une facette à la suivante : translation (xy, prisme linéaire) ,
+ *      début du rendu (m depuis la lentille) , fin du rendu (m, 0 = portée entière)
+ *      (facette i+1 = rotation(facette i) + translation ; son image est décalée de décalage × s / z,
+ *       s = distance à la lentille, z = distance à l'apex : toutes les facettes sortent de la lentille)
+ *
+ * Ligne d'une BARRE LED (instance de poids < 0 : toutes les LED d'une barre en un seul volume) :
+ * T0 : –, pondération du flux des LED | T1 : 2e couleur (rgb), frontière des demi-couleurs (2 = aucune)
+ * T2 : –, iris (1), frost (0), mise au point | T4 : –, –, poids de la tache de surface, rayon d'une LED
+ * T7 : –, éblouissement, tan(demi-angle du cône le plus large), – | T8 : obstacles
+ * T9 : tan(zoom/2) gauche, droite, 1re LED du côté droit, tan(cône) / tan(zoom/2)
+ * T10: 1re ligne des LED (lignes consécutives : couleur, flux) , nombre de LED , pas (m) , demi-couleur selon la hauteur
+ * T11: – , – , début du volume (m : les faisceaux individuels couvrent la zone plus proche) , –
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -198,7 +215,14 @@ vec3 spotGate(int row, vec2 g, float blur) {
 // ─────────────────────────────────────────────────────────────────────────────
 // 1. Faisceau volumétrique
 // ─────────────────────────────────────────────────────────────────────────────
-export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
+/**
+ * @param {object} [o]
+ * @param {boolean} [o.bar] volume des barres LED (toutes les LED d'une barre en une instance)
+ * @param {boolean} [o.prism] lyres à prisme (somme des facettes)
+ * Variantes séparées : le code du prisme ou des barres alourdirait le shader de toutes les lyres
+ * (plus de registres → moins de pixels calculés en parallèle, ~15 % plus lent)
+ */
+export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, { bar = false, prism = false } = {}) {
     const occ = occluderUniforms();
     return new THREE.ShaderMaterial({
         uniforms: {
@@ -232,16 +256,28 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
             void main() {
                 int row = int(iLens.w + 0.5);
                 vec4 T4 = texelFetch(uSpotParams, ivec2(4, row), 0);
-                vec4 T7 = texelFetch(uSpotParams, ivec2(7, row), 0);
+                vec4 T9 = texelFetch(uSpotParams, ivec2(9, row), 0);
                 vec3 W = iAxis.xyz;
                 vec3 R = iRight.xyz;
                 // Repère DIRECT (R, W×R, W) : conserve le sens des triangles (faces arrière = intérieur du cône)
                 vec3 U = cross(W, R);
                 float L = iAxis.w;
-                float z = position.z;              // 0 = lentille, 1 = fin de portée
-                // rayon réel du cône à cette distance (+3 % : le polygone contient le cercle)
-                float rad = (T4.w + z * L * T7.z) * 1.035;
-                vec3 world = iLens.xyz + W * (z * L) + (R * position.x + U * position.y) * rad;
+                vec4 T11 = texelFetch(uSpotParams, ivec2(11, row), 0);
+                float sEnd = T11.w > 0.0 ? min(T11.w, L) : L;
+                float s = mix(T11.z, sEnd, position.z);  // distance à la lentille (début → fin du rendu)
+                vec3 world;
+#ifdef BAR_MODE
+                    // Barre LED : tronc de pyramide (LED alignées sur R) inscrit dans une ellipse (× √2 + marge du polygone)
+                    vec4 T7 = texelFetch(uSpotParams, ivec2(7, row), 0);
+                    vec4 T10 = texelFetch(uSpotParams, ivec2(10, row), 0);
+                    float grow = T4.w + s * T7.z;
+                    float halfX = 0.5 * (T10.y - 1.0) * T10.z;
+                    world = iLens.xyz + W * s + (R * position.x * (halfX + grow) + U * position.y * grow) * 1.43;
+#else
+                    // rayon réel du cône (enveloppe des facettes du prisme) à cette distance (+3 % : le polygone contient le cercle)
+                    float rad = (T4.w + s * T9.y) * 1.035;
+                    world = iLens.xyz + W * s + (R * position.x + U * position.y) * rad;
+#endif
                 vWorld = world;
                 vLens = iLens;
                 vAxis = iAxis;
@@ -319,6 +355,194 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                 return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
             }
 
+            // Prisme et raccourci du faisceau ouvert : lus une fois par pixel
+            float pMainW, pFacetW, pPlainR2, pOutR2;
+            int pCount;
+            vec2 pV0, pRot, pD;
+            bool pPlain;
+
+            // Image de la fenêtre en g ; nulle hors de l'iris (+ flou maximal) ; cœur d'un faisceau ouvert
+            // (ni gobo, ni couteau, ni demi-couleur) : résultat exact sans calcul
+            vec3 gateAt(Gate G, vec2 g, float blur) {
+                float r2 = dot(g, g);
+                if (r2 >= pOutR2) return vec3(0.0);
+                if (pPlain && r2 < pPlainR2) return G.T0.rgb * (1.0 - 0.2 * r2);
+                return gateImage(G, g, blur);
+            }
+
+            // Somme des images de toutes les facettes ; g0 = coordonnées dans le faisceau central,
+            // k = s / z (décalage des facettes : nul à la lentille, entier au loin)
+#ifndef PRISM
+            vec3 prismImage(Gate G, vec2 g0, float k, float blur) {
+                return gateAt(G, g0, blur);
+            }
+#else
+            vec3 prismImage(Gate G, vec2 g0, float k, float blur) {
+                vec3 c = vec3(0.0);
+                if (pMainW > 0.0) c = gateAt(G, g0, blur) * pMainW;
+                vec2 v = pV0;
+                for (int i = 0; i < 8; i++) {
+                    if (i >= pCount) break;
+                    c += gateAt(G, g0 - v * k, blur) * pFacetW;
+                    v = vec2(pRot.x * v.x - pRot.y * v.y, pRot.y * v.x + pRot.x * v.y) + pD;
+                }
+                return c;
+            }
+#endif
+
+#ifdef BAR_MODE
+            // ── Barre LED : toutes les LED en un seul volume ──
+            // Réglages de la barre (lus une fois par pixel)
+            int bFirst, bCount, bSplitI;
+            float bPitch, bHalfX, bLedR, bTanM, bThL, bThR, bConeK, bSplit;
+            bool bSplitU;
+            vec3 bColB;
+
+            // Éclairement de toutes les LED au point (x, y) du plan à la distance s des lentilles
+            // (x le long de la barre, y en hauteur) : seules les LED dont le cône contient le point sont lues
+            vec3 barLight(float s, float x, float y, float blur) {
+                float rM = bLedR + s * bTanM;
+                if (s < 0.0 || abs(y) > rM) return vec3(0.0);
+                float fx = x + bHalfX;
+                int lo = max(0, int(ceil((fx - rM) / bPitch)));
+                int hi = min(bCount - 1, int(floor((fx + rM) / bPitch)));
+                float edge = 0.012 + blur;
+                vec3 c = vec3(0.0);
+                for (int k = 0; k < 32; k++) {
+                    int i = lo + k;
+                    if (i > hi) break;
+                    float th = i < bSplitI ? bThL : bThR;
+                    float zA = s + bLedR / (th * bConeK);
+                    vec2 g = vec2(fx - float(i) * bPitch, y) / (zA * th);
+                    float r2 = dot(g, g);
+                    if (r2 >= (1.0 + edge) * (1.0 + edge)) continue;
+                    vec4 A = spotParam(bFirst + i, 0);
+                    float m = (1.0 - smoothstep(1.0 - edge, 1.0 + edge, sqrt(r2))) * (1.0 - 0.2 * min(r2, 1.0));
+                    vec3 col = A.rgb;
+                    if (bSplit < 1.9) col = mix(A.rgb, bColB, smoothstep(bSplit - edge, bSplit + edge, bSplitU ? -g.y : g.x));
+                    c += col * (m * A.w / (PI * th * th * zA * zA));
+                }
+                return c;
+            }
+
+            // a + b·t ≤ c : resserre l'intervalle [tin, tout] du rayon
+            void clipLin(float a, float b, float c, inout float tin, inout float tout) {
+                if (abs(b) < 1e-8) { if (a > c) tout = -1e9; return; }
+                float t = (c - a) / b;
+                if (b > 0.0) tout = min(tout, t); else tin = max(tin, t);
+            }
+
+            vec3 barBeam(vec3 ro, vec3 rd, float tScene, vec3 sceneP, vec3 nrm, int row, vec3 C, vec3 W, vec3 R, vec3 U, float L) {
+                vec4 T0 = spotParam(row, 0);
+                vec4 T1 = spotParam(row, 1);
+                vec4 T2 = spotParam(row, 2);
+                vec4 T4 = spotParam(row, 4);
+                vec4 T7 = spotParam(row, 7);
+                vec4 T8 = spotParam(row, 8);
+                vec4 T9 = spotParam(row, 9);
+                vec4 T10 = spotParam(row, 10);
+                vec4 T11 = spotParam(row, 11);
+                bFirst = int(T10.x + 0.5);
+                bCount = int(T10.y + 0.5);
+                bPitch = T10.z;
+                bSplitU = T10.w > 0.5;
+                bHalfX = 0.5 * float(bCount - 1) * bPitch;
+                bLedR = T4.w;
+                bTanM = T7.z;
+                bThL = T9.x; bThR = T9.y; bSplitI = int(T9.z + 0.5); bConeK = T9.w;
+                bColB = T1.rgb; bSplit = T1.w;
+                float s0 = T11.z;
+                bool hasOcc = T8.x >= 0.0;
+
+                // ── Intersection rayon ↔ tronc de pyramide : s0 ≤ s ≤ L, |x| ≤ X0 + s·tan, |y| ≤ rayon LED + s·tan ──
+                vec3 q = ro - C;
+                float qs = dot(q, W), qx = dot(q, R), qy = dot(q, U);
+                float ds = dot(rd, W), dx = dot(rd, R), dy = dot(rd, U);
+                float X0 = bHalfX + bLedR;
+                float tin = -1e9, tout = 1e9;
+                clipLin(-qs, -ds, -s0, tin, tout);
+                clipLin(qs, ds, L, tin, tout);
+                clipLin(qx - bTanM * qs, dx - bTanM * ds, X0, tin, tout);
+                clipLin(-qx - bTanM * qs, -dx - bTanM * ds, X0, tin, tout);
+                clipLin(qy - bTanM * qs, dy - bTanM * ds, bLedR, tin, tout);
+                clipLin(-qy - bTanM * qs, -dy - bTanM * ds, bLedR, tin, tout);
+                tin = max(tin, uNear);
+                bool hitSurface = tScene < tout && tScene > tin;
+                tout = min(tout, tScene);
+                if (tout <= tin) discard;
+
+                float frostBlur = T2.z * 0.42;
+                float logFocus = log(T2.w);
+                float fadeStart = L * 0.7;
+                float fluxK = T0.w;
+
+                // Échantillons : répartis selon l'éclairement quand le rayon remonte la barre (comme les lyres)
+                float zOff = bLedR / bTanM;
+                float span = tout - tin;
+                float zIn = max(qs + ds * tin + zOff, 1e-3);
+                float zOut = max(qs + ds * tout + zOff, 1e-3);
+                bool imp = abs(ds) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
+                float nS = clamp(ceil(span * 2.0), 5.0, imp ? 8.0 : 14.0);
+                float dt = span / nS;
+                float invIn = 1.0 / zIn;
+                float invOut = 1.0 / zOut;
+                float impW = abs(invIn - invOut) / (abs(ds) * nS);
+                float jit = ign(gl_FragCoord.xy);
+                float cs = qs + zOff;
+
+                vec3 sum = vec3(0.0);
+                for (int i = 0; i < 14; i++) {
+                    if (float(i) >= nS) break;
+                    float t, w;
+                    if (imp) {
+                        float z = 1.0 / mix(invIn, invOut, (float(i) + jit) / nS);
+                        t = (z - cs) / ds;
+                        w = impW * z * z;
+                    } else {
+                        t = tin + (float(i) + jit) * dt;
+                        w = dt;
+                    }
+                    vec3 P = ro + rd * t;
+                    vec3 lp = P - C;
+                    float sp = dot(lp, W);
+                    float blur = frostBlur + min(0.14, abs(log(sp + 0.5) - logFocus) * 0.035);
+                    vec3 E = barLight(sp, dot(lp, R), dot(lp, U), blur);
+                    if (E.r + E.g + E.b < 1e-6) continue;
+                    if (hasOcc) {
+                        // Ombre : départ tiré le long de la barre (pénombre douce)
+                        vec3 a = C + R * (bHalfX * (2.0 * fract(jit * 7.13 + float(i) * 0.618) - 1.0));
+                        vec3 sd = P - a;
+                        if (segBlocked(a, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8)) continue;
+                    }
+                    float fade = 1.0 - smoothstep(fadeStart, L, sp);
+                    float cosT = dot(lp + W * zOff, -rd) / max(1e-4, length(lp + W * zOff));
+                    sum += E * (fluxK * fade * hazeFromNoise(hazeNoise(P, false)) * phase(cosT) * w);
+                    if (all(greaterThanEqual(sum, vec3(64.0 / 0.035)))) break;
+                }
+                vec3 col = sum * 0.035;
+
+                // ── Tache de lumière sur les surfaces ──
+                float splashW = T4.z;
+                if (hitSurface && splashW > 0.001) {
+                    bool blocked = false;
+                    if (hasOcc) {
+                        vec3 sd = sceneP - C;
+                        blocked = segBlocked(C, sd, 1.0 - 0.06 / max(length(sd), 0.1), T8);
+                    }
+                    if (!blocked) {
+                        vec3 lp = sceneP - C;
+                        float sp = dot(lp, W);
+                        float blur = frostBlur + min(0.14, abs(log(sp + 0.5) - logFocus) * 0.035);
+                        vec3 n = normalize(nrm);
+                        if (dot(n, rd) > 0.0) n = -n;
+                        float ndl = max(0.0, dot(n, -normalize(lp + W * zOff)));
+                        col += barLight(sp, dot(lp, R), dot(lp, U), blur) * (fluxK * ndl * splashW * 0.06 * (1.0 - smoothstep(fadeStart, L, sp)));
+                    }
+                }
+                return col;
+            }
+#endif
+
             void main() {
                 vec3 ro = cameraPosition;
                 vec3 rd = normalize(vWorld - ro);
@@ -336,23 +560,32 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                 vec3 R = vRight.xyz;
                 vec3 U = cross(R, W);
                 float weight = vRight.w;
+#ifdef BAR_MODE
+                gl_FragColor = vec4(barBeam(ro, rd, tScene, sceneP, nrm, row, vLens.xyz, W, R, U, L), 1.0);
+                return;
+#endif
 
                 vec4 T0 = spotParam(row, 0);
                 vec4 T2 = spotParam(row, 2);
                 vec4 T4 = spotParam(row, 4);
                 vec4 T7 = spotParam(row, 7);
                 vec4 T8 = spotParam(row, 8);
+                vec4 T9 = spotParam(row, 9);
                 bool hasOcc = T8.x >= 0.0;
                 float flux = T0.w * weight;
                 if (flux <= 0.0) discard;
                 float tanHalf = T2.x;
-                float tanCone = T7.z;
+                // Cône d'une facette (image de la fenêtre) : apex à apexDist derrière la lentille
                 float apexDist = T7.w;
                 vec3 apex = vLens.xyz - W * apexDist;
+                // Cône enveloppe (toutes les facettes) : c'est lui qu'on intersecte
+                float tanEnv = T9.y;
+                float envDist = T4.w / tanEnv;
+                vec3 envApex = vLens.xyz - W * envDist;
 
                 // ── Intersection analytique rayon ↔ cône ──
-                float c2 = 1.0 / (1.0 + tanCone * tanCone);
-                vec3 co = ro - apex;
+                float c2 = 1.0 / (1.0 + tanEnv * tanEnv);
+                vec3 co = ro - envApex;
                 float dv = dot(rd, W);
                 float cv = dot(co, W);
                 float qa = dv * dv - c2;
@@ -379,12 +612,16 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                     }
                 }
                 // Plans de la lentille et de fin de portée
+                // Plans de début et de fin du rendu (lentille et fin de portée, sauf faisceau raccourci)
+                vec4 T11 = spotParam(row, 11);
+                float sStart = T11.z;
+                float sEnd = T11.w > 0.0 ? min(T11.w, L) : L;
                 if (abs(dv) > 1e-6) {
-                    float ta = (apexDist - cv) / dv;
-                    float tb = (apexDist + L - cv) / dv;
+                    float ta = (envDist + sStart - cv) / dv;
+                    float tb = (envDist + sEnd - cv) / dv;
                     tin = max(tin, min(ta, tb));
                     tout = min(tout, max(ta, tb));
-                } else if (cv < apexDist || cv > apexDist + L) {
+                } else if (cv < envDist + sStart || cv > envDist + sEnd) {
                     discard;
                 }
                 tin = max(tin, uNear);
@@ -404,12 +641,23 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
 
                 // Faisceau ouvert (ni gobo, ni couteau, ni roue d'animation, ni demi-couleur) : à l'intérieur de
                 // l'iris moins sa marge de flou maximale, l'image de la fenêtre vaut exactement couleur × (1 − 0,2 r²)
-                bool plainGate = !G.hasFixed && !G.hasRot && !G.hasAnim && !G.anyBlade && !G.halfCol;
+                pPlain = !G.hasFixed && !G.hasRot && !G.hasAnim && !G.anyBlade && !G.halfCol;
                 float plainR = min(G.T2.y, 1.0) - (0.012 + frostBlur + 0.14);
-                float plainR2 = plainR > 0.0 ? plainR * plainR : -1.0;
+                pPlainR2 = plainR > 0.0 ? plainR * plainR : -1.0;
+                float outR = min(G.T2.y, 1.0) + 0.012 + frostBlur + 0.14;
+                pOutR2 = outR * outR;
+                pCount = int(T9.x + 0.5);
+                pMainW = T9.z;
+                pFacetW = T9.w;
+                vec4 T10 = spotParam(row, 10);
+                pV0 = T10.xy;
+                pRot = T10.zw;
+                pD = T11.xy;
 
                 // Caméra DANS le faisceau (on est visé) : cas le plus coûteux (faisceau plein écran)
-                bool inside = cv > apexDist && cv < apexDist + L && cv * cv >= dot(co, co) * c2;
+                bool inside = cv > envDist + sStart && cv < envDist + sEnd && cv * cv >= dot(co, co) * c2;
+                // Distances le long de l'axe désormais comptées depuis l'apex des facettes (éclairement en 1/z²)
+                cv += apexDist - envDist;
 
                 // ── Intégration de la diffusion le long du rayon ──
                 // Distance le long de l'axe aux deux bouts du trajet dans le faisceau
@@ -420,7 +668,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                 // répartis selon la lumière (serrés près de la lyre), moins nombreux pour une qualité équivalente.
                 // Faisceau vu de côté : répartition régulière, inchangée.
                 bool imp = abs(dv) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
-                float nS = weight < 0.99 ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
+                float nS = (weight < 0.99 || pCount > 0) ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
                                          : clamp(ceil(span * 2.6), 6.0, imp ? 8.0 : 18.0);
                 float dt = span / nS;
                 float invIn = 1.0 / zIn;
@@ -453,18 +701,18 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                     float zl = max(zA - apexDist, 0.0);
                     float r2 = dot(g, g);
                     vec3 gate;
-                    if (plainGate && r2 < plainR2) {
+                    if (pPlain && pCount == 0 && r2 < pPlainR2) {
                         gate = G.T0.rgb * (1.0 - 0.2 * r2);
                     } else {
                         float blur = frostBlur + min(0.14, abs(log(zl + 0.5) - logFocus) * 0.035);
-                        gate = gateImage(G, g, blur);
-                        // Rayon qui traverse le faisceau de biais : 2e lecture au milieu du trajet (demi-couleurs, gobos)
+                        gate = prismImage(G, g, zl / zA, blur);
+                        // Rayon qui traverse le faisceau de biais : 2e lecture au milieu du trajet (demi-couleurs, gobos, prisme)
                         vec3 P2 = ro + rd * (0.5 * (tin + tout));
                         vec3 lp2 = P2 - apex;
                         float zA2 = max(dot(lp2, W), 1e-3);
                         vec3 rad2 = lp2 - W * zA2;
                         vec2 g2 = vec2(dot(rad2, R), dot(rad2, U)) * (invTanHalf / zA2);
-                        gate = mix(gate, gateImage(G, g2, blur), 0.35);
+                        gate = mix(gate, prismImage(G, g2, max(zA2 - apexDist, 0.0) / zA2, blur), 0.35);
                     }
                     bool blocked = false;
                     if (hasOcc) {
@@ -500,12 +748,13 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                     float zl = max(zA - apexDist, 0.0);
                     vec3 gate;
                     float r2 = dot(g, g);
-                    if (plainGate && r2 < plainR2) {
-                        // Cœur d'un faisceau ouvert (ni gobo, ni couteau, ni demi-couleur) : résultat exact sans calcul
+                    if (pPlain && pCount == 0 && r2 < pPlainR2) {
+                        // Cœur d'un faisceau ouvert sans prisme : résultat exact sans calcul
                         gate = G.T0.rgb * (1.0 - 0.2 * r2);
                     } else {
                         float blur = frostBlur + min(0.14, abs(log(zl + 0.5) - logFocus) * 0.035);
-                        gate = gateImage(G, g, blur);
+                        gate = prismImage(G, g, zl / zA, blur);
+                        // Entre les facettes (ou hors de l'iris) : ni fumée ni ombre à calculer
                         if (gate.r + gate.g + gate.b < 1e-4) continue;
                     }
                     // Ombre de la structure de la scène : départ tiré sur la surface de la lentille (pénombre douce).
@@ -548,12 +797,13 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                     if (dot(n, rd) > 0.0) n = -n;
                     float ndl = max(0.0, dot(n, -normalize(lp)));
                     float E = irr0 / (zA * zA);
-                    col += gateImage(G, g, blur) * (E * ndl * splashW * 0.06 * (1.0 - smoothstep(fadeStart, L, zl)));
+                    col += prismImage(G, g, zl / max(zA, 1e-3), blur) * (E * ndl * splashW * 0.06 * (1.0 - smoothstep(fadeStart, L, zl)));
                 }
 
                 gl_FragColor = vec4(col, 1.0);
             }
         `,
+        defines: bar ? { BAR_MODE: 1 } : prism ? { PRISM: 1 } : {},
         side: THREE.BackSide,
         transparent: true,
         depthTest: false,
@@ -643,7 +893,7 @@ export function createGateMapMaterial(paramsTexture, goboTexture) {
             uRow:        { value: 0 },
             uScale:      { value: 1 },      // tan(angle lumière) / tan(zoom/2)
             uBlur:       { value: 0 },
-            uFacets:     { value: Array.from({ length: 8 }, () => new THREE.Vector3()) }, // centre.xy, poids
+            uFacets:     { value: Array.from({ length: 9 }, () => new THREE.Vector3()) }, // centre.xy, poids (axe + 8 facettes pendant l'insertion)
             uFacetCount: { value: 1 },
         },
         vertexShader: /* glsl */`
@@ -658,15 +908,16 @@ export function createGateMapMaterial(paramsTexture, goboTexture) {
             uniform int uRow;
             uniform float uScale;
             uniform float uBlur;
-            uniform vec3 uFacets[8];
+            uniform vec3 uFacets[9];
             uniform int uFacetCount;
             varying vec2 vUv;
             void main() {
                 vec2 g = (vUv * 2.0 - 1.0) * uScale;
                 vec3 col = vec3(0.0);
-                for (int i = 0; i < 8; i++) {
+                Gate G = loadGate(uRow);
+                for (int i = 0; i < 9; i++) {
                     if (i >= uFacetCount) break;
-                    col += spotGate(uRow, g - uFacets[i].xy, uBlur) * uFacets[i].z;
+                    col += gateImage(G, g - uFacets[i].xy, uBlur) * uFacets[i].z;
                 }
                 gl_FragColor = vec4(min(col, vec3(1.0)), 1.0);
             }

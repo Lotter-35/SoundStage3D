@@ -9,7 +9,9 @@
  *     + demi-couleur dans chaque faisceau
  *   - rendu : chaque LED est une « lyre » ultra-simple du batch des lyres (1 ligne de
  *     paramètres par LED, sans gobo) → mêmes faisceaux volumétriques, même tache au sol,
- *     même éblouissement, AUCUN nouveau shader et AUCUNE lumière Three.js
+ *     même éblouissement, AUCUN nouveau shader et AUCUNE lumière Three.js.
+ *     Faisceaux individuels jusqu'à ce qu'ils se chevauchent (~1,5 m), puis UN volume pour toute
+ *     la barre qui additionne ses LED (sinon 16 à 32 faisceaux superposés calculés chacun à leur tour)
  *
  * Toutes les animations (effets, strobe, rotation, macros) suivent l'horloge commune :
  * identiques chez tous les joueurs.
@@ -31,6 +33,10 @@ export const LEDBAR_BEAM_RANGE = 110;
 const PIXEL_FLUX = 2.4;
 /** Poids de facette < 0,99 : le shader des faisceaux prend son chemin économique (moins d'échantillons) */
 const BEAM_WEIGHT = 0.98;
+/** Demi-angle du cône d'une LED / demi-angle du zoom (marge du flou de bord) */
+const LED_CONE = 1.19;
+/** Distance où chaque point est éclairé par ~3 LED voisines (en pas) : le volume de la barre prend le relais */
+const MERGE_OVERLAP = 1.5;
 const DEG = Math.PI / 180;
 const TILT_ACCEL = 1400;       // °/s²
 const ZOOM_SPEED = 70;         // °/s
@@ -205,10 +211,15 @@ export class LedBarFixture {
         this._freeRows();
         this._n = n;
         this._slot = this._instancer.allocBar(n);
-        this._rows = Array.from({ length: n }, () => this.batch.allocRow());
+        // Lignes consécutives : le volume de la barre les lit à la suite
+        this._firstRow = this.batch.allocBlock(n);
+        this._rows = Array.from({ length: n }, (_, i) => this._firstRow + i);
         // Faisceau unique qui remplace ceux des LED quand la caméra est dedans (voir pushInstances)
         this._mergedRow = this.batch.allocRow();
         this._mergedLens = new THREE.Vector3();
+        // Volume de toute la barre au-delà de la zone où les faisceaux des LED sont séparés
+        this._barRow = this.batch.allocRow();
+        this._barLens = new THREE.Vector3();
         this._lensPos = Array.from({ length: n }, () => new THREE.Vector3());
         this._lastLens.fill(-1);
         this._lastHead.elements[0] = NaN;
@@ -301,6 +312,7 @@ export class LedBarFixture {
             for (let i = 0; i < this._n; i++) {
                 this._lensPos[i].set(pixelOffsetX(i, this._n), 0, BODY_DEPTH / 2 + 0.004).applyMatrix4(this._head);
             }
+            this._barLens.set(0, 0, BODY_DEPTH / 2 + 0.004).applyMatrix4(this._head);
         }
 
         // ── Intensité : dimmer × obturateur (strobe calé sur l'horloge commune) ──
@@ -360,12 +372,17 @@ export class LedBarFixture {
         const splashW = p.splash ? 1 : 0;
         const glare = p.lensGlare;
         const lensK = Math.min(this.intensity, 1) * 4.0;
+        // Zoom gauche / droite, et distance où le volume de la barre prend le relais des faisceaux individuels
+        const thL = Math.tan(Math.max(ZOOM_MIN * 0.5, this.zoomL) * 0.5 * DEG);
+        const thR = p.zoomSplit ? Math.tan(Math.max(ZOOM_MIN * 0.5, this.zoomR) * 0.5 * DEG) : thL;
+        const splitI = p.zoomSplit ? Math.ceil(n / 2) : n;
+        const merge = n >= 2;
+        const sMerge = merge ? Math.max(0.05, (MERGE_OVERLAP * PIXEL_PITCH - LED_LENS_RADIUS) / (Math.min(thL, thR) * LED_CONE)) : 0;
         for (let i = 0; i < n; i++) {
             const r = this.batch.paramsRow(this._rows[i]);
             const o = i * 3;
-            const zoom = p.zoomSplit ? (i < n / 2 ? this.zoomL : this.zoomR) : this.zoomL;
-            const tanHalf = Math.tan(Math.max(ZOOM_MIN * 0.5, zoom) * 0.5 * DEG);
-            const tanCone = tanHalf * 1.19;
+            const tanHalf = i < splitI ? thL : thR;
+            const tanCone = tanHalf * LED_CONE;
             r[0] = cols[o]; r[1] = cols[o + 1]; r[2] = cols[o + 2]; r[3] = flux;
             r[4] = _rgbB[0]; r[5] = _rgbB[1]; r[6] = _rgbB[2]; r[7] = split;
             r[8] = tanHalf; r[9] = 1; r[10] = 0; r[11] = 18;
@@ -375,6 +392,8 @@ export class LedBarFixture {
             r[24] = 0; r[25] = 0; r[26] = 0; r[27] = 0;
             r[28] = 0; r[29] = glare; r[30] = tanCone; r[31] = LED_LENS_RADIUS / tanCone;
             r[32] = this.occluders[0]; r[33] = this.occluders[1]; r[34] = this.occluders[2]; r[35] = this.occluders[3];
+            r[36] = 0; r[37] = tanCone; r[38] = 1; r[39] = 0;     // pas de prisme : enveloppe = cône de la LED
+            r[44] = 0; r[45] = 0; r[46] = 0; r[47] = sMerge;      // faisceau individuel jusqu'au volume de la barre
 
             // Lentille : s'illumine de la couleur de la LED (bloom), reflet sombre éteinte
             let lr = 0.02 + cols[o] * lensK, lg = 0.02 + cols[o + 1] * lensK, lb = 0.024 + cols[o + 2] * lensK;
@@ -389,6 +408,22 @@ export class LedBarFixture {
                 this._instancer.writeLens(this._slot, i, lr, lg, lb);
             }
         }
+        // Ligne du volume de la barre (format : voir SpotShaders.js, « Ligne d'une BARRE LED »)
+        if (merge) {
+            const b = this.batch.paramsRow(this._barRow);
+            const tcMax = Math.max(thL, thR) * LED_CONE;
+            b.fill(0);
+            b[3] = BEAM_WEIGHT;
+            b[4] = _rgbB[0]; b[5] = _rgbB[1]; b[6] = _rgbB[2]; b[7] = split;
+            b[9] = 1; b[11] = 18;
+            b[18] = splashW; b[19] = LED_LENS_RADIUS;
+            b[29] = glare; b[30] = tcMax; b[31] = LED_LENS_RADIUS / tcMax;
+            b[32] = this.occluders[0]; b[33] = this.occluders[1]; b[34] = this.occluders[2]; b[35] = this.occluders[3];
+            b[36] = thL; b[37] = thR; b[38] = splitI; b[39] = LED_CONE;
+            b[40] = this._firstRow; b[41] = n; b[42] = PIXEL_PITCH; b[43] = half === 2 ? 1 : 0;
+            b[46] = sMerge;
+        }
+        this._merge = merge;
         this._splitAxis = splitAxis;
         this._flux = flux;
     }
@@ -418,6 +453,8 @@ export class LedBarFixture {
             batch.pushVolume(this._lensPos[i], this._rows[i], this.axis, LEDBAR_BEAM_RANGE, R, BEAM_WEIGHT);
             batch.pushGlare(this._lensPos[i], this._rows[i], this.axis, BEAM_WEIGHT);
         }
+        // Au-delà : toutes les LED en un seul volume (poids < 0 : mode barre du shader)
+        if (this._merge) batch.pushVolume(this._barLens, this._barRow, this.axis, LEDBAR_BEAM_RANGE, this.right, -1);
     }
 
     /** Faisceau fusionné si la caméra est dans la zone où les faisceaux des LED se chevauchent */
@@ -464,11 +501,12 @@ export class LedBarFixture {
         // × 0,6 (calé sur le rendu des faisceaux séparés) : dans les vrais faisceaux, la caméra est souvent loin de leur axe (image de fenêtre plus sombre au bord)
         const f = 0.6 * r0[3] * eReal * (zc + aM) * (zc + aM);
         m.set(r0);
+        m[46] = 0; m[47] = 0;   // faisceau fusionné sur toute la portée
         m[0] = cr * inv; m[1] = cg * inv; m[2] = cb * inv; m[3] = f;
         m[4] = br * inv; m[5] = bg * inv; m[6] = bb * inv;
         m[8] = tan * inv;
         m[19] = Lm;
-        m[30] = tanCone; m[31] = aM;
+        m[30] = tanCone; m[31] = aM; m[37] = tanCone;
         batch.pushVolume(lens, this._mergedRow, this.axis, LEDBAR_BEAM_RANGE, R, BEAM_WEIGHT);
         return true;
     }
@@ -488,6 +526,11 @@ export class LedBarFixture {
             this.batch.paramsRow(this._mergedRow).fill(0);
             this.batch.freeRow(this._mergedRow);
             this._mergedRow = null;
+        }
+        if (this._barRow !== undefined && this._barRow !== null) {
+            this.batch.paramsRow(this._barRow).fill(0);
+            this.batch.freeRow(this._barRow);
+            this._barRow = null;
         }
     }
 }

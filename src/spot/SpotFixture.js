@@ -5,7 +5,7 @@
  *   - paramètres (consignes) : panneau, DMX ou réseau multijoueur
  *   - simulation mécanique (SpotMotion) → état physique réel
  *   - pose articulée socle / lyre (pan) / tête (tilt), montage posé ou suspendu
- *   - écriture de sa ligne de paramètres GPU et de ses faisceaux (1 par facette de prisme)
+ *   - écriture de sa ligne de paramètres GPU et de son faisceau (1 cône, enveloppe des facettes du prisme)
  *   - groupe de manipulation (gizmo) + volume de sélection invisible
  *   - patch DMX (univers, adresse, mode) et décodage de ses canaux
  * ─────────────────────────────────────────────────────────────
@@ -101,6 +101,8 @@ export class SpotFixture {
         this._lastDmxReset = null;
 
         this.facetCount = 0;
+        // Prisme pour le shader des faisceaux : facettes décrites par un générateur (voir SpotShaders.js, T9…T11)
+        this.prism = { count: 0, mainW: 1, facetW: 0, x0: 0, y0: 0, cos: 1, sin: 0, dx: 0, dy: 0 };
         this.facets = [];
         for (let i = 0; i < MAX_FACETS; i++) {
             this.facets.push({ axis: new THREE.Vector3(), right: new THREE.Vector3(), weight: 0, gx: 0, gy: 0 });
@@ -245,6 +247,10 @@ export class SpotFixture {
         r[24] = m.blades[2]; r[25] = m.bladeAngles[2]; r[26] = m.blades[3]; r[27] = m.bladeAngles[3];
         r[28] = m.bladeRot; r[29] = p.lensGlare; r[30] = tanCone; r[31] = LENS_RADIUS / tanCone;
         r[32] = this.occluders[0]; r[33] = this.occluders[1]; r[34] = this.occluders[2]; r[35] = this.occluders[3];
+        const pr = this.prism;
+        r[36] = pr.count; r[37] = this.tanLight; r[38] = pr.mainW; r[39] = pr.facetW;
+        r[40] = pr.x0; r[41] = pr.y0; r[42] = pr.cos; r[43] = pr.sin;
+        r[44] = pr.dx; r[45] = pr.dy; r[46] = 0; r[47] = 0;
 
         // Lentille : s'illumine de la couleur du faisceau (bloom 3x plus puissant)
         const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 15.0;
@@ -268,6 +274,8 @@ export class SpotFixture {
         };
         const type = m.prismType;
         const s = type > 0 ? m.prismIn : 0;
+        const pr = this.prism;
+        pr.count = 0; pr.mainW = s < 0.999 ? 1 - s : 0; pr.facetW = 0;
         if (s < 0.999) add(0, 0, 1 - s);
         if (s > 0.001) {
             const pa = m.prismAngle;
@@ -279,6 +287,10 @@ export class SpotFixture {
                     const off = (k - 1.5) * step;
                     add(cx * off, cy * off, s / 4);
                 }
+                pr.count = 4; pr.facetW = s / 4;
+                pr.x0 = -1.5 * step * cx / tanHalf; pr.y0 = -1.5 * step * cy / tanHalf;
+                pr.cos = 1; pr.sin = 0;
+                pr.dx = step * cx / tanHalf; pr.dy = step * cy / tanHalf;
             } else {
                 const count = type === 1 ? 3 : 8;
                 const dev = type === 1 ? 0.1 + tanHalf * 0.85 : 0.12 + tanHalf * 1.0;
@@ -286,17 +298,25 @@ export class SpotFixture {
                     const a = pa + (k / count) * Math.PI * 2;
                     add(Math.cos(a) * dev, Math.sin(a) * dev, s / count);
                 }
+                const step = Math.PI * 2 / count;
+                pr.count = count; pr.facetW = s / count;
+                pr.x0 = Math.cos(pa) * dev / tanHalf; pr.y0 = Math.sin(pa) * dev / tanHalf;
+                pr.cos = Math.cos(step); pr.sin = Math.sin(step);
+                pr.dx = 0; pr.dy = 0;
             }
         }
         this.facetCount = n;
     }
 
-    /** Ajoute les faisceaux et éblouissements de la lyre au batch */
+    /**
+     * Ajoute le faisceau et les éblouissements de la lyre au batch : UN cône (enveloppe des facettes du
+     * prisme, dont le shader additionne les images) et un éblouissement par facette
+     */
     pushInstances(batch) {
         if (this.flux <= 1e-4) return;
+        batch.pushVolume(this.lensPos, this.row, this.axis, SPOT_BEAM_RANGE, this.right, 1, this.prism.count > 0);
         for (let i = 0; i < this.facetCount; i++) {
             const f = this.facets[i];
-            batch.pushVolume(this.lensPos, this.row, f.axis, SPOT_BEAM_RANGE, f.right, f.weight);
             batch.pushGlare(this.lensPos, this.row, f.axis, f.weight);
         }
     }

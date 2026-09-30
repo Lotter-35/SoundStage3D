@@ -2,8 +2,10 @@
  * SpotBatch.js
  * ─────────────────────────────────────────────────────────────
  * Rendu GPU BATCHÉ de toutes les lyres :
- *   - faisceaux volumétriques → 1 cône instancié (1 instance par facette de prisme),
- *     rendu dans une scène dédiée par SpotVolumePass (demi-résolution, profondeur de la scène)
+ *   - faisceaux volumétriques → 1 cône instancié par lyre (enveloppe des facettes du prisme),
+ *     rendu dans une scène dédiée par SpotVolumePass (demi-résolution, profondeur de la scène).
+ *     3 variantes du shader, 1 draw call chacune : lyres sans prisme, lyres à prisme, barres LED
+ *     (le code du prisme ou des barres alourdirait le shader de toutes les lyres)
  *   - éblouissements de lentille → 1 billboard instancié dans la scène (bloom lampes)
  * Les paramètres de chaque lyre sont dans une DataTexture float (SPOT_TEXELS texels / lyre).
  * ─────────────────────────────────────────────────────────────
@@ -107,17 +109,17 @@ export class SpotBatch {
         this._materials = [this.volumeMaterial, this.glareMaterial];
 
         // ── Faisceaux (scène dédiée, rendue par SpotVolumePass) ──
+        // Variantes du shader : uniformes partagés (réglages, profondeur, vent… écrits une seule fois)
         this.volumeScene = new THREE.Scene();
-        const coneGeo = makeConeGeometry();
-        this.volumes = new InstanceStream(coneGeo, VOLUME_STRIDE, [
-            { name: 'iLens', offset: 0, size: 4 },
-            { name: 'iAxis', offset: 4, size: 4 },
-            { name: 'iRight', offset: 8, size: 4 },
-        ], 64);
-        this.volumeMesh = new THREE.Mesh(coneGeo, this.volumeMaterial);
-        this.volumeMesh.frustumCulled = false;
-        this.volumeMesh.matrixAutoUpdate = false;
-        this.volumeScene.add(this.volumeMesh);
+        const variant = (options) => {
+            const m = createVolumeMaterial(this.paramsTexture, this.goboTexture, getSmokeNoiseTexture(), options);
+            m.uniforms = this.volumeMaterial.uniforms;
+            return m;
+        };
+        this._plain = this._makeVolumeLayer(this.volumeMaterial, 64);
+        this._prism = this._makeVolumeLayer(variant({ prism: true }), 16);
+        this._bars = this._makeVolumeLayer(variant({ bar: true }), 8);
+        this._layers = [this._plain, this._prism, this._bars];
 
         // ── Éblouissements de lentille (scène principale, bloom lampes) ──
         const plane = new THREE.PlaneGeometry(1, 1);
@@ -137,6 +139,20 @@ export class SpotBatch {
         this.glareMesh.renderOrder = 10;
         enableLightsBloom(this.glareMesh);
         scene.add(this.glareMesh);
+    }
+
+    _makeVolumeLayer(material, capacity) {
+        const geo = makeConeGeometry();
+        const stream = new InstanceStream(geo, VOLUME_STRIDE, [
+            { name: 'iLens', offset: 0, size: 4 },
+            { name: 'iAxis', offset: 4, size: 4 },
+            { name: 'iRight', offset: 8, size: 4 },
+        ], capacity);
+        const mesh = new THREE.Mesh(geo, material);
+        mesh.frustumCulled = false;
+        mesh.matrixAutoUpdate = false;
+        this.volumeScene.add(mesh);
+        return { stream, mesh };
     }
 
     _allocParamsTexture(rows) {
@@ -166,6 +182,14 @@ export class SpotBatch {
         return this._rows++;
     }
 
+    /** Réserve n lignes CONSÉCUTIVES (LED d'une barre, lues à la suite par le shader) ; retourne la 1re */
+    allocBlock(n) {
+        while (this._rows + n > this._maxRows) this._allocParamsTexture(this._maxRows * 2);
+        const first = this._rows;
+        this._rows += n;
+        return first;
+    }
+
     freeRow(row) {
         this._freeRows.push(row);
     }
@@ -175,35 +199,44 @@ export class SpotBatch {
         return this.paramsTexture.image.data.subarray(row * n, row * n + n);
     }
 
+    /** Nombre de volumes à dessiner (lyres + barres LED) */
+    get volumeCount() {
+        return this._plain.stream.count + this._prism.stream.count + this._bars.stream.count;
+    }
+
     /** Assemble les faisceaux et éblouissements de toutes les lyres */
     assemble(fixtures, sources = null) {
-        this.volumes.begin();
+        for (const l of this._layers) l.stream.begin();
         this.glares.begin();
         // Projecteurs dont le faisceau est affiché (un faisceau à prisme compte pour un)
         let n = 0;
         for (const f of fixtures) {
-            const before = this.volumes.count;
+            const before = this.volumeCount;
             f.pushInstances(this);
-            if (this.volumes.count > before) n++;
+            if (this.volumeCount > before) n++;
         }
         if (sources) {
             for (const s of sources) {
-                const before = this.volumes.count;
+                const before = this.volumeCount;
                 s.pushInstances(this);
-                if (this.volumes.count > before) n++;
+                if (this.volumeCount > before) n++;
             }
         }
         this.volumeSources = n;
-        this.volumes.end();
+        for (const l of this._layers) {
+            l.stream.end();
+            l.mesh.visible = l.stream.count > 0;
+        }
         this.glares.end();
         this.paramsTexture.needsUpdate = true;
-        this.volumeMesh.visible = this.volumes.count > 0;
         this.glareMesh.visible = this.glares.count > 0;
     }
 
-    pushVolume(lens, row, axis, length, right, weight) {
-        const o = this.volumes.push();
-        const a = this.volumes.array;
+    /** weight < 0 : volume d'une barre LED (voir LedBarFixture.pushInstances) ; prism : lyre à prisme */
+    pushVolume(lens, row, axis, length, right, weight, prism = false) {
+        const stream = weight < 0 ? this._bars.stream : prism ? this._prism.stream : this._plain.stream;
+        const o = stream.push();
+        const a = stream.array;
         a[o] = lens.x; a[o + 1] = lens.y; a[o + 2] = lens.z; a[o + 3] = row;
         a[o + 4] = axis.x; a[o + 5] = axis.y; a[o + 6] = axis.z; a[o + 7] = length;
         a[o + 8] = right.x; a[o + 9] = right.y; a[o + 10] = right.z; a[o + 11] = weight;
@@ -217,12 +250,12 @@ export class SpotBatch {
     }
 
     compile(renderer, camera) {
-        for (const [scene, mesh] of [[this.volumeScene, this.volumeMesh], [this.scene, this.glareMesh]]) {
-            const was = mesh.visible;
-            mesh.visible = true;
-            try { renderer.compile(scene === this.scene ? mesh : scene, camera); } catch (_) {}
-            mesh.visible = was;
-        }
+        const meshes = [...this._layers.map(l => l.mesh), this.glareMesh];
+        const vis = meshes.map(m => m.visible);
+        for (const m of meshes) m.visible = true;
+        try { renderer.compile(this.volumeScene, camera); } catch (_) {}
+        try { renderer.compile(this.glareMesh, camera); } catch (_) {}
+        meshes.forEach((m, i) => { m.visible = vis[i]; });
     }
 }
 
@@ -293,7 +326,7 @@ export class SpotVolumePass extends Pass {
         this.needsSwap = !this.deferred;
         this._hasOut = false;
 
-        if (hasDepth && this.batch.volumeMesh.visible) {
+        if (hasDepth && this.batch.volumeCount > 0) {
             u.uDepth.value = depth;
             u.uNear.value = cam.near;
             u.uFar.value = cam.far;
