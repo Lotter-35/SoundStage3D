@@ -4,8 +4,8 @@
  *
  *   - temps GPU de chaque image mesuré par requêtes de minuterie (EXT_disjoint_timer_query_webgl2),
  *     lues quelques images plus tard (aucune attente) ; sans l'extension, la résolution ne bouge pas ;
- *   - cible : pourcentage réglable de la fréquence de l'écran, estimée sur les images les plus rapides
- *     et remise à zéro quand la fenêtre change d'écran ;
+ *   - cible : pourcentage réglable de la fréquence de l'écran, mesurée par une courte calibration
+ *     (images sans rendu) au démarrage et quand la fenêtre change d'écran, gardée par écran ;
  *   - paliers de 100 % à 67 % de l'échelle de rendu choisie (qui reste le plafond) ; baisse d'autant de
  *     paliers que nécessaire, remontée d'un palier à la fois quand le palier du dessus tient dans le budget ;
  *   - décision sur la médiane des mesures depuis le dernier changement (un pic isolé ne compte pas) ;
@@ -21,9 +21,11 @@ const UP_DELAY_MS = 3000;
 const MAX_UP_DELAY_MS = 30000;
 const BOUNCE_MS = 10000;       // baisse moins de 10 s après une remontée = va-et-vient
 const MIN_SAMPLES = 20;        // mesures depuis le dernier changement avant de décider
-const WINDOW = 31;
-const DOWN_BAN_MS = 30000;     // après une baisse inutile             // mesures gardées pour la médiane
+const WINDOW = 31;             // mesures gardées pour la médiane
+const DOWN_BAN_MS = 30000;     // après une baisse inutile
 const REFRESH_RATES = [50, 60, 75, 90, 100, 120, 144, 165, 170, 180, 200, 240];
+const CALIBRATION_FRAMES = 24;
+const REFRESH_STORAGE_KEY = 'soundstage3d:screen-refresh';
 
 export class DynamicResolution {
     /**
@@ -51,7 +53,10 @@ export class DynamicResolution {
         this._samples = 0;
         this._lastChange = 0;
         this._lastFrame = 0;
-        this._intervals = new Float32Array(240);
+        this._intervals = new Float32Array(120);
+        this._calibrating = false;
+        this._calIntervals = [];
+        this._calLast = 0;
         this._intervalCount = 0;
         this._intervalPos = 0;
         this._lastRefreshEstimate = 0;
@@ -95,7 +100,6 @@ export class DynamicResolution {
 
     /** Une fois par image : lecture des mesures prêtes, estimation de la fréquence de l'écran, décision */
     update(now) {
-        this._trackRefresh(now);
         if (!this.enabled || !this.ext) return;
         const gl = this.gl;
         const disjoint = gl.getParameter(this.ext.GPU_DISJOINT_EXT);
@@ -174,41 +178,89 @@ export class DynamicResolution {
         this._pending.length = 0;
     }
 
-    /** Fréquence de l'écran : les 10 % d'images les plus rapides suivent la synchro verticale */
-    _trackRefresh(now) {
-        // Fenêtre passée sur un autre écran : on repart de zéro (nouvelle fréquence en ~1 s)
-        if (now - this._lastScreenCheck > 500) {
-            this._lastScreenCheck = now;
-            const sc = window.screen || {};
-            const key = `${sc.availLeft ?? ''},${sc.availTop ?? ''},${sc.width}x${sc.height},${window.devicePixelRatio}`;
-            if (key !== this._screenKey) {
-                const first = this._screenKey === '';
-                this._screenKey = key;
-                if (!first) {
-                    this._intervalCount = 0;
-                    this._intervalPos = 0;
-                    this._lastRefreshEstimate = 0;
-                    this._reset();
-                }
-            }
+    /**
+     * À appeler au début de chaque image. Renvoie vrai quand l'image ne doit PAS être rendue : quelques images
+     * sans rendu (≈ 0,2 s) mesurent la vraie fréquence de l'écran (sans rendu, les images suivent la synchro
+     * verticale même si le jeu tourne plus lentement). Faite au démarrage et quand la fenêtre change d'écran ;
+     * la dernière fréquence trouvée pour cet écran sert en attendant.
+     */
+    calibrate(now) {
+        this._checkScreen(now);
+        if (!this._calibrating) {
+            this._trackFastFrames(now);
+            return false;
         }
-        const dt = this._lastFrame ? now - this._lastFrame : 0;
-        this._lastFrame = now;
-        if (dt > 0 && dt < 100) {
-            this._intervals[this._intervalPos] = dt;
-            this._intervalPos = (this._intervalPos + 1) % this._intervals.length;
-            this._intervalCount = Math.min(this._intervals.length, this._intervalCount + 1);
-        }
-        if (this._intervalCount < 60 || now - this._lastRefreshEstimate < 1000) return;
-        this._lastRefreshEstimate = now;
-        const sorted = Array.from(this._intervals.subarray(0, this._intervalCount)).sort((a, b) => a - b);
-        const hz = 1000 / sorted[Math.floor(sorted.length * 0.1)];
+        const dt = this._calLast ? now - this._calLast : 0;
+        this._calLast = now;
+        if (dt > 0 && dt < 100) this._calIntervals.push(dt);
+        if (this._calIntervals.length < CALIBRATION_FRAMES) return true;
+        const sorted = this._calIntervals.slice().sort((a, b) => a - b);
+        this._setRefresh(1000 / sorted[sorted.length >> 1]);
+        this._saveRefresh();
+        this._calibrating = false;
+        this._lastFrame = 0;
+        return false;
+    }
+
+    _startCalibration() {
+        this._calibrating = true;
+        this._calIntervals = [];
+        this._calLast = 0;
+    }
+
+    _checkScreen(now) {
+        if (now - this._lastScreenCheck < 500) return;
+        this._lastScreenCheck = now;
+        const sc = window.screen || {};
+        const key = `${sc.availLeft ?? ''},${sc.availTop ?? ''},${sc.width}x${sc.height},${window.devicePixelRatio}`;
+        if (key === this._screenKey) return;
+        this._screenKey = key;
+        // Valeur connue pour cet écran en attendant, puis calibration (l'écran a pu changer de réglage)
+        const known = this._loadRefresh();
+        if (known) this._setRefresh(known);
+        this._startCalibration();
+    }
+
+    _setRefresh(hz) {
         let best = REFRESH_RATES[0];
         for (const r of REFRESH_RATES) if (Math.abs(r - hz) < Math.abs(best - hz)) best = r;
         const hzNew = Math.abs(best - hz) / best < 0.06 ? best : Math.round(hz);
         if (hzNew !== this.refreshHz) {
             this.refreshHz = hzNew;
             this._reset();
+        }
+    }
+
+    _loadRefresh() {
+        try {
+            const map = JSON.parse(localStorage.getItem(REFRESH_STORAGE_KEY) || '{}');
+            return Number(map[this._screenKey]) || 0;
+        } catch (_) { return 0; }
+    }
+
+    _saveRefresh() {
+        try {
+            const map = JSON.parse(localStorage.getItem(REFRESH_STORAGE_KEY) || '{}');
+            map[this._screenKey] = this.refreshHz;
+            localStorage.setItem(REFRESH_STORAGE_KEY, JSON.stringify(map));
+        } catch (_) { /* stockage indisponible */ }
+    }
+
+    /** Images du jeu plus rapides que la fréquence retenue (écran changé de réglage) : on la remonte */
+    _trackFastFrames(now) {
+        const dt = this._lastFrame ? now - this._lastFrame : 0;
+        this._lastFrame = now;
+        if (!(dt > 0 && dt < 100)) return;
+        this._intervals[this._intervalPos] = dt;
+        this._intervalPos = (this._intervalPos + 1) % this._intervals.length;
+        this._intervalCount = Math.min(this._intervals.length, this._intervalCount + 1);
+        if (this._intervalCount < this._intervals.length || now - this._lastRefreshEstimate < 2000) return;
+        this._lastRefreshEstimate = now;
+        const sorted = Array.from(this._intervals).sort((a, b) => a - b);
+        const hz = 1000 / sorted[sorted.length >> 2];
+        if (hz > this.refreshHz * 1.1) {
+            this._setRefresh(hz);
+            this._saveRefresh();
         }
     }
 }

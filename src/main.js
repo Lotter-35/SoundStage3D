@@ -3550,7 +3550,7 @@ function updateDebug(dt) {
     const dynLines =
 `<span class="dbg-title">── RÉSOLUTION DYNAMIQUE ───────</span>
   État             <span class="dbg-val">${!dr.enabled ? 'désactivée' : !dr.available ? 'indisponible (pas de minuterie GPU)' : 'active'}</span>
-  Écran            <span class="dbg-val">${dr.refreshHz} Hz</span>  → cible <span class="dbg-val">${Math.round(dr.targetHz)} FPS</span> (${dr.targetPercent} %)
+  Écran            <span class="dbg-val">${dr.refreshHz} Hz</span>${dr._calibrating ? ' (mesure…)' : ''}  → cible <span class="dbg-val">${Math.round(dr.targetHz)} FPS</span> (${dr.targetPercent} %)
   Temps GPU (méd.) <span class="${gpuClass}">${dr.gpuMs.toFixed(2)} ms</span>  / budget ${budgetMs.toFixed(2)} ms
   Échelle dyn.     <span class="dbg-val">${Math.round(dr.factor * 100)} %</span>  (palier ${dr.level}${dr._downBan && performance.now() < dr._downBan.until ? ', baisse bloquée' : ''})
   Image rendue     <span class="dbg-val">${sceneRT ? `${sceneRT.width}×${sceneRT.height}` : '-'}</span>  MSAA ${laserManager ? laserManager._msaaSamples : '-'}x${
@@ -3595,6 +3595,8 @@ const SHADOW_RECENTER_STEP = 4; // m
 let _shadowMovedThisFrame = true;
 
 function renderFrame() {
+    // Calibration de la fréquence de l'écran (≈ 0,2 s au démarrage et au changement d'écran) : images vides
+    if (dynamicResolution.calibrate(performance.now())) return;
     const now = performance.now();
     const realFrameMs = now - _lastFrameTime;
     _lastFrameTime = now;
