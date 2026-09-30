@@ -292,7 +292,7 @@ export class Laser2Fixture {
             if (h0.id !== h1.id) split = true;
             else if (h0.id === SURF_PLAYER) split = span > 0.004;
             // Même surface aux deux bords mais obstacle au milieu (pilier…) : contrôle du milieu
-            else if (depth === 0 && span > 0.009) {
+            else if (depth === 0 && span > 0.009 && this._boxes[0] >= 0) {
                 const dm = _dStack[0].lerpVectors(d0, d1, 0.5).normalize();
                 split = this._hit(dm, _hStack[0]).id !== h0.id;
             }
