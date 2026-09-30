@@ -188,13 +188,104 @@ export function createFohTower(scene) {
         }
     }
 
-    // Petits projecteurs sur le toit tournés vers la scène (décor, non allumés)
-    const canGeo = new THREE.CylinderGeometry(0.12, 0.16, 0.35, 12);
-    for (const x of [X0 + 0.8, CX - 0.6, CX + 0.6, X1 - 0.8]) {
-        const c = addMesh(canGeo, blackMat, x, ROOF_Y + 0.25, Z0 - 0.1);
-        c.rotation.x = Math.PI / 2 + 0.25;
-    }
+    // ─── Texte blanc en lévitation "Vue régie" au centre de la table de régie ─
+    const deskTopY = DECK_Y + 0.9;
+    const labelBaseY = deskTopY + 0.28;
+
+    const labelTex = createRegieLabelCanvasTexture();
+    const labelMat = new THREE.MeshBasicMaterial({
+        map: labelTex,
+        transparent: true,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+    });
+
+    const labelGroup = new THREE.Group();
+    labelGroup.position.set(CX, labelBaseY, deskZ);
+
+    const labelMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.70, 0.25), labelMat);
+    labelGroup.add(labelMesh);
+
+    // Hitbox invisible pour le clic et le raycast
+    const triggerMesh = new THREE.Mesh(
+        new THREE.BoxGeometry(0.85, 0.45, 0.40),
+        new THREE.MeshBasicMaterial({ visible: false })
+    );
+    triggerMesh.userData = { isRegieTrigger: true };
+    labelGroup.add(triggerMesh);
+
+    group.add(labelGroup);
+
+    _regieTriggerMesh = triggerMesh;
+    _regieLabelGroup = labelGroup;
+
+    // Lévitation douce + orientation face caméra
+    labelGroup.userData.update = (time, camera) => {
+        labelGroup.position.y = labelBaseY + Math.sin(time * 2.2) * 0.03;
+        if (camera) {
+            labelMesh.quaternion.copy(camera.quaternion);
+        }
+    };
+
+    // Les projecteurs au-dessus de la tour régie sont désormais de vraies lyres Spot asservies (créées dans main.js avec spotManager)
 
     scene.add(group);
     return group;
+}
+
+// ─── Vue Régie & Interaction ──────────────────────────────────────────────────
+export const REGIE_VIEW_CAMERA = {
+    // Caméra relevée en hauteur sur la tour régie (vue dégagée au-dessus de la foule et du toit régie)
+    position: new THREE.Vector3(0, 9.2, 56.0),
+    // Cadrage relevé centré sur la scène globale (élimine l'excès de pelouse au sol)
+    target: new THREE.Vector3(0, 12.5, -5.0),
+    // Centre de la table de régie
+    deskCenter: new THREE.Vector3(CX, DECK_Y + 0.9, (DESK.z0 + DESK.z1) / 2),
+    interactRadius: 7.0, // mètres
+};
+
+let _regieTriggerMesh = null;
+let _regieLabelGroup = null;
+
+export function getRegieTriggerMesh() {
+    return _regieTriggerMesh;
+}
+
+export function updateFohTower(time, camera, playerPos) {
+    if (_regieLabelGroup && _regieLabelGroup.userData.update) {
+        _regieLabelGroup.userData.update(time, camera, playerPos);
+    }
+}
+
+/**
+ * Génère la texture Canvas de l'étiquette volante "Vue régie \n (E)".
+ */
+function createRegieLabelCanvasTexture() {
+    const canvas = document.createElement('canvas');
+    canvas.width = 512;
+    canvas.height = 180;
+    const ctx = canvas.getContext('2d');
+    const w = canvas.width;
+    const h = canvas.height;
+
+    // Fond 100% transparent (aucun cadre, fond, ombre ni effet brillant)
+    ctx.clearRect(0, 0, w, h);
+
+    // Ligne 1 : "Vue régie" en blanc pur
+    ctx.font = 'bold 50px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('Vue régie', w / 2, 55);
+
+    // Ligne 2 : "(E)" sous le texte en blanc pur
+    ctx.font = 'bold 36px -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText('(E)', w / 2, 122);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.colorSpace = THREE.SRGBColorSpace;
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    return texture;
 }

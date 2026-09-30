@@ -20,8 +20,8 @@ import { findConeOccluders, OCCLUDERS_PER_SPOT } from './SpotOcclusion.js';
 
 /** Portée de rendu des faisceaux (m) */
 export const SPOT_BEAM_RANGE = 140;
-/** Échelle du flux lumineux des faisceaux (calibrage visuel) */
-const FLUX_SCALE = 25;
+/** Échelle du flux lumineux des faisceaux (calibrage visuel, 3x plus puissant) */
+const FLUX_SCALE = 75;
 /** Zoom minimal réel : 0° = faisceau quasi parallèle (le flux reste réparti sur la section de la lentille) */
 const MIN_ZOOM_DEG = 0.25;
 const DEG = Math.PI / 180;
@@ -246,8 +246,8 @@ export class SpotFixture {
         r[28] = m.bladeRot; r[29] = p.lensGlare; r[30] = tanCone; r[31] = LENS_RADIUS / tanCone;
         r[32] = this.occluders[0]; r[33] = this.occluders[1]; r[34] = this.occluders[2]; r[35] = this.occluders[3];
 
-        // Lentille : s'illumine de la couleur du faisceau (bloom)
-        const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 5.0;
+        // Lentille : s'illumine de la couleur du faisceau (bloom 3x plus puissant)
+        const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 15.0;
         this._lensColor.setRGB(0.012 + m.colorA[0] * k, 0.014 + m.colorA[1] * k, 0.018 + m.colorA[2] * k);
         if (!this._lensColor.equals(this._lastLens)) {
             this._lastLens.copy(this._lensColor);

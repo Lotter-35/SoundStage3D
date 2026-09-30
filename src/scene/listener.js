@@ -17,6 +17,7 @@ import { Character3D } from './character3D.js?v=7';
 import { resolveCollision } from './collision.js?v=157';
 import { EmoteMenu } from '../ui/EmoteMenu.js';
 import { DanceManager } from './DanceManager.js';
+import { REGIE_VIEW_CAMERA } from './fohTower.js';
 
 const WALK_SPEED     = 4.0; // m/s — vitesse naturelle de marche
 const SPRINT_SPEED   = 8.5; // m/s — course avec Shift
@@ -61,6 +62,24 @@ export class Listener {
         this._onModeChange = null;
         this._onCameraModeChange = null;
 
+        // ─── Vue Régie (plan fixe FOH sur la scène globale) ───────────────
+        this.isRegieView = false;
+        this._regieTransition = 0; // 0 = caméra joueur, 1 = plan fixe régie
+        this._baseFov = camera.fov || 75;
+        this._regieFov = 42; // FOV réduit pour un cadrage téléobjectif cinéma sur la scène
+        this._playerCamPos = new THREE.Vector3();
+        this._playerCamQuat = new THREE.Quaternion();
+        this._zeroVelocity = new THREE.Vector2(0, 0);
+        this._onRegieViewChange = null;
+
+        // Pré-calcul du quaternion fixe de la caméra de régie (regard vers la scène)
+        const _regieMat = new THREE.Matrix4().lookAt(
+            REGIE_VIEW_CAMERA.position,
+            REGIE_VIEW_CAMERA.target,
+            new THREE.Vector3(0, 1, 0)
+        );
+        this._regieTargetQuat = new THREE.Quaternion().setFromRotationMatrix(_regieMat);
+
         // Vitesse de vol ajustable à la molette
         this.flySpeed = FLY_SPEED;
         this.flyVerticalSpeed = VERTICAL_SPEED;
@@ -96,6 +115,9 @@ export class Listener {
             if (!this.controls.isLocked) return;
             if (performance.now() < this._suppressMouseUntil) return;
             if (Math.abs(e.movementX) > 250 || Math.abs(e.movementY) > 250) return;
+
+            // En vue régie fixe : la caméra reste figée sur son plan panoramique
+            if (this.isRegieView) return;
 
             if (this.characterMode && this._character3D.isThirdPerson) {
                 // En 3ème personne : orbite autour du personnage
@@ -241,6 +263,72 @@ export class Listener {
     }
 
     /**
+     * Vérifie si le joueur est à portée d'interaction de la table de régie FOH.
+     * Rayon horizontal ~7.0m et niveau du plancher FOH (5.4m ± 2.8m).
+     */
+    canActivateRegieView() {
+        const p = this.feetPosition;
+        const dx = p.x - REGIE_VIEW_CAMERA.deskCenter.x;
+        const dy = p.y - 5.4;
+        const dz = p.z - REGIE_VIEW_CAMERA.deskCenter.z;
+        const horizDist = Math.sqrt(dx * dx + dz * dz);
+        return horizDist <= REGIE_VIEW_CAMERA.interactRadius && Math.abs(dy) <= 2.8;
+    }
+
+    /**
+     * Bascule entre la vue normale du joueur et la Vue Régie (plan fixe d'ensemble).
+     */
+    toggleRegieView() {
+        if (this.isRegieView) {
+            this.exitRegieView();
+        } else {
+            this.enterRegieView();
+        }
+    }
+
+    /**
+     * Active la Vue Régie :
+     * Le personnage reste exactement où il est.
+     * La caméra se positionne en plan fixe devant la scène globale.
+     */
+    enterRegieView() {
+        if (this.isRegieView) return;
+        this.isRegieView = true;
+
+        // Recalcul dynamique du quaternion de visée vers la cible de la régie
+        const _regieMat = new THREE.Matrix4().lookAt(
+            REGIE_VIEW_CAMERA.position,
+            REGIE_VIEW_CAMERA.target,
+            new THREE.Vector3(0, 1, 0)
+        );
+        this._regieTargetQuat.setFromRotationMatrix(_regieMat);
+
+        // Arrêter immédiatement le déplacement du personnage
+        this.resetMovement();
+        if (this._currentSpeed) this._currentSpeed.set(0, 0);
+
+        if (this._onRegieViewChange) {
+            this._onRegieViewChange(true);
+        }
+    }
+
+    /**
+     * Quitte la Vue Régie et ramène la caméra vers le joueur de manière fluide.
+     */
+    exitRegieView() {
+        if (!this.isRegieView) return;
+        this.isRegieView = false;
+
+        if (this._onRegieViewChange) {
+            this._onRegieViewChange(false);
+        }
+    }
+
+    onRegieViewChange(cb) {
+        this._onRegieViewChange = cb;
+    }
+
+    /**
      * Contrôle la vitesse de déplacement en vol libre à la molette :
      * - Molette vers le haut : accélérer
      * - Molette vers le bas : ralentir
@@ -292,6 +380,29 @@ export class Listener {
             if (this.emoteMenu && this.emoteMenu.isOpen) {
                 this.emoteMenu.close();
                 return;
+            }
+            if (this.isRegieView) {
+                this.exitRegieView();
+                return;
+            }
+        }
+
+        // Touche E : Entrer / Sortir de la Vue Régie (plan fixe d'ensemble FOH)
+        if (e.code === 'KeyE') {
+            e.preventDefault();
+            if (this.isRegieView) {
+                this.exitRegieView();
+            } else if (this.canActivateRegieView()) {
+                this.enterRegieView();
+            }
+            return;
+        }
+
+        // Si la vue régie est active, une touche de mouvement permet de quitter le plan fixe
+        if (this.isRegieView) {
+            if (e.code === 'KeyW' || e.code === 'KeyS' || e.code === 'KeyA' || e.code === 'KeyD' ||
+                e.code === 'KeyZ' || e.code === 'KeyQ' || e.code === 'Space' || e.code.startsWith('Arrow')) {
+                this.exitRegieView();
             }
         }
 
@@ -432,7 +543,7 @@ export class Listener {
             let isMoving = false;
             let jumpInput = false;
 
-            if (this.controls.isLocked) {
+            if (this.controls.isLocked && !this.isRegieView) {
                 const direction = this._direction;
                 direction.set(0, 0, 0);
 
@@ -533,7 +644,7 @@ export class Listener {
                     this._character3D.position.y = Math.max(BOUNDS.minY, Math.min(BOUNDS.maxY, this._character3D.position.y));
                 }
             } else {
-                // Ralentissement naturel si la souris est libérée
+                // Ralentissement naturel si la souris est libérée ou si vue régie active
                 this._currentSpeed.x += (0 - this._currentSpeed.x) * Math.min(1, dt * 14);
                 this._currentSpeed.y += (0 - this._currentSpeed.y) * Math.min(1, dt * 14);
             }
@@ -542,7 +653,43 @@ export class Listener {
             if (Math.abs(this._currentSpeed.y) < 0.001) this._currentSpeed.y = 0;
 
             // Toujours mettre à jour le personnage (animation idle/run/vol, gravité/altitude, caméra fluide)
-            this._character3D.update(dt, this._currentSpeed, jumpInput, isMoving);
+            // Si en vue régie : le personnage reste à sa place et joue son animation
+            const charVelocity = this.isRegieView ? this._zeroVelocity : this._currentSpeed;
+            this._character3D.update(dt, charVelocity, jumpInput, isMoving);
+
+            // ── Transition & Caméra Vue Régie (Plan fixe sur la scène globale) ──
+            if (this.isRegieView) {
+                this._regieTransition = Math.min(1.0, this._regieTransition + dt / 0.65);
+            } else if (this._regieTransition > 0) {
+                this._regieTransition = Math.max(0.0, this._regieTransition - dt / 0.55);
+            }
+
+            if (this._regieTransition > 0) {
+                const s = this._regieTransition;
+                const t = s * s * (3 - 2 * s); // interpolation smoothstep
+
+                if (t >= 0.999) {
+                    this.camera.position.copy(REGIE_VIEW_CAMERA.position);
+                    this.camera.quaternion.copy(this._regieTargetQuat);
+                } else {
+                    this._playerCamPos.copy(this.camera.position);
+                    this._playerCamQuat.copy(this.camera.quaternion);
+
+                    this.camera.position.lerpVectors(this._playerCamPos, REGIE_VIEW_CAMERA.position, t);
+                    this.camera.quaternion.slerpQuaternions(this._playerCamQuat, this._regieTargetQuat, t);
+                }
+
+                // Réduction fluide du FOV en Vue Régie (zoom téléobjectif d'ensemble)
+                const currentTargetFov = THREE.MathUtils.lerp(this._baseFov, this._regieFov, t);
+                if (Math.abs(this.camera.fov - currentTargetFov) > 0.05) {
+                    this.camera.fov = currentTargetFov;
+                    this.camera.updateProjectionMatrix();
+                }
+            } else if (this.camera.fov !== this._baseFov) {
+                // Rétablissement du FOV standard une fois la transition de sortie terminée
+                this.camera.fov = this._baseFov;
+                this.camera.updateProjectionMatrix();
+            }
         }
     }
 
@@ -629,6 +776,13 @@ export class Listener {
 
     /** Position d'écoute audio courante (oreilles du personnage ou caméra) */
     get position() {
+        if (this.isRegieView) {
+            return {
+                x: REGIE_VIEW_CAMERA.position.x,
+                y: REGIE_VIEW_CAMERA.position.y,
+                z: REGIE_VIEW_CAMERA.position.z,
+            };
+        }
         if (this.characterMode && this._character3D) {
             return {
                 x: this._character3D.position.x,
