@@ -338,29 +338,44 @@ if (renderer && typeof renderer.compile === 'function') {
 performance.mark('ss3d:warmup');
 
 // ─── Rendu dès que la scène est prête ─────────────────────────────
-// La suite (connexion multijoueur, téléchargement et décodage de la musique) peut prendre plusieurs
-// secondes : la scène tourne déjà derrière l'écran de chargement, qui disparaît dès que le personnage
-// est prêt. La musique arrive ensuite en arrière-plan. La boucle complète (animate) prend le relais à la fin.
+// La scène tourne déjà derrière l'écran de chargement pendant la suite (interface, connexion multijoueur
+// et état de la salle, téléchargement et décodage de la musique). L'écran ne disparaît qu'une fois TOUT
+// prêt : boucle complète lancée, shaders de l'état final préparés, puis une demi-seconde d'images fluides
+// (tout gel restant — compilation, envoi de textures, premières cibles de rendu — a lieu derrière l'écran).
+const BOOT_MAX_MS = 30000;       // garde-fou : le jeu s'affiche quoi qu'il arrive
+const BOOT_SMOOTH_MS = 500;      // durée d'images fluides exigée avant d'afficher le jeu
+const BOOT_SMOOTH_FRAME_MS = 50; // image plus longue = gel : le compteur repart de zéro
+let _bootMainReady = false;      // boucle complète lancée (connexion, musique et interface prêtes)
 let _bootReadyFrames = -1;
 let _bootPrewarm = null;
+let _bootLastFrame = 0;
+let _bootSmoothSince = 0;
 function updateBootScreen() {
     if (_bootFinished) return;
+    const now = performance.now();
+    const timedOut = now - _bootStart > BOOT_MAX_MS;
     const character = listener && listener._character3D;
-    if (character && !character.isLoaded && performance.now() - _bootStart <= 10000) {
-        _boot.set(0.98, 'Chargement du personnage');
+    if (character && !character.isLoaded && !timedOut) {
+        _boot.set(0.955, 'Chargement du personnage');
         return;
     }
-    // Personnage et modèles chargés : préparer leurs shaders pour les deux modes de rendu
-    // (direct / composer) et pour la scène sans appareil (pools de lumières masqués) → aucune compilation en jeu
+    if (!_bootMainReady && !timedOut) return;
+    // Tout est chargé : préparer les shaders de l'état final (salle synchronisée, avatars…) pour les deux
+    // modes de rendu (direct / composer) et pour la scène sans appareil (pools de lumières masqués)
     if (_bootReadyFrames < 0) {
+        _boot.set(0.99, 'Préparation du rendu');
         if (laserManager && typeof laserManager.warmupShaders === 'function') laserManager.warmupShaders();
         _bootReadyFrames = 0;
         _bootPrewarm = lightPoolGate.prewarm().catch(() => {}).then(() => { _bootPrewarm = null; });
         return;
     }
-    if (_bootPrewarm && performance.now() - _bootStart <= 15000) return;
-    // Deux images complètes encore derrière l'écran de chargement : passes de post-traitement compilées
-    if (++_bootReadyFrames >= 2) {
+    if (_bootPrewarm && !timedOut) return;
+    // Images complètes derrière l'écran jusqu'à ce que le rendu soit fluide
+    _bootReadyFrames++;
+    const frameMs = _bootLastFrame ? now - _bootLastFrame : Infinity;
+    _bootLastFrame = now;
+    if (frameMs > BOOT_SMOOTH_FRAME_MS) _bootSmoothSince = now;
+    if ((_bootReadyFrames >= 10 && now - _bootSmoothSince >= BOOT_SMOOTH_MS) || timedOut) {
         _bootFinished = true;
         performance.mark('ss3d:boot-done');
         _boot.done();
@@ -986,6 +1001,7 @@ function applyPendingPlaybackSync() {
 // Try to connect to the multiplayer server. Degrades gracefully if server is offline.
 let _mpReady = false;
 try {
+    _boot.set(0.96, 'Connexion à la salle');
     await mp.connect();
     _mpReady = true;
     console.log(`[MP] Connected — role: ${mp.role}, room: ${mp.roomId}`);
@@ -1997,6 +2013,7 @@ if (_mpReady) {
 
 try {
     const shouldAutoPlay = Boolean(isFirstInNewRoom && savedAudioFile);
+    _boot.set(0.98, 'Chargement de la musique');
     await initAudio(savedAudioFile, shouldAutoPlay);
 
     if (savedAudioFile && !_currentPlayingTrack && (!_mpReady || isFirstInNewRoom)) {
@@ -3786,5 +3803,6 @@ function animate() {
 }
 
 _earlyLoop = false; // la boucle complète prend le relais des images anticipées
+_bootMainReady = true;
 performance.mark('ss3d:ready');
 animate();
