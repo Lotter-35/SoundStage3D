@@ -15,7 +15,7 @@
 import { Laser2Scanner, displayColor, scannerKey } from '../Laser2Scanner.js';
 import { defaultLaser2Params } from '../config/laser2Params.js';
 import { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE } from './strides.js';
-import { cullObstacles, laser2Hit, playersInCone, SURF_SKY, SURF_GROUND, SURF_PLAYER } from './Collision.js';
+import { cullObstacles, laser2Hit, playersInCone, playerInWedge, SURF_SKY, SURF_GROUND, SURF_PLAYER } from './Collision.js';
 import { V3 } from './V3.js';
 
 const DEG = Math.PI / 180;
@@ -25,6 +25,8 @@ export const LASER2_RANGE = 1000;
 const PLAYER_RANGE = 150;
 /** Profondeur max de subdivision d'une nappe à la frontière de deux surfaces */
 const MAX_DEPTH = 7;
+/** Profondeur max quand un joueur traverse la nappe (silhouette nette) */
+const MAX_DEPTH_PLAYER = 10;
 /** Budget global de primitives (faisceaux + nappes) pour tous les lasers */
 export const PRIM_BUDGET = 9000;
 
@@ -36,8 +38,8 @@ const newHit = () => ({ t: 0, id: SURF_SKY, nx: 0, ny: 1, nz: 0 });
 const _hitA = newHit();
 const _hitB = newHit();
 const _hitBeam = newHit();
-const _dStack = Array.from({ length: MAX_DEPTH + 2 }, () => new V3());
-const _hStack = Array.from({ length: MAX_DEPTH + 2 }, newHit);
+const _dStack = Array.from({ length: MAX_DEPTH_PLAYER + 2 }, () => new V3());
+const _hStack = Array.from({ length: MAX_DEPTH_PLAYER + 2 }, newHit);
 const _P0 = new V3();
 const _P1 = new V3();
 
@@ -212,10 +214,16 @@ export class LaserCore {
      */
     _piece(s0, d0, h0, s1, d1, h1, depth) {
         const span = (s1 - s0) * this._angle;
+        // Un joueur peut traverser cette portion (même si ses deux bords touchent la même surface)
+        const pl = this._playersIn && span > 2e-4 && depth < MAX_DEPTH_PLAYER
+            && playerInWedge(this.origin, d0, d1, Math.max(h0.t, h1.t));
+        const maxDepth = pl || h0.id === SURF_PLAYER || h1.id === SURF_PLAYER ? MAX_DEPTH_PLAYER : MAX_DEPTH;
         let split = false;
-        if (depth < MAX_DEPTH && span > 2e-4) {
+        if (depth < maxDepth && span > 2e-4) {
             if (h0.id !== h1.id) split = true;
+            // Sur le joueur aux deux bords : juste assez fin pour suivre sa silhouette
             else if (h0.id === SURF_PLAYER) split = span > 0.004;
+            else if (pl) split = span > 0.002;
             // Même surface aux deux bords mais obstacle au milieu (pilier…) : contrôle du milieu
             else if (depth === 0 && span > 0.009 && this._boxes[0] >= 0) {
                 const dm = _dStack[0].lerpVectors(d0, d1, 0.5).normalize();
@@ -243,19 +251,22 @@ export class LaserCore {
         if (this._masked(h0) || this._masked(h1)) return;
         const O = this.origin;
         const f = s1 - s0;
-        const angle = this._angle * f;
         const M = this._M * f;
-        _P0.copy(O).addScaledVector(d0, h0.t);
-        _P1.copy(O).addScaledVector(d1, h1.t);
+        // Bords sur deux surfaces différentes (plus fin que la subdivision) : la portion s'arrête
+        // à la plus proche, sinon un triangle filerait derrière l'obstacle (voile, trait vers la source)
+        const tMin = h0.id !== h1.id ? Math.min(h0.t, h1.t) : Infinity;
+        _P0.copy(O).addScaledVector(d0, Math.min(h0.t, tMin));
+        _P1.copy(O).addScaledVector(d1, Math.min(h1.t, tMin));
         const need = (this._sn + 1) * SHEET_STRIDE;
         if (need > this.sheetData.length) this.sheetData = growF32(this.sheetData, need);
         const S = this.sheetData;
         const o = this._sn++ * SHEET_STRIDE;
         S[o] = O.x; S[o + 1] = O.y; S[o + 2] = O.z; S[o + 3] = this._ap;
         S[o + 4] = _P0.x; S[o + 5] = _P0.y; S[o + 6] = _P0.z; S[o + 7] = this._div;
-        S[o + 8] = _P1.x; S[o + 9] = _P1.y; S[o + 10] = _P1.z; S[o + 11] = Math.max(angle, 1e-5);
+        S[o + 8] = _P1.x; S[o + 9] = _P1.y; S[o + 10] = _P1.z; S[o + 11] = Math.max(this._angle, 1e-5);
         const m = Math.max(_D[0], _D[1], _D[2]);
-        S[o + 12] = _D[0] / m; S[o + 13] = _D[1] / m; S[o + 14] = _D[2] / m; S[o + 15] = M * this._vis;
+        // Puissance et arc de la nappe ENTIÈRE : même éclairement quel que soit le découpage
+        S[o + 12] = _D[0] / m; S[o + 13] = _D[1] / m; S[o + 14] = _D[2] / m; S[o + 15] = this._M * this._vis;
         S[o + 16] = this._g;
         const sm4 = this._smoke;
         S[o + 17] = sm4[0]; S[o + 18] = sm4[1]; S[o + 19] = sm4[2]; S[o + 20] = sm4[3];

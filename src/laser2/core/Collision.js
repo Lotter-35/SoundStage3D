@@ -261,3 +261,43 @@ export function laser2Hit(O, d, groups, players, range, out) {
     out.t = t; out.id = id; out.nx = nx; out.ny = ny; out.nz = nz;
     return out;
 }
+
+/**
+ * Un joueur (sphère englobante de sa boîte) peut-il couper l'éventail de rayons [d0, d1] issu de O ?
+ * Test conservateur : sert à forcer la subdivision d'une nappe là où un joueur la traverse,
+ * même si ses deux bords touchent la même surface (joueur au milieu d'une nappe).
+ */
+export function playerInWedge(O, d0, d1, maxT) {
+    const np = P[0] | 0;
+    if (!np) return false;
+    // Normale du plan de l'éventail, bissectrice, demi-ouverture
+    let nx = d0.y * d1.z - d0.z * d1.y, ny = d0.z * d1.x - d0.x * d1.z, nz = d0.x * d1.y - d0.y * d1.x;
+    const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+    const flat = nl < 1e-9;
+    if (!flat) { nx /= nl; ny /= nl; nz /= nl; }
+    let mx = d0.x + d1.x, my = d0.y + d1.y, mz = d0.z + d1.z;
+    const ml = Math.sqrt(mx * mx + my * my + mz * mz) || 1;
+    mx /= ml; my /= ml; mz /= ml;
+    const halfSpan = Math.acos(Math.max(-1, Math.min(1, d0.x * d1.x + d0.y * d1.y + d0.z * d1.z))) * 0.5;
+    let o = 1;
+    for (let p = 0; p < np; p++) {
+        const ex = (P[o + 3] - P[o]) * 0.5, ey = (P[o + 4] - P[o + 1]) * 0.5, ez = (P[o + 5] - P[o + 2]) * 0.5;
+        const r = Math.sqrt(ex * ex + ey * ey + ez * ez) + 0.05;
+        let vx = P[o] + ex - O.x, vy = P[o + 1] + ey - O.y, vz = P[o + 2] + ez - O.z;
+        o += 7 + (P[o + 6] | 0) * 7;
+        let rr = r;
+        if (!flat) {
+            const h = vx * nx + vy * ny + vz * nz;
+            if (Math.abs(h) >= r) continue;
+            rr = Math.sqrt(r * r - h * h);
+            vx -= h * nx; vy -= h * ny; vz -= h * nz;
+        }
+        const dist = Math.sqrt(vx * vx + vy * vy + vz * vz);
+        if (dist - rr > maxT) continue;
+        if (dist <= rr) return true;
+        const c = (vx * mx + vy * my + vz * mz) / dist;
+        const ang = Math.acos(Math.max(-1, Math.min(1, c)));
+        if (ang <= halfSpan + Math.asin(Math.min(1, rr / dist))) return true;
+    }
+    return false;
+}
