@@ -123,7 +123,7 @@ export class LightingSync {
         }
 
         // Événements continus nécessitant un throttling (sliders, gizmo)
-        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'strobe_update' || category === 'haze') {
+        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'ledbar_update' || category === 'strobe_update' || category === 'haze') {
             const idPart = (id !== undefined && id !== null) ? id : 'global';
             const throttleKey = event.throttleKey || `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
             this._sendThrottled(throttleKey, event);
@@ -277,6 +277,23 @@ export class LightingSync {
                     else if (msg.action === 'stopAll') fxEngine.stopAll();
                     break;
                 }
+
+                // ── 8. Barres LED ──
+                case 'ledbar_add':
+                    this._applyLedBarAdd(data);
+                    break;
+
+                case 'ledbar_update':
+                    this._applyLedBarUpdate(id, data);
+                    break;
+
+                case 'ledbar_remove':
+                    this._applyLedBarRemove(id);
+                    break;
+
+                case 'ledbar_action':
+                    if (msg.action === 'reset') this._ledBarManager()?.getBar(id)?.reset(msg.mode);
+                    break;
 
                 // ── 6. Reset Global ──
                 case 'reset_all':
@@ -836,6 +853,55 @@ export class LightingSync {
         return this.ambiancePanel ? this.ambiancePanel.spotManager : null;
     }
 
+    _ledBarManager() {
+        return this.ambiancePanel ? this.ambiancePanel.ledBarManager : null;
+    }
+
+    _applyLedBarAdd(data) {
+        const lm = this._ledBarManager();
+        if (!lm || !data || !data.id || lm.getBar(data.id)) return;
+        lm.addBar(null, data.params || {}, data.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLedBarUpdate(id, data) {
+        const lm = this._ledBarManager();
+        const bar = lm && lm.getBar(id);
+        if (!bar || !data) return;
+        // Ne pas écraser une barre que le joueur local est en train de déplacer au gizmo
+        if (this.ambiancePanel?.isDraggingGizmo && this.ambiancePanel.selectedSpot === bar) return;
+        bar.setParams(data);
+        const insp = this.ambiancePanel?._ledBarInspectorPanel;
+        if (insp && insp.isOpen && insp.currentBarId === id) insp.syncFromBar();
+        if (this.ambiancePanel?.selectedSpot === bar && this.ambiancePanel.transformControls) {
+            this.ambiancePanel.transformControls.updateMatrixWorld(true);
+        }
+    }
+
+    _applyLedBarRemove(id) {
+        const lm = this._ledBarManager();
+        if (!lm || !id) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedSpot && this.ambiancePanel.selectedSpot.id === id) {
+            this.ambiancePanel.deselectSpot();
+        }
+        lm.removeBar(id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLedBarsFullState(bars) {
+        const lm = this._ledBarManager();
+        if (!lm || !bars || typeof bars !== 'object') return;
+        const serverIds = new Set(Object.keys(bars));
+        for (const bar of lm.getAllBars()) {
+            if (!serverIds.has(bar.id)) this._applyLedBarRemove(bar.id);
+        }
+        for (const [id, b] of Object.entries(bars)) {
+            if (!b) continue;
+            if (lm.getBar(id)) this._applyLedBarUpdate(id, b.params || {});
+            else this._applyLedBarAdd({ id, params: b.params || {} });
+        }
+    }
+
     _spotPanelIsOn(id) {
         const insp = this.ambiancePanel?._spotInspectorPanel;
         return Boolean(insp && insp.isOpen && insp.currentSpotId === id);
@@ -995,6 +1061,10 @@ export class LightingSync {
             // 7. Lyres Spot
             if (state.spots || state.spotGlobals) {
                 this._applySpotsFullState(state.spots, state.spotGlobals);
+            }
+            // 8. Barres LED (serveur d'une ancienne version : pas de clé → barres locales conservées)
+            if (state.ledBars) {
+                this._applyLedBarsFullState(state.ledBars);
             }
             if (state.spotFx && this._spotManager()) {
                 this._spotManager().effects.setAll(state.spotFx);

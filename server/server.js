@@ -292,6 +292,11 @@ function defaultLightingState() {
         })),
         spotGlobals: {},  // réglages communs des lyres (fumée, qualité, éclairage réel)
         spotFx: {},       // effets de la console en cours : { id: définition }
+        // Barres LED : { id: { id, params } }. Les 4 barres posées au spawn dans src/main.js (ledbar-stage-1…4)
+        ledBars: Object.fromEntries(Array.from({ length: 4 }, (_, i) => {
+            const id = `ledbar-stage-${i + 1}`;
+            return [id, { id, params: {} }];
+        })),
     };
 }
 
@@ -382,6 +387,17 @@ function applyLightingChange(state, msg) {
     } else if (category === 'spot_global') {
         if (!state.spotGlobals) state.spotGlobals = {};
         if (data) Object.assign(state.spotGlobals, data);
+    } else if (category === 'ledbar_add') {
+        if (!state.ledBars) state.ledBars = {};
+        if (data && data.id) state.ledBars[data.id] = { id: data.id, params: { ...(data.params || {}) } };
+    } else if (category === 'ledbar_update') {
+        if (!state.ledBars) state.ledBars = {};
+        if (id && data) {
+            if (!state.ledBars[id]) state.ledBars[id] = { id, params: {} };
+            Object.assign(state.ledBars[id].params, data);
+        }
+    } else if (category === 'ledbar_remove') {
+        if (state.ledBars) delete state.ledBars[id];
     } else if (category === 'reset_all') {
         const fresh = defaultLightingState();
         state.env = fresh.env;
@@ -394,6 +410,7 @@ function applyLightingChange(state, msg) {
         state.spots = fresh.spots; // lyres du spawn conservées
         state.spotGlobals = {};
         state.spotFx = {};
+        state.ledBars = fresh.ledBars; // barres LED du spawn conservées
         state.haze = {};
     }
 }
