@@ -286,6 +286,8 @@ window.__SS3D.ledBarManager = ledBarManager;
 const laser2Manager = new Laser2Manager({ scene, camera, renderer, clock: () => spotManager.clock() });
 window.__SS3D.laser2Manager = laser2Manager;
 ambiancePanel.setLaser2Manager(laser2Manager);
+laser2Manager.setPlayerCollider(playerLaserCollider);
+laser2Manager.setDazzle(laserManager._dazzle || null);
 // 2 nouveaux lasers de test à côté des 2 anciens (x = ±12, y = 14), tournés vers le public.
 // Identifiants fixes : chaque client crée les mêmes lasers sans doublon avec l'état réseau.
 for (const [k, x] of [[1, -14.2], [2, 14.2]]) {

@@ -1,18 +1,19 @@
 /**
  * Laser2Batch.js
  * ─────────────────────────────────────────────────────────────
- * Rendu batché de TOUS les nouveaux lasers : 2 draw calls (faisceaux, nappes), quel que soit
+ * Rendu batché de TOUS les nouveaux lasers : 3 draw calls (faisceaux, nappes, impacts), quel que soit
  * le nombre de lasers. Chaque laser écrit ses instances dans ses propres tableaux (réutilisés
  * d'une image à l'autre) ; le batch les concatène et n'envoie au GPU que la portion utilisée.
  * ─────────────────────────────────────────────────────────────
  */
 
 import * as THREE from 'three';
-import { createLaser2BeamMaterial, createLaser2SheetMaterial, LASER2_UNIFORMS } from './Laser2Shaders.js';
+import { createLaser2BeamMaterial, createLaser2SheetMaterial, createLaser2ImpactMaterial, LASER2_UNIFORMS } from './Laser2Shaders.js';
 import { enableLaserBloom } from '../laser/LaserManager.js';
 
 export const BEAM_STRIDE = 13;   // aO(4) aE(4) aC(4) aG(1)
 export const SHEET_STRIDE = 17;  // aO(4) aA(4) aB(4) aC(4) aG(1)
+export const IMPACT_STRIDE = 14; // aP0(4) aP1(4) aN(3) aC(3)
 
 class InstanceStream {
     constructor(geometry, stride, layout, capacity) {
@@ -80,12 +81,22 @@ export class Laser2Batch {
         sheetGeo.instanceCount = 0;
         this.sheets = new InstanceStream(sheetGeo, SHEET_STRIDE, [['aO', 0, 4], ['aA', 4, 4], ['aB', 8, 4], ['aC', 12, 4], ['aG', 16, 1]], 512);
 
+        const impGeo = new THREE.InstancedBufferGeometry();
+        impGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3));
+        impGeo.setAttribute('aCorner', new THREE.Float32BufferAttribute([-1, 0, 1, 0, -1, 1, 1, 1], 2));
+        impGeo.setIndex([0, 1, 2, 2, 1, 3]);
+        impGeo.instanceCount = 0;
+        this.impacts = new InstanceStream(impGeo, IMPACT_STRIDE, [['aP0', 0, 4], ['aP1', 4, 4], ['aN', 8, 3], ['aC', 11, 3]], 256);
+
         this.beamMaterial = createLaser2BeamMaterial();
         this.sheetMaterial = createLaser2SheetMaterial();
+        this.impactMaterial = createLaser2ImpactMaterial();
 
         this.beamMesh = new THREE.Mesh(beamGeo, this.beamMaterial);
         this.sheetMesh = new THREE.Mesh(sheetGeo, this.sheetMaterial);
-        for (const m of [this.sheetMesh, this.beamMesh]) {
+        this.impactMesh = new THREE.Mesh(impGeo, this.impactMaterial);
+        this.impactMesh.name = 'laser2-impacts';
+        for (const m of [this.sheetMesh, this.beamMesh, this.impactMesh]) {
             m.frustumCulled = false;
             m.renderOrder = 5;
             scene.add(m);
@@ -97,21 +108,25 @@ export class Laser2Batch {
     }
 
     /**
-     * @param {Iterable<{beamData: Float32Array, beamN: number, sheetData: Float32Array, sheetN: number}>} fixtures
+     * @param {Iterable<{beamData: Float32Array, beamN: number, sheetData: Float32Array, sheetN: number, impactData: Float32Array, impactN: number}>} fixtures
      * @param {THREE.PerspectiveCamera} camera
      * @param {THREE.WebGLRenderer} renderer
      */
     assemble(fixtures, camera, renderer) {
         this.beams.begin();
         this.sheets.begin();
+        this.impacts.begin();
         for (const f of fixtures) {
             this.beams.append(f.beamData, f.beamN);
             this.sheets.append(f.sheetData, f.sheetN);
+            this.impacts.append(f.impactData, f.impactN);
         }
         this.beams.end();
         this.sheets.end();
+        this.impacts.end();
         this.beamMesh.visible = this.beams.count > 0;
         this.sheetMesh.visible = this.sheets.count > 0;
+        this.impactMesh.visible = this.impacts.count > 0;
 
         // Taille d'un pixel à 1 m de profondeur
         if (camera && renderer) {
@@ -122,7 +137,7 @@ export class Laser2Batch {
     }
 
     dispose() {
-        for (const m of [this.beamMesh, this.sheetMesh]) {
+        for (const m of [this.beamMesh, this.sheetMesh, this.impactMesh]) {
             this.scene.remove(m);
             m.geometry.dispose();
             m.material.dispose();

@@ -62,6 +62,11 @@ export class DazzleEffect {
         this._eyeToOrigin = new THREE.Vector3();
         this._projected   = new THREE.Vector3();
         this._bestOrigin  = new THREE.Vector3();
+
+        // Contribution des nouveaux lasers (src/laser2), consommée à la mise à jour suivante
+        this._ext = 0;
+        this._extOrigin = new THREE.Vector3();
+        this._extColor = '#ffffff';
         this._centerDir   = new THREE.Vector3();
     }
 
@@ -85,12 +90,25 @@ export class DazzleEffect {
      * @param {Array<{pod, hitPts, params, effectiveBeamPower, effectivePanPower}>} laserData
      *   Tableau de données par laser actif, fourni par LaserManager
      */
+    /**
+     * Éblouissement calculé par un autre système laser (nouveaux lasers) : force 0…1, source, couleur.
+     * Seule la plus forte contribution de l'image est gardée.
+     */
+    setExternal(strength, origin, color) {
+        if (strength <= this._ext) return;
+        this._ext = strength;
+        this._extOrigin.copy(origin);
+        this._extColor = color;
+    }
+
     update(delta, laserData) {
         const eyePos = this.camera.position;
         this.camera.getWorldDirection(this._camFwd);
+        const ext = this._ext;
+        this._ext = 0;
 
         // Déclin passif si tous les lasers sont éteints
-        let anyActive = false;
+        let anyActive = ext > 0.005;
         for (const ld of laserData) {
             if (ld.effectiveBeamPower > 0.005 || ld.effectivePanPower > 0.005) {
                 anyActive = true;
@@ -198,6 +216,14 @@ export class DazzleEffect {
                 hasDazzlingPod = true;
                 bestColor = params.color || '#0055ff';
             }
+        }
+
+        // Nouveaux lasers
+        if (ext > globalMaxStrength) {
+            globalMaxStrength = ext;
+            this._bestOrigin.copy(this._extOrigin);
+            hasDazzlingPod = true;
+            bestColor = this._extColor;
         }
 
         // ── Calcul de projection écran & Visibilité lissée ──────────────────────

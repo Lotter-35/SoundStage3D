@@ -4,15 +4,27 @@
  * Orchestrateur des nouveaux lasers (moteur de points + galvos) :
  *   - ajout / suppression / duplication / recherche (identifiants uniques réseau)
  *   - mise à jour sur l'horloge commune (même image chez tous les joueurs)
- *   - rendu batché : 2 draw calls pour tous les faisceaux et nappes, 3 pour tous les boîtiers
+ *   - rendu batché : 3 draw calls (faisceaux, nappes, impacts), 3 pour tous les boîtiers
+ *   - éblouissement réaliste : puissance reçue par l'œil (faisceau fixe = très fort, balayé = flash)
  *
  * Coexiste avec l'ancien système laser (src/laser/), voué à être supprimé.
  * ─────────────────────────────────────────────────────────────
  */
 
+import * as THREE from 'three';
 import { Laser2Fixture } from './Laser2Fixture.js';
-import { Laser2Batch } from './Laser2Batch.js';
+import { Laser2Batch, BEAM_STRIDE, SHEET_STRIDE } from './Laser2Batch.js';
+import { setLaser2PlayerCollider } from './Laser2Collision.js';
 import { getLaser2HousingInstancer } from './Laser2Housing.js';
+
+/** Rayon de capture autour de l'œil (m) : pupille + marge de tête (un faisceau de 1 cm reste « visé ») */
+const EYE_R = 0.05;
+/** Puissance reçue (unités affichées) donnant ~63 % d'éblouissement */
+const DAZZLE_P0 = 0.08;
+
+const _eye = new THREE.Vector3();
+const _fwd = new THREE.Vector3();
+const _rgb = [0, 0, 0];
 
 function makeId() {
     return 'laser2-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
@@ -36,6 +48,17 @@ export class Laser2Manager {
         this.batch = new Laser2Batch(scene);
         this._instancer = getLaser2HousingInstancer(scene);
         this.cpuMs = 0;
+        this.dazzle = null;
+    }
+
+    /** Collider des joueurs (les faisceaux s'arrêtent sur les corps et y laissent leur trace) */
+    setPlayerCollider(collider) {
+        setLaser2PlayerCollider(collider);
+    }
+
+    /** Éblouissement partagé avec l'ancien système (DazzleEffect) */
+    setDazzle(dazzle) {
+        this.dazzle = dazzle;
     }
 
     addLaser(position = null, params = {}, id = null) {
@@ -106,7 +129,88 @@ export class Laser2Manager {
         for (const l of this._lasers.values()) l.update();
         this.batch.assemble(this._lasers.values(), this.camera, this.renderer);
         this._instancer.flush();
+        if (this.dazzle && this.camera) this._updateDazzle();
         this.cpuMs += (performance.now() - t0 - this.cpuMs) * 0.05;
+    }
+
+    /**
+     * Puissance reçue par l'œil de la caméra :
+     *   - faisceau : l'œil est dans le faisceau → sa puissance (moyenne) entière
+     *   - nappe    : l'œil est dans le plan balayé → fraction du temps où le faisceau passe sur l'œil
+     *                (largeur de capture / arc balayé à cette distance)
+     * × regard vers la source. Converti en force 0…1 pour le DazzleEffect (flash, persistance).
+     */
+    _updateDazzle() {
+        const cam = this.camera;
+        _eye.setFromMatrixPosition(cam.matrixWorld);
+        cam.getWorldDirection(_fwd);
+        let best = 0, bestLaser = null;
+        const col = _rgb;
+        for (const l of this._lasers.values()) {
+            const O = l.origin;
+            const ex = _eye.x - O.x, ey = _eye.y - O.y, ez = _eye.z - O.z;
+            const r = Math.sqrt(ex * ex + ey * ey + ez * ez);
+            if (r < 0.05) continue;
+            // L'œil doit être devant le laser
+            if (ex * l.fwd.x + ey * l.fwd.y + ez * l.fwd.z <= 0) continue;
+            const look = Math.max(0.1, Math.min(1, -(ex * _fwd.x + ey * _fwd.y + ez * _fwd.z) / r * 0.7 + 0.3));
+            const div = l.params.divergence * 1e-3, ap = l.params.aperture * 1e-3;
+            const R = Math.max(0.5 * (ap + r * div), 0.005) + EYE_R;
+            let P = 0, cr = 0, cg = 0, cb = 0;
+
+            const B = l.beamData;
+            for (let i = 0; i < l.beamN; i++) {
+                const o = i * BEAM_STRIDE;
+                const dx = B[o + 4] - O.x, dy = B[o + 5] - O.y, dz = B[o + 6] - O.z;
+                const len = Math.sqrt(dx * dx + dy * dy + dz * dz);
+                // L'œil est avant l'impact (marge : le corps du joueur arrête le faisceau juste devant l'œil)
+                const along = (ex * dx + ey * dy + ez * dz) / len;
+                if (along <= 0 || along > len + 0.6) continue;
+                const px = ex - dx / len * along, py = ey - dy / len * along, pz = ez - dz / len * along;
+                const dist = Math.sqrt(px * px + py * py + pz * pz);
+                if (dist >= R) continue;
+                const k = (1 - dist / R);
+                const p = B[o + 11] * k * k;
+                P += p; cr += B[o + 8] * p; cg += B[o + 9] * p; cb += B[o + 10] * p;
+            }
+
+            const S = l.sheetData;
+            for (let i = 0; i < l.sheetN; i++) {
+                const o = i * SHEET_STRIDE;
+                const ax = S[o + 4] - O.x, ay = S[o + 5] - O.y, az = S[o + 6] - O.z;
+                const bx = S[o + 8] - O.x, by = S[o + 9] - O.y, bz = S[o + 10] - O.z;
+                let nx = ay * bz - az * by, ny = az * bx - ax * bz, nz = ax * by - ay * bx;
+                const nl = Math.sqrt(nx * nx + ny * ny + nz * nz);
+                if (nl < 1e-9) continue;
+                nx /= nl; ny /= nl; nz /= nl;
+                const dp = Math.abs(ex * nx + ey * ny + ez * nz);
+                if (dp >= R) continue;
+                // Dans le secteur A → B (même côté des deux bords), avant les impacts
+                const s1 = (ay * ez - az * ey) * nx + (az * ex - ax * ez) * ny + (ax * ey - ay * ex) * nz;
+                const s2 = (ey * bz - ez * by) * nx + (ez * bx - ex * bz) * ny + (ex * by - ey * bx) * nz;
+                const la = Math.sqrt(ax * ax + ay * ay + az * az), lb = Math.sqrt(bx * bx + by * by + bz * bz);
+                // Tolérance angulaire R / r (s1 = |A|·r·sin(angle A → œil))
+                if (s1 < -R * la || s2 < -R * lb) continue;
+                if (r > Math.max(la, lb) + 0.6) continue;
+                const arc = r * S[o + 11];
+                const frac = Math.min(1, (2 * R) / Math.max(arc, 1e-4));
+                const k = 1 - dp / R;
+                const p = S[o + 15] * frac * k * k;
+                P += p; cr += S[o + 12] * p; cg += S[o + 13] * p; cb += S[o + 14] * p;
+            }
+
+            const s = 1 - Math.exp(-(P * look) / DAZZLE_P0);
+            if (s > best) {
+                best = s;
+                bestLaser = l;
+                col[0] = cr / P; col[1] = cg / P; col[2] = cb / P;
+            }
+        }
+        if (bestLaser && best > 0.005) {
+            const m = Math.max(col[0], col[1], col[2], 1e-6);
+            const hex = '#' + col.map(v => Math.round(255 * v / m).toString(16).padStart(2, '0')).join('');
+            this.dazzle.setExternal(best, bestLaser.origin, hex);
+        }
     }
 
     dispose() {

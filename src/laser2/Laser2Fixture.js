@@ -12,24 +12,33 @@
 import * as THREE from 'three';
 import { LASER2_PARAMS_SCHEMA, HARDWARE_PRESETS, defaultLaser2Params } from './config/laser2Params.js';
 import { Laser2Scanner, displayColor } from './Laser2Scanner.js';
-import { BEAM_STRIDE, SHEET_STRIDE } from './Laser2Batch.js';
+import { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE } from './Laser2Batch.js';
+import { cullObstacles, laser2Hit, playersInCone, SURF_SKY, SURF_PLAYER } from './Laser2Collision.js';
 import { getLaser2HousingInstancer, APERTURE_Z, BODY } from './Laser2Housing.js';
 
 const DEG = Math.PI / 180;
 /** Portée maximale d'un rayon (ciel) */
 export const LASER2_RANGE = 1000;
-const GROUND_Y = 0;
+/** Distance max à laquelle un joueur est testé (au-delà, les capsules sont ignorées) */
+const PLAYER_RANGE = 150;
+/** Profondeur max de subdivision d'une nappe à la frontière de deux surfaces */
+const MAX_DEPTH = 7;
 
 const PLACEMENT_KEYS = new Set(['posX', 'posY', 'posZ', 'yaw', 'pitch', 'roll']);
 
 const _D = [0, 0, 0];
 const _dA = new THREE.Vector3();
 const _dB = new THREE.Vector3();
-const _dM = new THREE.Vector3();
-const _hA = new THREE.Vector3();
-const _hB = new THREE.Vector3();
-const _hM = new THREE.Vector3();
 const _last = [NaN, NaN];
+const newHit = () => ({ t: 0, id: SURF_SKY, nx: 0, ny: 1, nz: 0 });
+const _hitA = newHit();
+const _hitB = newHit();
+const _hitBeam = newHit();
+// Pile de subdivision (1 direction + 1 impact par niveau, 0 allocation)
+const _dStack = Array.from({ length: MAX_DEPTH + 2 }, () => new THREE.Vector3());
+const _hStack = Array.from({ length: MAX_DEPTH + 2 }, newHit);
+const _P0 = new THREE.Vector3();
+const _P1 = new THREE.Vector3();
 
 export class Laser2Fixture {
     /**
@@ -77,8 +86,16 @@ export class Laser2Fixture {
         // Instances GPU de ce laser (réutilisées)
         this.beamData = new Float32Array(64 * BEAM_STRIDE);
         this.sheetData = new Float32Array(64 * SHEET_STRIDE);
+        this.impactData = new Float32Array(64 * IMPACT_STRIDE);
         this.beamN = 0;
         this.sheetN = 0;
+        this.impactN = 0;
+
+        // Obstacles pouvant entrer dans le cône de balayage (recalculés quand le laser bouge)
+        this._boxes = new Int16Array(160);
+        this._boxes[0] = -1;
+        this._cullKey = '';
+        this._playersIn = false;
 
         this.applyTransform();
     }
@@ -152,7 +169,17 @@ export class Laser2Fixture {
         }
         if (this.isBeingDragged) this.syncFromGizmo();
         this.scanner.update(this.clock());
-        if (this.scanner.version !== this._geoVersion || this._builtPlace !== this._placeVersion) {
+        // Joueurs dans le cône : impacts sur les corps recalculés à chaque image
+        const half = this._coneHalf();
+        const players = playersInCone(this.origin, this.fwd, half, PLAYER_RANGE);
+        const wasIn = this._playersIn;
+        this._playersIn = players;
+        if (players || wasIn || this.scanner.version !== this._geoVersion || this._builtPlace !== this._placeVersion) {
+            const key = `${this._placeVersion}|${this.params.maxAngle}`;
+            if (key !== this._cullKey) {
+                cullObstacles(this.origin, this.fwd, half, LASER2_RANGE, this._boxes);
+                this._cullKey = key;
+            }
             this._buildWorld();
             this._geoVersion = this.scanner.version;
             this._builtPlace = this._placeVersion;
@@ -166,13 +193,14 @@ export class Laser2Fixture {
         return out;
     }
 
-    /** Distance jusqu'au premier obstacle (sol) ou la portée max ; `true` si le rayon touche le sol */
-    _hitT(d) {
-        if (d.y < -1e-6) {
-            const t = (this.origin.y - GROUND_Y) / -d.y;
-            if (t < LASER2_RANGE) return t;
-        }
-        return LASER2_RANGE;
+    /** Demi-angle du cône de balayage (diagonale du carré ±angle max) */
+    _coneHalf() {
+        const a = Math.tan(this.params.maxAngle * DEG);
+        return Math.atan(a * Math.SQRT2) + 0.03;
+    }
+
+    _hit(d, out) {
+        return laser2Hit(this.origin, d, this._boxes, this._playersIn, LASER2_RANGE, out);
     }
 
     _buildWorld() {
@@ -183,9 +211,11 @@ export class Laser2Fixture {
         const div = p.divergence * 1e-3;
         const g = Math.min(0.9, p.forwardScatter / 100);
         const vis = p.visibility;
+        this._ap = ap; this._div = div; this._g = g; this._vis = vis;
+        this.impactN = 0;
         let lr = 0, lg = 0, lb = 0;
 
-        // Faisceaux
+        // Faisceaux (+ point d'impact sur la surface touchée)
         const nb = sc.beamCount;
         if (nb * BEAM_STRIDE > this.beamData.length) this.beamData = new Float32Array(Math.ceil(nb * 1.5 + 8) * BEAM_STRIDE);
         const B = this.beamData;
@@ -197,20 +227,25 @@ export class Laser2Fixture {
             if (M <= 1e-6) continue;
             lr += _D[0]; lg += _D[1]; lb += _D[2];
             this._dir(sc.beams[s], sc.beams[s + 1], _dA);
-            const t = this._hitT(_dA);
+            const h = this._hit(_dA, _hitBeam);
+            const t = h.t;
             const o = bn++ * BEAM_STRIDE;
             B[o] = O.x; B[o + 1] = O.y; B[o + 2] = O.z; B[o + 3] = ap;
             B[o + 4] = O.x + _dA.x * t; B[o + 5] = O.y + _dA.y * t; B[o + 6] = O.z + _dA.z * t; B[o + 7] = div;
             B[o + 8] = _D[0] / M; B[o + 9] = _D[1] / M; B[o + 10] = _D[2] / M; B[o + 11] = M * vis;
             B[o + 12] = g;
+            if (h.id !== SURF_SKY) {
+                _P0.set(B[o + 4], B[o + 5], B[o + 6]);
+                this._pushImpact(_P0, _P0, h, ap + t * div, M * vis, _D, M);
+            }
         }
         this.beamN = bn;
 
-        // Nappes (coupées en deux quand un bord touche le sol et l'autre part dans le ciel)
+        // Nappes : coupées exactement sur chaque surface, subdivisées aux frontières
         const ns = sc.sheetCount;
         _last[0] = NaN;
-        if (ns * 2 * SHEET_STRIDE > this.sheetData.length) this.sheetData = new Float32Array(Math.ceil(ns * 2 * 1.5 + 8) * SHEET_STRIDE);
         let sn = 0;
+        this._sn = 0;
         for (let i = 0; i < ns; i++) {
             const s = i * 7;
             displayColor(sc.sheets[s + 4], sc.sheets[s + 5], sc.sheets[s + 6], _D);
@@ -219,34 +254,21 @@ export class Laser2Fixture {
             lr += _D[0]; lg += _D[1]; lb += _D[2];
             const a0x = sc.sheets[s], a0y = sc.sheets[s + 1], a1x = sc.sheets[s + 2], a1y = sc.sheets[s + 3];
             // Les nappes s'enchaînent : le début de celle-ci est souvent la fin de la précédente
-            if (a0x === _last[0] && a0y === _last[1]) _dA.copy(_dB);
-            else this._dir(a0x, a0y, _dA);
+            if (a0x === _last[0] && a0y === _last[1]) {
+                _dA.copy(_dB);
+                copyHit(_hitA, _hitB);
+            } else {
+                this._dir(a0x, a0y, _dA);
+                this._hit(_dA, _hitA);
+            }
             this._dir(a1x, a1y, _dB);
+            this._hit(_dB, _hitB);
             _last[0] = a1x; _last[1] = a1y;
-            const angle = Math.sqrt((a1x - a0x) * (a1x - a0x) + (a1y - a0y) * (a1y - a0y));
-            const tA = this._hitT(_dA), tB = this._hitT(_dB);
-            const groundA = tA < LASER2_RANGE, groundB = tB < LASER2_RANGE;
-            _hA.copy(O).addScaledVector(_dA, tA);
-            _hB.copy(O).addScaledVector(_dB, tB);
-            if (groundA === groundB || angle < 1e-4) {
-                sn = this._pushSheet(sn, _hA, _hB, angle, _D, M, ap, div, g, vis);
-                continue;
-            }
-            // Recherche de la direction où le rayon cesse de toucher le sol
-            let lo = 0, hi = 1;
-            for (let it = 0; it < 12; it++) {
-                const m = (lo + hi) * 0.5;
-                _dM.lerpVectors(_dA, _dB, m).normalize();
-                const hit = this._hitT(_dM) < LASER2_RANGE;
-                if (hit === groundA) lo = m; else hi = m;
-            }
-            _dM.lerpVectors(_dA, _dB, lo).normalize();
-            _hM.copy(O).addScaledVector(_dM, this._hitT(_dM));
-            sn = this._pushSheet(sn, _hA, _hM, angle * lo, _D, M * lo, ap, div, g, vis);
-            _dM.lerpVectors(_dA, _dB, hi).normalize();
-            _hM.copy(O).addScaledVector(_dM, this._hitT(_dM));
-            sn = this._pushSheet(sn, _hM, _hB, angle * (1 - hi), _D, M * (1 - hi), ap, div, g, vis);
+            this._angle = Math.sqrt((a1x - a0x) * (a1x - a0x) + (a1y - a0y) * (a1y - a0y));
+            this._M = M;
+            this._piece(0, _dA, _hitA, 1, _dB, _hitB, 0);
         }
+        sn = this._sn;
         this.sheetN = sn;
 
         // Lentille : couleur moyenne émise
@@ -257,6 +279,62 @@ export class Laser2Fixture {
         } else {
             this._instancer.lensColor(this._slot, 0, 0, 0);
         }
+    }
+
+    /**
+     * Portion [s0, s1] d'une nappe (directions d0, d1 et leurs impacts) : émise telle quelle si ses deux
+     * bords touchent la même surface plane (ou le ciel), sinon coupée en deux à mi-angle.
+     */
+    _piece(s0, d0, h0, s1, d1, h1, depth) {
+        const span = (s1 - s0) * this._angle;
+        let split = false;
+        if (depth < MAX_DEPTH && span > 2e-4) {
+            if (h0.id !== h1.id) split = true;
+            else if (h0.id === SURF_PLAYER) split = span > 0.004;
+            // Même surface aux deux bords mais obstacle au milieu (pilier…) : contrôle du milieu
+            else if (depth === 0 && span > 0.009) {
+                const dm = _dStack[0].lerpVectors(d0, d1, 0.5).normalize();
+                split = this._hit(dm, _hStack[0]).id !== h0.id;
+            }
+        }
+        if (!split) {
+            this._emitPiece(s0, d0, h0, s1, d1, h1);
+            return;
+        }
+        const sm = (s0 + s1) * 0.5;
+        const dm = _dStack[depth + 1].lerpVectors(d0, d1, 0.5).normalize();
+        const hm = this._hit(dm, _hStack[depth + 1]);
+        this._piece(s0, d0, h0, sm, dm, hm, depth + 1);
+        this._piece(sm, dm, hm, s1, d1, h1, depth + 1);
+    }
+
+    _emitPiece(s0, d0, h0, s1, d1, h1) {
+        const O = this.origin;
+        const f = s1 - s0;
+        const angle = this._angle * f;
+        const M = this._M * f;
+        _P0.copy(O).addScaledVector(d0, h0.t);
+        _P1.copy(O).addScaledVector(d1, h1.t);
+        const need = (this._sn + 1) * SHEET_STRIDE;
+        if (need > this.sheetData.length) this.sheetData = growF32(this.sheetData, need);
+        this._sn = this._pushSheet(this._sn, _P0, _P1, angle, _D, M, this._ap, this._div, this._g, this._vis);
+        // Trait lumineux sur la surface touchée par les deux bords
+        if (h0.id === h1.id && h0.id !== SURF_SKY) {
+            const tm = (h0.t + h1.t) * 0.5;
+            this._pushImpact(_P0, _P1, h0, this._ap + tm * this._div, M * this._vis, _D, Math.max(_D[0], _D[1], _D[2]));
+        }
+    }
+
+    /** Point (P0 = P1) ou trait lumineux sur une surface */
+    _pushImpact(P0, P1, h, width, power, D, m) {
+        const need = (this.impactN + 1) * IMPACT_STRIDE;
+        if (need > this.impactData.length) this.impactData = growF32(this.impactData, need);
+        const I = this.impactData;
+        const o = this.impactN++ * IMPACT_STRIDE;
+        I[o] = P0.x; I[o + 1] = P0.y; I[o + 2] = P0.z; I[o + 3] = width;
+        I[o + 4] = P1.x; I[o + 5] = P1.y; I[o + 6] = P1.z; I[o + 7] = power;
+        I[o + 8] = h.nx; I[o + 9] = h.ny; I[o + 10] = h.nz;
+        I[o + 11] = D[0] / m; I[o + 12] = D[1] / m; I[o + 13] = D[2] / m;
     }
 
     _pushSheet(sn, A, Bp, angle, D, M, ap, div, g, vis) {
@@ -278,5 +356,18 @@ export class Laser2Fixture {
         this._slot = null;
         this.beamN = 0;
         this.sheetN = 0;
+        this.impactN = 0;
     }
+}
+
+function copyHit(dst, src) {
+    dst.t = src.t; dst.id = src.id; dst.nx = src.nx; dst.ny = src.ny; dst.nz = src.nz;
+}
+
+function growF32(a, need) {
+    let n = a.length;
+    while (n < need) n *= 2;
+    const b = new Float32Array(n);
+    b.set(a);
+    return b;
 }
