@@ -15,7 +15,8 @@
 import { ServerClock } from '../multiplayer/ServerClock.js';
 import { DMX_PACKET, decodeDmxPacket } from '../dmx/DmxProtocol.js';
 
-const RECONNECT_DELAY = 2000;
+const RECONNECT_DELAY = 2000;      // première tentative de reconnexion (ms)
+const RECONNECT_MAX_DELAY = 10000; // puis tentatives de plus en plus espacées
 /** Au-delà de ce volume en attente d'envoi, la régie saute des envois (les changements sont repris au suivant) */
 const MAX_BUFFERED = 256 * 1024;
 
@@ -35,6 +36,7 @@ export class RegieClient {
         this._roomId = null;
         this._wantOpen = false;
         this._retry = null;
+        this._attempts = 0;
         this.clock = new ServerClock((m) => this._sendJson(m));
         this.status = 'idle';        // idle | connecting | open | joined | lost
         this.roomId = null;
@@ -97,6 +99,7 @@ export class RegieClient {
         this._ws = ws;
         ws.onopen = () => {
             this._setStatus('open');
+            this._attempts = 0;
             this.clock.start();
             this._sendJson({ type: 'REGIE_JOIN', roomId: this._roomId });
         };
@@ -119,7 +122,8 @@ export class RegieClient {
             this._ws = null;
             if (!this._wantOpen) return;
             this._setStatus('lost');
-            this._retry = setTimeout(() => this._open(), RECONNECT_DELAY);
+            this._attempts++;
+            this._retry = setTimeout(() => this._open(), Math.min(RECONNECT_MAX_DELAY, RECONNECT_DELAY * this._attempts));
         };
     }
 

@@ -3,18 +3,20 @@
  *
  * La liste des projecteurs vient du jeu (message PATCH : type, patch DMX, pilotage, position).
  * La sélection est partagée par toutes les vues (plan, liste, faders).
- * Les groupes sont gardés sur ce poste (localStorage) ; ils passeront dans les shows
- * sauvegardés sur le serveur avec les patterns.
+ * Les groupes appartiennent au show courant (sauvegardé sur le serveur, voir ShowStore) :
+ * bindGroups() les branche, chaque modification appelle le rappel de sauvegarde.
  */
 
 import { fixtureKey, KIND_ORDER } from './fixtureTypes.js';
 
-const GROUPS_KEY = 'soundstage3d:regie:groups';
+/** Ancienne clé des groupes (étape 2, gardés sur le poste) : repris une fois dans le show */
+const LEGACY_GROUPS_KEY = 'soundstage3d:regie:groups';
 
-function loadGroups() {
+export function takeLegacyGroups() {
     try {
-        const g = JSON.parse(localStorage.getItem(GROUPS_KEY) || '[]');
-        if (Array.isArray(g)) return g.filter(x => x && typeof x.name === 'string' && Array.isArray(x.keys));
+        const g = JSON.parse(localStorage.getItem(LEGACY_GROUPS_KEY) || '[]');
+        localStorage.removeItem(LEGACY_GROUPS_KEY);
+        if (Array.isArray(g)) return g.filter((x) => x && typeof x.name === 'string' && Array.isArray(x.keys));
     } catch (_) { /* stockage indisponible */ }
     return [];
 }
@@ -27,7 +29,8 @@ export class FixtureStore {
         this.byKey = new Map();
         /** @type {Set<string>} */
         this.selection = new Set();
-        this.groups = loadGroups();
+        this.groups = [];
+        this._saveGroupsCb = null;
         this.version = 0;          // liste ou sélection modifiée (rafraîchissement des vues)
         this._listeners = [];
     }
@@ -87,8 +90,19 @@ export class FixtureStore {
     }
 
     // ── Groupes ───────────────────────────────────────────────────────────
+    /**
+     * Branche les groupes du show courant (tableau modifié sur place)
+     * @param {object[]} groups
+     * @param {() => void} save appelé après chaque modification
+     */
+    bindGroups(groups, save) {
+        this.groups = groups;
+        this._saveGroupsCb = save;
+        this._changed();
+    }
+
     _saveGroups() {
-        try { localStorage.setItem(GROUPS_KEY, JSON.stringify(this.groups)); } catch (_) { /* stockage indisponible */ }
+        if (this._saveGroupsCb) this._saveGroupsCb();
     }
 
     /** Nouveau groupe à partir de la sélection (null si rien n'est sélectionné) */
@@ -121,7 +135,8 @@ export class FixtureStore {
     }
 
     deleteGroup(id) {
-        this.groups = this.groups.filter(x => x.id !== id);
+        const i = this.groups.findIndex((x) => x.id === id);
+        if (i >= 0) this.groups.splice(i, 1);
         this._saveGroups();
         this._changed();
     }

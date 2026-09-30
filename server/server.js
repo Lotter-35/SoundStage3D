@@ -76,12 +76,110 @@ const MIME_TYPES = {
 const STORAGE_DIR = path.resolve(__dirname, 'storage');
 const AUDIO_STORAGE_DIR = path.join(STORAGE_DIR, 'audio');
 const PLAYLISTS_DIR = path.join(STORAGE_DIR, 'playlists');
+const SHOWS_DIR = path.join(STORAGE_DIR, 'shows'); // shows de la régie lumière (groupes, patterns…)
 
 try {
     fs.mkdirSync(AUDIO_STORAGE_DIR, { recursive: true });
     fs.mkdirSync(PLAYLISTS_DIR, { recursive: true });
+    fs.mkdirSync(SHOWS_DIR, { recursive: true });
 } catch (e) {
     console.error('[Storage] Error initializing storage directories:', e);
+}
+
+// ─── Shows de la régie lumière (un fichier JSON par show) ─────────────────────
+const SHOW_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
+const SHOW_MAX_BYTES = 8 * 1024 * 1024;
+
+function showPath(id) {
+    return path.join(SHOWS_DIR, `${id}.json`);
+}
+
+function getShowsList() {
+    const list = [];
+    try {
+        for (const f of fs.readdirSync(SHOWS_DIR)) {
+            if (!f.endsWith('.json')) continue;
+            try {
+                const data = JSON.parse(fs.readFileSync(path.join(SHOWS_DIR, f), 'utf-8'));
+                list.push({
+                    id: data.id,
+                    name: data.name || 'Show sans nom',
+                    updatedAt: data.updatedAt || 0,
+                    patterns: Array.isArray(data.patterns) ? data.patterns.length : 0,
+                });
+            } catch (_) { /* fichier illisible : ignoré */ }
+        }
+    } catch (e) {
+        console.error('[Shows] Lecture du dossier impossible :', e.message);
+    }
+    return list.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+/** Écriture atomique (fichier temporaire puis renommage) : un show n'est jamais à moitié écrit */
+function saveShowOnDisk(show) {
+    const file = showPath(show.id);
+    const tmp = `${file}.tmp`;
+    fs.writeFileSync(tmp, JSON.stringify(show, null, 1), 'utf-8');
+    fs.renameSync(tmp, file);
+}
+
+function sendJson(res, status, data) {
+    res.writeHead(status, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify(data));
+}
+
+/** API des shows : GET /api/shows, GET|PUT|DELETE /api/shows/:id */
+function handleShowsApi(req, res, url) {
+    const parts = url.pathname.split('/').filter(Boolean); // ['api', 'shows', id?]
+    const id = parts[2] ? decodeURIComponent(parts[2]) : null;
+    if (!id) {
+        if (req.method === 'GET') return sendJson(res, 200, getShowsList());
+        return sendJson(res, 405, { error: 'Méthode non prise en charge' });
+    }
+    if (!SHOW_ID_RE.test(id)) return sendJson(res, 400, { error: 'Identifiant de show invalide' });
+    if (req.method === 'GET') {
+        try {
+            return sendJson(res, 200, JSON.parse(fs.readFileSync(showPath(id), 'utf-8')));
+        } catch (_) {
+            return sendJson(res, 404, { error: 'Show introuvable' });
+        }
+    }
+    if (req.method === 'DELETE') {
+        try { fs.unlinkSync(showPath(id)); } catch (_) { /* déjà supprimé */ }
+        console.log(`[Shows] Supprimé : ${id}`);
+        return sendJson(res, 200, { ok: true });
+    }
+    if (req.method === 'PUT') {
+        const chunks = [];
+        let size = 0;
+        let aborted = false;
+        req.on('data', (c) => {
+            size += c.length;
+            if (size > SHOW_MAX_BYTES) {
+                aborted = true;
+                sendJson(res, 413, { error: 'Show trop volumineux' });
+                req.destroy();
+                return;
+            }
+            chunks.push(c);
+        });
+        req.on('end', () => {
+            if (aborted) return;
+            let show;
+            try { show = JSON.parse(Buffer.concat(chunks).toString('utf-8')); } catch (_) { return sendJson(res, 400, { error: 'JSON invalide' }); }
+            if (!show || typeof show !== 'object' || show.id !== id) return sendJson(res, 400, { error: 'Show invalide' });
+            show.updatedAt = Date.now();
+            try {
+                saveShowOnDisk(show);
+            } catch (e) {
+                console.error('[Shows] Écriture impossible :', e.message);
+                return sendJson(res, 500, { error: 'Écriture impossible' });
+            }
+            return sendJson(res, 200, { ok: true, updatedAt: show.updatedAt });
+        });
+        return;
+    }
+    return sendJson(res, 405, { error: 'Méthode non prise en charge' });
 }
 
 function getPlaylistsList() {
@@ -586,7 +684,7 @@ function getPlayersSnapshot(room) {
 const server = http.createServer((req, res) => {
     // CORS headers for all requests
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Room-Id, X-Client-Id, X-File-Name, X-Track-Id, *');
 
     if (req.method === 'OPTIONS') {
@@ -725,6 +823,12 @@ const server = http.createServer((req, res) => {
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ success: true, trackId, size: buffer.length, addedToQueue: true }));
         });
+        return;
+    }
+
+    // Endpoint: /api/shows — shows de la régie lumière
+    if (url.pathname === '/api/shows' || url.pathname.startsWith('/api/shows/')) {
+        handleShowsApi(req, res, url);
         return;
     }
 

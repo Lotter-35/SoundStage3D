@@ -4,15 +4,19 @@
  * Pilote en DMX les projecteurs d'une salle du jeu : la régie calcule les univers,
  * les envoie au serveur, qui les relaie aux joueurs (WebSocket).
  * Projecteurs de la salle (liste envoyée par le jeu), plan, patch, groupes, faders
- * de la sélection ou de canaux bruts, prise de main, grand master et blackout.
+ * de la sélection ou de canaux bruts, prise de main, grand master et blackout,
+ * patterns (moteur d'effets en temps musicaux) et shows sauvegardés sur le serveur.
  */
 
 import { RegieClient } from './RegieClient.js';
 import { DmxOutput } from './DmxOutput.js';
 import { RoomsView, OUTDATED_TEXT } from './ui/RoomsView.js';
 import { DeskView } from './ui/DeskView.js';
-import { FixtureStore } from './FixtureStore.js';
+import { FixtureStore, takeLegacyGroups } from './FixtureStore.js';
 import { channelsOf } from './fixtureTypes.js';
+import { ShowStore } from './ShowStore.js';
+import { TempoClock } from './TempoClock.js';
+import { PatternEngine } from './PatternEngine.js';
 
 const PREFS_KEY = 'soundstage3d:regie';
 
@@ -36,6 +40,29 @@ client.on('dmx', (packet) => out.receive(packet));
 
 const store = new FixtureStore();
 client.on('patch', (fixtures) => store.setFixtures(fixtures));
+
+// Show courant (sauvegardé sur le serveur), tempo et patterns joués par-dessus les réglages manuels
+const shows = new ShowStore();
+const tempo = new TempoClock(() => client.clock.now());
+const engine = new PatternEngine({ store, tempo, getShow: () => shows.show });
+out.setLayer((frameOf, t) => engine.apply(frameOf, t));
+
+let _showId = null;
+shows.onChange(() => {
+    const show = shows.show;
+    if (!show || show.id === _showId) return;
+    _showId = show.id;
+    engine.stopAll();
+    tempo.setBpm(show.bpm);
+    // Groupes de l'étape 2 (gardés sur ce poste) : repris une fois dans le show
+    const legacy = takeLegacyGroups();
+    if (legacy.length && show.groups.length === 0) {
+        show.groups.push(...legacy);
+        shows.touch();
+    }
+    store.bindGroups(show.groups, () => shows.touch());
+});
+shows.openLast();
 
 // Canaux d'intensité de tous les projecteurs patchés : ceux que le master et le blackout touchent
 let _patchSignature = '';
@@ -77,7 +104,7 @@ function openRoom(roomId) {
     setRoomInUrl(roomId);
     client.join(roomId);
     out.start();
-    setView(new DeskView({ client, out, store, prefs, savePrefs, onLeave: () => showRooms() }));
+    setView(new DeskView({ client, out, store, shows, tempo, engine, prefs, savePrefs, onLeave: () => showRooms() }));
 }
 
 function showRooms(error = '') {
@@ -94,6 +121,7 @@ client.on('outdated', () => showRooms(OUTDATED_TEXT));
 // Page quittée ou mise en cache par le navigateur : on ferme la connexion (sinon la régie resterait
 // ouverte côté serveur) ; retour sur la page depuis le cache : on rouvre la salle
 window.addEventListener('pagehide', () => {
+    shows.flushOnExit();
     client.leave();
     out.stop();
 });
@@ -109,4 +137,4 @@ if (initial) openRoom(initial.toUpperCase());
 else showRooms();
 
 // Accès de débogage depuis la console du navigateur
-window.__regie = { client, out, store, get view() { return view; } };
+window.__regie = { client, out, store, shows, tempo, engine, get view() { return view; } };

@@ -1,14 +1,15 @@
 /**
  * DeskView.js — pupitre de la régie
  *
- *   barre du haut : salle, connexion, joueurs, horloge musicale, avance des trames, débit,
- *                   grand master et blackout
+ *   barre du haut : show (sauvegarde), salle, connexion, joueurs, horloge musicale, tempo,
+ *                   avance des trames, débit, grand master et blackout
  *   gauche        : groupes, univers
- *   centre        : plan de la scène · liste des projecteurs (patch) · moniteur DMX
+ *   centre        : plan de la scène · liste des projecteurs (patch) · patterns · moniteur DMX
  *                   + sélection rapide et prise / reprise de main
  *   bas           : faders — canaux nommés de la sélection, ou canaux bruts d'un univers
  *
- * Raccourcis : B = blackout, Échap = rien de sélectionné, Ctrl+A = tout sélectionner.
+ * Raccourcis : B = blackout, T = tap tempo, Espace = lancer / arrêter le pattern affiché,
+ * Échap = rien de sélectionné, Ctrl+A = tout sélectionner.
  */
 
 import { h, ICONS, fmtClock, fmtRate, pad3 } from './dom.js';
@@ -17,6 +18,8 @@ import { FaderBank } from './FaderBank.js';
 import { PlanView } from './PlanView.js';
 import { PatchView } from './PatchView.js';
 import { GroupsPanel } from './GroupsPanel.js';
+import { PatternsView } from './PatternsView.js';
+import { ShowBar } from './ShowBar.js';
 import { channelsOf, KINDS, KIND_ORDER } from '../fixtureTypes.js';
 import { takeControl, releaseControl } from '../FixtureControl.js';
 import { DMX_UNIVERSE_SIZE, DMX_MAX_UNIVERSE } from '../../dmx/DmxProtocol.js';
@@ -32,7 +35,7 @@ const STATUS_TEXT = {
     lost: 'Reconnexion…',
 };
 
-const VIEWS = [['plan', 'Plan'], ['patch', 'Patch'], ['dmx', 'Moniteur DMX']];
+const VIEWS = [['plan', 'Plan'], ['patch', 'Patch'], ['patterns', 'Patterns'], ['dmx', 'Moniteur DMX']];
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 /** Nom de canal sans ses précisions entre parenthèses (libellé de fader) */
@@ -44,14 +47,20 @@ export class DeskView {
      * @param {import('../RegieClient.js').RegieClient} o.client
      * @param {import('../DmxOutput.js').DmxOutput} o.out
      * @param {import('../FixtureStore.js').FixtureStore} o.store
+     * @param {import('../ShowStore.js').ShowStore} o.shows
+     * @param {import('../TempoClock.js').TempoClock} o.tempo
+     * @param {import('../PatternEngine.js').PatternEngine} o.engine
      * @param {object} o.prefs          réglages de la page (sauvegardés par main.js)
      * @param {() => void} o.savePrefs
      * @param {() => void} o.onLeave    retour au choix de la salle
      */
-    constructor({ client, out, store, prefs, savePrefs, onLeave }) {
+    constructor({ client, out, store, shows, tempo, engine, prefs, savePrefs, onLeave }) {
         this.client = client;
         this.out = out;
         this.store = store;
+        this.shows = shows;
+        this.tempo = tempo;
+        this.engine = engine;
         this.prefs = prefs;
         this._savePrefs = savePrefs;
         this._onLeave = onLeave;
@@ -71,6 +80,12 @@ export class DeskView {
         this.plan = new PlanView({ store, out });
         this.patch = new PatchView({ store });
         this.groups = new GroupsPanel({ store });
+        this.showBar = new ShowBar({ shows, tempo });
+        this.patterns = new PatternsView({
+            store, shows, engine, prefs, savePrefs,
+            now: () => client.clock.now(),
+            playTime: () => client.clock.now() + out.lookahead,
+        });
 
         this.el = h('div', { class: 'desk' }, [this._buildTopBar(), this._buildSide(), this._buildCenter(), this._buildBank()]);
         this._applyPercent();
@@ -118,6 +133,8 @@ export class DeskView {
         return h('div', { class: 'topbar' }, [
             h('span', { class: 'brand', text: 'Régie' }),
             h('span', { class: 'sep' }),
+            this.showBar.showEl,
+            h('span', { class: 'sep' }),
             h('span', { class: 'group' }, [h('span', { class: 'dim', text: 'Salle' }), this.$room,
                 h('button', { class: 'btn', text: 'Changer', onclick: () => this._onLeave() })]),
             h('span', { class: 'sep' }),
@@ -126,6 +143,8 @@ export class DeskView {
             h('span', { class: 'sep' }),
             h('span', { class: 'group' }, [this.$play, this.$clock, this.$track]),
             h('span', { class: 'grow' }),
+            this.showBar.tempoEl,
+            h('span', { class: 'sep' }),
             h('span', { class: 'group' }, [h('span', { class: 'dim', text: 'Avance' }), this.$lookahead, h('span', { class: 'dim', text: 'ms' })]),
             h('span', { class: 'group' }, [h('span', { class: 'dim', text: 'Sortie' }), this.$rate]),
             h('span', { class: 'sep' }),
@@ -217,7 +236,7 @@ export class DeskView {
         this.prefs.view = id;
         this._savePrefs();
         for (const [k, b] of this.$viewBtns) b.classList.toggle('on', k === id);
-        const el = id === 'plan' ? this.plan.el : id === 'patch' ? this.patch.el : this.monitor.el;
+        const el = id === 'plan' ? this.plan.el : id === 'patch' ? this.patch.el : id === 'patterns' ? this.patterns.el : this.monitor.el;
         this.$centerBody.replaceChildren(el);
         this.$uniTitle.style.display = id === 'dmx' ? '' : 'none';
         if (id === 'plan') this.plan.invalidate();
@@ -361,9 +380,16 @@ export class DeskView {
     _key(e) {
         const t = e.target;
         if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
-        if (e.key === 'b' || e.key === 'B') {
-            if (e.ctrlKey || e.metaKey || e.altKey) return;
+        if (t && (t.tagName === 'SELECT' || t.tagName === 'BUTTON') && (e.key === ' ' || e.key === 'Enter')) return;
+        const plain = !(e.ctrlKey || e.metaKey || e.altKey);
+        if ((e.key === 'b' || e.key === 'B') && plain) {
             this.out.blackout = !this.out.blackout;
+            e.preventDefault();
+        } else if ((e.key === 't' || e.key === 'T') && plain) {
+            this.showBar.tap();
+            e.preventDefault();
+        } else if (e.key === ' ' && plain && this.view === 'patterns' && this.patterns.pattern) {
+            this.engine.toggle(this.patterns.pattern.id, this.client.clock.now() + this.out.lookahead);
             e.preventDefault();
         } else if (e.key === 'Escape') {
             this.store.clearSelection();
@@ -421,6 +447,8 @@ export class DeskView {
         this._raf = 0;
         document.removeEventListener('keydown', this._onKey);
         this.plan.dispose();
+        this.patterns.dispose();
+        this.showBar.dispose();
     }
 
     _frame(now) {
@@ -438,7 +466,9 @@ export class DeskView {
         }
         if (this.view === 'plan') this.plan.frame(now);
         else if (this.view === 'patch') this.patch.frame();
+        else if (this.view === 'patterns') this.patterns.frame();
         this.groups.frame();
+        this.showBar.frame();
 
         this.$room.textContent = c.roomId || '—';
         this.$status.textContent = STATUS_TEXT[c.status] || c.status;

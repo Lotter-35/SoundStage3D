@@ -3,13 +3,12 @@
  * ─────────────────────────────────────────────────────────────
  * Sortie DMX de la régie.
  *
- * `universes` est l'état DMX de la salle tel que la régie le voit : ses propres réglages
- * plus ce qu'envoient les autres régies (le dernier qui parle l'emporte, canal par canal).
- * À chaque tick (30 par seconde), seules les plages modifiées depuis le dernier envoi partent,
- * datées « maintenant + avance » sur l'horloge du serveur : les jeux les appliquent à cette heure.
- *
- * Le grand master et le blackout agissent à la sortie, sur les seuls canaux d'intensité
- * (dimmers) des projecteurs patchés : les réglages (faders) restent intacts.
+ * `universes` sont les réglages manuels tels que la régie les voit : les siens plus ce
+ * qu'envoient les autres régies (le dernier qui parle l'emporte, canal par canal).
+ * À chaque tick (30 par seconde), la sortie est composée pour l'heure « maintenant + avance »
+ * (horloge du serveur) : réglages manuels, puis la couche des patterns en lecture, puis le
+ * grand master et le blackout (seuls canaux d'intensité, les faders restent intacts).
+ * Seules les plages modifiées depuis le dernier envoi partent ; les jeux les appliquent à cette heure.
  *
  * Le tick vient d'un Worker : les minuteries d'un onglet caché sont ralenties à 1 par seconde,
  * pas celles d'un Worker (la régie continue d'émettre quand on passe sur l'onglet du jeu).
@@ -53,8 +52,11 @@ export class DmxOutput {
         this._blackout = false;
         /** @type {Map<number, {address: number, fineAddress?: number}[]>} canaux d'intensité par univers */
         this._intensity = new Map();
-        /** @type {Map<number, Uint8Array>} sorties après master / blackout */
+        /** @type {Map<number, Uint8Array>} dernière sortie composée (réglages + patterns + master) */
         this._frames = new Map();
+        this._scratch = new Map();
+        /** @type {((frameOf: (universe: number) => Uint8Array, time: number) => void)|null} couche des patterns */
+        this._layer = null;
         this.version = 0;       // incrémenté à chaque changement (rafraîchissement de l'interface)
         this._ticker = null;
         this._win = { t: performance.now(), outBytes: 0, outPackets: 0, inBytes: 0 };
@@ -74,6 +76,7 @@ export class DmxOutput {
     reset() {
         this.universes.clear();
         this._sent.clear();
+        this._frames.clear();
         this.version++;
     }
 
@@ -119,34 +122,79 @@ export class DmxOutput {
         this.version++;
     }
 
-    /** Univers tel qu'il part vers les jeux (après master et blackout) */
-    output(n) {
-        const u = this.universes.get(n);
-        return u ? this._frame(n, u) : undefined;
+    /**
+     * Couche écrite par-dessus les réglages manuels à chaque trame (moteur des patterns)
+     * @param {(frameOf: (universe: number) => Uint8Array, time: number) => void} fn
+     */
+    setLayer(fn) {
+        this._layer = fn;
     }
 
-    _frame(n, u) {
+    /** Univers tel qu'il part vers les jeux (réglages + patterns + master), à la dernière trame */
+    output(n) {
+        return this._frames.get(n) || this.universes.get(n);
+    }
+
+    /** Grand master / blackout sur les canaux d'intensité d'un univers composé */
+    _applyMaster(n, f) {
         const k = this._blackout ? 0 : this._master;
         const list = this._intensity.get(n);
-        if (k >= 1 || !list || list.length === 0) return u;
-        let f = this._frames.get(n);
-        if (!f) {
-            f = new Uint8Array(DMX_UNIVERSE_SIZE);
-            this._frames.set(n, f);
-        }
-        f.set(u);
+        if (k >= 1 || !list || list.length === 0) return;
         for (const c of list) {
             const i = c.address - 1;
             if (c.fineAddress) {
                 const j = c.fineAddress - 1;
-                const v16 = Math.round(((u[i] << 8) | u[j]) * k);
+                const v16 = Math.round(((f[i] << 8) | f[j]) * k);
                 f[i] = (v16 >> 8) & 255;
                 f[j] = v16 & 255;
             } else {
-                f[i] = Math.round(u[i] * k);
+                f[i] = Math.round(f[i] * k);
             }
         }
-        return f;
+    }
+
+    /** Compose la sortie de l'heure t ; version++ si elle a changé (rafraîchissement de l'interface) */
+    _compose(t) {
+        const used = new Set();
+        const scratch = this._scratch;
+        const frameOf = (n) => {
+            let f = scratch.get(n);
+            if (!f) {
+                f = new Uint8Array(DMX_UNIVERSE_SIZE);
+                scratch.set(n, f);
+            }
+            if (!used.has(n)) {
+                used.add(n);
+                const u = this.universes.get(n);
+                if (u) f.set(u);
+                else f.fill(0);
+            }
+            return f;
+        };
+        for (const n of this.universes.keys()) frameOf(n);
+        // Univers écrits seulement par un pattern maintenant arrêté : ils reviennent aux réglages (zéro)
+        for (const n of this._frames.keys()) frameOf(n);
+        if (this._layer) {
+            try { this._layer(frameOf, t); } catch (e) { console.error('[Régie] patterns', e); }
+        }
+        let changed = false;
+        for (const n of used) {
+            const s = scratch.get(n);
+            this._applyMaster(n, s);
+            let f = this._frames.get(n);
+            if (!f) {
+                f = new Uint8Array(DMX_UNIVERSE_SIZE);
+                this._frames.set(n, f);
+            }
+            for (let i = 0; i < DMX_UNIVERSE_SIZE; i++) {
+                if (f[i] !== s[i]) {
+                    f.set(s);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+        if (changed) this.version++;
     }
 
     get(universe, address) {
@@ -169,6 +217,7 @@ export class DmxOutput {
         if (packet.full) {
             this.universes.clear();
             this._sent.clear();
+            this._frames.clear();
         }
         for (const b of packet.blocks) {
             this.universe(b.universe).set(b.data, b.start - 1);
@@ -180,13 +229,14 @@ export class DmxOutput {
 
     tick() {
         this._updateStats();
+        const t = this._now() + this.lookahead;
+        this._compose(t);
         const blocks = [];
-        for (const [n, u] of this.universes) {
-            const prev = this._sentCopy(n);
-            for (const b of diffUniverse(n, prev, this._frame(n, u))) blocks.push(b);
+        for (const [n, f] of this._frames) {
+            for (const b of diffUniverse(n, this._sentCopy(n), f)) blocks.push(b);
         }
         if (blocks.length === 0) return;
-        const bytes = encodeDmxPacket(blocks, this._now() + this.lookahead);
+        const bytes = encodeDmxPacket(blocks, t);
         if (!this._send(bytes)) return; // pas envoyé : les changements repartiront au prochain tick
         for (const b of blocks) this._sentCopy(b.universe).set(b.data, b.start - 1);
         this._win.outBytes += bytes.length;
