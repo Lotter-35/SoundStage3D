@@ -11,7 +11,7 @@
 
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { createHazeCompositeMaterial } from './HazeShaders.js';
+import { createHazeCompositeMaterial } from './HazeShaders.js?v=2';
 import { resolveResolutionScale } from '../render/resolutionScale.js';
 
 export class HazePass extends Pass {

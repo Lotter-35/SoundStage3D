@@ -21,20 +21,20 @@ import { InputStage } from './audio/inputStage.js';
 import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
-import { Controls } from './ui/controls.js?v=160';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=307';
+import { Controls } from './ui/controls.js?v=161';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=308';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
-import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=157';
+import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=159';
 import { DmxReceiver } from './dmx/DmxReceiver.js';
 import { PatchReporter, collectPatch, encodeFixtureStates } from './dmx/PatchReporter.js';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=5';
 import { LightingSync } from './multiplayer/LightingSync.js?v=11';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=186';
-import { LaserManager } from './laser/LaserManager.js?v=307';
+import { LaserManager } from './laser/LaserManager.js?v=308';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
@@ -45,7 +45,7 @@ import { LedBarManager } from './ledbar/LedBarManager.js';
 import { Laser2Manager } from './laser2/Laser2Manager.js';
 import { ildaLibrary } from './laser2/ilda/IldaLibrary.js';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
-import { HazeVolume } from './haze/HazeVolume.js';
+import { HazeVolume } from './haze/HazeVolume.js?v=2';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
 import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
@@ -463,6 +463,8 @@ try {
     _isShuffle = localStorage.getItem('soundstage3d:playback-shuffle') === 'true';
 } catch (_) {}
 controls.setShuffleState(_isShuffle);
+let _repeatMode = 'off';     // 'off' | 'all' | 'one' — partagé par la salle (serveur) en multijoueur
+const _soloPlayed = [];      // historique des morceaux joués (répéter tout hors serveur)
 
 const _localAudioFileCache = new Map();
 const _decodedAudioBuffers = new Map(); // id or name -> AudioBuffer
@@ -563,6 +565,84 @@ function setBufferOnEngine(buf) {
 // en cours + les DECODE_AHEAD suivants de la file. Les autres restent en cache sous forme de
 // fichier compressé (téléchargé) et sont décodés à la demande.
 const DECODE_AHEAD = 4;
+const DOWNLOAD_AHEAD = 10; // au-delà, on ne télécharge rien d'avance (une playlist de 500 morceaux ne doit pas être téléchargée en entier)
+
+// Cache des fichiers compressés téléchargés : plafonné (les morceaux joués il y a longtemps sont
+// retéléchargés à la demande). Seuls les fichiers téléchargés depuis le serveur sont évincés :
+// un fichier ajouté depuis le disque local n'a pas d'autre source et reste toujours en cache.
+const FILE_CACHE_MAX_BYTES = 300 * 1024 * 1024;
+const _downloadedFiles = new WeakSet();
+
+/**
+ * Télécharge un morceau en flux. Si la connexion tombe en cours de route, la reprise se fait avec un
+ * en-tête Range à partir des octets déjà reçus (3 reprises max) au lieu de tout retélécharger.
+ * Une annulation (AbortController) est propagée telle quelle.
+ */
+async function _fetchAudioBlob(fullUrl, signal) {
+    const chunks = [];
+    let received = 0, total = 0, type = '';
+    for (let attempt = 0; attempt < 4; attempt++) {
+        const headers = received > 0 ? { Range: `bytes=${received}-` } : {};
+        let resp;
+        try {
+            resp = await fetch(fullUrl, { signal, headers });
+            if (received > 0 && resp.status === 200) { chunks.length = 0; received = 0; }          // serveur sans Range : on repart de zéro
+            else if (received > 0 && resp.status !== 206) throw new Error(`HTTP ${resp.status}`);
+            else if (received === 0 && !resp.ok) throw new Error(`HTTP ${resp.status}`);
+            if (!type) type = resp.headers.get('Content-Type') || '';
+            if (received === 0) total = parseInt(resp.headers.get('Content-Length') || '0', 10);
+            if (!resp.body || !resp.body.getReader) { const b = await resp.blob(); return b; }
+            const reader = resp.body.getReader();
+            for (;;) {
+                const { done, value } = await reader.read();
+                if (done) break;
+                chunks.push(value);
+                received += value.length;
+            }
+            if (!total || received >= total) return new Blob(chunks, { type: type || 'audio/mpeg' });
+            throw new Error('flux incomplet');
+        } catch (err) {
+            if (err.name === 'AbortError' || (signal && signal.aborted)) throw err;
+            if (/^HTTP 4\d\d/.test(err.message) && !/^HTTP 416/.test(err.message)) throw err;   // fichier absent / refusé : inutile de réessayer
+            if (attempt === 3) throw err;
+            console.warn(`[Audio] Téléchargement interrompu à ${received}/${total || '?'} octets, reprise (${attempt + 1}/3)`, err.message);
+            await new Promise(r => setTimeout(r, 400 * (attempt + 1)));
+        }
+    }
+}
+
+function _cacheDownloadedFile(track, file) {
+    _downloadedFiles.add(file);
+    if (track.id) _localAudioFileCache.set(track.id, file);
+    if (track.name) _localAudioFileCache.set(track.name, file);
+    track.file = file;
+    _trimFileCache();
+}
+
+function _trimFileCache() {
+    const keep = new Set();
+    for (const t of [_currentPlayingTrack, ...getUpcomingPlaybackQueue().slice(0, DOWNLOAD_AHEAD)]) {
+        if (!t) continue;
+        if (t.id) keep.add(t.id);
+        if (t.name) keep.add(t.name);
+    }
+    const unique = new Set();
+    let total = 0;
+    for (const f of _localAudioFileCache.values()) {
+        if (_downloadedFiles.has(f) && !unique.has(f)) { unique.add(f); total += f.size || 0; }
+    }
+    if (total <= FILE_CACHE_MAX_BYTES) return;
+    // Map = ordre d'insertion : les plus anciens d'abord
+    for (const [k, f] of _localAudioFileCache) {
+        if (total <= FILE_CACHE_MAX_BYTES) break;
+        if (!_downloadedFiles.has(f) || keep.has(k)) continue;
+        _localAudioFileCache.delete(k);
+        // La taille n'est retirée que quand plus aucune clé ne référence ce fichier
+        let still = false;
+        for (const g of _localAudioFileCache.values()) { if (g === f) { still = true; break; } }
+        if (!still) total -= f.size || 0;
+    }
+}
 
 function _isTrackDecoded(t) {
     return Boolean(t) && (_decodedAudioBuffers.has(t.id) || _decodedAudioBuffers.has(t.name));
@@ -585,6 +665,7 @@ function _isTrackReady(t) {
 function _needsPrefetch(item, idx) {
     if (!item) return false;
     if (idx < DECODE_AHEAD) return !_isTrackDecoded(item);
+    if (idx >= DOWNLOAD_AHEAD) return false;
     return !_hasTrackFile(item) && Boolean(item.url || item.id);
 }
 
@@ -635,6 +716,14 @@ async function getOrDecodeAudioBuffer(file, trackId = null) {
             if (trackId) _decodedAudioBuffers.set(trackId, audioBuf);
             _decodedAudioBuffers.set(file.name, audioBuf);
             console.log(`[Audio] Pre-decoded track in memory: ${file.name}`);
+            try {
+                if (trackId && audioBuf.duration > 0) {
+                    const known = controls.getTrackDuration({ id: trackId });
+                    controls.setTrackDuration(trackId, audioBuf.duration);
+                    // Format que le serveur ne sait pas lire : on lui communique la durée mesurée
+                    if (!known && mp && mp.roomId) mp.sendTrackDuration(trackId, audioBuf.duration);
+                }
+            } catch (_) { /* pas encore connecté */ }
             _evictDecodedBuffers();
 
             const allTracks = [_currentPlayingTrack, ..._manualQueue, ..._contextQueue].filter(Boolean);
@@ -716,13 +805,9 @@ async function ensureTrackLoadedAndDecoded(track) {
             const baseUrl = (mp && mp.httpUrl) ? mp.httpUrl : `http://${window.location.hostname || 'localhost'}:8068`;
             const fullUrl = trackUrl.startsWith('http') ? trackUrl : `${baseUrl}${trackUrl}`;
             console.log(`[AudioPriority] ⚡ Téléchargement prioritaire du morceau à jouer : "${track.name}" (${fullUrl})`);
-            const resp = await fetch(fullUrl);
-            if (!resp.ok) throw new Error(`HTTP ${resp.status} - ${resp.statusText}`);
-            const blob = await resp.blob();
+            const blob = await _fetchAudioBlob(fullUrl);
             file = new File([blob], track.name, { type: blob.type || 'audio/mpeg' });
-            if (track.id) _localAudioFileCache.set(track.id, file);
-            if (track.name) _localAudioFileCache.set(track.name, file);
-            track.file = file;
+            _cacheDownloadedFile(track, file);
             if (_currentPlayingTrack && (_currentPlayingTrack.id === track.id || _currentPlayingTrack.name === track.name)) {
                 _currentPlayingTrack.file = file;
             }
@@ -855,9 +940,7 @@ async function _runPrefetchLoop() {
                     const baseUrl = (mp && mp.httpUrl) ? mp.httpUrl : '';
                     const fullUrl = url.startsWith('http') ? url : `${baseUrl}${url}`;
                     
-                    const resp = await fetch(fullUrl, { signal: controller.signal });
-                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-                    const blob = await resp.blob();
+                    const blob = await _fetchAudioBlob(fullUrl, controller.signal);
 
                     // Vérifier si le morceau est TOUJOURS dans la file après la fin du transfert
                     const currentQueue = getUpcomingPlaybackQueue();
@@ -870,9 +953,7 @@ async function _runPrefetchLoop() {
                     }
 
                     file = new File([blob], nextItem.name, { type: blob.type || 'audio/mpeg' });
-                    if (nextItem.id) _localAudioFileCache.set(nextItem.id, file);
-                    _localAudioFileCache.set(nextItem.name, file);
-                    nextItem.file = file;
+                    _cacheDownloadedFile(nextItem, file);
                 } catch (err) {
                     if (err.name === 'AbortError' || controller.signal.aborted) {
                         // Annulation normale (morceau supprimé ou nouvel ordre prioritaire)
@@ -979,7 +1060,8 @@ function applyPendingPlaybackSync() {
     const { startTime, startOffset, trackName } = _pendingPlaybackSync;
     _pendingPlaybackSync = null;
 
-    const now = Date.now();
+    // Les dates envoyées par le serveur sont comparées à l'horloge DU SERVEUR (les horloges des PC peuvent différer de plusieurs secondes)
+    const now = mp.serverNow();
     const delayMs = startTime - now;
 
     const isNewTrack = _isNewTrackStarting || _isSwitchingTrack;
@@ -1054,7 +1136,7 @@ try {
 
     // Synchronisation immédiate de l'horloge globale de balayage des lasers
     if (mp.sweepTime !== undefined) {
-        const lagSec = mp.serverTime ? (Date.now() - mp.serverTime) / 1000 : 0;
+        const lagSec = mp.serverTime ? Math.max(0, (mp.serverNow() - mp.serverTime) / 1000) : 0;
         _sharedSweepTime = mp.sweepTime + lagSec;
         _hasServerSweepTime = true;
     }
@@ -1165,6 +1247,11 @@ try {
             try { localStorage.setItem('soundstage3d:playback-shuffle', String(_isShuffle)); } catch (_) {}
         }
 
+        if (state.repeatMode !== undefined) {
+            _repeatMode = state.repeatMode || 'off';
+            controls.setRepeatMode(_repeatMode);
+        }
+
         if (state.loadedPlaylistId) {
             _contextPlaylistId = state.loadedPlaylistId;
             _contextPlaylistName = state.loadedPlaylistName || 'Playlist';
@@ -1178,29 +1265,6 @@ try {
 
         syncQueueToUI();
         startBackgroundPrefetch();
-    });
-
-    // Also keep legacy mp.onQueueSync for backward compatibility
-    mp.onQueueSync((queue, currentIndex, addedTrack, loadedPlaylistId, loadedPlaylistName, isNewPlaylistLoad) => {
-        if (_localQueueVersion === 0 && queue && queue.length > 0) {
-            const mapped = queue.map(item => {
-                const isDecoded = _isTrackReady(item);
-                return {
-                    id: item.id,
-                    name: item.name,
-                    url: item.url || (item.id ? `/audio/track/${item.id}` : null),
-                    uploadedBy: item.uploadedBy,
-                    file: _localAudioFileCache.get(item.id) || _localAudioFileCache.get(item.name) || null,
-                    loading: !isDecoded,
-                };
-            });
-            if (currentIndex >= 0 && currentIndex < mapped.length) {
-                _currentPlayingTrack = mapped[currentIndex];
-                _contextQueue = mapped.slice(currentIndex + 1);
-            }
-            syncQueueToUI();
-            startBackgroundPrefetch();
-        }
     });
 
     // Continuous real-time server verification check (every 3 seconds)
@@ -1314,6 +1378,19 @@ try {
         applyPendingPlaybackSync();
     });
 
+    // Action de lecture refusée pendant le chargement d'un morceau : l'interface revient à l'état réel du lecteur
+    mp.onActionRejected(() => {
+        controls.setPlayState(audioEngine.isPlaying);
+        mp.requestQueueState();
+    });
+    mp.onServerError((message) => {
+        const np = document.getElementById('now-playing');
+        if (!np || !message) return;
+        const old = np.textContent;
+        np.textContent = `⚠️ ${message}`;
+        setTimeout(() => { if (np.textContent.startsWith('⚠️')) np.textContent = old; }, 4000);
+    });
+
     // Room closed
     mp.onRoomClosed(() => {
         const overlay = document.getElementById('overlay');
@@ -1329,7 +1406,7 @@ try {
         if (mp.role === 'master') return;
         if (!audioReady || controls.state.sine.active || _isSwitchingTrack || _isNewTrackStarting) return;
         if (!audioEngine.buffer) return;
-        const lagMs = serverTimestamp ? (Date.now() - serverTimestamp) : 0;
+        const lagMs = serverTimestamp ? (mp.serverNow() - serverTimestamp) : 0;
         const compensated = currentTime + (lagMs / 1000);
         if (isPlaying) {
             // Only seek if drift exceeds 0.75s to prevent stuttering/audio cutting
@@ -1358,7 +1435,7 @@ try {
         // 1. Resynchronisation fluide de la lecture audio (GUESTS uniquement)
         // Le master est la source de vérité locale — il ne se recale jamais sur le serveur
         if (mp.role !== 'master' && audioReady && audioEngine.buffer && !controls.state.sine.active && !_isSwitchingTrack && !_isNewTrackStarting) {
-            const lagSec = serverTime ? (Date.now() - serverTime) / 1000 : 0;
+            const lagSec = serverTime ? Math.max(0, (mp.serverNow() - serverTime) / 1000) : 0;
             const targetAudioTime = musicTime + (isPlaying ? lagSec : 0);
 
             // ── Protection anti-lagspike : si un freeze s'est produit dans les 3 dernières secondes,
@@ -1410,7 +1487,7 @@ try {
 
         // 2. Synchronisation de la phase de balayage des lasers et lumières (indépendante de la musique)
         if (sweepTime !== undefined) {
-            const lagSec = serverTime ? (Date.now() - serverTime) / 1000 : 0;
+            const lagSec = serverTime ? Math.max(0, (mp.serverNow() - serverTime) / 1000) : 0;
             const targetSweep = sweepTime + lagSec;
             if (!_hasServerSweepTime || Math.abs(_sharedSweepTime - targetSweep) > 0.04) {
                 _sharedSweepTime = targetSweep;
@@ -1882,6 +1959,8 @@ async function initAudio(file = null, autoPlay = false) {
 controls.showHUD();
 
 const isFirstInNewRoom = !_mpReady || Boolean(mp && mp.role === 'master' && mp.isFirstInRoom);
+// Salle qui revient avec une file mémorisée (salle permanente) : on reprend son état, sans lancer de musique de nous-mêmes
+const roomRestored = Boolean(_mpReady && mp && (mp.currentTrack || mp.manualQueue?.length > 0 || mp.contextQueue?.length > 0));
 
 let savedAudioFile = null;
 if (!_mpReady) {
@@ -2047,7 +2126,7 @@ if (_mpReady) {
 }
 
 try {
-    const shouldAutoPlay = Boolean(isFirstInNewRoom && savedAudioFile);
+    const shouldAutoPlay = Boolean(isFirstInNewRoom && savedAudioFile && !roomRestored);
     _boot.set(0.98, 'Chargement de la musique');
     await initAudio(savedAudioFile, shouldAutoPlay);
 
@@ -2100,7 +2179,7 @@ if (_mpReady) {
         mp.sendTrackBufferReady();
 
         if (mp.playback && mp.playback.isPlaying) {
-            const elapsed = Math.max(0, (Date.now() - (mp.playback.timestamp || Date.now())) / 1000);
+            const elapsed = Math.max(0, (mp.serverNow() - (mp.playback.timestamp || mp.serverNow())) / 1000);
             const targetTime = (mp.playback.currentTime || 0) + elapsed;
             audioEngine.seek(targetTime);
             audioEngine.play(inputStage ? inputStage.input : crossover.input);
@@ -2121,7 +2200,7 @@ const unlockAudioContext = () => {
     if (audioEngine.ctx && audioEngine.ctx.state === 'suspended') {
         audioEngine.ctx.resume().then(() => {
             if (_mpReady && mp?.playback?.isPlaying && audioEngine.buffer) {
-                const elapsed = Math.max(0, (Date.now() - (mp.playback.timestamp || Date.now())) / 1000);
+                const elapsed = Math.max(0, (mp.serverNow() - (mp.playback.timestamp || mp.serverNow())) / 1000);
                 const targetTime = (mp.playback.currentTime || 0) + elapsed;
                 audioEngine.seek(targetTime);
                 audioEngine.play(inputStage ? inputStage.input : crossover.input);
@@ -2306,6 +2385,10 @@ async function playTrack(track, autoPlay = true) {
         loading: true
     };
     _currentAudioFileName = _currentPlayingTrack.name;
+    if (!_soloPlayed.length || _soloPlayed[_soloPlayed.length - 1].id !== _currentPlayingTrack.id) {
+        _soloPlayed.push({ id: _currentPlayingTrack.id, name: _currentPlayingTrack.name, url: _currentPlayingTrack.url, uploadedBy: _currentPlayingTrack.uploadedBy, file: _currentPlayingTrack.file });
+        if (_soloPlayed.length > 500) _soloPlayed.shift();
+    }
 
     // Couper immédiatement l'ancien audio
     audioEngine.stop();
@@ -2349,9 +2432,10 @@ async function playTrack(track, autoPlay = true) {
         }
 
         if (_mpReady && mp) {
-            const isAlreadyOnServer = fromServer || Boolean(track.url) || Boolean(_currentPlayingTrack.url);
-            if (file && !isAlreadyOnServer && (!track.id || track.id.startsWith('local_') || track.id.startsWith('q_'))) {
-                mp.uploadAudioFile(file, _currentPlayingTrack.id).catch(e => console.warn('[MP] Track sync:', e));
+            const localFile = _currentPlayingTrack.file || track.file || null;
+            const isAlreadyOnServer = Boolean(track.url) || Boolean(_currentPlayingTrack.url);
+            if (localFile && !isAlreadyOnServer && (!track.id || track.id.startsWith('local_') || track.id.startsWith('q_'))) {
+                mp.uploadAudioFile(localFile, _currentPlayingTrack.id).catch(e => console.warn('[MP] Track sync:', e));
             }
             mp.sendAction('seek', { currentTime: 0 });
             mp.sendTrackBufferReady();
@@ -2367,10 +2451,19 @@ async function playTrack(track, autoPlay = true) {
     }
 }
 
-async function playNextInQueue() {
+async function playNextInQueue(auto = false) {
     // En multijoueur : déléguer au serveur pour synchroniser instantanément toute la pièce
     if (_mpReady && mp && mp.roomId) {
-        mp.sendQueueNext();
+        mp.sendQueueNext(auto);
+        return;
+    }
+
+    // Répéter le morceau (fin naturelle) : on repart de 0:00
+    if (auto && _repeatMode === 'one' && _currentPlayingTrack && audioEngine.buffer) {
+        audioEngine.seek(0);
+        audioEngine.play(inputStage ? inputStage.input : crossover?.input);
+        controls.setPlayState(true);
+        _isSwitchingTrack = false;
         return;
     }
 
@@ -2394,9 +2487,10 @@ async function playNextInQueue() {
         return;
     }
 
-    // 3. Bouclage de la playlist active si existante
-    if (_contextPlaylistTracks.length > 0) {
-        let upcoming = _contextPlaylistTracks.map(formatPlaylistTrackForQueue);
+    // 3. « Répéter tout » : on repart de la playlist active, ou des morceaux déjà joués
+    if (_repeatMode !== 'off' && (_contextPlaylistTracks.length > 0 || _soloPlayed.length > 0)) {
+        const source = _contextPlaylistTracks.length > 0 ? _contextPlaylistTracks : _soloPlayed;
+        let upcoming = source.map(formatPlaylistTrackForQueue);
         if (_isShuffle) {
             upcoming = shuffleArray(upcoming);
         }
@@ -2408,6 +2502,7 @@ async function playNextInQueue() {
     }
 
     // Rien d'autre à jouer
+    _soloPlayed.length = 0;
     audioEngine.stop();
     audioEngine.seek(0);
     setBufferOnEngine(null);
@@ -2496,6 +2591,21 @@ async function addFilesToQueue(files, playImmediatelyIfEmpty = false) {
 }
 
 // ─── Playback & Spotify Queue Event Wiring ───────────────────────
+
+// 0. Bouton Répéter (🔁) : désactivé → toute la liste → le morceau
+controls.onRepeatToggle((mode) => {
+    _repeatMode = mode;
+    if (_mpReady && mp && mp.roomId) mp.sendRepeatSet(mode);
+});
+
+// 0b. Suppression définitive d'un morceau du serveur (liste « Toutes les musiques »)
+controls.onTrackDelete((ids) => {
+    if (_mpReady && mp && mp.roomId) {
+        mp.sendTrackDelete(ids);
+    } else {
+        alert('Suppression impossible : pas de connexion au serveur.');
+    }
+});
 
 // 1. Bouton Aléatoire (🔀)
 controls.onShuffleToggle((isShuffle) => {
@@ -2671,7 +2781,7 @@ controls.onPlaylistFilesAdd(async (playlistId, files) => {
     if (valid.length === 0) return;
 
     let pl = controls.getPlaylist(playlistId);
-    if (!pl) return;
+    if (!pl || pl.virtual) return; // « Toutes les musiques » est automatique
     if (!Array.isArray(pl.tracks)) pl.tracks = [];
 
     const isConnected = Boolean(_mpReady && mp);
@@ -3361,6 +3471,8 @@ canvas.addEventListener('click', (e) => {
     }
 
     if (!listener.isLocked) {
+        // Gizmo de déplacement actif (lampe sélectionnée) : on reste en souris libre, Tab pour reprendre la caméra
+        if (ambiancePanel && ambiancePanel.shouldKeepCursor()) return;
         listener.lock();
     }
 });
@@ -3735,9 +3847,9 @@ function renderFrame() {
 
             // Auto-advance track when reaching the end (si une file ou playlist est active)
             if (audioEngine.isPlaying && dur > 0 && curTime >= dur - 0.25 && !_isSwitchingTrack) {
-                if (_manualQueue.length > 0 || _contextQueue.length > 0 || _contextPlaylistTracks.length > 0) {
+                if (_manualQueue.length > 0 || _contextQueue.length > 0 || _contextPlaylistTracks.length > 0 || _repeatMode !== 'off') {
                     _isSwitchingTrack = true;
-                    playNextInQueue();
+                    playNextInQueue(true);
                 } else {
                     audioEngine.stop();
                     audioEngine.seek(0);
@@ -3747,7 +3859,7 @@ function renderFrame() {
                     _currentPlayingTrack = null;
                     _currentAudioFileName = '';
                     syncQueueToUI();
-                    if (_mpReady && mp && mp.roomId) mp.sendQueueNext();
+                    if (_mpReady && mp && mp.roomId) mp.sendQueueNext(true);
                 }
             }
         }

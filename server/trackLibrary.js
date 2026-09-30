@@ -9,6 +9,7 @@
 
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 
 const TRACK_ID_RE = /^[A-Za-z0-9_-]{1,80}$/;
 const HEADER_BYTES = 128 * 1024;
@@ -155,6 +156,7 @@ function createTrackLibrary({ audioDir, playlistsDir, getLiveTrackIds = () => ne
                     size: m.size || 0,
                     createdAt: m.createdAt || 0,
                     duration: typeof m.duration === 'number' ? m.duration : null,
+                    hash: typeof m.hash === 'string' ? m.hash : null,
                 });
             } catch (_) { /* méta illisible : le morceau reste jouable, sans métadonnées */ }
         }
@@ -173,14 +175,49 @@ function createTrackLibrary({ audioDir, playlistsDir, getLiveTrackIds = () => ne
             fs.writeFileSync(metaPath(m.id), JSON.stringify({
                 id: m.id, name: m.name, mime: m.mime, uploadedBy: m.uploadedBy, size: m.size, createdAt: m.createdAt,
                 ...(m.duration ? { duration: m.duration } : {}),
+                ...(m.hash ? { hash: m.hash } : {}),
             }));
         } catch (err) {
             log(`[Library] Écriture des métadonnées impossible (${m.id}) : ${err.message}`);
         }
     }
 
+    const sha1 = (buf) => crypto.createHash('sha1').update(buf).digest('hex');
+
+    /** Un autre morceau au contenu identique (même empreinte, fichier présent) ? */
+    function findByHash(hash, exceptId) {
+        if (!hash) return null;
+        for (const m of metas.values()) {
+            if (m.id !== exceptId && m.hash === hash && bins.has(m.id)) return m;
+        }
+        return null;
+    }
+
+    /** Rend `id.bin` identique à `srcId.bin` sans occuper d'espace (lien physique ; copie si impossible) */
+    function linkBin(srcId, id) {
+        try { fs.unlinkSync(binPath(id)); } catch (_) {}
+        try { fs.linkSync(binPath(srcId), binPath(id)); return 'lien'; }
+        catch (_) { fs.copyFileSync(binPath(srcId), binPath(id)); return 'copie'; }
+    }
+
+    /**
+     * Écrit un morceau reçu : si un fichier identique existe déjà (même empreinte SHA-1), le nouvel
+     * identifiant pointe sur le même contenu au lieu d'occuper de nouveau l'espace disque.
+     * Chaque identifiant garde son propre fichier/lien : la suppression de l'un n'affecte pas l'autre.
+     */
+    function store(id, info, buffer) {
+        const hash = sha1(buffer);
+        const twin = findByHash(hash, id);
+        let how = 'écrit';
+        if (twin) { how = linkBin(twin.id, id); }
+        else fs.writeFileSync(binPath(id), buffer);
+        const meta = register(id, info, buffer, hash);
+        if (twin) { log(`[Library] "${info.name}" identique à "${twin.name}" (${twin.id}) : ${how}, ${(buffer.length / 1048576).toFixed(1)} Mo économisés`); meta.deduped = true; }
+        return meta;
+    }
+
     /** Enregistre un morceau déjà écrit sur disque (upload) */
-    function register(id, info, buffer) {
+    function register(id, info, buffer, hash = null) {
         const m = {
             id,
             name: info.name,
@@ -189,11 +226,43 @@ function createTrackLibrary({ audioDir, playlistsDir, getLiveTrackIds = () => ne
             size: buffer.length,
             createdAt: Date.now(),
             duration: computeDuration(buffer, buffer.length, info.mime, info.name),
+            hash: hash || sha1(buffer),
         };
         bins.add(id);
         metas.set(id, m);
         persistMeta(m);
         return m;
+    }
+
+    /**
+     * Anciens morceaux sans empreinte : calculée par petits paquets en arrière-plan.
+     * Si `link` est vrai, un doublon exact est remplacé par un lien vers le fichier déjà présent.
+     */
+    function fillMissingHashes({ link = false, onDone = () => {} } = {}) {
+        const pending = [...metas.values()].filter(m => !m.hash && bins.has(m.id)).map(m => m.id);
+        const stats = { hashed: 0, linked: 0, savedBytes: 0 };
+        const step = () => {
+            const batch = pending.splice(0, 3);
+            for (const id of batch) {
+                const m = metas.get(id);
+                if (!m) continue;
+                try {
+                    m.hash = sha1(fs.readFileSync(binPath(id)));
+                    stats.hashed++;
+                    if (link) {
+                        const twin = findByHash(m.hash, id);
+                        if (twin && !sameFile(twin.id, id)) { linkBin(twin.id, id); stats.linked++; stats.savedBytes += m.size || 0; }
+                    }
+                    persistMeta(m);
+                } catch (_) {}
+            }
+            if (pending.length) setTimeout(step, 50); else onDone(stats);
+        };
+        if (pending.length) setTimeout(step, 2000); else onDone(stats);
+    }
+
+    function sameFile(a, b) {
+        try { const x = fs.statSync(binPath(a)), y = fs.statSync(binPath(b)); return x.ino !== 0 && x.ino === y.ino && x.dev === y.dev; } catch (_) { return false; }
     }
 
     /** Durées manquantes (morceaux anciens) : lues par petits paquets en arrière-plan, sans bloquer le serveur */
@@ -309,6 +378,8 @@ function createTrackLibrary({ audioDir, playlistsDir, getLiveTrackIds = () => ne
         getMeta: (id) => metas.get(id) || null,
         allMeta: () => [...metas.values()],
         register,
+        store,
+        fillMissingHashes,
         setDuration,
         fillMissingDurations,
         collectGarbage,

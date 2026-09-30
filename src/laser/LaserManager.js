@@ -24,7 +24,7 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { LaserShow } from './LaserShow.js?v=29';
 import { LaserBatch } from './LaserBatch.js';
 import { LaserFanPass } from './LaserFanPass.js';
-import { FinalCompositePass } from './FinalCompositePass.js';
+import { FinalCompositePass } from './FinalCompositePass.js?v=2';
 import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';

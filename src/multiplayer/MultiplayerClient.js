@@ -11,7 +11,7 @@
  *   mp.sendDsp(bus, param, value);
  *   mp.sendPosition(x, y, z, rotY);
  */
-import { ServerClock } from './ServerClock.js';
+import { ServerClock } from './ServerClock.js?v=2';
 import { DMX_PACKET, decodeDmxPacket } from '../dmx/DmxProtocol.js';
 import { ildaLive, ILDA_LIVE_PACKET } from '../laser2/ilda/IldaLive.js';
 
@@ -32,8 +32,6 @@ export class MultiplayerClient {
         this.sine = null;
         this.trackName = null;
         this.audioUrl = null;
-        this.queue = [];         // current shared queue [{ id, name, url, uploadedBy }]
-        this.currentQueueIndex = -1;
         this.currentTrack = null;
         this.manualQueue = [];   // priority manual queue
         this.contextQueue = [];  // context upcoming queue
@@ -54,7 +52,6 @@ export class MultiplayerClient {
         this._lightingFullSyncListeners = [];
         this._onPlayersUpdate = null;
         this._onAudioTrackChanged = null;
-        this._onQueueSync = null;
         this._onQueueStateSync = null;
         this._onPlaylistsSync = null;
         this._onIldaIndex = null;
@@ -281,11 +278,6 @@ export class MultiplayerClient {
         return res.json();
     }
 
-    /** Register callback when shared audio queue changes (legacy) */
-    onQueueSync(cb) {
-        this._onQueueSync = cb;
-    }
-
     /** Register callback when structured queue state syncs (two-tier Spotify queue) */
     onQueueStateSync(cb) {
         this._onQueueStateSync = cb;
@@ -336,10 +328,31 @@ export class MultiplayerClient {
         this._send({ type: 'QUEUE_SHUFFLE_TOGGLE', isShuffle, contextQueue });
     }
 
-    /** Advance to next track in queue */
-    sendQueueNext() {
-        this._send({ type: 'QUEUE_NEXT' });
+    /** Advance to next track in queue (auto = fin naturelle du morceau : le serveur applique « répéter le morceau ») */
+    sendQueueNext(auto = false) {
+        this._send({ type: 'QUEUE_NEXT', auto: Boolean(auto) });
     }
+
+    /** Mode répéter partagé par toute la salle : 'off' | 'all' | 'one' */
+    sendRepeatSet(mode) {
+        this._send({ type: 'QUEUE_REPEAT_SET', mode });
+    }
+
+    /** Supprimer définitivement des morceaux du serveur (et de toutes les playlists) */
+    sendTrackDelete(trackIds) {
+        this._send({ type: 'TRACK_DELETE', trackIds });
+    }
+
+    /** Durée mesurée localement d'un morceau dont le serveur ne connaît pas la durée */
+    sendTrackDuration(trackId, duration) {
+        this._send({ type: 'TRACK_DURATION', trackId, duration });
+    }
+
+    /** Action de lecture refusée par le serveur (ex. pause pendant le chargement d'un morceau) */
+    onActionRejected(cb) { this._onActionRejected = cb; }
+
+    /** Message d'erreur du serveur */
+    onServerError(cb) { this._onServerError = cb; }
 
     /** Go to previous track or restart current track */
     sendQueuePrev() {
@@ -354,31 +367,6 @@ export class MultiplayerClient {
     /** Request full queue state snapshot from server */
     requestQueueState() {
         this._send({ type: 'QUEUE_STATE_GET' });
-    }
-
-    /** Reorder items in the shared queue */
-    sendQueueReorder(fromIdx, toIdx) {
-        this._send({ type: 'QUEUE_REORDER', fromIdx, toIdx });
-    }
-
-    /** Remove an item from the shared queue */
-    sendQueueRemove(index) {
-        this._send({ type: 'QUEUE_REMOVE', index });
-    }
-
-    /** Request to play a specific track from the shared queue */
-    sendQueuePlayIndex(index) {
-        this._send({ type: 'QUEUE_PLAY_INDEX', index });
-    }
-
-    /** Ask server to add a track from saved storage to the room queue */
-    sendQueueAddTrack(track) {
-        this._send({ type: 'QUEUE_ADD_TRACK', track });
-    }
-
-    /** Ask server to add multiple tracks from a playlist to the room queue */
-    sendQueueAddTracks(tracks) {
-        this._send({ type: 'QUEUE_ADD_TRACKS', tracks });
     }
 
     /** Register callback for playlist list updates from server */
@@ -526,8 +514,6 @@ export class MultiplayerClient {
                 this.sine = msg.sine;
                 this.trackName = msg.trackName;
                 this.audioUrl = msg.audioUrl;
-                this.queue = msg.queue || [];
-                this.currentQueueIndex = msg.currentQueueIndex !== undefined ? msg.currentQueueIndex : -1;
                 this.currentTrack = msg.currentTrack || null;
                 this.manualQueue = msg.manualQueue || [];
                 this.contextQueue = msg.contextQueue || [];
@@ -548,6 +534,7 @@ export class MultiplayerClient {
                         manualQueue: this.manualQueue,
                         contextQueue: this.contextQueue,
                         isShuffle: this.isShuffle,
+                        repeatMode: msg.repeatMode || 'off',
                         queueVersion: this.queueVersion,
                         loadedPlaylistId: this.loadedPlaylistId,
                         loadedPlaylistName: this.loadedPlaylistName,
@@ -573,8 +560,6 @@ export class MultiplayerClient {
                 this.sine = msg.sine;
                 this.trackName = msg.trackName;
                 this.audioUrl = msg.audioUrl;
-                this.queue = msg.queue || [];
-                this.currentQueueIndex = msg.currentQueueIndex !== undefined ? msg.currentQueueIndex : -1;
                 this.currentTrack = msg.currentTrack || null;
                 this.manualQueue = msg.manualQueue || [];
                 this.contextQueue = msg.contextQueue || [];
@@ -595,6 +580,7 @@ export class MultiplayerClient {
                         manualQueue: this.manualQueue,
                         contextQueue: this.contextQueue,
                         isShuffle: this.isShuffle,
+                        repeatMode: msg.repeatMode || 'off',
                         queueVersion: this.queueVersion,
                         loadedPlaylistId: this.loadedPlaylistId,
                         loadedPlaylistName: this.loadedPlaylistName,
@@ -676,6 +662,10 @@ export class MultiplayerClient {
                 if (this._onAction) this._onAction(msg.action, msg.data ?? {});
                 break;
 
+            case 'SYNC_ACTION_REJECTED':
+                if (this._onActionRejected) this._onActionRejected(msg.action, msg.reason);
+                break;
+
             case 'PLAYBACK_SYNC':
                 if (this._onPlaybackSync) {
                     this._onPlaybackSync(msg.currentTime, msg.isPlaying, msg.serverTimestamp);
@@ -687,26 +677,13 @@ export class MultiplayerClient {
                 this.manualQueue = msg.manualQueue || [];
                 this.contextQueue = msg.contextQueue || [];
                 this.isShuffle = Boolean(msg.isShuffle);
+                this.repeatMode = msg.repeatMode || 'off';
                 this.queueVersion = msg.queueVersion || 1;
                 if (msg.loadedPlaylistId !== undefined) this.loadedPlaylistId = msg.loadedPlaylistId;
                 if (msg.loadedPlaylistName !== undefined) this.loadedPlaylistName = msg.loadedPlaylistName;
-                if (msg.queue) this.queue = msg.queue;
-                if (msg.currentIndex !== undefined) this.currentQueueIndex = msg.currentIndex;
                 console.log(`[MP] Queue state synced (v${this.queueVersion}): manual=${this.manualQueue.length}, context=${this.contextQueue.length}, shuffle=${this.isShuffle}`);
                 if (this._onQueueStateSync) {
                     this._onQueueStateSync(msg);
-                }
-                break;
-            }
-
-            case 'QUEUE_SYNC': {
-                this.queue = msg.queue || [];
-                this.currentQueueIndex = msg.currentIndex !== undefined ? msg.currentIndex : -1;
-                if (msg.loadedPlaylistId !== undefined) this.loadedPlaylistId = msg.loadedPlaylistId;
-                if (msg.loadedPlaylistName !== undefined) this.loadedPlaylistName = msg.loadedPlaylistName;
-                console.log(`[MP] Queue synced: ${this.queue.length} tracks (current index: ${this.currentQueueIndex})`);
-                if (this._onQueueSync) {
-                    this._onQueueSync(this.queue, this.currentQueueIndex, msg.addedTrack, msg.loadedPlaylistId, msg.loadedPlaylistName, Boolean(msg.isNewPlaylistLoad));
                 }
                 break;
             }
@@ -757,6 +734,7 @@ export class MultiplayerClient {
 
             case 'ERROR':
                 console.error('[MP] Server error:', msg.message);
+                if (this._onServerError) this._onServerError(msg.message);
                 break;
 
             default:

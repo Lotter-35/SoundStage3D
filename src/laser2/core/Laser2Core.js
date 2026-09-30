@@ -138,6 +138,7 @@ export class LaserCore {
         const sm4 = this._smoke || (this._smoke = [0, 0, 0, 0]);
         sm4[0] = sm; sm4[1] = Math.max(0.1, p.smokeScale); sm4[2] = (p.smokeSpeed / 100) * 1.5; sm4[3] = p.smokeContrast / 100;
         const smB = p.smokeBeams ? sm * 0.6 : 0;
+        const exactColor = Boolean(p.exactColor);
         this.impactN = 0;
         let lr = 0, lg = 0, lb = 0;
 
@@ -148,7 +149,7 @@ export class LaserCore {
         let bn = 0;
         for (let i = 0; i < nb; i++) {
             const s = i * 5;
-            displayColor(sc.beams[s + 2], sc.beams[s + 3], sc.beams[s + 4], _D);
+            displayColor(sc.beams[s + 2], sc.beams[s + 3], sc.beams[s + 4], _D, exactColor);
             const M = Math.max(_D[0], _D[1], _D[2]);
             if (M <= 1e-6) continue;
             lr += _D[0]; lg += _D[1]; lb += _D[2];
@@ -176,7 +177,7 @@ export class LaserCore {
         this._sn = 0;
         for (let i = 0; i < ns; i++) {
             const s = i * 7;
-            displayColor(sc.sheets[s + 4], sc.sheets[s + 5], sc.sheets[s + 6], _D);
+            displayColor(sc.sheets[s + 4], sc.sheets[s + 5], sc.sheets[s + 6], _D, exactColor);
             const M = Math.max(_D[0], _D[1], _D[2]);
             if (M <= 1e-6) continue;
             lr += _D[0]; lg += _D[1]; lb += _D[2];

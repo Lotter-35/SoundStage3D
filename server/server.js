@@ -92,6 +92,23 @@ try {
     console.error('[Storage] Error initializing storage directories:', e);
 }
 
+// ─── Bibliothèque des morceaux (index, durées, suppression sûre) ───────────────
+const { createTrackLibrary, safeId } = require('./trackLibrary');
+const library = createTrackLibrary({
+    audioDir: AUDIO_STORAGE_DIR,
+    playlistsDir: PLAYLISTS_DIR,
+    getLiveTrackIds: () => liveTrackIds(),
+    log: (m) => console.log(m),
+});
+{
+    const rep = library.orphanReport();
+    console.log(`[Library] ${rep.total} morceaux sur le serveur, dont ${rep.orphans} dans aucune playlist (${(rep.orphanBytes / 1048576).toFixed(0)} Mo) — visibles dans « Toutes les musiques »`);
+    library.fillMissingDurations();
+    library.fillMissingHashes({ link: true, onDone: (st) => { if (st.hashed) console.log(`[Library] Empreintes calculées : ${st.hashed} morceaux, ${st.linked} doublons fusionnés (${(st.savedBytes / 1048576).toFixed(0)} Mo économisés)`); } });
+}
+const ALL_PLAYLIST_ID = '__all__';
+const READY_TIMEOUT_MS = 8000; // attente maximale des clients avant de lancer un morceau (les retardataires rejoignent en cours de route)
+
 // ─── Shows de la régie lumière (un fichier JSON par show) ─────────────────────
 const SHOW_ID_RE = /^[A-Za-z0-9_-]{1,64}$/;
 const SHOW_MAX_BYTES = 8 * 1024 * 1024;
@@ -202,15 +219,15 @@ function getPlaylistsList() {
                     name: data.name || 'Playlist sans nom',
                     trackCount: Array.isArray(data.tracks) ? data.tracks.length : 0,
                     tracks: (data.tracks || []).map(t => {
-                        const binPath = path.join(AUDIO_STORAGE_DIR, `${t.id}.bin`);
-                        const onServer = fs.existsSync(binPath);
+                        const meta = library.getMeta(t.id);
                         return {
                             id: t.id,
                             name: t.name,
                             mime: t.mime || 'audio/mpeg',
                             url: t.url || `/audio/track/${t.id}`,
                             uploadedBy: t.uploadedBy || null,
-                            onServer: onServer,
+                            onServer: library.hasFile(t.id),
+                            duration: (meta && meta.duration) || null,
                         };
                     }),
                     createdAt: data.createdAt || 0,
@@ -220,14 +237,74 @@ function getPlaylistsList() {
                 console.warn(`[Playlist] Error reading ${f}:`, err.message);
             }
         }
-        return list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        list.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+        list.push(getAllTracksPlaylist());
+        return list;
     } catch (e) {
         console.error('[Playlist] Error listing playlists:', e);
         return [];
     }
 }
 
+/** Playlist virtuelle « Toutes les musiques » : tous les fichiers présents sur le serveur (jamais écrite sur disque) */
+function getAllTracksPlaylist() {
+    // Un seul exemplaire par contenu : deux envois du même fichier n'apparaissent qu'une fois dans la liste
+    const seenHash = new Set();
+    const tracks = library.allMeta()
+        .sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))
+        .filter(m => { if (!m.hash) return true; if (seenHash.has(m.hash)) return false; seenHash.add(m.hash); return true; })
+        .sort((a, b) => String(a.name).localeCompare(String(b.name), undefined, { numeric: true, sensitivity: 'base' }))
+        .map(m => ({
+            id: m.id,
+            name: m.name,
+            mime: m.mime,
+            url: `/audio/track/${m.id}`,
+            uploadedBy: m.uploadedBy,
+            onServer: true,
+            duration: m.duration || null,
+        }));
+    return { id: ALL_PLAYLIST_ID, name: 'Toutes les musiques', virtual: true, trackCount: tracks.length, tracks, createdAt: 0, updatedAt: 0 };
+}
+
+let _playlistsBroadcastTimer = null;
+/** Diffuse la liste des playlists à tous, regroupée (un envoi d'un lot de fichiers = une seule mise à jour) */
+function schedulePlaylistsBroadcast() {
+    if (_playlistsBroadcastTimer) return;
+    _playlistsBroadcastTimer = setTimeout(() => {
+        _playlistsBroadcastTimer = null;
+        broadcastAll({ type: 'PLAYLISTS_SYNC', playlists: getPlaylistsList() });
+    }, 1200);
+}
+
+/** Incrémente la version de la file d'attente ; une salle permanente la mémorise (sauvegarde groupée) */
+function bumpQueueVersion(room) {
+    room.queueVersion = (room.queueVersion || 0) + 1;
+    scheduleWorldSave(room);
+}
+
+/** Identifiants des morceaux encore utilisés par une salle (lecture en cours ou files d'attente) */
+function liveTrackIds() {
+    const ids = new Set();
+    for (const room of rooms.values()) {
+        if (room.currentTrack && room.currentTrack.id) ids.add(room.currentTrack.id);
+        for (const list of [room.manualQueue, room.contextQueue]) {
+            if (Array.isArray(list)) for (const t of list) if (t && t.id) ids.add(t.id);
+        }
+    }
+    // Files d'attente mémorisées des salles permanentes (salles vides) : leurs morceaux ne sont jamais supprimés
+    try {
+        for (const f of fs.readdirSync(WORLDS_DIR)) {
+            if (!f.endsWith('.json')) continue;
+            const w = JSON.parse(fs.readFileSync(path.join(WORLDS_DIR, f), 'utf-8'));
+            for (const id of worldQueueIds(w.queue)) ids.add(id);
+        }
+    } catch (_) { /* pas de dossier de mondes */ }
+    return ids;
+}
+
 function getPlaylistById(id) {
+    if (id === ALL_PLAYLIST_ID) return getAllTracksPlaylist();
+    if (!safeId(id)) return null;
     try {
         const filePath = path.join(PLAYLISTS_DIR, `${id}.json`);
         if (!fs.existsSync(filePath)) return null;
@@ -305,6 +382,35 @@ function loadWorld(name) {
     }
 }
 
+/** Identifiants des morceaux d'une file mémorisée */
+function worldQueueIds(q) {
+    const ids = [];
+    if (!q || typeof q !== 'object') return ids;
+    for (const t of [q.currentTrack, ...(q.manualQueue || []), ...(q.contextQueue || [])]) if (t && t.id) ids.push(t.id);
+    return ids;
+}
+
+/** File mémorisée d'une salle permanente : uniquement les morceaux dont le fichier existe encore */
+function restoreQueue(room, q) {
+    if (!q || typeof q !== 'object') return;
+    const ok = (t) => t && t.id && library.hasFile(t.id);
+    room.manualQueue = (q.manualQueue || []).filter(ok);
+    room.contextQueue = (q.contextQueue || []).filter(ok);
+    room.currentTrack = ok(q.currentTrack) ? q.currentTrack : null;
+    room.loadedPlaylistId = q.loadedPlaylistId || null;
+    room.loadedPlaylistName = q.loadedPlaylistName || null;
+    room.isShuffle = Boolean(q.isShuffle);
+    room.repeatMode = ['off', 'all', 'one'].includes(q.repeatMode) ? q.repeatMode : 'off';
+    if (room.currentTrack) {
+        room.trackName = room.currentTrack.name || q.trackName || '';
+        // Lecture reprise seulement si la musique tournait au départ du dernier joueur ; sinon morceau chargé, en pause
+        if (q.wasPlaying) {
+            room.playback = { currentTime: 0, isPlaying: true, timestamp: Date.now() };
+            room.isPlayingTriggered = true;
+        }
+    }
+}
+
 /** Écriture atomique du monde d'une salle permanente */
 function saveWorldNow(room) {
     if (!room.persistent) return;
@@ -318,6 +424,17 @@ function saveWorldNow(room) {
             lightingVersion: room.lightingVersion || 1,
             lightingState: room.lightingState,
             dspState: room.dspState,
+            queue: {
+                currentTrack: room.currentTrack || null,
+                manualQueue: room.manualQueue || [],
+                contextQueue: room.contextQueue || [],
+                loadedPlaylistId: room.loadedPlaylistId || null,
+                loadedPlaylistName: room.loadedPlaylistName || null,
+                isShuffle: Boolean(room.isShuffle),
+                repeatMode: room.repeatMode || 'off',
+                trackName: room.trackName || '',
+                wasPlaying: Boolean(room.currentTrack && room.playback && room.playback.isPlaying),
+            },
         }), 'utf-8');
         fs.renameSync(tmp, file);
     } catch (e) {
@@ -624,11 +741,13 @@ function createRoom(ws, clientId, roomId, persistentName) {
         audioBuffer: null,
         audioMime: null,
         queue: [],
-        currentQueueIndex: -1,
         currentTrack: null,
         manualQueue: [],
         contextQueue: [],
         isShuffle: false,
+        repeatMode: 'off',
+        playedList: [],
+        uploadedIds: new Set(),
         queueVersion: 1,
         lightingVersion: (world && world.lightingVersion) || 1,
         persistent: persistentName,
@@ -644,6 +763,7 @@ function createRoom(ws, clientId, roomId, persistentName) {
         isAwaitingReady: false,
         readyTimeout: null,
     };
+    if (world) restoreQueue(room, world.queue);
     rooms.set(roomId, room);
     ws.roomId = roomId;
 
@@ -665,12 +785,11 @@ function createRoom(ws, clientId, roomId, persistentName) {
         sine: room.sine,
         trackName: room.trackName,
         audioUrl: room.audioBuffer ? `/audio/${roomId}` : null,
-        queue: room.queue || [],
-        currentQueueIndex: room.currentQueueIndex !== undefined ? room.currentQueueIndex : -1,
         currentTrack: room.currentTrack || null,
         manualQueue: room.manualQueue || [],
         contextQueue: room.contextQueue || [],
         isShuffle: Boolean(room.isShuffle),
+        repeatMode: room.repeatMode || 'off',
         queueVersion: room.queueVersion || 1,
         loadedPlaylistId: room.loadedPlaylistId || null,
         loadedPlaylistName: room.loadedPlaylistName || null,
@@ -897,7 +1016,8 @@ function getPlayersSnapshot(room) {
 const server = http.createServer((req, res) => {
     // CORS headers for all requests
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, HEAD, POST, PUT, DELETE, OPTIONS');
+    res.setHeader('Access-Control-Expose-Headers', 'Content-Length, Content-Range, Accept-Ranges');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-Room-Id, X-Client-Id, X-File-Name, X-Track-Id, *');
 
     if (req.method === 'OPTIONS') {
@@ -914,7 +1034,7 @@ const server = http.createServer((req, res) => {
         const roomId = url.searchParams.get('room') || req.headers['x-room-id'];
         const fileName = decodeURIComponent(url.searchParams.get('name') || req.headers['x-file-name'] || 'track.mp3');
         const uploaderId = url.searchParams.get('clientId') || req.headers['x-client-id'] || null;
-        const trackId = url.searchParams.get('trackId') || req.headers['x-track-id'] || `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
+        const trackId = safeId(url.searchParams.get('trackId') || req.headers['x-track-id'] || '') || `t_${Date.now()}_${Math.random().toString(36).slice(2, 7)}`;
         const addToQueue = url.searchParams.get('addToQueue') !== 'false' && req.headers['x-add-to-queue'] !== 'false';
         const room = roomId ? rooms.get(roomId) : null;
 
@@ -930,19 +1050,18 @@ const server = http.createServer((req, res) => {
             const buffer = Buffer.concat(chunks);
             const mime = req.headers['content-type'] || 'audio/mpeg';
 
-            // Persist audio track to disk storage
+            // Persist audio track to disk storage (fichier + métadonnées + durée)
+            let trackDuration = null;
             try {
-                fs.writeFileSync(path.join(AUDIO_STORAGE_DIR, `${trackId}.bin`), buffer);
-                fs.writeFileSync(path.join(AUDIO_STORAGE_DIR, `${trackId}.json`), JSON.stringify({
-                    id: trackId,
-                    name: fileName,
-                    mime: mime,
-                    uploadedBy: uploaderId,
-                    size: buffer.length,
-                    createdAt: Date.now()
-                }));
+                const meta = library.store(trackId, { name: fileName, mime, uploadedBy: uploaderId }, buffer);
+                trackDuration = meta.duration;
+                schedulePlaylistsBroadcast();
             } catch (err) {
                 console.warn(`[Audio] Failed to persist track ${trackId} to disk:`, err);
+            }
+            if (room) {
+                if (!room.uploadedIds) room.uploadedIds = new Set();
+                room.uploadedIds.add(trackId);
             }
 
             const trackEntry = {
@@ -962,11 +1081,10 @@ const server = http.createServer((req, res) => {
             if (!addToQueue) {
                 console.log(`[Audio] Stored track "${fileName}" (${trackId}, ${buffer.length} bytes) for playlist without modifying queue.`);
                 res.writeHead(200, { 'Content-Type': 'application/json' });
-                res.end(JSON.stringify({ success: true, trackId, size: buffer.length, addedToQueue: false }));
+                res.end(JSON.stringify({ success: true, trackId, size: buffer.length, duration: trackDuration, addedToQueue: false }));
                 return;
             }
 
-            if (!room.queue) room.queue = [];
             if (!room.manualQueue) room.manualQueue = [];
             if (!room.contextQueue) room.contextQueue = [];
             const queueItem = {
@@ -976,15 +1094,12 @@ const server = http.createServer((req, res) => {
                 url: `/audio/${roomId}/${trackId}`,
                 uploadedBy: uploaderId,
             };
-            room.queue.push(queueItem);
-
-            console.log(`[Audio] Received ${buffer.length} bytes for room ${roomId}: "${fileName}" (${trackId}) from ${uploaderId || 'unknown'}. Queue length: ${room.queue.length}`);
+            console.log(`[Audio] Received ${buffer.length} bytes for room ${roomId}: "${fileName}" (${trackId}) from ${uploaderId || 'unknown'}.`);
 
             // Ne démarrer automatiquement que si aucune musique n'est active dans le salon
             const shouldAutoStart = (!room.currentTrack && !room.audioBuffer);
 
             if (shouldAutoStart) {
-                room.currentQueueIndex = 0;
                 room.currentTrack = queueItem;
                 room.audioBuffer = buffer;
                 room.audioMime = mime;
@@ -995,15 +1110,9 @@ const server = http.createServer((req, res) => {
                 room.isAwaitingReady = true;
                 if (room.readyTimeout) clearTimeout(room.readyTimeout);
 
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
 
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
-
-                broadcastRoomAll(room, {
-                    type: 'QUEUE_SYNC',
-                    queue: room.queue,
-                    currentIndex: room.currentQueueIndex,
-                });
 
                 broadcastRoomAll(room, {
                     type: 'AUDIO_TRACK_CHANGED',
@@ -1015,26 +1124,19 @@ const server = http.createServer((req, res) => {
                 });
 
                 room.readyTimeout = setTimeout(() => {
-                    console.warn(`[Sync] Safety timeout reached (60s) for room ${roomId}. Triggering playback.`);
+                    console.warn(`[Sync] Safety timeout reached (${READY_TIMEOUT_MS / 1000}s) for room ${roomId}. Triggering playback.`);
                     triggerSimultaneousPlay(room);
-                }, 60000);
+                }, READY_TIMEOUT_MS);
             } else {
                 // Musique déjà en cours : ajoutée dans la file manuelle prioritaire sans interrompre la lecture
                 room.manualQueue.push(queueItem);
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
 
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
-
-                broadcastRoomAll(room, {
-                    type: 'QUEUE_SYNC',
-                    queue: room.queue,
-                    currentIndex: room.currentQueueIndex,
-                    addedTrack: queueItem,
-                });
             }
 
             res.writeHead(200, { 'Content-Type': 'application/json' });
-            res.end(JSON.stringify({ success: true, trackId, size: buffer.length, addedToQueue: true }));
+            res.end(JSON.stringify({ success: true, trackId, size: buffer.length, duration: trackDuration, addedToQueue: true }));
         });
         return;
     }
@@ -1078,7 +1180,7 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET' && url.pathname.startsWith('/audio/')) {
         const parts = url.pathname.slice(7).split('/');
         const roomId = parts[0];
-        const trackId = parts[1];
+        const trackId = parts[1] ? (safeId(parts[1]) || '__invalid__') : parts[1];
         const room = rooms.get(roomId);
 
         let buffer = null;
@@ -1092,7 +1194,9 @@ const server = http.createServer((req, res) => {
                 buffer = t.buffer;
                 mime = t.mime || 'audio/mpeg';
                 trackName = t.name || 'track.mp3';
-            } else if (room.audioBuffer) {
+            } else if (room.audioBuffer && !trackId) {
+                // Adresse sans identifiant de morceau (ancien format /audio/<salle>) : morceau courant de la salle.
+                // Avec un identifiant inconnu, on ne renvoie JAMAIS un autre morceau à sa place.
                 buffer = room.audioBuffer;
                 mime = room.audioMime || 'audio/mpeg';
                 trackName = room.trackName || 'track.mp3';
@@ -1100,22 +1204,18 @@ const server = http.createServer((req, res) => {
         }
 
         // 2. Fallback to persistent disk storage (e.g. for /audio/track/:trackId or cross-session playlists)
+        //    Lu en flux depuis le disque (jamais chargé en entier en mémoire), avec reprise possible (Range)
         if (!buffer) {
-            const targetTrackId = trackId || (roomId !== 'track' ? roomId : null);
-            if (targetTrackId) {
-                const binPath = path.join(AUDIO_STORAGE_DIR, `${targetTrackId}.bin`);
-                const metaPath = path.join(AUDIO_STORAGE_DIR, `${targetTrackId}.json`);
-                if (fs.existsSync(binPath)) {
-                    try {
-                        buffer = fs.readFileSync(binPath);
-                        if (fs.existsSync(metaPath)) {
-                            const meta = JSON.parse(fs.readFileSync(metaPath, 'utf-8'));
-                            mime = meta.mime || mime;
-                            trackName = meta.name || trackName;
-                        }
-                    } catch (err) {
-                        console.warn(`[Audio] Error reading track ${targetTrackId} from disk:`, err.message);
-                    }
+            const targetTrackId = safeId(trackId || (roomId !== 'track' ? roomId : '') || '');
+            if (targetTrackId && library.hasFile(targetTrackId)) {
+                const meta = library.getMeta(targetTrackId);
+                const binFile = path.join(AUDIO_STORAGE_DIR, `${targetTrackId}.bin`);
+                try {
+                    const stat = fs.statSync(binFile);
+                    sendAudio(req, res, { filePath: binFile, size: stat.size, mime: (meta && meta.mime) || mime, name: (meta && meta.name) || trackName, etag: `"${targetTrackId}-${stat.size}"` });
+                    return;
+                } catch (err) {
+                    console.warn(`[Audio] Error reading track ${targetTrackId} from disk:`, err.message);
                 }
             }
         }
@@ -1126,12 +1226,7 @@ const server = http.createServer((req, res) => {
             return;
         }
 
-        res.writeHead(200, {
-            'Content-Type': mime,
-            'Content-Length': buffer.length,
-            'Content-Disposition': `inline; filename="${encodeURIComponent(trackName)}"`,
-        });
-        res.end(buffer);
+        sendAudio(req, res, { buffer, size: buffer.length, mime, name: trackName });
         return;
     }
 
@@ -1181,6 +1276,44 @@ const server = http.createServer((req, res) => {
     res.end('Not found');
 });
 
+/**
+ * Envoie un morceau (mémoire ou fichier) avec prise en charge de l'en-tête Range :
+ * un téléchargement interrompu peut reprendre là où il s'est arrêté au lieu de tout recommencer.
+ */
+function sendAudio(req, res, { buffer = null, filePath = null, size, mime, name, etag = null }) {
+    const headers = {
+        'Content-Type': mime,
+        'Accept-Ranges': 'bytes',
+        'Content-Disposition': `inline; filename="${encodeURIComponent(name)}"`,
+    };
+    if (etag) {
+        headers['ETag'] = etag;
+        headers['Cache-Control'] = 'private, max-age=3600';
+        if (req.headers['if-none-match'] === etag) { res.writeHead(304, headers); res.end(); return; }
+    }
+    let start = 0, end = size - 1, status = 200;
+    const range = /^bytes=(\d*)-(\d*)$/.exec(req.headers['range'] || '');
+    if (range && (range[1] !== '' || range[2] !== '')) {
+        if (range[1] === '') { start = Math.max(0, size - parseInt(range[2], 10)); }
+        else { start = parseInt(range[1], 10); if (range[2] !== '') end = Math.min(end, parseInt(range[2], 10)); }
+        if (start > end || start >= size) {
+            res.writeHead(416, { 'Content-Range': `bytes */${size}` });
+            res.end();
+            return;
+        }
+        status = 206;
+        headers['Content-Range'] = `bytes ${start}-${end}/${size}`;
+    }
+    headers['Content-Length'] = end - start + 1;
+    res.writeHead(status, headers);
+    if (req.method === 'HEAD') { res.end(); return; }
+    if (buffer) { res.end(start === 0 && end === size - 1 ? buffer : buffer.subarray(start, end + 1)); return; }
+    const stream = fs.createReadStream(filePath, { start, end });
+    stream.on('error', () => res.destroy());
+    res.on('close', () => stream.destroy());
+    stream.pipe(res);
+}
+
 function triggerSimultaneousPlay(room) {
     if (!room) return;
     room.isAwaitingReady = false;
@@ -1190,8 +1323,16 @@ function triggerSimultaneousPlay(room) {
         room.readyTimeout = null;
     }
 
-    // Schedule simultaneous playback (0ms for solo player, 250ms for group sync)
-    const delay = room.clients.size > 1 ? 250 : 0;
+    // Départ simultané : 0 ms en solo ; en groupe, le temps qu'il faut au message pour atteindre le plus lent
+    // des joueurs (moitié de son aller-retour + marge), entre 80 et 250 ms. 250 ms si un joueur n'a pas encore mesuré.
+    let delay = 0;
+    if (room.clients.size > 1) {
+        let worstRtt = 0, unknown = false;
+        for (const c of room.clients.values()) {
+            if (typeof c.rtt === 'number') worstRtt = Math.max(worstRtt, c.rtt); else unknown = true;
+        }
+        delay = unknown ? 250 : Math.round(Math.min(250, Math.max(80, worstRtt / 2 + 60)));
+    }
     const startTime = Date.now() + delay;
     room.playback = { currentTime: 0, isPlaying: true, timestamp: startTime };
 
@@ -1222,9 +1363,8 @@ function getQueueStateSnapshot(room) {
         loadedPlaylistId: room.loadedPlaylistId || null,
         loadedPlaylistName: room.loadedPlaylistName || null,
         isShuffle: Boolean(room.isShuffle),
+        repeatMode: room.repeatMode || 'off',
         queueVersion: room.queueVersion || 1,
-        queue: room.queue || [],
-        currentIndex: room.currentQueueIndex !== undefined ? room.currentQueueIndex : -1,
     };
 }
 
@@ -1266,13 +1406,22 @@ function playTrackInRoom(room, track, roomId) {
         room.audioMime = trackEntry.mime;
     }
 
+    // Historique des morceaux joués (sert au « répéter tout » hors playlist)
+    if (!room.playedList) room.playedList = [];
+    const lastPlayed = room.playedList[room.playedList.length - 1];
+    if (!lastPlayed || lastPlayed.id !== track.id) {
+        room.playedList.push({ id: track.id, name: track.name, mime: track.mime || 'audio/mpeg', url: track.url || `/audio/track/${track.id}`, uploadedBy: track.uploadedBy || 'server' });
+        if (room.playedList.length > 500) room.playedList.shift();
+    }
+    trimRoomAudioCache(room);
+
     room.playback = { currentTime: 0, isPlaying: false, timestamp: Date.now() };
     room.readyClients = new Set();
     room.isPlayingTriggered = false;
     room.isAwaitingReady = true;
     if (room.readyTimeout) clearTimeout(room.readyTimeout);
 
-    room.queueVersion = (room.queueVersion || 0) + 1;
+    bumpQueueVersion(room);
 
     // Broadcast full queue state snapshot immediately to ALL clients
     broadcastRoomAll(room, getQueueStateSnapshot(room));
@@ -1288,9 +1437,27 @@ function playTrackInRoom(room, track, roomId) {
     });
 
     room.readyTimeout = setTimeout(() => {
-        console.warn(`[Sync] Safety timeout reached (7s) for room ${roomId}. Triggering playback.`);
+        console.warn(`[Sync] Safety timeout reached (${READY_TIMEOUT_MS / 1000}s) for room ${roomId}. Triggering playback.`);
         triggerSimultaneousPlay(room);
-    }, 7000);
+    }, READY_TIMEOUT_MS);
+}
+
+/** Ne garde en mémoire que le morceau courant et les 2 suivants (avant : tous les morceaux joués restaient en RAM) */
+function trimRoomAudioCache(room) {
+    if (!room.audioTracks || room.audioTracks.size <= 3) return;
+    const keep = new Set();
+    if (room.currentTrack) keep.add(room.currentTrack.id);
+    for (const t of [...(room.manualQueue || []), ...(room.contextQueue || [])].slice(0, 2)) if (t) keep.add(t.id);
+    for (const id of [...room.audioTracks.keys()]) {
+        if (room.audioTracks.size <= 3) break;
+        if (!keep.has(id)) room.audioTracks.delete(id);
+    }
+}
+
+/** Répéter le morceau : tout le monde relance le même morceau à 0:00 au même instant (les tampons sont déjà chargés) */
+function replayCurrentTrack(room) {
+    room.playback = { currentTime: 0, isPlaying: false, timestamp: Date.now() };
+    triggerSimultaneousPlay(room);
 }
 
 const wss = new WebSocketServer({ server });
@@ -1381,12 +1548,11 @@ wss.on('connection', (ws) => {
                     sine: room.sine,
                     trackName: room.trackName,
                     audioUrl: room.audioBuffer ? `/audio/${roomId}` : null,
-                    queue: room.queue || [],
-                    currentQueueIndex: room.currentQueueIndex !== undefined ? room.currentQueueIndex : -1,
                     currentTrack: room.currentTrack || null,
                     manualQueue: room.manualQueue || [],
                     contextQueue: room.contextQueue || [],
                     isShuffle: Boolean(room.isShuffle),
+                    repeatMode: room.repeatMode || 'off',
                     queueVersion: room.queueVersion || 1,
                     loadedPlaylistId: room.loadedPlaylistId || null,
                     loadedPlaylistName: room.loadedPlaylistName || null,
@@ -1584,6 +1750,8 @@ wss.on('connection', (ws) => {
                 if (room.readyClients && !room.isPlayingTriggered && room.readyClients.size < room.clients.size) {
                     if (['play_pause', 'seek', 'skip', 'prev', 'next'].includes(msg.action)) {
                         console.log(`[Sync] Ignored action '${msg.action}' while room ${ws.roomId} is loading new track (${room.readyClients.size}/${room.clients.size} ready).`);
+                        // L'émetteur a déjà appliqué l'action localement : on le prévient pour qu'il revienne à l'état de la salle
+                        send(ws, { type: 'SYNC_ACTION_REJECTED', action: msg.action, reason: 'loading' });
                         return;
                     }
                 }
@@ -1626,11 +1794,9 @@ wss.on('connection', (ws) => {
                     room.audioBuffer = null;
                     room.trackName = '';
                     room.playback = { currentTime: 0, isPlaying: false, timestamp: Date.now() };
-                    room.queue = [];
-                    room.currentQueueIndex = -1;
                     room.manualQueue = [];
                     room.contextQueue = [];
-                    room.queueVersion = (room.queueVersion || 0) + 1;
+                    bumpQueueVersion(room);
                     broadcastRoomAll(room, getQueueStateSnapshot(room));
                 }
 
@@ -1693,7 +1859,7 @@ wss.on('connection', (ws) => {
                     playTrackInRoom(room, item, ws.roomId);
                 } else {
                     room.manualQueue.push(item);
-                    room.queueVersion = (room.queueVersion || 0) + 1;
+                    bumpQueueVersion(room);
                     broadcastRoomAll(room, getQueueStateSnapshot(room));
                 }
                 console.log(`[Queue] Manual track added "${item.name}" by ${clientId} in ${ws.roomId} (v${room.queueVersion})`);
@@ -1723,7 +1889,7 @@ wss.on('connection', (ws) => {
                     playTrackInRoom(room, first, ws.roomId);
                 } else {
                     room.manualQueue.push(...items);
-                    room.queueVersion = (room.queueVersion || 0) + 1;
+                    bumpQueueVersion(room);
                     broadcastRoomAll(room, getQueueStateSnapshot(room));
                 }
                 console.log(`[Queue] Manual batch added ${tracks.length} tracks by ${clientId} in ${ws.roomId} (v${room.queueVersion})`);
@@ -1738,7 +1904,7 @@ wss.on('connection', (ws) => {
                 const { index } = msg;
                 if (index < 0 || index >= room.manualQueue.length) return;
                 const [removed] = room.manualQueue.splice(index, 1);
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
                 console.log(`[Queue] Manual removed "${removed?.name}" at index ${index} by ${clientId} (v${room.queueVersion})`);
                 break;
@@ -1753,7 +1919,7 @@ wss.on('connection', (ws) => {
                 if (fromIdx < 0 || fromIdx >= room.manualQueue.length || toIdx < 0 || toIdx >= room.manualQueue.length) return;
                 const [moved] = room.manualQueue.splice(fromIdx, 1);
                 room.manualQueue.splice(toIdx, 0, moved);
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
                 console.log(`[Queue] Manual reordered ${fromIdx} -> ${toIdx} by ${clientId} (v${room.queueVersion})`);
                 break;
@@ -1765,7 +1931,7 @@ wss.on('connection', (ws) => {
                 const room = rooms.get(ws.roomId);
                 if (!room) return;
                 room.manualQueue = [];
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
                 console.log(`[Queue] Manual queue cleared by ${clientId} (v${room.queueVersion})`);
                 break;
@@ -1779,7 +1945,7 @@ wss.on('connection', (ws) => {
                 const { index } = msg;
                 if (index < 0 || index >= room.contextQueue.length) return;
                 const [removed] = room.contextQueue.splice(index, 1);
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
                 console.log(`[Queue] Context removed "${removed?.name}" at index ${index} by ${clientId} (v${room.queueVersion})`);
                 break;
@@ -1794,7 +1960,7 @@ wss.on('connection', (ws) => {
                 if (fromIdx < 0 || fromIdx >= room.contextQueue.length || toIdx < 0 || toIdx >= room.contextQueue.length) return;
                 const [moved] = room.contextQueue.splice(fromIdx, 1);
                 room.contextQueue.splice(toIdx, 0, moved);
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
                 console.log(`[Queue] Context reordered ${fromIdx} -> ${toIdx} by ${clientId} (v${room.queueVersion})`);
                 break;
@@ -1831,9 +1997,22 @@ wss.on('connection', (ws) => {
                         room.contextQueue = room.isShuffle ? shuffleArray(others) : others;
                     }
                 }
-                room.queueVersion = (room.queueVersion || 0) + 1;
+                bumpQueueVersion(room);
                 broadcastRoomAll(room, getQueueStateSnapshot(room));
                 console.log(`[Queue] Shuffle toggled to ${room.isShuffle} by ${clientId} (v${room.queueVersion})`);
+                break;
+            }
+
+            // ─── QUEUE_REPEAT_SET (off | all | one) ───────────────────────
+            case 'QUEUE_REPEAT_SET': {
+                if (!ws.roomId) return;
+                const room = rooms.get(ws.roomId);
+                if (!room) return;
+                const mode = ['off', 'all', 'one'].includes(msg.mode) ? msg.mode : 'off';
+                room.repeatMode = mode;
+                bumpQueueVersion(room);
+                broadcastRoomAll(room, getQueueStateSnapshot(room));
+                console.log(`[Queue] Repeat mode set to ${mode} by ${clientId} (v${room.queueVersion})`);
                 break;
             }
 
@@ -1845,25 +2024,37 @@ wss.on('connection', (ws) => {
                 if (Date.now() - (room.lastAdvanceTime || 0) < 300) return;
                 room.lastAdvanceTime = Date.now();
 
+                const repeatMode = room.repeatMode || 'off';
+                // Fin naturelle d'un morceau avec « répéter le morceau » : on relance le même, sans rechargement
+                if (msg.auto && repeatMode === 'one' && room.currentTrack) {
+                    console.log(`[Queue] Repeat one: replaying "${room.currentTrack.name}" in ${ws.roomId}`);
+                    replayCurrentTrack(room);
+                    break;
+                }
+
                 let nextTrack = null;
                 if (room.manualQueue && room.manualQueue.length > 0) {
                     nextTrack = room.manualQueue.shift();
                 } else if (room.contextQueue && room.contextQueue.length > 0) {
                     nextTrack = room.contextQueue.shift();
-                } else if (room.loadedPlaylistId) {
-                    const pl = getPlaylistById(room.loadedPlaylistId);
-                    if (pl && Array.isArray(pl.tracks) && pl.tracks.length > 0) {
-                        let upcoming = pl.tracks.map(t => ({
-                            id: t.id,
-                            name: t.name,
-                            mime: t.mime || 'audio/mpeg',
-                            url: t.url || `/audio/track/${t.id}`,
-                            uploadedBy: t.uploadedBy || 'server'
-                        }));
-                        if (room.isShuffle) upcoming = shuffleArray(upcoming);
-                        nextTrack = upcoming.shift();
-                        room.contextQueue = upcoming;
+                } else if (repeatMode !== 'off') {
+                    // « Répéter tout » : on repart du début de la playlist chargée, ou de l'historique des morceaux joués
+                    let source = null;
+                    if (room.loadedPlaylistId) {
+                        const pl = getPlaylistById(room.loadedPlaylistId);
+                        if (pl && Array.isArray(pl.tracks)) source = pl.tracks;
                     }
+                    if (!source || source.length === 0) source = room.playedList || [];
+                    let upcoming = source.map(t => ({
+                        id: t.id,
+                        name: t.name,
+                        mime: t.mime || 'audio/mpeg',
+                        url: t.url || `/audio/track/${t.id}`,
+                        uploadedBy: t.uploadedBy || 'server'
+                    }));
+                    if (room.isShuffle) upcoming = shuffleArray(upcoming);
+                    nextTrack = upcoming.shift();
+                    room.contextQueue = upcoming;
                 }
 
                 if (nextTrack) {
@@ -1874,11 +2065,10 @@ wss.on('connection', (ws) => {
                     room.audioBuffer = null;
                     room.trackName = '';
                     room.playback = { currentTime: 0, isPlaying: false, timestamp: Date.now() };
-                    room.queue = [];
-                    room.currentQueueIndex = -1;
                     room.manualQueue = [];
                     room.contextQueue = [];
-                    room.queueVersion = (room.queueVersion || 0) + 1;
+                    room.playedList = [];
+                    bumpQueueVersion(room);
                     broadcastRoomAll(room, getQueueStateSnapshot(room));
                     broadcastRoomAll(room, {
                         type: 'SYNC_ACTION',
@@ -1942,154 +2132,6 @@ wss.on('connection', (ws) => {
                 break;
             }
 
-            // ─── QUEUE_REORDER (Legacy support) ──────────────────────────
-            case 'QUEUE_REORDER': {
-                if (!ws.roomId) return;
-                const room = rooms.get(ws.roomId);
-                if (!room || !room.queue) return;
-                const { fromIdx, toIdx } = msg;
-                if (fromIdx < 0 || fromIdx >= room.queue.length || toIdx < 0 || toIdx >= room.queue.length) return;
-
-                const [moved] = room.queue.splice(fromIdx, 1);
-                room.queue.splice(toIdx, 0, moved);
-
-                if (room.currentQueueIndex === fromIdx) {
-                    room.currentQueueIndex = toIdx;
-                } else if (fromIdx < room.currentQueueIndex && toIdx >= room.currentQueueIndex) {
-                    room.currentQueueIndex--;
-                } else if (fromIdx > room.currentQueueIndex && toIdx <= room.currentQueueIndex) {
-                    room.currentQueueIndex++;
-                }
-
-                room.queueVersion = (room.queueVersion || 0) + 1;
-                broadcastRoomAll(room, getQueueStateSnapshot(room));
-                broadcastRoomAll(room, {
-                    type: 'QUEUE_SYNC',
-                    queue: room.queue,
-                    currentIndex: room.currentQueueIndex,
-                });
-                break;
-            }
-
-            // ─── QUEUE_ADD_TRACK (Legacy support) ─────────────────────────
-            case 'QUEUE_ADD_TRACK': {
-                if (!ws.roomId) return;
-                const room = rooms.get(ws.roomId);
-                if (!room) return;
-                const { track } = msg;
-                if (!track || !track.id) return;
-                if (!room.queue) room.queue = [];
-                if (!room.audioTracks) room.audioTracks = new Map();
-
-                const binPath = path.join(AUDIO_STORAGE_DIR, `${track.id}.bin`);
-                if (fs.existsSync(binPath) && !room.audioTracks.has(track.id)) {
-                    try {
-                        const buf = fs.readFileSync(binPath);
-                        room.audioTracks.set(track.id, {
-                            id: track.id,
-                            name: track.name,
-                            buffer: buf,
-                            mime: track.mime || 'audio/mpeg',
-                            uploadedBy: track.uploadedBy || 'server'
-                        });
-                    } catch (err) {
-                        console.warn(`[Queue] Error reading audio for track ${track.id}:`, err);
-                    }
-                }
-
-                const wasEmpty = room.queue.length === 0;
-                const newTrack = {
-                    id: track.id,
-                    name: track.name,
-                    url: `/audio/track/${track.id}`,
-                    mime: track.mime || 'audio/mpeg',
-                    uploadedBy: track.uploadedBy || ws.nickname || 'user'
-                };
-                room.queue.push(newTrack);
-
-                if (wasEmpty) {
-                    playTrackInRoom(room, newTrack, ws.roomId);
-                } else {
-                    if (!room.manualQueue) room.manualQueue = [];
-                    room.manualQueue.push(newTrack);
-                    room.queueVersion = (room.queueVersion || 0) + 1;
-                    broadcastRoomAll(room, getQueueStateSnapshot(room));
-                }
-
-                broadcastRoomAll(room, {
-                    type: 'QUEUE_SYNC',
-                    queue: room.queue,
-                    currentIndex: room.currentQueueIndex
-                });
-                break;
-            }
-
-            // ─── QUEUE_ADD_TRACKS (Batch add tracks from playlist - Legacy) ─
-            case 'QUEUE_ADD_TRACKS': {
-                if (!ws.roomId) return;
-                const room = rooms.get(ws.roomId);
-                if (!room) return;
-                const tracks = Array.isArray(msg.tracks) ? msg.tracks : [];
-                if (tracks.length === 0) return;
-                if (!room.queue) room.queue = [];
-                if (!room.manualQueue) room.manualQueue = [];
-
-                for (const track of tracks) {
-                    if (!track || !track.id) continue;
-                    const newTrack = {
-                        id: track.id,
-                        name: track.name,
-                        url: `/audio/track/${track.id}`,
-                        mime: track.mime || 'audio/mpeg',
-                        uploadedBy: track.uploadedBy || ws.nickname || 'user'
-                    };
-                    room.queue.push(newTrack);
-                    room.manualQueue.push(newTrack);
-                }
-
-                room.queueVersion = (room.queueVersion || 0) + 1;
-                broadcastRoomAll(room, getQueueStateSnapshot(room));
-                broadcastRoomAll(room, {
-                    type: 'QUEUE_SYNC',
-                    queue: room.queue,
-                    currentIndex: room.currentQueueIndex
-                });
-                break;
-            }
-
-            // ─── QUEUE_REMOVE (Legacy support) ───────────────────────────
-            case 'QUEUE_REMOVE': {
-                if (!ws.roomId) return;
-                const room = rooms.get(ws.roomId);
-                if (!room || !room.queue) return;
-                const { index } = msg;
-                if (index < 0 || index >= room.queue.length) return;
-
-                const removed = room.queue.splice(index, 1)[0];
-                room.queueVersion = (room.queueVersion || 0) + 1;
-                broadcastRoomAll(room, getQueueStateSnapshot(room));
-                broadcastRoomAll(room, {
-                    type: 'QUEUE_SYNC',
-                    queue: room.queue,
-                    currentIndex: room.currentQueueIndex,
-                });
-                break;
-            }
-
-            // ─── QUEUE_PLAY_INDEX (Legacy support) ───────────────────────
-            case 'QUEUE_PLAY_INDEX': {
-                if (!ws.roomId) return;
-                const room = rooms.get(ws.roomId);
-                if (!room || !room.queue) return;
-                const { index } = msg;
-                if (index < 0 || index >= room.queue.length) return;
-
-                room.currentQueueIndex = index;
-                const item = room.queue[index];
-                playTrackInRoom(room, item, ws.roomId);
-                break;
-            }
-
             // ─── PLAYLISTS_GET ───────────────────────────────────────────
             case 'PLAYLISTS_GET': {
                 send(ws, {
@@ -2104,6 +2146,10 @@ wss.on('connection', (ws) => {
                 if (!ws.roomId) return;
                 const room = rooms.get(ws.roomId);
                 const { name, playlistId, tracks: inputTracks } = msg;
+                if (playlistId === ALL_PLAYLIST_ID) {
+                    send(ws, { type: 'ERROR', message: '« Toutes les musiques » est une liste automatique : elle ne se modifie pas.' });
+                    return;
+                }
 
                 const sourceTracks = Array.isArray(inputTracks) ? inputTracks : [];
 
@@ -2145,6 +2191,13 @@ wss.on('connection', (ws) => {
                 savePlaylistOnDisk(playlistData);
                 console.log(`[Playlist] Saved "${targetName}" (${targetId}) with ${tracks.length} tracks by ${clientId}`);
 
+                // Morceaux retirés de la playlist : leur fichier est supprimé s'il n'est dans aucune autre playlist ni salle
+                if (existing && Array.isArray(existing.tracks)) {
+                    const kept = new Set(tracks.map(t => t.id));
+                    const removedIds = existing.tracks.map(t => t.id).filter(id => id && !kept.has(id));
+                    if (removedIds.length) library.collectGarbage(removedIds, { minAgeMs: 0 });
+                }
+
                 broadcastAll({
                     type: 'PLAYLISTS_SYNC',
                     playlists: getPlaylistsList(),
@@ -2167,25 +2220,9 @@ wss.on('connection', (ws) => {
                     return;
                 }
 
-                if (!room.audioTracks) room.audioTracks = new Map();
-                for (const t of pl.tracks) {
-                    const binPath = path.join(AUDIO_STORAGE_DIR, `${t.id}.bin`);
-                    if (fs.existsSync(binPath)) {
-                        try {
-                            const buf = fs.readFileSync(binPath);
-                            room.audioTracks.set(t.id, {
-                                id: t.id,
-                                name: t.name,
-                                buffer: buf,
-                                mime: t.mime || 'audio/mpeg',
-                                uploadedBy: t.uploadedBy || 'server'
-                            });
-                        } catch (err) {
-                            console.warn(`[Playlist] Error reading audio for track ${t.id}:`, err);
-                        }
-                    }
-                }
-
+                // Les morceaux sont lus sur le disque à la demande (avant : toute la playlist était chargée en mémoire,
+                // jusqu'à plusieurs centaines de Mo en bloquant le serveur)
+                room.playedList = [];
                 const formattedTracks = pl.tracks.map(t => ({
                     id: t.id,
                     name: t.name,
@@ -2194,7 +2231,6 @@ wss.on('connection', (ws) => {
                     uploadedBy: t.uploadedBy || 'server'
                 }));
 
-                room.queue = formattedTracks;
                 room.loadedPlaylistId = pl.id;
                 room.loadedPlaylistName = pl.name;
                 room.isShuffle = Boolean(shuffle);
@@ -2205,7 +2241,6 @@ wss.on('connection', (ws) => {
                 } else if (room.isShuffle && formattedTracks.length > 1) {
                     validIndex = Math.floor(Math.random() * formattedTracks.length);
                 }
-                room.currentQueueIndex = validIndex;
                 const curTrack = formattedTracks[validIndex];
 
                 if (room.isShuffle) {
@@ -2226,6 +2261,7 @@ wss.on('connection', (ws) => {
             // ─── PLAYLIST_RENAME ─────────────────────────────────────────
             case 'PLAYLIST_RENAME': {
                 const { playlistId, newName } = msg;
+                if (playlistId === ALL_PLAYLIST_ID) return;
                 if (playlistId && newName && newName.trim()) {
                     const pl = getPlaylistById(playlistId);
                     if (pl) {
@@ -2246,9 +2282,13 @@ wss.on('connection', (ws) => {
             // ─── PLAYLIST_DELETE ─────────────────────────────────────────
             case 'PLAYLIST_DELETE': {
                 const { playlistId } = msg;
-                if (playlistId) {
+                if (playlistId && playlistId !== ALL_PLAYLIST_ID) {
+                    const doomed = getPlaylistById(playlistId);
                     deletePlaylistOnDisk(playlistId);
                     console.log(`[Playlist] Deleted ${playlistId} by ${clientId}`);
+                    if (doomed && Array.isArray(doomed.tracks)) {
+                        library.collectGarbage(doomed.tracks.map(t => t.id).filter(Boolean), { minAgeMs: 0 });
+                    }
                     broadcastAll({
                         type: 'PLAYLISTS_SYNC',
                         playlists: getPlaylistsList(),
@@ -2258,9 +2298,49 @@ wss.on('connection', (ws) => {
                 break;
             }
 
+            // ─── TRACK_DELETE (suppression définitive de morceaux du serveur) ───
+            case 'TRACK_DELETE': {
+                const ids = (Array.isArray(msg.trackIds) ? msg.trackIds : []).map(safeId).filter(Boolean).slice(0, 500);
+                if (ids.length === 0) return;
+                const playing = new Set();
+                for (const r of rooms.values()) if (r.currentTrack && r.currentTrack.id) playing.add(r.currentTrack.id);
+                const blocked = ids.filter(id => playing.has(id));
+                const targets = ids.filter(id => !playing.has(id));
+                if (blocked.length) send(ws, { type: 'ERROR', message: 'Un morceau en cours de lecture ne peut pas être supprimé.' });
+                if (targets.length === 0) return;
+
+                // Retirer des files d'attente de toutes les salles
+                const gone = new Set(targets);
+                for (const r of rooms.values()) {
+                    let changed = false;
+                    for (const key of ['queue', 'manualQueue', 'contextQueue']) {
+                        if (!Array.isArray(r[key])) continue;
+                        const before = r[key].length;
+                        r[key] = r[key].filter(t => !gone.has(t.id));
+                        if (r[key].length !== before) changed = true;
+                    }
+                    if (r.audioTracks) for (const id of gone) r.audioTracks.delete(id);
+                    if (changed) {
+                        r.queueVersion = (r.queueVersion || 0) + 1;
+                        broadcastRoomAll(r, getQueueStateSnapshot(r));
+                    }
+                }
+                library.deleteTracks(targets);
+                broadcastAll({ type: 'PLAYLISTS_SYNC', playlists: getPlaylistsList(), authorId: clientId });
+                break;
+            }
+
+            // ─── TRACK_DURATION (durée mesurée par un client pour un format que le serveur ne lit pas) ───
+            case 'TRACK_DURATION': {
+                const id = safeId(msg.trackId);
+                if (id && library.setDuration(id, Number(msg.duration))) schedulePlaylistsBroadcast();
+                break;
+            }
+
             // ─── PING ─────────────────────────────────────────────────────
             case 'PING': {
                 // t : heure d'envoi du client (renvoyée) ; serverTime : estimation de l'horloge serveur (ServerClock.js)
+                if (typeof msg.rtt === 'number' && msg.rtt >= 0 && msg.rtt < 5000) ws.rtt = msg.rtt;   // dernier aller-retour mesuré par le client
                 send(ws, { type: 'PONG', t: msg.t, serverTime: Date.now() });
                 break;
             }
@@ -2295,6 +2375,11 @@ wss.on('connection', (ws) => {
             saveWorldNow(room); // salle permanente : monde écrit sur le disque avant de libérer la mémoire
             rooms.delete(ws.roomId);
             console.log(`[Room] Destroyed: ${ws.roomId} (empty)`);
+            // Fichiers envoyés pendant la session et jamais rangés dans une playlist : supprimés (les récents sont épargnés 2 min)
+            if (room.uploadedIds && room.uploadedIds.size > 0) {
+                const removed = library.collectGarbage([...room.uploadedIds], { minAgeMs: 2 * 60 * 1000 });
+                if (removed.length) schedulePlaylistsBroadcast();
+            }
         } else {
             // Reassign master if master left
             if (clientId === room.masterId && room.clients.size > 0) {

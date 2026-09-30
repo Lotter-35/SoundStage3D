@@ -46,7 +46,7 @@ export class ServerClock {
     }
 
     ping() {
-        this._send({ type: 'PING', t: localNow() });
+        this._send({ type: 'PING', t: localNow(), ...(this.rtt != null ? { rtt: Math.round(this.rtt) } : {}) });
     }
 
     /** À appeler à la réception d'un PONG { t, serverTime } */

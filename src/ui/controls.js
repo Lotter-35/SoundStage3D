@@ -9,7 +9,7 @@
  */
 import { DSP_DEFAULTS } from '../config/dsp-defaults.js';
 import { DspPanels } from './DspPanels.js?v=2';
-import { PlaybackUI } from './PlaybackUI.js';
+import { PlaybackUI } from './PlaybackUI.js?v=2';
 import { HudBar } from './HudBar.js';
 
 export class Controls {
@@ -73,6 +73,8 @@ export class Controls {
                 onNext:                ()        => this._callbacks.onNext && this._callbacks.onNext(),
                 onPlayPause:           ()        => this._callbacks.onPlayPause && this._callbacks.onPlayPause(),
                 onShuffleToggle:       (sh)      => this._callbacks.onShuffleToggle && this._callbacks.onShuffleToggle(sh),
+                onRepeatToggle:        (mode)    => this._callbacks.onRepeatToggle && this._callbacks.onRepeatToggle(mode),
+                onTrackDelete:         (ids)     => this._callbacks.onTrackDelete && this._callbacks.onTrackDelete(ids),
                 onPlaylistLoad:        (id)      => this._callbacks.onPlaylistLoad && this._callbacks.onPlaylistLoad(id),
                 onPlaylistSave:        (n, id, t)=> this._callbacks.onPlaylistSave && this._callbacks.onPlaylistSave(n, id, t),
                 onPlaylistRename:      (id, n)   => this._callbacks.onPlaylistRename && this._callbacks.onPlaylistRename(id, n),
@@ -243,6 +245,18 @@ export class Controls {
         this.playbackUI.setShuffleState(isShuffle);
     }
 
+    setRepeatMode(mode) {
+        this.playbackUI.setRepeatMode(mode);
+    }
+
+    setTrackDuration(id, seconds) {
+        this.playbackUI.setTrackDuration(id, seconds);
+    }
+
+    getTrackDuration(track) {
+        return this.playbackUI.getTrackDuration(track);
+    }
+
     // ─── Environment / Weather API ───
     setEnvironmentManager(mgr) {
         if (this.weatherPanel) this.weatherPanel.setEnvironmentManager(mgr);
@@ -337,6 +351,8 @@ export class Controls {
     onPrev(cb)                  { this._callbacks.onPrev = cb; }
     onNext(cb)                  { this._callbacks.onNext = cb; }
     onShuffleToggle(cb)         { this._callbacks.onShuffleToggle = cb; }
+    onRepeatToggle(cb)          { this._callbacks.onRepeatToggle = cb; }
+    onTrackDelete(cb)           { this._callbacks.onTrackDelete = cb; }
 
     onCameraToggle(cb)          { this._callbacks.onCameraToggle = cb; }
     onGrassChange(cb)           { this._callbacks.onGrassChange = cb; }

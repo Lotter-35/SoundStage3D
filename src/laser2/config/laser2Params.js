@@ -144,6 +144,9 @@ export const LASER2_PARAMS_SCHEMA = {
     modulation:  opt(MODULATIONS, 'Analogique', 'Modulation', 'hardware', false),
     threshold:   num(6, 0, 40, 0.5, 'Seuil des diodes (%)', 'hardware', false),
     colorShift:  num(6, 0, 20, 1, 'Décalage couleur (points)', 'hardware', false),
+    diodeFx:     bool(true, 'Effet des diodes (seuil)', 'hardware', false),
+    galvoFx:     bool(true, 'Effet des galvos (inertie, vitesse limitée)', 'hardware', false),
+    exactColor:  bool(false, 'Couleur exacte (corrige le mélange des diodes)', 'hardware', false),
 
     // ── 🌫️ Volutes (hors DMX) : fumée qui bouge dans les nappes, identique chez tous les joueurs ──
     smokeOn:       bool(true, 'Volutes', 'smoke', false),

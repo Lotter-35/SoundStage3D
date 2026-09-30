@@ -294,20 +294,30 @@ export function createHazeCompositeMaterial() {
                 vec4 acc = vec4(0.0);
                 float wsum = 0.0;
                 vec4 nearest = vec4(0.0, 0.0, 0.0, 1.0);
+                float nearestZ = 1e9;
                 float bestDiff = 1e20;
                 for (int j = 0; j < 2; j++) {
                     for (int i = 0; i < 2; i++) {
                         vec2 uv = (i0 + vec2(float(i), float(j)) + 0.5) / uHazeSize;
                         vec4 h = texture2D(tHaze, uv);
-                        float diff = abs(linDepth(uv) - dc) / max(dc, 0.1);
+                        float zt = linDepth(uv);
+                        float diff = abs(zt - dc) / max(dc, 0.1);
                         float wb = (i == 0 ? 1.0 - f.x : f.x) * (j == 0 ? 1.0 - f.y : f.y);
                         float w = wb * exp(-diff * 30.0) + 1e-5 * wb;
                         acc += h * w;
                         wsum += w;
-                        if (diff < bestDiff) { bestDiff = diff; nearest = h; }
+                        if (diff < bestDiff) { bestDiff = diff; nearest = h; nearestZ = zt; }
                     }
                 }
                 vec4 hz = bestDiff > 0.1 && wsum < 0.05 ? nearest : acc / max(wsum, 1e-6);
+                // Détail fin au premier plan (câbles, barres de la tour) : aucun texel basse résolution n'est à sa profondeur.
+                // Le brouillard du texel le plus proche est alors ramené à la distance du pixel (milieu supposé homogène :
+                // transmittance^(z pixel / z texel)) au lieu d'appliquer tout le brouillard du fond, qui effaçait le détail.
+                if (bestDiff > 0.1 && wsum < 0.05 && dc < nearestZ) {
+                    float r = clamp(dc / max(nearestZ, 0.1), 0.0, 1.0);
+                    float t2 = pow(max(nearest.a, 1e-4), r);
+                    hz = vec4(nearest.rgb * (1.0 - t2) / max(1.0 - nearest.a, 1e-4), t2);
+                }
                 gl_FragColor = vec4(base.rgb * hz.a + hz.rgb, base.a);
             }
         `,

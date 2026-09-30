@@ -1653,6 +1653,31 @@ body {
     color: #ffffff;
 }
 
+/* Bouton répéter : « 1 » affiché en mode répéter le morceau */
+.pb-repeat-btn[data-mode="one"]::before {
+    content: '1';
+    position: absolute;
+    top: 1px;
+    right: 5px;
+    font-size: 8px;
+    font-weight: 700;
+    line-height: 1;
+    color: #22c55e;
+}
+
+/* Durée d'un morceau, à droite de son nom */
+.pb-queue-duration {
+    flex-shrink: 0;
+    margin-left: 8px;
+    font-size: 0.68rem;
+    color: #82828e;
+    font-variant-numeric: tabular-nums;
+}
+
+.pb-pl-item.virtual .pb-pl-drag-handle {
+    visibility: hidden;
+}
+
 .pb-shuffle-btn.active::after {
     content: '';
     position: absolute;

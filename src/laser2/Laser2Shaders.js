@@ -279,8 +279,8 @@ export function createLaser2ImpactMaterial() {
                 vec4 vp = viewMatrix * vec4((P0 + P1) * 0.5, 1.0);
                 float pix = max(-vp.z, 0.05) * uPixelK;
                 float w = max(aP0.w, pix * 1.5);
-                float halo = max(w * 2.5, 0.05);
-                float R = w * 0.5 + halo * 2.0;
+                float halo = max(w * 1.2, 0.03);
+                float R = w * 0.5 + halo * 2.4;
                 float along = aCorner.y < 0.5 ? -R : L + R;
                 float across = aCorner.x * R;
                 vec3 P = P0 + u * along + v * across + n * 0.012;
@@ -303,8 +303,10 @@ export function createLaser2ImpactMaterial() {
                 float k = d / (0.5 * w);
                 float core = exp(-2.0 * k * k);
                 // Halo ramené à zéro avant le bord du quad (sinon coupé net → carré, amplifié par le bloom)
-                float R = 0.5 * w + 2.0 * halo;
-                float glow = max(0.0, exp(-d / halo) - exp(-R / halo)) * 0.18 * (1.0 - smoothstep(0.6 * R, R, d));
+                float R = 0.5 * w + 2.4 * halo;
+                // Halo gaussien (sans pointe au centre, fondu doux jusqu'au bord) : pas de rond à bord net
+                float gk = d / halo;
+                float glow = max(0.0, exp(-gk * gk * 1.3) - exp(-(R / halo) * (R / halo) * 1.3)) * 0.12 * (1.0 - smoothstep(0.3 * R, R, d));
                 vec3 c = shade(vChroma, vDim.w) * uImpactK * (core + glow);
                 gl_FragColor = vec4(c, 1.0);
             }

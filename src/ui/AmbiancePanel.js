@@ -2128,6 +2128,18 @@ export class AmbiancePanel {
         }
     }
 
+    /**
+     * Vrai si un clic sur la scène ne doit PAS reprendre la souris : gizmo en cours de glissement, tout juste
+     * relâché, survolé, ou lampe sélectionnée avec son gizmo affiché (on reste en souris libre jusqu'à Tab).
+     */
+    shouldKeepCursor() {
+        const tc = this.transformControls;
+        if (this.isDraggingGizmo) return true;
+        if (performance.now() - (this._dragEndTime || 0) < 400) return true;
+        if (!tc) return false;
+        return Boolean(tc.dragging || tc.axis !== null || tc.object);
+    }
+
     /** Vrai (une seule fois) si le dernier clic vient de sélectionner un projecteur : main.js ne doit pas reverrouiller la souris. */
     consumeFixturePick() {
         const picked = performance.now() - (this._lastFixturePick || -1e9) < 2000;

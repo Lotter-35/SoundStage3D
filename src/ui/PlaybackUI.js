@@ -24,6 +24,9 @@ export class PlaybackUI {
         this._contextPlaylistId = null;
 
         this._isShuffle = false;
+        this._repeatMode = 'off'; // 'off' | 'all' | 'one'
+        this._durations = new Map(); // id → secondes
+        this._durationRefreshTimer = null;
 
         // Playlists state
         this._playlists = [];
@@ -79,6 +82,7 @@ export class PlaybackUI {
         this.pbPlayBtn = document.getElementById('pb-play-btn');
         this.pbNextBtn = document.getElementById('pb-next-btn');
         this.pbShuffleBtn = document.getElementById('pb-shuffle-btn');
+        this.pbRepeatBtn = document.getElementById('pb-repeat-btn');
 
         this.pbPlaylistSelect = document.getElementById('pb-playlist-select');
         this.pbPlaylistStatus = document.getElementById('pb-playlist-status');
@@ -280,6 +284,7 @@ export class PlaybackUI {
                     return;
                 }
                 const pl = this._playlists.find(p => p.id === this._selectedPlaylistId);
+                if (pl && pl.virtual) { window.alert('« Toutes les musiques » est une liste automatique : elle ne se renomme pas.'); return; }
                 const currentName = pl ? pl.name : '';
                 const newName = window.prompt("Nouveau nom de la playlist :", currentName);
                 if (newName && newName.trim() && this.callbacks.onPlaylistRename) {
@@ -296,8 +301,9 @@ export class PlaybackUI {
                     return;
                 }
                 const pl = this._playlists.find(p => p.id === this._selectedPlaylistId);
+                if (pl && pl.virtual) { window.alert('« Toutes les musiques » est une liste automatique : elle ne se supprime pas.'); return; }
                 const name = pl ? pl.name : '';
-                if (window.confirm(`Supprimer définitivement la playlist "${name}" du serveur ?`)) {
+                if (window.confirm(`Supprimer définitivement la playlist "${name}" du serveur ?\nLes musiques qui ne sont dans aucune autre playlist seront aussi effacées du serveur.`)) {
                     if (this.callbacks.onPlaylistDelete) {
                         this.callbacks.onPlaylistDelete(this._selectedPlaylistId);
                         this._selectedPlaylistId = '';
@@ -319,6 +325,15 @@ export class PlaybackUI {
                 this._isShuffle = !this._isShuffle;
                 this.setShuffleState(this._isShuffle);
                 if (this.callbacks.onShuffleToggle) this.callbacks.onShuffleToggle(this._isShuffle);
+            });
+        }
+
+        if (this.pbRepeatBtn) {
+            this.pbRepeatBtn.addEventListener('click', (e) => {
+                e.stopPropagation();
+                const next = this._repeatMode === 'off' ? 'all' : (this._repeatMode === 'all' ? 'one' : 'off');
+                this.setRepeatMode(next);
+                if (this.callbacks.onRepeatToggle) this.callbacks.onRepeatToggle(next);
             });
         }
 
@@ -657,6 +672,11 @@ export class PlaybackUI {
 
     _handlePlaylistFilesSelected(files) {
         if (!files || files.length === 0) return;
+        const selected = this._selectedPlaylistId ? this._playlists.find(p => p.id === this._selectedPlaylistId) : null;
+        if (selected && selected.virtual) {
+            window.alert("« Toutes les musiques » est une liste automatique : choisissez (ou créez) une playlist pour y ajouter des musiques.");
+            return;
+        }
         if (!this._selectedPlaylistId) {
             let plName = window.prompt("Nom de la nouvelle playlist pour ces morceaux :", "Ma Playlist");
             if (!plName || !plName.trim()) plName = "Ma Playlist";
@@ -715,7 +735,10 @@ export class PlaybackUI {
         this._playlists = Array.isArray(playlists) ? playlists : [];
         for (const pl of this._playlists) {
             if (Array.isArray(pl.tracks)) {
-                this._playlistSnapshots.set(pl.id, JSON.stringify(pl.tracks));
+                if (!pl.virtual) this._playlistSnapshots.set(pl.id, JSON.stringify(pl.tracks));
+                for (const t of pl.tracks) {
+                    if (t && t.id && t.duration > 0) this._durations.set(t.id, t.duration);
+                }
             }
         }
 
@@ -738,7 +761,7 @@ export class PlaybackUI {
         for (const pl of this._playlists) {
             const opt = document.createElement('option');
             opt.value = pl.id;
-            opt.textContent = `${pl.name} (${(pl.tracks ? pl.tracks.length : pl.trackCount) || 0} morceaux)`;
+            opt.textContent = `${pl.virtual ? '🎵 ' : ''}${pl.name} (${(pl.tracks ? pl.tracks.length : pl.trackCount) || 0} morceaux)`;
             if (pl.id === this._selectedPlaylistId) {
                 opt.selected = true;
             }
@@ -801,11 +824,12 @@ export class PlaybackUI {
         }
 
         const isContextPlaylist = Boolean(this._selectedPlaylistId && (this._selectedPlaylistId === this._contextPlaylistId));
+        const isVirtual = Boolean(pl.virtual);
 
         tracks.forEach((track, index) => {
             const el = document.createElement('div');
-            el.className = 'pb-queue-item pb-pl-item';
-            el.draggable = true;
+            el.className = 'pb-queue-item pb-pl-item' + (isVirtual ? ' virtual' : '');
+            el.draggable = !isVirtual;
             el.dataset.index = index;
             el.dataset.trackId = track.id;
 
@@ -885,9 +909,15 @@ export class PlaybackUI {
             const removeBtn = document.createElement('button');
             removeBtn.className = 'pb-pl-remove-btn';
             removeBtn.innerHTML = '✕';
-            removeBtn.title = 'Supprimer ce morceau de la playlist';
+            removeBtn.title = isVirtual ? 'Supprimer définitivement ce morceau du serveur (et de toutes les playlists)' : 'Supprimer ce morceau de la playlist (effacé du serveur s\'il n\'est dans aucune autre playlist)';
             removeBtn.addEventListener('click', (e) => {
                 e.stopPropagation();
+                if (isVirtual) {
+                    if (window.confirm(`Supprimer définitivement "${track.name}" du serveur ?\nIl sera aussi retiré de toutes les playlists.`)) {
+                        if (this.callbacks.onTrackDelete) this.callbacks.onTrackDelete([track.id]);
+                    }
+                    return;
+                }
                 pl.tracks.splice(index, 1);
                 this._renderPlaylistTracks();
                 this._triggerAutoSave();
@@ -899,9 +929,12 @@ export class PlaybackUI {
             actions.appendChild(addBtn);
             actions.appendChild(removeBtn);
 
+            const durationEl = this._createDurationElement(track);
+
             el.appendChild(handle);
             el.appendChild(num);
             el.appendChild(name);
+            if (durationEl) el.appendChild(durationEl);
             if (serverBadge) el.appendChild(serverBadge);
             if (badge) el.appendChild(badge);
             el.appendChild(actions);
@@ -957,6 +990,7 @@ export class PlaybackUI {
             el.addEventListener('drop', (e) => {
                 e.preventDefault();
                 el.classList.remove('drag-over-top', 'drag-over-bottom');
+                if (isVirtual) return;
                 if (this._plDraggedIndex === null || this._plDraggedIndex === undefined || this._plDraggedIndex === index) return;
 
                 const rect = el.getBoundingClientRect();
@@ -984,7 +1018,7 @@ export class PlaybackUI {
 
     _triggerAutoSave() {
         const pl = this._selectedPlaylistId ? this._playlists.find(p => p.id === this._selectedPlaylistId) : null;
-        if (!pl || !this._selectedPlaylistId) return;
+        if (!pl || !this._selectedPlaylistId || pl.virtual) return;
 
         if (this.pbPlaylistStatus) {
             this.pbPlaylistStatus.classList.remove('hidden', 'saved');
@@ -1153,6 +1187,8 @@ export class PlaybackUI {
             this.pbQNowItem.appendChild(num);
             if (spinner) this.pbQNowItem.appendChild(spinner);
             this.pbQNowItem.appendChild(name);
+            const nowDuration = this._createDurationElement(this._currentTrack);
+            if (nowDuration) this.pbQNowItem.appendChild(nowDuration);
         } else if (this.pbQNowSection) {
             this.pbQNowSection.classList.add('hidden');
         }
@@ -1247,6 +1283,8 @@ export class PlaybackUI {
         el.appendChild(handle);
         if (spinner) el.appendChild(spinner);
         el.appendChild(name);
+        const durationEl = this._createDurationElement(item);
+        if (durationEl) el.appendChild(durationEl);
         el.appendChild(removeBtn);
 
         // Drag and drop events
@@ -1719,6 +1757,49 @@ export class PlaybackUI {
             return 380;
         }
         return 320;
+    }
+
+    /** Durée d'un morceau (secondes) : fournie avec le morceau, sinon connue par la liste des playlists ou par un décodage local */
+    getTrackDuration(track) {
+        if (!track) return 0;
+        if (track.duration > 0) return track.duration;
+        if (track.id && this._durations.has(track.id)) return this._durations.get(track.id);
+        return 0;
+    }
+
+    _createDurationElement(track) {
+        const d = this.getTrackDuration(track);
+        if (!(d > 0)) return null;
+        const el = document.createElement('span');
+        el.className = 'pb-queue-duration';
+        const h = Math.floor(d / 3600);
+        el.textContent = h > 0
+            ? `${h}:${String(Math.floor((d % 3600) / 60)).padStart(2, '0')}:${String(Math.floor(d % 60)).padStart(2, '0')}`
+            : this._formatTime(d);
+        return el;
+    }
+
+    /** Enregistre la durée d'un morceau mesurée localement (décodage) et rafraîchit les listes */
+    setTrackDuration(id, seconds) {
+        if (!id || !(seconds > 0)) return;
+        if (this._durations.get(id) === seconds) return;
+        this._durations.set(id, seconds);
+        if (this._durationRefreshTimer) return;
+        this._durationRefreshTimer = setTimeout(() => {
+            this._durationRefreshTimer = null;
+            this._renderSpotifyQueue();
+            this._renderPlaylistTracks();
+        }, 150);
+    }
+
+    setRepeatMode(mode) {
+        this._repeatMode = (mode === 'all' || mode === 'one') ? mode : 'off';
+        if (this.pbRepeatBtn) {
+            this.pbRepeatBtn.dataset.mode = this._repeatMode;
+            this.pbRepeatBtn.classList.toggle('active', this._repeatMode !== 'off');
+            this.pbRepeatBtn.title = this._repeatMode === 'all' ? 'Répéter : toute la liste'
+                : this._repeatMode === 'one' ? 'Répéter : le morceau en cours' : 'Répéter : désactivé';
+        }
     }
 
     setShuffleState(isShuffle) {

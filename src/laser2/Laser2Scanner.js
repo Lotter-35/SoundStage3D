@@ -107,7 +107,7 @@ export class Laser2Scanner {
         this.k = -Infinity;                 // dernier échantillon simulé
 
         // État des galvos
-        this.px = 0; this.vx = 0;
+        this.px = 0; this.vx = 0; this._armed = false;
         this.py = 0; this.vy = 0;
 
         this._patternFrame = new LaserFrame(512);
@@ -219,8 +219,9 @@ export class Laser2Scanner {
         this.chan = [pw[0] > 0 ? bal : 0, pw[1] > 0 ? bal : 0, pw[2] > 0 ? bal : 0];
         this.dimmer = dim;
         this.ttl = p.modulation !== 'Analogique';
-        this.thr = p.threshold / 100;
-        this.shift = Math.round(p.colorShift);
+        this.galvo = p.galvoFx !== false;                          // false : miroirs parfaits (aucune inertie)
+        this.thr = p.diodeFx === false ? 0 : p.threshold / 100;    // false : diodes parfaites (aucun seuil)
+        this.shift = this.galvo ? Math.round(p.colorShift) : 0;    // le décalage de couleur compense le retard des galvos
         this.shutter = p.shutter;
         this.strobeRate = p.strobeRate;
         this.divergence = p.divergence * 1e-3;
@@ -415,6 +416,7 @@ export class Laser2Scanner {
         const sub = this.sub, h = T / sub;
         const wn2 = this.wn * this.wn, c2 = 2 * this.zeta * this.wn;
         const [p00, p01, p10, p11] = this.phi;
+        const galvo = this.galvo;
         const amax = this.amax, vmax = this.vmax, lim = this.maxAngle * 1.05;
         let nextFx = k0;
         const drawAll = this.drawA <= 0 && this.drawB >= 1;
@@ -422,7 +424,11 @@ export class Laser2Scanner {
         const cmode = this.colorMode;
         const lr = this.lvl[0], lg = this.lvl[1], lb = this.lvl[2];
         const cr = this.chan[0], cg = this.chan[1], cb = this.chan[2];
-        const ttl = this.ttl, thr = this.thr;
+        const ttl = this.ttl, thr = this.thr, kThr = 1 / (1 - Math.min(thr, 0.95));
+        // Après un passage éteint, le faisceau ne se rallume que lorsque les miroirs ont rejoint leur consigne
+        // (sinon un grand saut, ex. retour de l'éventail, dessine une nappe parasite pendant que le miroir finit sa course)
+        const settleTol = 0.004;
+        let armed = this._armed || false;
         const strobe = this.shutter === 'Strobe', open = this.shutter !== 'Fermé';
         const rate = this.strobeRate;
         const rot = this.rotSpeed !== 0;
@@ -462,39 +468,43 @@ export class Laser2Scanner {
             }
             const ux = _cmd[0], uy = _cmd[1];
 
-            // Miroir X : solution exacte du servo linéaire, petites étapes bornées pendant les sauts
-            let e = px - ux;
-            let a = -wn2 * e - c2 * vx;
-            if (a > amax || a < -amax || vx >= vmax || vx <= -vmax) {
-                for (let q = 0; q < sub; q++) {
-                    a = wn2 * (ux - px) - c2 * vx;
-                    a = a > amax ? amax : a < -amax ? -amax : a;
-                    vx += a * h;
+            if (galvo) {
+                // Miroir X : solution exacte du servo linéaire, petites étapes bornées pendant les sauts
+                let e = px - ux;
+                let a = -wn2 * e - c2 * vx;
+                if (a > amax || a < -amax || vx >= vmax || vx <= -vmax) {
+                    for (let q = 0; q < sub; q++) {
+                        a = wn2 * (ux - px) - c2 * vx;
+                        a = a > amax ? amax : a < -amax ? -amax : a;
+                        vx += a * h;
+                        vx = vx > vmax ? vmax : vx < -vmax ? -vmax : vx;
+                        px += vx * h;
+                    }
+                } else {
+                    const e2 = p00 * e + p01 * vx;
+                    vx = p10 * e + p11 * vx;
+                    px = ux + e2;
                     vx = vx > vmax ? vmax : vx < -vmax ? -vmax : vx;
-                    px += vx * h;
                 }
-            } else {
-                const e2 = p00 * e + p01 * vx;
-                vx = p10 * e + p11 * vx;
-                px = ux + e2;
-                vx = vx > vmax ? vmax : vx < -vmax ? -vmax : vx;
-            }
-            // Miroir Y
-            e = py - uy;
-            a = -wn2 * e - c2 * vy;
-            if (a > amax || a < -amax || vy >= vmax || vy <= -vmax) {
-                for (let q = 0; q < sub; q++) {
-                    a = wn2 * (uy - py) - c2 * vy;
-                    a = a > amax ? amax : a < -amax ? -amax : a;
-                    vy += a * h;
+                // Miroir Y
+                e = py - uy;
+                a = -wn2 * e - c2 * vy;
+                if (a > amax || a < -amax || vy >= vmax || vy <= -vmax) {
+                    for (let q = 0; q < sub; q++) {
+                        a = wn2 * (uy - py) - c2 * vy;
+                        a = a > amax ? amax : a < -amax ? -amax : a;
+                        vy += a * h;
+                        vy = vy > vmax ? vmax : vy < -vmax ? -vmax : vy;
+                        py += vy * h;
+                    }
+                } else {
+                    const e2 = p00 * e + p01 * vy;
+                    vy = p10 * e + p11 * vy;
+                    py = uy + e2;
                     vy = vy > vmax ? vmax : vy < -vmax ? -vmax : vy;
-                    py += vy * h;
                 }
             } else {
-                const e2 = p00 * e + p01 * vy;
-                vy = p10 * e + p11 * vy;
-                py = uy + e2;
-                vy = vy > vmax ? vmax : vy < -vmax ? -vmax : vy;
+                px = ux; py = uy; vx = 0; vy = 0;
             }
             if (px > lim) { px = lim; vx = 0; } else if (px < -lim) { px = -lim; vx = 0; }
             if (py > lim) { py = lim; vy = 0; } else if (py < -lim) { py = -lim; vy = 0; }
@@ -539,9 +549,16 @@ export class Laser2Scanner {
                 if (ttl) {
                     r = vr >= 0.5 ? cr : 0; g = vg >= 0.5 ? cg : 0; b = vb >= 0.5 ? cb : 0;
                 } else {
-                    r = vr < thr ? 0 : vr * cr; g = vg < thr ? 0 : vg * cg; b = vb < thr ? 0 : vb * cb;
+                    // Seuil de la diode : sous le seuil elle est éteinte, au-dessus la puissance monte depuis zéro
+                    // (courbe continue : plus de saut de couleur quand une voie franchit le seuil)
+                    r = vr < thr ? 0 : (vr - thr) * kThr * cr; g = vg < thr ? 0 : (vg - thr) * kThr * cg; b = vb < thr ? 0 : (vb - thr) * kThr * cb;
                 }
             }
+            if (r > 0 || g > 0 || b > 0) {
+                if (armed) {
+                    if (Math.abs(px - ux) + Math.abs(py - uy) > settleTol) { r = 0; g = 0; b = 0; } else armed = false;
+                }
+            } else armed = true;
             const o = k & RING_MASK;
             AX[o] = px; AY[o] = py;
             UX[o] = ux; UY[o] = uy;
@@ -550,6 +567,7 @@ export class Laser2Scanner {
             if (++j === n) j = 0;
         }
         this.px = px; this.vx = vx; this.py = py; this.vy = vy;
+        this._armed = armed;
     }
 
     // ── Réduction de la trajectoire en primitives ─────────────────────────
@@ -766,7 +784,9 @@ function grow(a) {
 }
 
 /** Couleur affichée (linéaire) d'une primitive à partir des puissances équilibrées par source */
-export function displayColor(r, g, b, out) {
+export function displayColor(r, g, b, out, exact = false) {
+    // Couleur exacte : la teinte choisie est affichée telle quelle (les primaires réelles des diodes sont ignorées)
+    if (exact) { out[0] = r; out[1] = g; out[2] = b; return out; }
     out[0] = r * PRIM[0][0] + g * PRIM[1][0] + b * PRIM[2][0];
     out[1] = r * PRIM[0][1] + g * PRIM[1][1] + b * PRIM[2][1];
     out[2] = r * PRIM[0][2] + g * PRIM[1][2] + b * PRIM[2][2];
