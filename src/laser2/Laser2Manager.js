@@ -4,6 +4,8 @@
  * Orchestrateur des nouveaux lasers (moteur de points + galvos) :
  *   - ajout / suppression / duplication / recherche (identifiants uniques réseau)
  *   - mise à jour sur l'horloge commune (même image chez tous les joueurs)
+ *   - calcul (galvos, faisceaux, collisions) dans un Web Worker (core/) : le fil principal envoie
+ *     les réglages quand ils changent et l'heure à chaque image, puis dessine la géométrie reçue
  *   - rendu batché : 3 draw calls (faisceaux, nappes, impacts), 3 pour tous les boîtiers
  *   - éblouissement réaliste : puissance reçue par l'œil (faisceau fixe = très fort, balayé = flash)
  *
@@ -14,8 +16,11 @@
 import * as THREE from 'three';
 import { Laser2Fixture } from './Laser2Fixture.js';
 import { Laser2Batch, BEAM_STRIDE, SHEET_STRIDE } from './Laser2Batch.js';
-import { setLaser2PlayerCollider } from './Laser2Collision.js';
 import { getLaser2HousingInstancer } from './Laser2Housing.js';
+import { Laser2Host } from './core/Laser2Host.js';
+import { packPlayers } from './core/Collision.js';
+import { buildLaser2ObstacleGroups } from './Laser2Obstacles.js';
+import { ildaLibrary } from './ilda/IldaLibrary.js';
 
 /** Rayon de capture autour de l'œil (m) : pupille + marge de tête (un faisceau de 1 cm reste « visé ») */
 const EYE_R = 0.05;
@@ -47,9 +52,29 @@ export class Laser2Manager {
         this._nextNumber = 1;
         this.batch = new Laser2Batch(scene);
         this._instancer = getLaser2HousingInstancer(scene);
-        this.cpuMs = 0;
+        this.cpuMs = 0;           // coût sur le fil principal (ms / image, lissé)
+        this.coreMs = 0;          // coût du calcul (worker ou direct)
+        this.prims = 0;
+        this.shared = 0;
         this.dazzle = null;
         this.patch = null;
+        this.playerCollider = null;
+        this._players = null;
+        this._sentDocs = new Set();
+        this.previewId = null;    // laser dont le panneau affiche l'aperçu du tracé
+        this.host = new Laser2Host((r) => this._onResult(r), () => this._resendAll());
+        this.host.init(buildLaser2ObstacleGroups());
+    }
+
+    /** Mode de calcul : 'worker' ou 'direct' */
+    get computeMode() {
+        return this.host.mode;
+    }
+
+    /** Le worker a planté : tout l'état est renvoyé au calcul direct */
+    _resendAll() {
+        this._sentDocs.clear();
+        for (const l of this._lasers.values()) { l._dirtyParams = true; l._dirtyTransform = true; l._sentDocKey = null; }
     }
 
     /** Patch DMX commun (lyres, barres LED, strobes, lasers) : pilotage par la régie */
@@ -74,7 +99,7 @@ export class Laser2Manager {
 
     /** Collider des joueurs (les faisceaux s'arrêtent sur les corps et y laissent leur trace) */
     setPlayerCollider(collider) {
-        setLaser2PlayerCollider(collider);
+        this.playerCollider = collider;
     }
 
     /** Éblouissement partagé avec l'ancien système (DazzleEffect) */
@@ -95,7 +120,6 @@ export class Laser2Manager {
             id: laserId,
             number: this._nextNumber++,
             scene: this.scene,
-            clock: () => this.clock(),
             params: p,
         });
         this._lasers.set(laserId, laser);
@@ -111,6 +135,7 @@ export class Laser2Manager {
         if (!l) return false;
         l.dispose();
         this._lasers.delete(id);
+        this.host.remove(id);
         return true;
     }
 
@@ -152,11 +177,66 @@ export class Laser2Manager {
 
     update() {
         const t0 = performance.now();
-        for (const l of this._lasers.values()) l.update();
-        this.batch.assemble(this._lasers.values(), this.camera, this.renderer);
+        for (const l of this._lasers.values()) {
+            if (l.isBeingDragged) l.syncFromGizmo();
+            // Forme ILDA : prise dans la bibliothèque partagée, envoyée une fois au cœur de calcul
+            let docKey = '';
+            if (l.params.source === 'Fichier ILDA') {
+                ildaLibrary.ensureLoaded();
+                const doc = ildaLibrary.get(l.params.ildaFile);
+                const e = doc && ildaLibrary.entry(l.params.ildaFile);
+                if (doc && e) {
+                    docKey = `${l.params.ildaFile}@${e.mtime}`;
+                    if (!this._sentDocs.has(docKey)) {
+                        this.host.doc(docKey, doc.frames.map(f => ({
+                            n: f.n, x: f.x.slice(0, f.n), y: f.y.slice(0, f.n), r: f.r.slice(0, f.n), g: f.g.slice(0, f.n), b: f.b.slice(0, f.n),
+                        })));
+                        this._sentDocs.add(docKey);
+                    }
+                }
+                l.docReady = Boolean(docKey);
+            }
+            const msg = {};
+            let send = false;
+            if (l._dirtyParams) { msg.params = { ...l.params }; l._dirtyParams = false; send = true; }
+            if (l._dirtyTransform) { msg.transform = l.transformArray(); l._dirtyTransform = false; send = true; }
+            if (docKey !== l._sentDocKey) { msg.docKey = docKey; l._sentDocKey = docKey; send = true; }
+            if (send) this.host.set(l.id, msg);
+        }
+        this._players = packPlayers(this.playerCollider, this._players);
+        // Mode worker : envoie une copie (le tableau est réutilisé d'une image à l'autre)
+        const players = this.host.mode === 'worker' ? this._players.slice(0, this._playersLen()) : this._players;
+        this.host.frame(this.clock(), players, this.previewId);
         this._instancer.flush();
         if (this.dazzle && this.camera) this._updateDazzle();
         this.cpuMs += (performance.now() - t0 - this.cpuMs) * 0.05;
+    }
+
+    _playersLen() {
+        const P = this._players;
+        let o = 1;
+        for (let p = 0, n = P[0] | 0; p < n; p++) o += 7 + (P[o + 6] | 0) * 7;
+        return o;
+    }
+
+    /** Géométrie reçue du cœur de calcul */
+    _onResult(r) {
+        const t0 = performance.now();
+        for (const it of r.items) {
+            const l = this._lasers.get(it.id);
+            if (l) l.applyResult(it);
+        }
+        if (r.preview && r.previewId) {
+            const l = this._lasers.get(r.previewId);
+            if (l) l.preview = r.preview;
+        }
+        this.batch.assemble(this._lasers.values(), this.camera, this.renderer);
+        this._instancer.flush();
+        this.coreMs += (r.ms - this.coreMs) * 0.05;
+        this.prims = r.prims;
+        this.shared = r.shared;
+        this.tolScale = r.tolScale;
+        this.cpuMs += (performance.now() - t0) * 0.05;
     }
 
     /**
@@ -240,6 +320,7 @@ export class Laser2Manager {
     }
 
     dispose() {
+        this.host.dispose();
         for (const l of this._lasers.values()) l.dispose();
         this._lasers.clear();
         this.batch.dispose();

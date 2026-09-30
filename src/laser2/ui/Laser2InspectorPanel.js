@@ -17,7 +17,6 @@
 import GUI from 'lil-gui';
 import { makeDraggable } from '../../ui/draggable.js';
 import { LASER2_PARAMS_SCHEMA, LASER2_FOLDERS, HARDWARE_PRESETS } from '../config/laser2Params.js';
-import { RING } from '../Laser2Scanner.js';
 import { ildaLibrary } from '../ilda/IldaLibrary.js';
 import { describeChannels, encode, getFootprint } from '../Laser2Profile.js';
 import { isAnimatedPattern } from '../Laser2Patterns.js';
@@ -54,6 +53,7 @@ export class Laser2InspectorPanel {
 
     openForLaser(laser) {
         this._laser = laser;
+        this.laser2Manager.previewId = laser.id;
         if (this.panelWrap) this.panelWrap.classList.remove('hidden');
         this._buildGui();
         clearInterval(this._timer);
@@ -70,6 +70,7 @@ export class Laser2InspectorPanel {
         }
         if (this.panelWrap) this.panelWrap.classList.add('hidden');
         this._laser = null;
+        if (this.laser2Manager) this.laser2Manager.previewId = null;
         this.controllers = {};
     }
 
@@ -286,7 +287,7 @@ export class Laser2InspectorPanel {
         const laser = this._laser;
         const c = this._ctx;
         if (!laser || !c) return;
-        const s = laser.scanner;
+        const s = laser.preview;          // aperçu calculé par le cœur (worker) pour ce laser
         const W = PREVIEW;
         c.fillStyle = '#05060a';
         c.fillRect(0, 0, W, W);
@@ -294,43 +295,40 @@ export class Laser2InspectorPanel {
         c.strokeStyle = 'rgba(255,255,255,0.08)';
         c.lineWidth = 1;
         c.strokeRect(6.5, 6.5, W - 13, W - 13);
-        if (!Number.isFinite(s.k)) return;
-        const win = Math.min(s.frame.n * 2, Math.round(s.pps / 25), RING - 64);
-        const k1 = s.k, k0 = k1 - win + 1;
-        const sc = (W / 2 - 7) / Math.max(1e-3, s.maxAngle);
-        const cx = W / 2, cy = W / 2;
-        const M = RING - 1;
-        c.strokeStyle = 'rgba(150,160,180,0.35)';
-        c.beginPath();
-        for (let k = k0; k <= k1; k++) {
-            const o = k & M;
-            const X = cx + s.ux[o] * sc, Y = cy - s.uy[o] * sc;
-            if (k === k0) c.moveTo(X, Y); else c.lineTo(X, Y);
-        }
-        c.stroke();
-        c.lineWidth = 1.6;
-        c.lineCap = 'round';
-        for (let k = k0 + 1; k <= k1; k++) {
-            const o = k & M, q = (k - 1) & M;
-            const r = s.pr[o], g = s.pg[o], b = s.pb[o];
-            const m = Math.max(r, g, b);
-            if (m <= 1e-6) continue;
-            c.strokeStyle = `rgb(${Math.round(80 + 175 * (r + g * 0.05 + b * 0.12) / m)},${Math.round(80 + 175 * (g + r * 0.03 + b * 0.02) / m)},${Math.round(80 + 175 * (b + g * 0.15) / m)})`;
-            c.beginPath();
-            c.moveTo(cx + s.ax[q] * sc, cy - s.ay[q] * sc);
-            c.lineTo(cx + s.ax[o] * sc, cy - s.ay[o] * sc);
-            c.stroke();
-        }
-        const st = s.stats;
-        if (laser.params.source === 'Fichier ILDA' && !s._doc) {
+        const st = laser.stats;
+        if (laser.params.source === 'Fichier ILDA' && !laser.docReady) {
             this._info.textContent = laser.params.ildaFile ? 'Chargement de la forme ILDA…' : 'Choisis une forme ILDA';
             return;
+        }
+        if (s && s.n > 1) {
+            const n = s.n;
+            const sc = (W / 2 - 7) / Math.max(1e-3, s.maxAngle);
+            const cx = W / 2, cy = W / 2;
+            c.strokeStyle = 'rgba(150,160,180,0.35)';
+            c.beginPath();
+            for (let i = 0; i < n; i++) {
+                const X = cx + s.ux[i] * sc, Y = cy - s.uy[i] * sc;
+                if (i === 0) c.moveTo(X, Y); else c.lineTo(X, Y);
+            }
+            c.stroke();
+            c.lineWidth = 1.6;
+            c.lineCap = 'round';
+            for (let i = 1; i < n; i++) {
+                const r = s.pr[i], g = s.pg[i], b = s.pb[i];
+                const m = Math.max(r, g, b);
+                if (m <= 1e-6) continue;
+                c.strokeStyle = `rgb(${Math.round(80 + 175 * (r + g * 0.05 + b * 0.12) / m)},${Math.round(80 + 175 * (g + r * 0.03 + b * 0.02) / m)},${Math.round(80 + 175 * (b + g * 0.15) / m)})`;
+                c.beginPath();
+                c.moveTo(cx + s.ax[i - 1] * sc, cy - s.ay[i - 1] * sc);
+                c.lineTo(cx + s.ax[i] * sc, cy - s.ay[i] * sc);
+                c.stroke();
+            }
         }
         const hz = st.frameHz;
         const flicker = hz < 20 ? ' <span style="color:#ff8a65">⚠ scintille</span>' : '';
         const anim = st.frames > 1 ? ` · animation ${st.frames} images` : '';
         this._info.innerHTML = `${st.points} points · <b>${hz.toFixed(0)} images/s</b>${flicker}${anim}<br>`
-            + `${st.beams} faisceaux · ${st.sheets} nappes · ${(this.laser2Manager.cpuMs || 0).toFixed(2)} ms`;
+            + `${st.beams} faisceaux · ${st.sheets} nappes · calcul ${(this.laser2Manager.coreMs || 0).toFixed(2)} ms (${this.laser2Manager.computeMode === 'worker' ? 'worker' : 'direct'})`;
     }
 
     // ── Choix de la forme ILDA (banque → forme) ─────────────────────────

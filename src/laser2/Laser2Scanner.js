@@ -58,6 +58,14 @@ const SCANNER_KEYS = Object.entries(LASER2_PARAMS_SCHEMA)
     .filter(([k, s]) => !['place', 'dmx'].includes(s.folder) && !['visibility', 'forwardScatter', 'audienceMask'].includes(k))
     .map(([k]) => k);
 
+/**
+ * Clé de simulation : deux lasers avec la même clé dessinent exactement la même chose au même instant
+ * (même contenu, mêmes galvos, mêmes effets) et peuvent partager une seule simulation.
+ */
+export function scannerKey(p, docKey = '') {
+    return docKey + '|' + SCANNER_KEYS.map(k => p[k]).join('|');
+}
+
 /** Effets dépendant du temps recalculés tous les CHUNK échantillons (≈ 0,5 ms : invisible) */
 const CHUNK = 16;
 
@@ -522,7 +530,7 @@ export class Laser2Scanner {
 
     // ── Réduction de la trajectoire en primitives ─────────────────────────
     _extract(k0, k1) {
-        let tol = 7e-4;
+        let tol = 7e-4 * (this.tolScale || 1);
         for (let pass = 0; pass < 4; pass++) {
             if (this._extractPass(k0, k1, tol)) break;
             tol *= 2;

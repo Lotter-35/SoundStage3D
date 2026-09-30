@@ -11,9 +11,8 @@ import * as THREE from 'three';
 import { createLaser2BeamMaterial, createLaser2SheetMaterial, createLaser2ImpactMaterial, LASER2_UNIFORMS } from './Laser2Shaders.js';
 import { enableLaserBloom } from '../laser/LaserManager.js';
 
-export const BEAM_STRIDE = 13;   // aO(4) aE(4) aC(4) aG(1)
-export const SHEET_STRIDE = 17;  // aO(4) aA(4) aB(4) aC(4) aG(1)
-export const IMPACT_STRIDE = 14; // aP0(4) aP1(4) aN(3) aC(3)
+import { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE } from './core/strides.js';
+export { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE };
 
 class InstanceStream {
     constructor(geometry, stride, layout, capacity) {
