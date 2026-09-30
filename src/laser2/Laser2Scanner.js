@@ -660,6 +660,12 @@ export class Laser2Scanner {
         };
 
         const PR = this.pr, PG = this.pg, PB = this.pb, AX = this.ax, AY = this.ay;
+        // Continuité : le trajet qui mène au premier point de la fenêtre part du point d'avant (sinon
+        // ce premier point devient un faux faisceau fixe et le petit bout de trajet manque à la nappe)
+        {
+            const o = (k0 - 1) & RING_MASK;
+            if (PR[o] + PG[o] + PB[o] > 1e-6) { prevLit = true; qx = AX[o]; qy = AY[o]; }
+        }
         for (let k = k0; k < k1; k++) {
             const o = k & RING_MASK;
             const r = PR[o], g = PG[o], b = PB[o];
@@ -687,7 +693,9 @@ export class Laser2Scanner {
                     const proj = ex * sdx + ey * sdy;
                     const perp = Math.abs(ex * sdy - ey * sdx);
                     const ratio = d / sd0;
-                    let cut = perp > tol || proj <= sProj || ratio < 0.6 || ratio > 1.7;
+                    // Vitesse quasi constante dans un morceau : quand les miroirs ralentissent (demi-tour),
+                    // la luminosité monte en dégradé fin au lieu de marches visibles (traits dans la nappe)
+                    let cut = perp > tol || proj <= sProj || ratio < 0.88 || ratio > 1.14;
                     if (!cut) {
                         const lv = sLevel / sCount, se = sr + sg + sb;
                         cut = Math.abs(lvl - lv) > 0.15 * lv
