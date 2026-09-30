@@ -433,6 +433,107 @@ function broadcastRoom(room, data, excludeId = null) {
             send(client, data);
         }
     }
+    // Les régies suivent l'horloge musicale et le nombre de joueurs
+    if (room.regies && room.regies.size > 0 && data && REGIE_PLAYBACK_EVENTS.has(data.type)) {
+        sendRegies(room, regiePlaybackMessage(room));
+    }
+}
+
+// ─── Régie lumière & DMX ──────────────────────────────────────────────────────
+// La page régie (/regie) est un client à part : pas d'avatar, pas comptée parmi les joueurs
+// (room.regies, jamais room.clients), donc elle ne bloque pas l'attente « prêt » des morceaux.
+// Elle envoie des paquets DMX binaires (0x02, format décrit dans src/dmx/DmxProtocol.js) :
+// le serveur tient l'état complet des univers de la salle et relaie chaque paquet aux joueurs
+// et aux autres régies. Un joueur ou une régie qui arrive reçoit l'état complet.
+const DMX_PACKET = 0x02;
+const DMX_FLAG_FULL = 0x01;
+const DMX_UNIVERSE_SIZE = 512;
+const DMX_MAX_UNIVERSE = 64;
+const DMX_MAX_PACKET = 64 * 1024;
+// (pas PLAYERS_UPDATE : il part à chaque mouvement de joueur ; PEER_JOINED / PEER_LEFT suffisent pour le compte)
+const REGIE_PLAYBACK_EVENTS = new Set(['SYNC_ACTION', 'START_PLAYBACK_SYNC', 'AUDIO_TRACK_CHANGED', 'PEER_JOINED', 'PEER_LEFT']);
+
+function sendRegies(room, data) {
+    if (!room.regies) return;
+    for (const ws of room.regies.values()) send(ws, data);
+}
+
+/** Horloge musicale et état de la salle pour les régies */
+function regiePlaybackMessage(room) {
+    const pb = room.playback || { currentTime: 0, isPlaying: false, timestamp: Date.now() };
+    return {
+        type: 'REGIE_PLAYBACK',
+        serverTime: Date.now(),
+        playback: { currentTime: pb.currentTime || 0, isPlaying: Boolean(pb.isPlaying), timestamp: pb.timestamp || Date.now() },
+        trackName: room.trackName || '',
+        playerCount: room.clients.size,
+    };
+}
+
+/** Vérifie puis applique un paquet DMX à l'état de la salle ; false si le paquet est invalide */
+function applyDmxPacket(room, buf) {
+    if (buf.length < 12 || buf.length > DMX_MAX_PACKET) return false;
+    const count = buf.readUInt16LE(10);
+    let o = 12;
+    for (let i = 0; i < count; i++) {
+        if (o + 6 > buf.length) return false;
+        o += 6 + buf.readUInt16LE(o + 4);
+        if (o > buf.length) return false;
+    }
+    if (!room.dmx) room.dmx = new Map();
+    o = 12;
+    for (let i = 0; i < count; i++) {
+        const universe = buf.readUInt16LE(o);
+        const start = buf.readUInt16LE(o + 2);
+        const len = buf.readUInt16LE(o + 4);
+        o += 6;
+        if (universe >= 1 && universe <= DMX_MAX_UNIVERSE && start >= 1 && start + len - 1 <= DMX_UNIVERSE_SIZE) {
+            let u = room.dmx.get(universe);
+            if (!u) {
+                u = Buffer.alloc(DMX_UNIVERSE_SIZE);
+                room.dmx.set(universe, u);
+            }
+            buf.copy(u, start - 1, o, o + len);
+        }
+        o += len;
+    }
+    return true;
+}
+
+/** Paquet binaire à envoyer tel quel (voix, DMX) */
+function sendBinary(ws, buf) {
+    if (ws && ws.readyState === WebSocket.OPEN) {
+        try { ws.send(buf, { binary: true }); } catch (_) {}
+    }
+}
+
+/** Paquet DMX reçu d'une régie : état de la salle mis à jour, puis relais aux joueurs et aux autres régies */
+function relayDmxPacket(ws, buf) {
+    if (!ws.roomId) return;
+    const room = rooms.get(ws.roomId);
+    if (!room || !applyDmxPacket(room, buf)) return;
+    for (const peer of room.clients.values()) if (peer !== ws) sendBinary(peer, buf);
+    if (room.regies) for (const peer of room.regies.values()) if (peer !== ws) sendBinary(peer, buf);
+}
+
+/** Envoie l'état DMX complet de la salle (arrivée d'un joueur ou d'une régie) */
+function sendDmxState(ws, room) {
+    if (!room.dmx || room.dmx.size === 0) return;
+    const universes = [...room.dmx.entries()];
+    const buf = Buffer.alloc(12 + universes.length * (6 + DMX_UNIVERSE_SIZE));
+    buf[0] = DMX_PACKET;
+    buf[1] = DMX_FLAG_FULL;
+    buf.writeDoubleLE(0, 2); // 0 = appliquer tout de suite
+    buf.writeUInt16LE(universes.length, 10);
+    let o = 12;
+    for (const [number, data] of universes) {
+        buf.writeUInt16LE(number, o);
+        buf.writeUInt16LE(1, o + 2);
+        buf.writeUInt16LE(DMX_UNIVERSE_SIZE, o + 4);
+        data.copy(buf, o + 6);
+        o += 6 + DMX_UNIVERSE_SIZE;
+    }
+    sendBinary(ws, buf);
 }
 
 const AVATAR_COLORS = [
@@ -627,6 +728,20 @@ const server = http.createServer((req, res) => {
         return;
     }
 
+    // Endpoint: GET /api/rooms — salles ouvertes (écran d'accueil de la régie)
+    if (req.method === 'GET' && url.pathname === '/api/rooms') {
+        const list = [...rooms.entries()].map(([id, room]) => ({
+            id,
+            players: room.clients.size,
+            regies: room.regies ? room.regies.size : 0,
+            trackName: room.trackName || '',
+            createdAt: room.createdAt || 0,
+        }));
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify(list));
+        return;
+    }
+
     // Endpoint: GET /api/playlists
     if (req.method === 'GET' && url.pathname === '/api/playlists') {
         const list = getPlaylistsList();
@@ -703,6 +818,7 @@ const server = http.createServer((req, res) => {
     if (req.method === 'GET') {
         let reqPath = decodeURIComponent(url.pathname);
         if (reqPath === '/' || reqPath === '') reqPath = '/index.html';
+        if (reqPath === '/regie' || reqPath === '/regie/') reqPath = '/regie.html';
         const safePath = path.normalize(reqPath).replace(/^(\.\.[\/\\])+/, '');
         const filePath = path.join(ROOT_DIR, safePath);
 
@@ -873,6 +989,12 @@ wss.on('connection', (ws) => {
     console.log(`[+] Client connected: ${clientId} (color: ${ws.color})`);
 
     ws.on('message', (raw, isBinary) => {
+        // Paquets DMX de la régie
+        if (isBinary && Buffer.isBuffer(raw) && raw.length > 0 && raw[0] === DMX_PACKET) {
+            relayDmxPacket(ws, raw);
+            return;
+        }
+
         // Fast path : relais immédiat des paquets vocaux binaires (Micro)
         if (isBinary || (Buffer.isBuffer(raw) && raw.length > 0 && raw[0] === 0x01)) {
             if (!ws.roomId) return;
@@ -1014,6 +1136,8 @@ wss.on('connection', (ws) => {
                     sweepTime: Math.max(0, (Date.now() - (room.createdAt || Date.now())) / 1000),
                 });
 
+                sendDmxState(ws, room);
+
                 // Notify existing clients
                 broadcastRoom(room, { type: 'PEER_JOINED', peerId: clientId }, clientId);
 
@@ -1022,6 +1146,24 @@ wss.on('connection', (ws) => {
                     type: 'PLAYERS_UPDATE',
                     players: getPlayersSnapshot(room),
                 });
+                break;
+            }
+
+            // ─── REGIE_JOIN (page régie lumière : client à part, sans avatar) ──
+            case 'REGIE_JOIN': {
+                const roomId = String(msg.roomId || '').toUpperCase();
+                const room = rooms.get(roomId);
+                if (!room) {
+                    send(ws, { type: 'ROOM_NOT_FOUND', roomId });
+                    return;
+                }
+                if (!room.regies) room.regies = new Map();
+                room.regies.set(clientId, ws);
+                ws.roomId = roomId;
+                ws.isRegie = true;
+                console.log(`[Régie] ${clientId} ouvre la régie de ${roomId} (${room.regies.size} régie(s))`);
+                send(ws, { ...regiePlaybackMessage(room), type: 'REGIE_JOINED', roomId, clientId });
+                sendDmxState(ws, room);
                 break;
             }
 
@@ -1819,7 +1961,8 @@ wss.on('connection', (ws) => {
 
             // ─── PING ─────────────────────────────────────────────────────
             case 'PING': {
-                send(ws, { type: 'PONG' });
+                // t : heure d'envoi du client (renvoyée) ; serverTime : estimation de l'horloge serveur (ServerClock.js)
+                send(ws, { type: 'PONG', t: msg.t, serverTime: Date.now() });
                 break;
             }
 
@@ -1835,6 +1978,12 @@ wss.on('connection', (ws) => {
         const room = rooms.get(ws.roomId);
         if (!room) return;
 
+        if (ws.isRegie) {
+            if (room.regies) room.regies.delete(clientId);
+            console.log(`[Régie] ${clientId} ferme la régie de ${ws.roomId}`);
+            return;
+        }
+
         room.clients.delete(clientId);
         if (room.readyClients) {
             room.readyClients.delete(clientId);
@@ -1843,6 +1992,7 @@ wss.on('connection', (ws) => {
         if (room.clients.size === 0) {
             // Destroy empty room only when everyone has left
             if (room.readyTimeout) clearTimeout(room.readyTimeout);
+            sendRegies(room, { type: 'ROOM_CLOSED' });
             rooms.delete(ws.roomId);
             console.log(`[Room] Destroyed: ${ws.roomId} (empty)`);
         } else {
@@ -1903,5 +2053,6 @@ setInterval(() => {
             lightingVersion: room.lightingVersion || 1,
             lightingState: room.lightingState || defaultLightingState(),
         });
+        if (room.regies && room.regies.size > 0) sendRegies(room, regiePlaybackMessage(room));
     }
 }, 2000);

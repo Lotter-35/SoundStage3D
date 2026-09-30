@@ -11,6 +11,9 @@
  *   mp.sendDsp(bus, param, value);
  *   mp.sendPosition(x, y, z, rotY);
  */
+import { ServerClock } from './ServerClock.js';
+import { DMX_PACKET, decodeDmxPacket } from '../dmx/DmxProtocol.js';
+
 export class MultiplayerClient {
     constructor(wsUrl = 'ws://localhost:8068') {
         this._wsUrl = wsUrl;
@@ -58,6 +61,19 @@ export class MultiplayerClient {
         this._onReady = null;    // called when room is created/joined
         this._onVoiceData = null; // (senderId, sampleRate, pcmInt16) => void
         this._cachedClientIdBytes = null;
+        this._dmxListeners = [];  // (paquet DMX décodé) => void — trames de la régie lumière
+        /** Horloge du serveur (datation des trames DMX) */
+        this.clock = new ServerClock((m) => this._send(m));
+    }
+
+    /** Heure du serveur estimée (ms) */
+    serverNow() {
+        return this.clock.now();
+    }
+
+    /** Trames DMX reçues de la régie (déjà décodées, voir src/dmx/DmxProtocol.js) */
+    onDmx(cb) {
+        this._dmxListeners.push(cb);
     }
 
     // ─── Public API ───────────────────────────────────────────────────────────
@@ -78,6 +94,7 @@ export class MultiplayerClient {
 
             this._ws.onopen = () => {
                 this.connected = true;
+                this.clock.start();
                 if (roomParam) {
                     this._send({ type: 'JOIN_ROOM', roomId: roomParam.toUpperCase() });
                 } else {
@@ -91,9 +108,18 @@ export class MultiplayerClient {
                     data = await data.arrayBuffer();
                 }
 
-                // Paquet binaire : flux vocal en direct
+                // Paquet binaire : trame DMX de la régie ou flux vocal en direct
                 if (data instanceof ArrayBuffer) {
                     const bytes = new Uint8Array(data);
+                    if (bytes.length > 0 && bytes[0] === DMX_PACKET) {
+                        const packet = decodeDmxPacket(bytes);
+                        if (packet) {
+                            for (const cb of this._dmxListeners) {
+                                try { cb(packet); } catch (e) { console.error('[MP] DMX', e); }
+                            }
+                        }
+                        return;
+                    }
                     if (bytes.length >= 6 && bytes[0] === 0x01) {
                         const idLen = bytes[1];
                         const pad = (idLen % 2 === 1) ? 1 : 0;
@@ -122,6 +148,7 @@ export class MultiplayerClient {
 
             this._ws.onclose = () => {
                 this.connected = false;
+                this.clock.stop();
                 console.warn('[MP] WebSocket closed');
             };
 
@@ -686,7 +713,7 @@ export class MultiplayerClient {
             }
 
             case 'PONG':
-                // Heartbeat response — no-op
+                this.clock.onPong(msg);
                 break;
 
             case 'ERROR':

@@ -27,7 +27,8 @@ import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
-import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=156';
+import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=157';
+import { DmxReceiver } from './dmx/DmxReceiver.js';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=5';
 import { LightingSync } from './multiplayer/LightingSync.js?v=11';
 import { DanceManager } from './scene/DanceManager.js';
@@ -204,6 +205,14 @@ const spotManager = new SpotManager({ scene, camera, renderer, laserManager });
 ambiancePanel.setSpotManager(spotManager);
 window.__SS3D.spotManager = spotManager;
 
+// Trames DMX de la régie lumière (page /regie) : appliquées à leur heure d'affichage au patch
+// commun des lyres et des barres LED (projecteurs réglés sur « Piloté par le DMX »)
+const dmxReceiver = new DmxReceiver({
+    apply: (universe, bytes, start) => spotManager.applyDmxFrame(universe, bytes, start),
+    now: () => mp.serverNow(),
+});
+window.__SS3D.dmxReceiver = dmxReceiver;
+
 // 9 lyres de base posées sur la scène, sur le bord avant (z = -0.6), alignées sur les line arrays (x = ±12) et les subs.
 // Identifiants fixes : chaque client crée les mêmes lyres sans doublon avec l'état réseau.
 for (let i = 0; i < 9; i++) {
@@ -356,6 +365,7 @@ function earlyFrame() {
         _earlySweep += dt;
         laserManager.updateAll(dt, _earlySweep);
         strobeManager.updateAll(dt);
+        dmxReceiver.update();
         spotManager.update(dt);
         hazeVolume.update(dt);
         lightPoolGate.update();
@@ -879,6 +889,7 @@ const mpHost = window.location.hostname || 'localhost';
 const mpPort = (window.location.port === '8067') ? '8068' : (window.location.port === '8080' ? '8068' : (window.location.port || '8068'));
 const mpProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const mp = new MultiplayerClient(`${mpProto}://${mpHost}:${mpPort}`);
+mp.onDmx((packet) => dmxReceiver.push(packet));
 let playerAvatars = null;
 let _mpPosAccum = 0;
 const MP_POS_INTERVAL = 1 / 20; // 20 fps position sync
@@ -2085,6 +2096,13 @@ clientOptions.bind('mouseSensitivity', (v) => {
 });
 const optionsPanel = new OptionsPanel(document.getElementById('options-btn'));
 window.__SS3D.optionsPanel = optionsPanel;
+
+// Régie lumière DMX : page séparée, ouverte sur la salle en cours
+document.getElementById('regie-btn')?.addEventListener('click', () => {
+    const url = new URL('regie.html', window.location.href);
+    if (mp && mp.roomId) url.searchParams.set('room', mp.roomId);
+    window.open(url.toString(), '_blank');
+});
 
 controls.onEnter(async (file) => {
     await initAudio(file, true);
@@ -3694,6 +3712,7 @@ function renderFrame() {
 
     // Lyres Spot : DMX → mécanique → faisceaux batchés → lumières réelles
     if (spotManager) {
+        dmxReceiver.update();
         spotManager.update(dt);
     }
 
