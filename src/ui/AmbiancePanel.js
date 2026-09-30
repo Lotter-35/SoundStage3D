@@ -3714,6 +3714,8 @@ export class AmbiancePanel {
         let createdStrobesCount = 0;
         let createdLightsCount = 0;
         let createdSpotsCount = 0;
+        let createdLaser2Count = 0;
+        let lastCreatedLaser2 = null;
         let lastCreatedLaser = null;
         let lastCreatedStrobe = null;
         let lastCreatedSpot = null;
@@ -3820,12 +3822,15 @@ export class AmbiancePanel {
             const strobesToCreate = [];
             const lightsToCreate = [];
             const spotsToCreate = [];
+            const laser2sToCreate = [];   // nouveaux lasers (moteur de points, type « Laser2Fixture »)
 
             if (Array.isArray(parsed)) {
                 parsed.forEach(item => {
                     if (!item || typeof item !== 'object') return;
                     const type = item.type || '';
-                    if (type === 'SpotFixture') {
+                    if (type === 'Laser2Fixture') {
+                        laser2sToCreate.push(item);
+                    } else if (type === 'SpotFixture') {
                         spotsToCreate.push(item);
                     } else if (type === 'LaserPod' || type.includes('Laser') || item.beamCount !== undefined || item.laserId !== undefined) {
                         lasersToCreate.push(item);
@@ -3848,10 +3853,15 @@ export class AmbiancePanel {
                 if (Array.isArray(parsed.spots)) {
                     spotsToCreate.push(...parsed.spots);
                 }
+                if (Array.isArray(parsed.laser2s)) {
+                    laser2sToCreate.push(...parsed.laser2s);
+                }
 
-                if (lasersToCreate.length === 0 && strobesToCreate.length === 0 && lightsToCreate.length === 0 && spotsToCreate.length === 0) {
+                if (lasersToCreate.length === 0 && strobesToCreate.length === 0 && lightsToCreate.length === 0 && spotsToCreate.length === 0 && laser2sToCreate.length === 0) {
                     const type = parsed.type || '';
-                    if (type === 'SpotFixture') {
+                    if (type === 'Laser2Fixture') {
+                        laser2sToCreate.push(parsed);
+                    } else if (type === 'SpotFixture') {
                         spotsToCreate.push(parsed);
                     } else if (type === 'LaserPod' || type.includes('Laser') || parsed.beamCount !== undefined) {
                         lasersToCreate.push(parsed);
@@ -3863,7 +3873,7 @@ export class AmbiancePanel {
                 }
             }
 
-            const totalQueue = lasersToCreate.length + strobesToCreate.length + lightsToCreate.length + spotsToCreate.length;
+            const totalQueue = lasersToCreate.length + strobesToCreate.length + lightsToCreate.length + spotsToCreate.length + laser2sToCreate.length;
             let processed = 0;
 
             // Import d'une scène complète : elle REMPLACE les lasers, stroboscopes et lyres en place (pas de doublons)
@@ -3988,6 +3998,30 @@ export class AmbiancePanel {
                 }
             }
 
+            // 3 bis. Nouveaux lasers (réglages complets dans params, position comprise)
+            if (this.laser2Manager && laser2sToCreate.length > 0) {
+                for (let i = 0; i < laser2sToCreate.length; i++) {
+                    const ld = laser2sToCreate[i];
+                    const params = { ...(ld.params || {}) };
+                    if (ld.position && params.posX === undefined) {
+                        params.posX = ld.position.x;
+                        params.posY = ld.position.y;
+                        params.posZ = ld.position.z;
+                    }
+                    // Patch DMX recalculé (pas de conflit avec les projecteurs déjà en place)
+                    delete params.dmxAddress;
+                    const { id, laser } = this.laser2Manager.addLaser(null, params);
+                    this._emitSync({ category: 'laser2_add', data: { id, params: { ...laser.params } } });
+                    createdLaser2Count++;
+                    lastCreatedLaser2 = laser;
+                    processed++;
+                    updateProgress();
+                    if ((i + 1) % 3 === 0 && (i + 1) < laser2sToCreate.length) {
+                        await nextFrame();
+                    }
+                }
+            }
+
             // 4. Création des lumières classiques Three.js
             if (lightsToCreate.length > 0) {
                 for (let i = 0; i < lightsToCreate.length; i++) {
@@ -4003,7 +4037,7 @@ export class AmbiancePanel {
             }
         }
 
-        const totalCreated = createdLasersCount + createdStrobesCount + createdLightsCount + createdSpotsCount;
+        const totalCreated = createdLasersCount + createdStrobesCount + createdLightsCount + createdSpotsCount + createdLaser2Count;
 
         if (totalCreated === 0) {
             if (this.importStatusEl) {
@@ -4016,7 +4050,9 @@ export class AmbiancePanel {
         this._buildGui();
 
         // Sélectionner le dernier élément créé
-        if (lastCreatedStrobe) {
+        if (lastCreatedLaser2) {
+            this.selectSpot(lastCreatedLaser2);
+        } else if (lastCreatedStrobe) {
             this.selectStrobe(lastCreatedStrobe);
         } else if (lastCreatedLaser) {
             this.selectLaser(lastCreatedLaser);
@@ -4026,6 +4062,7 @@ export class AmbiancePanel {
         if (createdLasersCount > 0) parts.push(`${createdLasersCount} laser(s)`);
         if (createdStrobesCount > 0) parts.push(`${createdStrobesCount} stroboscope(s)`);
         if (createdSpotsCount > 0) parts.push(`${createdSpotsCount} lyre(s)`);
+        if (createdLaser2Count > 0) parts.push(`${createdLaser2Count} laser(s) (points / ILDA)`);
         if (createdLightsCount > 0) parts.push(`${createdLightsCount} lampe(s)`);
         const statusMsg = `✅ Succès : ${parts.join(', ')} créé(s) dans la scène !`;
 
