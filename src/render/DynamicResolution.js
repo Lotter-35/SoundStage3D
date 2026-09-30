@@ -4,7 +4,8 @@
  *
  *   - temps GPU de chaque image mesuré par requêtes de minuterie (EXT_disjoint_timer_query_webgl2),
  *     lues quelques images plus tard (aucune attente) ; sans l'extension, la résolution ne bouge pas ;
- *   - cible : fréquence de l'écran (estimée sur les images les plus rapides) ou FPS choisis, plafonnée à 144 ;
+ *   - cible : pourcentage réglable de la fréquence de l'écran, estimée sur les images les plus rapides
+ *     et remise à zéro quand la fenêtre change d'écran ;
  *   - paliers de 100 % à 67 % de l'échelle de rendu choisie (qui reste le plafond) ; baisse d'autant de
  *     paliers que nécessaire, remontée d'un palier à la fois quand le palier du dessus tient dans le budget ;
  *   - décision sur la médiane des mesures depuis le dernier changement (un pic isolé ne compte pas) ;
@@ -22,8 +23,7 @@ const BOUNCE_MS = 10000;       // baisse moins de 10 s après une remontée = va
 const MIN_SAMPLES = 20;        // mesures depuis le dernier changement avant de décider
 const WINDOW = 31;
 const DOWN_BAN_MS = 30000;     // après une baisse inutile             // mesures gardées pour la médiane
-const REFRESH_RATES = [60, 75, 90, 100, 120, 144];
-const MAX_TARGET_HZ = 144;
+const REFRESH_RATES = [50, 60, 75, 90, 100, 120, 144, 165, 170, 180, 200, 240];
 
 export class DynamicResolution {
     /**
@@ -34,7 +34,10 @@ export class DynamicResolution {
         this.gl = renderer.getContext();
         this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2');
         this.apply = apply;
-        this.mode = 'off';     // 'off' | 'auto' (fréquence de l'écran) | nombre de FPS
+        this.enabled = false;
+        this.targetPercent = 100; // FPS visés, en % de la fréquence de l'écran
+        this._screenKey = '';
+        this._lastScreenCheck = 0;
         this.level = 0;
         this.gpuMs = 0;        // médiane récente du temps GPU d'une image
         this._window = [];
@@ -56,20 +59,27 @@ export class DynamicResolution {
 
     get available() { return Boolean(this.ext); }
     get factor() { return STEPS[this.level]; }
-    get targetHz() { return this.mode === 'auto' ? this.refreshHz : Math.min(MAX_TARGET_HZ, this.mode); }
+    get targetHz() { return this.refreshHz * this.targetPercent / 100; }
 
-    /** @param {'off'|'auto'|number} mode */
-    setMode(mode) {
-        this.mode = mode;
+    /** @param {number} pct FPS visés en % de la fréquence de l'écran */
+    setTargetPercent(pct) {
+        this.targetPercent = pct;
+        this._downBan = null;
+        this._reset();
+    }
+
+    /** @param {boolean} enabled */
+    setEnabled(enabled) {
+        this.enabled = Boolean(enabled);
         this._downFrom = null;
         this._downBan = null;
         this._reset();
-        if (mode === 'off' && this.level !== 0) this._setLevel(0, performance.now());
+        if (!this.enabled && this.level !== 0) this._setLevel(0, performance.now());
     }
 
     /** À appeler juste avant le rendu de l'image */
     begin() {
-        if (this.mode === 'off' || !this.ext || this._active) return;
+        if (!this.enabled || !this.ext || this._active) return;
         const q = this._free.pop() || this.gl.createQuery();
         this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, q);
         this._active = q;
@@ -86,7 +96,7 @@ export class DynamicResolution {
     /** Une fois par image : lecture des mesures prêtes, estimation de la fréquence de l'écran, décision */
     update(now) {
         this._trackRefresh(now);
-        if (this.mode === 'off' || !this.ext) return;
+        if (!this.enabled || !this.ext) return;
         const gl = this.gl;
         const disjoint = gl.getParameter(this.ext.GPU_DISJOINT_EXT);
         while (this._pending.length) {
@@ -166,6 +176,22 @@ export class DynamicResolution {
 
     /** Fréquence de l'écran : les 10 % d'images les plus rapides suivent la synchro verticale */
     _trackRefresh(now) {
+        // Fenêtre passée sur un autre écran : on repart de zéro (nouvelle fréquence en ~1 s)
+        if (now - this._lastScreenCheck > 500) {
+            this._lastScreenCheck = now;
+            const sc = window.screen || {};
+            const key = `${sc.availLeft ?? ''},${sc.availTop ?? ''},${sc.width}x${sc.height},${window.devicePixelRatio}`;
+            if (key !== this._screenKey) {
+                const first = this._screenKey === '';
+                this._screenKey = key;
+                if (!first) {
+                    this._intervalCount = 0;
+                    this._intervalPos = 0;
+                    this._lastRefreshEstimate = 0;
+                    this._reset();
+                }
+            }
+        }
         const dt = this._lastFrame ? now - this._lastFrame : 0;
         this._lastFrame = now;
         if (dt > 0 && dt < 100) {
@@ -173,12 +199,16 @@ export class DynamicResolution {
             this._intervalPos = (this._intervalPos + 1) % this._intervals.length;
             this._intervalCount = Math.min(this._intervals.length, this._intervalCount + 1);
         }
-        if (this._intervalCount < 120 || now - this._lastRefreshEstimate < 2000) return;
+        if (this._intervalCount < 60 || now - this._lastRefreshEstimate < 1000) return;
         this._lastRefreshEstimate = now;
         const sorted = Array.from(this._intervals.subarray(0, this._intervalCount)).sort((a, b) => a - b);
         const hz = 1000 / sorted[Math.floor(sorted.length * 0.1)];
         let best = REFRESH_RATES[0];
         for (const r of REFRESH_RATES) if (Math.abs(r - hz) < Math.abs(best - hz)) best = r;
-        this.refreshHz = Math.min(MAX_TARGET_HZ, hz > MAX_TARGET_HZ ? MAX_TARGET_HZ : best);
+        const hzNew = Math.abs(best - hz) / best < 0.06 ? best : Math.round(hz);
+        if (hzNew !== this.refreshHz) {
+            this.refreshHz = hzNew;
+            this._reset();
+        }
     }
 }

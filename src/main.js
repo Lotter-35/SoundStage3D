@@ -47,7 +47,7 @@ import { HazeVolume } from './haze/HazeVolume.js';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
 import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
-import { clientOptions, RES_QUALITY, DYN_RES_MODES } from './ui/ClientOptions.js';
+import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
@@ -2122,7 +2122,8 @@ const dynamicResolution = new DynamicResolution(renderer, (factor) => {
     applyPixelRatio();
 });
 window.__SS3D.dynamicResolution = dynamicResolution;
-clientOptions.bind('dynamicResolution', (v) => dynamicResolution.setMode(DYN_RES_MODES[v] ?? 'off'));
+clientOptions.bind('dynamicResolution', (v) => dynamicResolution.setEnabled(v));
+clientOptions.bind('dynamicResolutionTarget', (v) => dynamicResolution.setTargetPercent(v));
 clientOptions.bind('renderScale', () => applyPixelRatio());
 clientOptions.bind('sharpness', (v) => laserManager && laserManager.setSharpness(v));
 clientOptions.bind('antialiasing', (mode) => laserManager && laserManager.setAntialiasing(mode));
@@ -3472,7 +3473,7 @@ function updateFpsCounter(dt, renderMs = 0) {
     if (fpsEl) {
         const dyn = dynamicResolution.factor;
         fpsEl.textContent = dyn < 1 ? `${_fps} FPS · ${Math.round(dyn * 100)} %` : _fps + ' FPS';
-        fpsEl.title = `Résolution dynamique : ${Math.round(dyn * 100)} % · GPU ${dynamicResolution.gpuMs.toFixed(1)} ms · cible ${dynamicResolution.targetHz} FPS`;
+        fpsEl.title = `Résolution dynamique : ${Math.round(dyn * 100)} % · GPU ${dynamicResolution.gpuMs.toFixed(1)} ms · cible ${Math.round(dynamicResolution.targetHz)} FPS (${dynamicResolution.targetPercent} % de ${dynamicResolution.refreshHz} Hz)`;
     }
 
     _debugAccum = 0;

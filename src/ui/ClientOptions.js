@@ -33,14 +33,6 @@ export const RES_QUALITY = {
 };
 const RES_QUALITY_NAMES = Object.keys(RES_QUALITY);
 
-/** Résolution dynamique : FPS visés (Auto = fréquence de l'écran, plafonnée à 144) */
-export const DYN_RES_MODES = {
-    'Désactivée': 'off',
-    'Auto (fréquence de l’écran)': 'auto',
-    '60 FPS': 60,
-    '120 FPS': 120,
-    '144 FPS': 144,
-};
 
 export const OPTION_FOLDERS = [
     { id: 'display', title: '🖥️ Affichage' },
@@ -57,7 +49,8 @@ const bool = (value, label, folder, hint) => ({ value, label, folder, hint });
 export const CLIENT_OPTIONS_SCHEMA = {
     // ── Affichage ──
     renderScale:      num(100, 25, 200, 5, 'Échelle de rendu (%)', 'display', '100 % = résolution de l\'écran (plafonnée à 1,5× sur écran haute densité)'),
-    dynamicResolution: opt(Object.keys(DYN_RES_MODES), 'Auto (fréquence de l’écran)', 'Résolution dynamique', 'display', 'Baisse l’échelle de rendu (jusqu’à 67 %) quand la carte graphique ne tient pas les FPS visés ; l’échelle de rendu choisie reste le maximum'),
+    dynamicResolution: bool(true, 'Résolution dynamique', 'display', 'Baisse l’échelle de rendu (jusqu’à 67 %) quand la carte graphique ne tient pas les FPS visés ; l’échelle de rendu choisie reste le maximum'),
+    dynamicResolutionTarget: num(100, 30, 100, 5, 'Résolution dynamique : FPS visés (% de l’écran)', 'display', '100 % = fréquence de l’écran (ex. 120 Hz → 120 FPS, 50 % → 60 FPS). Mise à jour quand la fenêtre change d’écran'),
     sharpness:        num(0, 0, 1, 0.01, 'Netteté', 'display', 'Accentuation des contours en post-traitement'),
     antialiasing:     opt(AA_MODES, AA_MODES[0], 'Anticrénelage', 'display'),
 
