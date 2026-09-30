@@ -3534,6 +3534,31 @@ function updateDebug(dt) {
     const ftMaxClass = _frameTimeMax <= 16 ? 'dbg-val' : _frameTimeMax <= 33 ? 'dbg-warn' : 'dbg-bad';
     const vsyncHz = _frameTimeAvg > 0 ? Math.round(1000 / _frameTimeAvg) : 60;
 
+    // Résolution dynamique et résolution Auto des effets (valeurs réellement appliquées)
+    const dr = dynamicResolution;
+    const budgetMs = dr.targetHz > 0 ? 1000 / dr.targetHz * 0.9 : 0;
+    const gpuClass = !dr.enabled || dr.gpuMs <= budgetMs ? 'dbg-val' : dr.gpuMs <= budgetMs * 1.3 ? 'dbg-warn' : 'dbg-bad';
+    const sceneRT = laserManager && laserManager._sceneRT;
+    const effectLine = (label, pass, rt, busy) => {
+        if (!pass || !rt) return '';
+        const setting = pass.resolutionSetting === 'auto' ? 'Auto' : `fixe ${Math.round(pass.resolutionSetting * 100)} %`;
+        const extra = [];
+        if (busy) extra.push('beaucoup → ½');
+        if (pass.resolutionFactor < 1 && !busy) extra.push(`× ${pass.resolutionFactor}`);
+        return `\n  ${label.padEnd(17)}<span class="dbg-val">${rt.width}×${rt.height}</span>  (${setting}, ${Math.round(pass.resolutionScale * 100)} %${extra.length ? ', ' + extra.join(', ') : ''})`;
+    };
+    const dynLines =
+`<span class="dbg-title">── RÉSOLUTION DYNAMIQUE ───────</span>
+  État             <span class="dbg-val">${!dr.enabled ? 'désactivée' : !dr.available ? 'indisponible (pas de minuterie GPU)' : 'active'}</span>
+  Écran            <span class="dbg-val">${dr.refreshHz} Hz</span>  → cible <span class="dbg-val">${Math.round(dr.targetHz)} FPS</span> (${dr.targetPercent} %)
+  Temps GPU (méd.) <span class="${gpuClass}">${dr.gpuMs.toFixed(2)} ms</span>  / budget ${budgetMs.toFixed(2)} ms
+  Échelle dyn.     <span class="dbg-val">${Math.round(dr.factor * 100)} %</span>  (palier ${dr.level}${dr._downBan && performance.now() < dr._downBan.until ? ', baisse bloquée' : ''})
+  Image rendue     <span class="dbg-val">${sceneRT ? `${sceneRT.width}×${sceneRT.height}` : '-'}</span>  MSAA ${laserManager ? laserManager._msaaSamples : '-'}x${
+    effectLine('Brouillard', hazeVolume && hazeVolume.pass, hazeVolume && hazeVolume.pass.target, false)}${
+    effectLine('Lyres', spotManager && spotManager.volumePass, spotManager && spotManager.volumePass.volumeTarget, spotManager && spotManager._busy)}${
+    effectLine('Lasers', laserManager && laserManager._fanPass, laserManager && laserManager._fanPass && laserManager._fanPass.fanTarget, laserManager && laserManager._fanBusy)}
+`;
+
     debugContent.innerHTML =
 `<span class="dbg-title">── FRAME & PERFORMANCE ────────</span>
   FPS              <span class="${fpsClass}">${_fps}</span>
@@ -3542,7 +3567,7 @@ function updateDebug(dt) {
   Frame tick max   <span class="${ftMaxClass}">${_frameTimeMax.toFixed(1)} ms</span>
   Pixel ratio      <span class="dbg-val">${renderer.getPixelRatio()}</span>
   Resolution       <span class="dbg-val">${renderer.domElement.width}×${renderer.domElement.height}</span>
-<span class="dbg-title">── THREE.JS RENDER ────────────</span>
+${dynLines}<span class="dbg-title">── THREE.JS RENDER ────────────</span>
   Draw calls       <span class="dbg-val">${ren.calls}</span>
   Triangles        <span class="dbg-val">${ren.triangles.toLocaleString()}</span>
   Points           <span class="dbg-val">${ren.points}</span>
