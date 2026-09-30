@@ -18,6 +18,7 @@ import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=200';
 import { StrobeInspectorPanel } from '../strobe/ui/StrobeInspectorPanel.js?v=8';
 import { SpotInspectorPanel } from '../spot/ui/SpotInspectorPanel.js';
 import { LedBarInspectorPanel } from '../ledbar/ui/LedBarInspectorPanel.js';
+import { Laser2InspectorPanel } from '../laser2/ui/Laser2InspectorPanel.js';
 import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
@@ -74,6 +75,9 @@ export class AmbiancePanel {
         // Barres LED : sélectionnées dans le même emplacement que les lyres (selectedSpot, isLedBar = true)
         this.ledBarManager = null;
         this._ledBarInspectorPanel = null;
+        // Nouveaux lasers (moteur de points) : même emplacement de sélection (selectedSpot, isLaser2 = true)
+        this.laser2Manager = null;
+        this._laser2InspectorPanel = null;
         this.lights = []; // [{ id, name, light, type, isBuiltin, markerMesh, helper, defaultConfig }]
         this._nextId = 1;
 
@@ -213,20 +217,42 @@ export class AmbiancePanel {
         this._buildGui();
     }
 
-    /** Catégorie réseau d'un projecteur de l'emplacement « lyre » (lyre Spot ou barre LED) */
+    /**
+     * Injecte le Laser2Manager (nouveaux lasers à moteur de points) et initialise son panneau d'inspection.
+     * @param {import('../laser2/Laser2Manager.js').Laser2Manager} laser2Manager
+     */
+    setLaser2Manager(laser2Manager) {
+        this.laser2Manager = laser2Manager;
+        this._laser2InspectorPanel = new Laser2InspectorPanel({ laser2Manager, ambiancePanel: this });
+        this._buildGui();
+    }
+
+    /** Catégorie réseau d'un projecteur de l'emplacement « lyre » (lyre Spot, barre LED ou nouveau laser) */
     _fixtureCategory(fixture) {
+        if (fixture && fixture.isLaser2) return 'laser2';
         return fixture && fixture.isLedBar ? 'ledbar' : 'spot';
     }
 
     /** Panneau d'inspection d'un projecteur de l'emplacement « lyre » */
     _fixturePanel(fixture) {
+        if (fixture && fixture.isLaser2) return this._laser2InspectorPanel;
         return fixture && fixture.isLedBar ? this._ledBarInspectorPanel : this._spotInspectorPanel;
     }
 
-    /** Vrai si l'inspecteur d'une lyre ou d'une barre LED est ouvert */
+    /** Vrai si l'inspecteur d'une lyre, d'une barre LED ou d'un nouveau laser est ouvert */
     _isFixturePanelOpen() {
         return Boolean((this._spotInspectorPanel && this._spotInspectorPanel.isOpen)
-            || (this._ledBarInspectorPanel && this._ledBarInspectorPanel.isOpen));
+            || (this._ledBarInspectorPanel && this._ledBarInspectorPanel.isOpen)
+            || (this._laser2InspectorPanel && this._laser2InspectorPanel.isOpen));
+    }
+
+    /** Rafraîchit le panneau ouvert d'un projecteur de l'emplacement « lyre » */
+    _syncFixturePanel(fixture) {
+        const panel = this._fixturePanel(fixture);
+        if (!panel || !panel.isOpen) return;
+        if (fixture.isLaser2) panel.syncFromLaser();
+        else if (fixture.isLedBar) panel.syncFromBar();
+        else panel.syncFromSpot();
     }
 
     /**
@@ -394,10 +420,7 @@ export class AmbiancePanel {
                 const spot = this.selectedSpot;
                 spot.isBeingDragged = true;
                 spot.syncFromGizmo();
-                const panel = this._fixturePanel(spot);
-                if (panel && panel.isOpen) {
-                    if (spot.isLedBar) panel.syncFromBar(); else panel.syncFromSpot();
-                }
+                this._syncFixturePanel(spot);
                 this._emitSync({ category: `${this._fixtureCategory(spot)}_update`, id: spot.id, data: spot.getPlacement() });
                 return;
             }
@@ -1932,12 +1955,16 @@ export class AmbiancePanel {
         this._updateAllHelpersVisibility();
         this._rebuildInspectorGui();
 
-        if (spot.isLedBar) {
-            if (this._spotInspectorPanel && this._spotInspectorPanel.isOpen) this._spotInspectorPanel.close();
-            if (this._ledBarInspectorPanel) this._ledBarInspectorPanel.openForBar(spot);
-        } else {
-            if (this._ledBarInspectorPanel && this._ledBarInspectorPanel.isOpen) this._ledBarInspectorPanel.close();
-            if (this._spotInspectorPanel) this._spotInspectorPanel.openForSpot(spot);
+        // Un seul inspecteur de projecteur ouvert à la fois (lyre, barre LED ou nouveau laser)
+        const panels = [this._spotInspectorPanel, this._ledBarInspectorPanel, this._laser2InspectorPanel];
+        const target = this._fixturePanel(spot);
+        for (const panel of panels) if (panel && panel !== target && panel.isOpen) panel.close();
+        if (spot.isLaser2) {
+            if (target) target.openForLaser(spot);
+        } else if (spot.isLedBar) {
+            if (target) target.openForBar(spot);
+        } else if (target) {
+            target.openForSpot(spot);
         }
     }
 
@@ -1959,11 +1986,22 @@ export class AmbiancePanel {
         if (this._ledBarInspectorPanel && this._ledBarInspectorPanel.isOpen) {
             this._ledBarInspectorPanel.close();
         }
+        if (this._laser2InspectorPanel && this._laser2InspectorPanel.isOpen) {
+            this._laser2InspectorPanel.close();
+        }
         this._rebuildInspectorGui();
     }
 
     /** Duplique une lyre (réglages identiques, décalée de 0.8 m, nouvelle adresse DMX libre) */
     duplicateSelectedSpot(spot = this.selectedSpot) {
+        if (spot && spot.isLaser2) {
+            if (!this.laser2Manager) return null;
+            const res = this.laser2Manager.duplicateLaser(spot.id);
+            if (!res) return null;
+            this._emitSync({ category: 'laser2_add', data: { id: res.id, params: { ...res.laser.params } } });
+            this.selectSpot(res.laser);
+            return res;
+        }
         if (spot && spot.isLedBar) {
             if (!this.ledBarManager) return null;
             const res = this.ledBarManager.duplicateBar(spot.id);
@@ -1981,6 +2019,15 @@ export class AmbiancePanel {
     }
 
     deleteSelectedSpot(spot = this.selectedSpot) {
+        if (spot && spot.isLaser2) {
+            if (!this.laser2Manager) return;
+            const id = spot.id;
+            if (this.selectedSpot === spot) this.deselectSpot();
+            this.laser2Manager.removeLaser(id);
+            this._emitSync({ category: 'laser2_remove', id });
+            this._rebuildInspectorGui();
+            return;
+        }
         if (spot && spot.isLedBar) {
             if (!this.ledBarManager) return;
             const id = spot.id;
@@ -2001,6 +2048,12 @@ export class AmbiancePanel {
     /** Copie la configuration complète de la lyre (JSON) dans le presse-papiers */
     exportSelectedSpot(spot = this.selectedSpot) {
         if (!spot) return;
+        if (spot.isLaser2) {
+            const json = JSON.stringify({ name: spot.displayName, type: 'Laser2Fixture', params: spot.params }, null, 2);
+            try { navigator.clipboard.writeText(json); } catch (_) {}
+            console.log('[Laser] Configuration :', json);
+            return;
+        }
         if (spot.isLedBar) {
             const json = JSON.stringify({ name: spot.displayName, type: 'LedBarFixture', params: spot.params }, null, 2);
             try { navigator.clipboard.writeText(json); } catch (_) {}
@@ -2152,6 +2205,19 @@ export class AmbiancePanel {
                 if (bar) {
                     this._lastFixturePick = performance.now();
                     this.selectSpot(bar);
+                    return;
+                }
+            }
+        }
+
+        // ── Tester les nouveaux lasers ──
+        if (this.laser2Manager && this.laser2Manager.count > 0) {
+            const hits = this.raycaster.intersectObjects(this.laser2Manager.getLaserObjects(), false);
+            if (hits.length > 0) {
+                const l2 = this.laser2Manager.getLaserFromObject(hits[0].object);
+                if (l2) {
+                    this._lastFixturePick = performance.now();
+                    this.selectSpot(l2);
                     return;
                 }
             }
@@ -2310,6 +2376,25 @@ export class AmbiancePanel {
                     this._emitSync({ category: 'ledbar_add', data: { id, params: { ...bar.params } } });
                     this.selectSpot(bar);
                     this._logSceneProbe('💡 Barre LED');
+                    return null;
+                }
+
+            case '🔦 Laser (points / ILDA)':
+                if (!this.laser2Manager) {
+                    console.warn('[AmbiancePanel] Laser2Manager non disponible. Appelez setLaser2Manager() depuis main.js.');
+                    return null;
+                }
+                {
+                    // En hauteur devant le joueur, faisceaux dirigés à l'opposé de la caméra
+                    const l2Pos = spawnPos.clone();
+                    l2Pos.y = Math.max(6.0, l2Pos.y);
+                    const { id, laser } = this.laser2Manager.addLaser(l2Pos, {
+                        yaw: this.camera ? Math.round(THREE.MathUtils.radToDeg(Math.atan2(
+                            l2Pos.x - this.camera.position.x, l2Pos.z - this.camera.position.z))) : 0,
+                    });
+                    this._emitSync({ category: 'laser2_add', data: { id, params: { ...laser.params } } });
+                    this.selectSpot(laser);
+                    this._logSceneProbe('🔦 Laser');
                     return null;
                 }
 
@@ -4349,6 +4434,7 @@ export class AmbiancePanel {
             '⚡ Stroboscope',
             '🎯 Lyre Spot',
             '💡 Barre LED',
+            '🔦 Laser (points / ILDA)',
             '🔴 LaserPod',
         ]).name('Type');
 
@@ -4560,6 +4646,13 @@ export class AmbiancePanel {
             });
         }
 
+        // 6. Nouveaux lasers
+        if (this.laser2Manager) {
+            this.laser2Manager.getAllLasers().forEach(l => {
+                lightOptions[`🔦 Laser #${l.number}`] = `laser2_${l.id}`;
+            });
+        }
+
         let currentSelectedId = '';
         if (this.selectedSpot) {
             currentSelectedId = `${this._fixtureCategory(this.selectedSpot)}_${this.selectedSpot.id}`;
@@ -4584,6 +4677,11 @@ export class AmbiancePanel {
                 if (laser) {
                     this.selectLaser(laser);
                 }
+                return;
+            }
+            if (typeof id === 'string' && id.startsWith('laser2_')) {
+                const l2 = this.laser2Manager ? this.laser2Manager.getLaser(id.slice(7)) : null;
+                if (l2) this.selectSpot(l2);
                 return;
             }
             if (typeof id === 'string' && id.startsWith('ledbar_')) {
@@ -4623,7 +4721,7 @@ export class AmbiancePanel {
                 deleteSpot: () => this.deleteSelectedSpot(spot),
             };
 
-            const fSpotActions = this.fInspector.addFolder(`${spot.isLedBar ? '💡 Barre LED' : '🎯 Lyre Spot'} #${spot.number} - Actions`);
+            const fSpotActions = this.fInspector.addFolder(`${spot.isLaser2 ? '🔦 Laser' : spot.isLedBar ? '💡 Barre LED' : '🎯 Lyre Spot'} #${spot.number} - Actions`);
             fSpotActions.open();
             fSpotActions.add(spotActions, 'exportSpot').name('💾 Exporter');
             fSpotActions.add(spotActions, 'duplicateSpot').name('📋 Dupliquer');

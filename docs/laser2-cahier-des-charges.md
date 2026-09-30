@@ -113,7 +113,7 @@ Le générateur interne produit des points qui passent par la même physique des
 | 1 | Mode | Éteint · DMX (générateur interne) · ILDA fichier · ILDA live · Mire de test |
 | 2–3 | Dimmer + fin | 0–100 % |
 | 4 | Shutter / Strobe | fermé, ouvert, strobe lent → rapide, aléatoire, pulse |
-| 5 | Banque | Faisceaux · Nappes & tunnels · Graphiques · Animations · Texte · banques ILDA du serveur |
+| 5 | Banque | Faisceaux · Nappes & tunnels · Graphiques · Animations · banques ILDA du serveur |
 | 6 | Motif | numéro dans la banque |
 | 7 | Image / lecture | 0–127 image fixe, 128–255 lecture auto lente → rapide |
 | 8 | Vitesse de dessin | kpps envoyés aux galvos (plus vite = plus fluide mais plus déformé) |
@@ -169,12 +169,7 @@ Premier nouveau laser de test : à côté des 2 actuels (x = ±12 m, y = 14 m).
 | Persistance | Deux modes, Œil par défaut. |
 | Fumée | Pas de lien avec le brouillard de la scène, laser toujours visible ; volutes nouvelles et configurables. |
 | Couleurs | RGB dans le code, sélecteur de couleur dans les options. |
-| Texte | À préciser (voir ci-dessous). |
+| Texte | Pas besoin (un fichier ILDA contenant du texte reste lisible). |
 | Nombre de lasers | 50 boîtiers maximum, formes complexes. |
 | Éblouissement | Réaliste. Zones de masquage : non activées par défaut. |
 | Emplacement | À côté des 2 lasers actuels. |
-
-### Question ouverte
-
-- **Texte** : faire écrire au laser un mot tapé dans le panneau (ex. « SOUNDSTAGE ») avec une police vectorielle
-  spéciale laser, sans passer par un fichier ILDA ? (Un fichier ILDA qui contient déjà du texte marche de toute façon.)

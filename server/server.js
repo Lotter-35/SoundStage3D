@@ -468,6 +468,12 @@ function defaultLightingState() {
             const id = `ledbar-stage-${i + 1}`;
             return [id, { id, params: {} }];
         })),
+        // Nouveaux lasers (moteur de points) : { id: { id, params } }. Les 2 lasers posés au spawn
+        // dans src/main.js (laser2-stage-1…2)
+        laser2s: Object.fromEntries(Array.from({ length: 2 }, (_, i) => {
+            const id = `laser2-stage-${i + 1}`;
+            return [id, { id, params: {} }];
+        })),
     };
 }
 
@@ -569,6 +575,17 @@ function applyLightingChange(state, msg) {
         }
     } else if (category === 'ledbar_remove') {
         if (state.ledBars) delete state.ledBars[id];
+    } else if (category === 'laser2_add') {
+        if (!state.laser2s) state.laser2s = {};
+        if (data && data.id) state.laser2s[data.id] = { id: data.id, params: { ...(data.params || {}) } };
+    } else if (category === 'laser2_update') {
+        if (!state.laser2s) state.laser2s = {};
+        if (id && data) {
+            if (!state.laser2s[id]) state.laser2s[id] = { id, params: {} };
+            Object.assign(state.laser2s[id].params, data);
+        }
+    } else if (category === 'laser2_remove') {
+        if (state.laser2s) delete state.laser2s[id];
     } else if (category === 'reset_all') {
         const fresh = defaultLightingState();
         state.env = fresh.env;
@@ -582,6 +599,7 @@ function applyLightingChange(state, msg) {
         state.spotGlobals = {};
         state.spotFx = {};
         state.ledBars = fresh.ledBars; // barres LED du spawn conservées
+        state.laser2s = fresh.laser2s; // nouveaux lasers du spawn conservés
         state.haze = {};
     }
 }
