@@ -122,8 +122,15 @@ export class LedBarManager {
         this._instancer.flush();
     }
 
+    /** Caméra dans les faisceaux d'une barre (image précédente) : le SpotManager réduit la résolution */
+    get cameraInsideBeam() {
+        for (const b of this._bars.values()) if (b.cameraInside) return true;
+        return false;
+    }
+
     pushInstances(batch) {
-        for (const b of this._bars.values()) b.pushInstances(batch);
+        const cam = this.spotManager.camera;
+        for (const b of this._bars.values()) b.pushInstances(batch, cam);
     }
 
     dispose() {

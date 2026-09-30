@@ -22,7 +22,7 @@ import {
 } from './config/ledBarParams.js';
 import { decode, getFootprint } from './LedBarProfile.js';
 import { computeFxPixels } from './LedBarEffects.js';
-import { getLedBarHousingInstancer, pixelOffsetX, bodyLength, LED_LENS_RADIUS, BODY_DEPTH } from './LedBarHousing.js';
+import { getLedBarHousingInstancer, pixelOffsetX, bodyLength, LED_LENS_RADIUS, BODY_DEPTH, PIXEL_PITCH } from './LedBarHousing.js';
 import { findConeOccluders, OCCLUDERS_PER_SPOT } from '../spot/SpotOcclusion.js';
 
 /** Portée de rendu des faisceaux (m) */
@@ -41,6 +41,7 @@ const PATCH_KEYS = new Set(['dmxUniverse', 'dmxAddress', 'dmxMode', 'dmxControl'
 
 const _rot = new THREE.Matrix4();
 const _rgb = [0, 0, 0];
+const _lp = new THREE.Vector3();
 const _rgbB = [0, 0, 0];
 
 const wrap180 = (a) => a - 360 * Math.floor((a + 180) / 360);
@@ -201,10 +202,13 @@ export class LedBarFixture {
         const n = pixelCountOf(this.params);
         if (n === this._n) return;
         if (this._slot) this._instancer.freeBar(this._slot);
-        for (const r of this._rows) { this.batch.paramsRow(r).fill(0); this.batch.freeRow(r); }
+        this._freeRows();
         this._n = n;
         this._slot = this._instancer.allocBar(n);
         this._rows = Array.from({ length: n }, () => this.batch.allocRow());
+        // Faisceau unique qui remplace ceux des LED quand la caméra est dedans (voir pushInstances)
+        this._mergedRow = this.batch.allocRow();
+        this._mergedLens = new THREE.Vector3();
         this._lensPos = Array.from({ length: n }, () => new THREE.Vector3());
         this._lastLens.fill(-1);
         this._lastHead.elements[0] = NaN;
@@ -389,11 +393,24 @@ export class LedBarFixture {
         this._flux = flux;
     }
 
-    /** Ajoute les faisceaux et éblouissements des LED allumées au batch des lyres */
-    pushInstances(batch) {
+    /**
+     * Ajoute les faisceaux et éblouissements des LED allumées au batch des lyres.
+     * Caméra DANS les faisceaux de la barre : chaque faisceau couvrirait tout l'écran (16 à 32 fois le
+     * calcul plein écran → gros lag). Là où les faisceaux se chevauchent, on les remplace par UN faisceau
+     * équivalent (couleur moyenne, éclairement identique à la position de la caméra).
+     * @param {import('../spot/SpotBatch.js').SpotBatch} batch
+     * @param {THREE.Camera} [camera]
+     */
+    pushInstances(batch, camera = null) {
+        this.cameraInside = false;
         if (this._flux <= 1e-4) return;
         const cols = this._colors;
         const R = this._splitAxis || this.right;
+        this.cameraInside = Boolean(camera && this._pushMerged(batch, camera.position, R));
+        if (this.cameraInside) {
+            for (let i = 0; i < this._n; i++) batch.pushGlare(this._lensPos[i], this._rows[i], this.axis, BEAM_WEIGHT);
+            return;
+        }
         for (let i = 0; i < this._n; i++) {
             const r = this.batch.paramsRow(this._rows[i]);
             // LED éteinte (noir) : aucun faisceau → aucun coût GPU
@@ -403,13 +420,75 @@ export class LedBarFixture {
         }
     }
 
+    /** Faisceau fusionné si la caméra est dans la zone où les faisceaux des LED se chevauchent */
+    _pushMerged(batch, cam, R) {
+        const n = this._n;
+        if (n < 2 || this._mergedRow === null) return false;
+        const r0 = this.batch.paramsRow(this._rows[0]);
+        const rN = this.batch.paramsRow(this._rows[n - 1]);
+        const tanCone = Math.max(r0[30], rN[30]);
+        if (!(tanCone > 0)) return false;
+        const Lm = (n - 1) * PIXEL_PITCH / 2 + LED_LENS_RADIUS;       // rayon de la « lentille » fusionnée
+        const lens = this._mergedLens.set(0, 0, BODY_DEPTH / 2 + 0.004).applyMatrix4(this._head);
+        const aM = Lm / tanCone;
+        _lp.copy(cam).sub(lens);
+        const zc = _lp.dot(this.axis);                               // distance caméra ↔ lentilles le long de l'axe
+        // Trop près de la barre : les faisceaux ne se chevauchent pas encore (on les garde séparés)
+        if (zc < 2.5 * PIXEL_PITCH / tanCone || zc > LEDBAR_BEAM_RANGE) return false;
+        const radial2 = _lp.lengthSq() - zc * zc;
+        const rad = Lm + zc * tanCone;
+        if (radial2 > rad * rad) return false;                       // caméra hors du faisceau de la barre
+
+        // Couleurs moyennes et nombre de faisceaux qui éclairent la caméra
+        const m = this.batch.paramsRow(this._mergedRow);
+        let cr = 0, cg = 0, cb = 0, br = 0, bg = 0, bb = 0, tan = 0;
+        for (let i = 0; i < n; i++) {
+            const r = this.batch.paramsRow(this._rows[i]);
+            cr += r[0]; cg += r[1]; cb += r[2];
+            br += r[4]; bg += r[5]; bb += r[6];
+            tan += r[8];
+        }
+        const inv = 1 / n;
+        // Flux du faisceau fusionné : même éclairement que les vrais faisceaux à la position de la caméra
+        // (somme des faisceaux qui la contiennent, chacun en 1/z² depuis son apex)
+        const aS = LED_LENS_RADIUS / tanCone;
+        let eReal = 0;
+        for (let i = 0; i < n; i++) {
+            _lp.copy(cam).sub(this._lensPos[i]);
+            const z = _lp.dot(this.axis) + aS;
+            if (z <= 0) continue;
+            const rr = z * tanCone;
+            if (_lp.lengthSq() - (z - aS) * (z - aS) <= rr * rr) eReal += 1 / (z * z);
+        }
+        if (eReal <= 0) return false;
+        // × 0,6 (calé sur le rendu des faisceaux séparés) : dans les vrais faisceaux, la caméra est souvent loin de leur axe (image de fenêtre plus sombre au bord)
+        const f = 0.6 * r0[3] * eReal * (zc + aM) * (zc + aM);
+        m.set(r0);
+        m[0] = cr * inv; m[1] = cg * inv; m[2] = cb * inv; m[3] = f;
+        m[4] = br * inv; m[5] = bg * inv; m[6] = bb * inv;
+        m[8] = tan * inv;
+        m[19] = Lm;
+        m[30] = tanCone; m[31] = aM;
+        batch.pushVolume(lens, this._mergedRow, this.axis, LEDBAR_BEAM_RANGE, R, BEAM_WEIGHT);
+        return true;
+    }
+
     dispose() {
         this.patch.unregister(this);
         this.scene.remove(this.group);
         if (this._slot) this._instancer.freeBar(this._slot);
+        this._freeRows();
+        this._slot = null;
+    }
+
+    _freeRows() {
         for (const r of this._rows) { this.batch.paramsRow(r).fill(0); this.batch.freeRow(r); }
         this._rows = [];
-        this._slot = null;
+        if (this._mergedRow !== undefined && this._mergedRow !== null) {
+            this.batch.paramsRow(this._mergedRow).fill(0);
+            this.batch.freeRow(this._mergedRow);
+            this._mergedRow = null;
+        }
     }
 }
 
