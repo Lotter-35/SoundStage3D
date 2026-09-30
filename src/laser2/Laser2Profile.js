@@ -5,7 +5,7 @@
  * Mode Standard : 36 canaux (dimmer et positions en 16 bits). Utilisé par le jeu ET par la régie.
  *
  *  1 Mode            0-9 éteint · 10-59 motifs internes · 60-109 fichier ILDA · 110-159 ILDA live
- *                    (en attendant : fichier ILDA) · 160-209 mire de test · 210-255 motifs internes
+ *                    (la banque choisit le canal live) · 160-209 mire de test · 210-255 motifs internes
  *  2-3 Dimmer        4 Obturateur / strobe (0-19 fermé, 50-99 strobe, reste ouvert)
  *  5 Banque          tranches de 10 : banque 1 = 0-9, banque 2 = 10-19… (banques internes ou ILDA selon le mode)
  *  6 Motif           numéro dans la banque (0 = premier)
@@ -62,14 +62,15 @@ function encRot(angle, speed) {
 function modeOf(v) {
     if (v < 10) return 'off';
     if (v < 60 || v >= 210) return 'internal';
-    if (v < 160) return 'ilda';
+    if (v < 110) return 'ilda';
+    if (v < 160) return 'live';
     return 'test';
 }
 
 const CHANNELS = [
     { name: 'Mode (éteint / motifs / ILDA / ILDA live / mire)',
       dec: (v, o, ctx) => { ctx.mode = modeOf(v); },
-      enc: p => (p.source === 'Fichier ILDA' ? 80 : p.pattern === 'Mire ILDA' ? 180 : 30) },
+      enc: p => (p.source === 'ILDA live' ? 130 : p.source === 'Fichier ILDA' ? 80 : p.pattern === 'Mire ILDA' ? 180 : 30) },
     { name: 'Dimmer', wide: true, intensity: true,
       dec: (v16, o) => { o.dimmer = (v16 / 65535) * 100; },
       enc: p => round(clamp(p.dimmer / 100, 0, 1) * 65535) },
@@ -134,6 +135,7 @@ const CHANNELS = [
 
 /** Banque DMX (index) des réglages courants */
 function bankOf(p) {
+    if (p.source === 'ILDA live') return Math.max(0, Math.round(p.liveChannel) - 1);
     if (p.source === 'Fichier ILDA') {
         const e = ildaLibrary.entry(p.ildaFile);
         return e ? Math.max(0, ildaLibrary.bankNames.indexOf(e.bank)) : 0;
@@ -185,7 +187,11 @@ export function decode(universe, address) {
     }
     params.color = ctx.macro || rgbToHex(ctx.r, ctx.g, ctx.b);
     // Contenu : banque + motif, interprétés selon le mode
-    if (ctx.mode === 'ilda') {
+    if (ctx.mode === 'live') {
+        // ILDA live : la banque choisit le canal live (banque 1 = canal 1…)
+        params.source = 'ILDA live';
+        params.liveChannel = Math.min(16, ctx.bank + 1);
+    } else if (ctx.mode === 'ilda') {
         params.source = 'Fichier ILDA';
         const banks = ildaLibrary.bankNames;
         const bank = banks[Math.min(ctx.bank, banks.length - 1)];

@@ -302,6 +302,11 @@ export class CoreSystem {
     }
 
     setDoc(key, frames) {
+        // Image live : remplace la précédente du même canal (« live:N#série »)
+        if (key.startsWith('live:')) {
+            const prefix = key.slice(0, key.indexOf('#') + 1);
+            for (const k of this.docs.keys()) if (k !== key && k.startsWith(prefix)) this.docs.delete(k);
+        }
         this.docs.set(key, frames);
         for (const c of this.cores.values()) if (c.docKey === key) c._dirtyCfg = true;
     }
@@ -316,7 +321,7 @@ export class CoreSystem {
 
     /** Simulation partagée correspondant aux réglages du laser */
     _acquire(c) {
-        const ilda = c.params.source === 'Fichier ILDA';
+        const ilda = c.params.source === 'Fichier ILDA' || c.params.source === 'ILDA live';
         const frames = ilda ? this.docs.get(c.docKey) : null;
         const docKey = ilda ? `${c.docKey}#${frames ? 1 : 0}` : '';
         const key = scannerKey(c.params, docKey);

@@ -22,7 +22,7 @@ export const PATTERN_BANKS = [
 ];
 export const PATTERNS = PATTERN_BANKS.flatMap(b => b.patterns);
 
-export const SOURCES = ['Motif interne', 'Fichier ILDA'];
+export const SOURCES = ['Motif interne', 'Fichier ILDA', 'ILDA live'];
 export const PLAY_MODES = ['Boucle', 'Aller-retour', 'Image fixe'];
 export const ILDA_COLOR_MODES = ['Couleurs du fichier', 'Couleur du laser'];
 
@@ -82,6 +82,7 @@ export const LASER2_PARAMS_SCHEMA = {
     pattern:     opt(PATTERNS, 'Faisceaux (éventail)', 'Motif', 'content'),
     // Forme ILDA : chemin dans la bibliothèque du serveur (« Banque/forme.ild »), choisie par banque dans le panneau
     ildaFile:    { value: '', label: 'Forme ILDA', folder: 'content', dmx: true, custom: true },
+    liveChannel: num(1, 1, 16, 1, 'Canal ILDA live', 'content'),
     playMode:    opt(PLAY_MODES, 'Boucle', 'Lecture', 'content'),
     ildaFps:     num(30, 1, 60, 1, 'Vitesse d\'animation (images/s)', 'content'),
     ildaFrame:   num(0, 0, 999, 1, 'Image affichée (image fixe)', 'content'),

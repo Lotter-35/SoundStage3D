@@ -34,6 +34,8 @@ const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
 const { initIldaLibrary, handleIldaRequest } = require('./ildaLibrary');
+const { initArtNet } = require('./artnetInput');
+const { initIldaLive, liveState, handleIldaLiveRequest } = require('./ildaLive');
 
 const PORT = process.env.PORT || 8068;
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -678,6 +680,7 @@ function createRoom(ws, clientId, roomId, persistentName) {
         sweepTime: 0,
         persistent: Boolean(persistentName),
     });
+    sendIldaLiveState(ws);
     return room;
 }
 
@@ -785,6 +788,40 @@ function relayDmxPacket(ws, buf) {
     if (!room || !applyDmxPacket(room, buf)) return;
     for (const peer of room.clients.values()) if (peer !== ws) sendBinary(peer, buf);
     if (room.regies) for (const peer of room.regies.values()) if (peer !== ws) sendBinary(peer, buf);
+}
+
+/**
+ * Trame Art-Net reçue (console sur le réseau local) : même chemin que les paquets de la régie,
+ * pour toutes les salles ouvertes. Heure d'affichage légèrement dans le futur : tous les joueurs
+ * appliquent la trame au même instant.
+ */
+const ARTNET_LEAD_MS = 60;
+function relayArtNetFrame(universe, data) {
+    const buf = Buffer.alloc(12 + 6 + data.length);
+    buf[0] = DMX_PACKET;
+    buf[1] = 0;
+    buf.writeDoubleLE(Date.now() + ARTNET_LEAD_MS, 2);
+    buf.writeUInt16LE(1, 10);
+    buf.writeUInt16LE(universe, 12);
+    buf.writeUInt16LE(1, 14);
+    buf.writeUInt16LE(data.length, 16);
+    data.copy(buf, 18);
+    for (const room of rooms.values()) {
+        if (!applyDmxPacket(room, buf)) continue;
+        for (const peer of room.clients.values()) sendBinary(peer, buf);
+        if (room.regies) for (const peer of room.regies.values()) sendBinary(peer, buf);
+    }
+}
+if (process.env.SS3D_ARTNET !== '0') initArtNet({ onDmx: relayArtNetFrame, maxUniverse: DMX_MAX_UNIVERSE });
+
+// ILDA live (IDN ou POST /api/ilda/live) : chaque nouvelle image d'un canal part à tous les joueurs
+initIldaLive((buf) => {
+    for (const room of rooms.values()) for (const peer of room.clients.values()) sendBinary(peer, buf);
+});
+
+/** Dernières images ILDA live (joueur qui arrive) */
+function sendIldaLiveState(ws) {
+    for (const buf of liveState()) sendBinary(ws, buf);
 }
 
 /** Envoie l'état DMX complet de la salle (arrivée d'un joueur ou d'une régie) */
@@ -1002,7 +1039,8 @@ const server = http.createServer((req, res) => {
         return;
     }
 
-    // Endpoint: /api/ilda — bibliothèque de formes ILDA des nouveaux lasers
+    // Endpoint: /api/ilda — bibliothèque de formes ILDA des nouveaux lasers (+ /api/ilda/live : image live)
+    if (handleIldaLiveRequest(req, res, url)) return;
     if (handleIldaRequest(req, res, url)) return;
 
     // Endpoint: /api/shows — shows de la régie lumière
@@ -1360,6 +1398,7 @@ wss.on('connection', (ws) => {
                 });
 
                 sendDmxState(ws, room);
+                sendIldaLiveState(ws);
 
                 // Notify existing clients
                 broadcastRoom(room, { type: 'PEER_JOINED', peerId: clientId }, clientId);

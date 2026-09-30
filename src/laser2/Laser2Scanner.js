@@ -147,7 +147,7 @@ export class Laser2Scanner {
 
     // ── Configuration (à chaque changement de paramètres) ─────────────────
     configure(p) {
-        const ilda = p.source === 'Fichier ILDA';
+        const ilda = p.source === 'Fichier ILDA' || p.source === 'ILDA live';
         let frameKey;
         if (ilda) {
             const doc = this._doc;

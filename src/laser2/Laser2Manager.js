@@ -21,6 +21,7 @@ import { Laser2Host } from './core/Laser2Host.js';
 import { packPlayers } from './core/Collision.js';
 import { buildLaser2ObstacleGroups } from './Laser2Obstacles.js';
 import { ildaLibrary } from './ilda/IldaLibrary.js';
+import { ildaLive } from './ilda/IldaLive.js';
 
 /** Rayon de capture autour de l'œil (m) : pupille + marge de tête (un faisceau de 1 cm reste « visé ») */
 const EYE_R = 0.05;
@@ -195,6 +196,20 @@ export class Laser2Manager {
                     }
                 }
                 l.docReady = Boolean(docKey);
+            } else if (l.params.source === 'ILDA live') {
+                // Image live : nouvelle série → nouvelle image envoyée au cœur (l'ancienne est remplacée)
+                const ch = Math.round(l.params.liveChannel);
+                const live = ildaLive.get(ch);
+                if (live) {
+                    docKey = `live:${ch}#${live.serial}`;
+                    if (!this._sentDocs.has(docKey)) {
+                        const f = live.frame;
+                        this.host.doc(docKey, [{ n: f.n, x: f.x.slice(0, f.n), y: f.y.slice(0, f.n), r: f.r.slice(0, f.n), g: f.g.slice(0, f.n), b: f.b.slice(0, f.n) }]);
+                        for (const k of this._sentDocs) if (k.startsWith(`live:${ch}#`)) this._sentDocs.delete(k);
+                        this._sentDocs.add(docKey);
+                    }
+                }
+                l.docReady = Boolean(live);
             }
             const msg = {};
             let send = false;

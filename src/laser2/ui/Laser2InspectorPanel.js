@@ -296,6 +296,10 @@ export class Laser2InspectorPanel {
         c.lineWidth = 1;
         c.strokeRect(6.5, 6.5, W - 13, W - 13);
         const st = laser.stats;
+        if (laser.params.source === 'ILDA live' && !laser.docReady) {
+            this._info.innerHTML = `Canal live ${Math.round(laser.params.liveChannel)} : en attente d'images<br><span style="opacity:.7">IDN (UDP 7255, canal ${Math.round(laser.params.liveChannel) - 1}) ou POST /api/ilda/live?ch=${Math.round(laser.params.liveChannel)}</span>`;
+            return;
+        }
         if (laser.params.source === 'Fichier ILDA' && !laser.docReady) {
             this._info.textContent = laser.params.ildaFile ? 'Chargement de la forme ILDA…' : 'Choisis une forme ILDA';
             return;
@@ -391,26 +395,28 @@ export class Laser2InspectorPanel {
     _refreshVisibility() {
         const p = this._laser && this._laser.params;
         if (!p) return;
+        const live = p.source === 'ILDA live';
         const ilda = p.source === 'Fichier ILDA';
-        const beams = !ilda && (p.pattern === 'Faisceaux (éventail)' || p.pattern === 'Nappe + faisceaux');
-        this._show('pattern', !ilda);
+        this._show('liveChannel', live);
+        const beams = !ilda && !live && (p.pattern === 'Faisceaux (éventail)' || p.pattern === 'Nappe + faisceaux');
+        this._show('pattern', !ilda && !live);
         this._show('beamCount', beams);
         this._show('beamDwell', beams || (!ilda && p.pattern === 'Point fixe'));
-        for (const k of ['density', 'cornerPoints', 'blankPoints']) this._show(k, !ilda);
+        for (const k of ['density', 'cornerPoints', 'blankPoints']) this._show(k, !ilda && !live);
         const fixed = p.playMode === 'Image fixe';
-        const anim = ilda || isAnimatedPattern(p.pattern);
+        const anim = ilda || (!live && isAnimatedPattern(p.pattern));
         this._show('playMode', anim);
         this._show('ildaFps', anim && !fixed);
         this._show('ildaFrame', anim && fixed);
-        const fanLike = !ilda && /Faisceaux|éventail/i.test(p.pattern);
-        this._show('fanSpread', !ilda && (fanLike || /^Nappe/.test(p.pattern)));
+        const fanLike = !ilda && !live && /Faisceaux|éventail/i.test(p.pattern);
+        this._show('fanSpread', !ilda && !live && (fanLike || /^Nappe/.test(p.pattern)));
         this._show('fanBlend', fanLike);
         this._show('zoomFxSpeed', p.zoomFx !== 'Aucun');
         this._show('sweepSpeed', p.sweepX > 0 || p.sweepY > 0);
         this._show('sweepShape', p.sweepX > 0 || p.sweepY > 0);
         this._show('waveSpeed', p.waveAmp > 0);
         this._show('colorSpeed', p.colorMode !== 'Fixe');
-        this._show('ildaColor', ilda);
+        this._show('ildaColor', ilda || live);
         for (const c of [this._ildaBankCtrl, this._ildaFileCtrl]) if (c) { if (ilda) c.show(); else c.hide(); }
         if (this._ildaInfo) this._ildaInfo.style.display = ilda ? '' : 'none';
         this._show('strobeRate', p.shutter === 'Strobe');

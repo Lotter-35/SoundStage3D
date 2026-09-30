@@ -13,6 +13,7 @@
  */
 import { ServerClock } from './ServerClock.js';
 import { DMX_PACKET, decodeDmxPacket } from '../dmx/DmxProtocol.js';
+import { ildaLive, ILDA_LIVE_PACKET } from '../laser2/ilda/IldaLive.js';
 
 export class MultiplayerClient {
     constructor(wsUrl = 'ws://localhost:8068') {
@@ -132,6 +133,11 @@ export class MultiplayerClient {
                                 try { cb(packet); } catch (e) { console.error('[MP] DMX', e); }
                             }
                         }
+                        return;
+                    }
+                    // Image ILDA live (nouveaux lasers)
+                    if (bytes.length > 0 && bytes[0] === ILDA_LIVE_PACKET) {
+                        ildaLive.receive(bytes);
                         return;
                     }
                     if (bytes.length >= 6 && bytes[0] === 0x01) {
