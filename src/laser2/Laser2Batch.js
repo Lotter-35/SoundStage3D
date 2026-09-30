@@ -138,7 +138,8 @@ export class Laser2Batch {
             const k = g ? g[3] * p.sourceGlow : 0;
             if (k > 0.01) {
                 const o = f.origin, d = f.fwd;
-                src[0] = o.x + d.x * 0.03; src[1] = o.y + d.y * 0.03; src[2] = o.z + d.z * 0.03; src[3] = p.sourceGlowRadius;
+                src[0] = o.x + d.x * 0.03; src[1] = o.y + d.y * 0.03; src[2] = o.z + d.z * 0.03; // Le point grossit avec le dimmer : taille réglée atteinte au maximum
+                src[3] = p.sourceGlowRadius * Math.max(0.15, Math.min(1, (p.dimmer ?? 100) / 100));
                 src[4] = d.x; src[5] = d.y; src[6] = d.z; src[7] = 0;
                 src[8] = g[0]; src[9] = g[1]; src[10] = g[2]; src[11] = k;
                 this.sources.append(src, 1);
