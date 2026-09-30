@@ -8,11 +8,12 @@
  */
 
 import * as THREE from 'three';
-import { createLaser2BeamMaterial, createLaser2SheetMaterial, createLaser2ImpactMaterial, LASER2_UNIFORMS } from './Laser2Shaders.js';
+import { createLaser2BeamMaterial, createLaser2SheetMaterial, createLaser2ImpactMaterial, createLaser2SourceMaterial, LASER2_UNIFORMS } from './Laser2Shaders.js';
 import { enableLaserBloom } from '../laser/LaserManager.js';
 
 import { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE } from './core/strides.js';
 export { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE };
+const SOURCE_STRIDE = 12;
 
 class InstanceStream {
     constructor(geometry, stride, layout, capacity) {
@@ -87,15 +88,27 @@ export class Laser2Batch {
         impGeo.instanceCount = 0;
         this.impacts = new InstanceStream(impGeo, IMPACT_STRIDE, [['aP0', 0, 4], ['aP1', 4, 4], ['aN', 8, 3], ['aC', 11, 3]], 256);
 
+        // Points lumineux à la sortie des lasers
+        const srcGeo = new THREE.InstancedBufferGeometry();
+        srcGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3));
+        srcGeo.setAttribute('aCorner', new THREE.Float32BufferAttribute([-1, -1, 1, -1, -1, 1, 1, 1], 2));
+        srcGeo.setIndex([0, 1, 2, 2, 1, 3]);
+        srcGeo.instanceCount = 0;
+        this.sources = new InstanceStream(srcGeo, SOURCE_STRIDE, [['aP', 0, 4], ['aF', 4, 4], ['aC', 8, 4]], 16);
+        this._src = new Float32Array(SOURCE_STRIDE);
+
         this.beamMaterial = createLaser2BeamMaterial();
         this.sheetMaterial = createLaser2SheetMaterial();
         this.impactMaterial = createLaser2ImpactMaterial();
+        this.sourceMaterial = createLaser2SourceMaterial();
 
         this.beamMesh = new THREE.Mesh(beamGeo, this.beamMaterial);
         this.sheetMesh = new THREE.Mesh(sheetGeo, this.sheetMaterial);
         this.impactMesh = new THREE.Mesh(impGeo, this.impactMaterial);
         this.impactMesh.name = 'laser2-impacts';
-        for (const m of [this.sheetMesh, this.beamMesh, this.impactMesh]) {
+        this.sourceMesh = new THREE.Mesh(srcGeo, this.sourceMaterial);
+        this.sourceMesh.name = 'laser2-sources';
+        for (const m of [this.sheetMesh, this.beamMesh, this.impactMesh, this.sourceMesh]) {
             m.frustumCulled = false;
             m.renderOrder = 5;
             scene.add(m);
@@ -115,14 +128,27 @@ export class Laser2Batch {
         this.beams.begin();
         this.sheets.begin();
         this.impacts.begin();
+        this.sources.begin();
+        const src = this._src;
         for (const f of fixtures) {
             this.beams.append(f.beamData, f.beamN);
             this.sheets.append(f.sheetData, f.sheetN);
             this.impacts.append(f.impactData, f.impactN);
+            const g = f.glow, p = f.params;
+            const k = g ? g[3] * p.sourceGlow : 0;
+            if (k > 0.01) {
+                const o = f.origin, d = f.fwd;
+                src[0] = o.x + d.x * 0.03; src[1] = o.y + d.y * 0.03; src[2] = o.z + d.z * 0.03; src[3] = p.sourceGlowRadius;
+                src[4] = d.x; src[5] = d.y; src[6] = d.z; src[7] = 0;
+                src[8] = g[0]; src[9] = g[1]; src[10] = g[2]; src[11] = k;
+                this.sources.append(src, 1);
+            }
         }
         this.beams.end();
         this.sheets.end();
         this.impacts.end();
+        this.sources.end();
+        this.sourceMesh.visible = this.sources.count > 0;
         this.beamMesh.visible = this.beams.count > 0;
         this.sheetMesh.visible = this.sheets.count > 0;
         this.impactMesh.visible = this.impacts.count > 0;
@@ -136,7 +162,7 @@ export class Laser2Batch {
     }
 
     dispose() {
-        for (const m of [this.beamMesh, this.sheetMesh, this.impactMesh]) {
+        for (const m of [this.beamMesh, this.sheetMesh, this.impactMesh, this.sourceMesh]) {
             this.scene.remove(m);
             m.geometry.dispose();
             m.material.dispose();

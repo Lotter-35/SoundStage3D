@@ -73,6 +73,8 @@ export class Laser2Fixture {
         this.impactN = 0;
         this.stats = { points: 0, frameHz: 0, window: 0, beams: 0, sheets: 0, frames: 1 };
         this.preview = null;
+        // Point lumineux à la sortie : couleur émise (chroma) + intensité
+        this.glow = [0, 0, 0, 0];
 
         this.applyTransform();
     }
@@ -182,6 +184,13 @@ export class Laser2Fixture {
         const l = item.lens;
         const m = Math.max(l[0], l[1], l[2]);
         const k = m > 1 ? 1 / m : 1;
+        // Point de sortie (même principe que l'éclat de buse des anciens lasers) : couleur émise, blanchie au cœur
+        if (m > 1e-4) {
+            this.glow[0] = l[0] / m; this.glow[1] = l[1] / m; this.glow[2] = l[2] / m;
+            this.glow[3] = Math.min(1.5, m * 0.5);
+        } else {
+            this.glow[3] = 0;
+        }
         if (Math.abs(this._glass.r - l[0] * k) + Math.abs(this._glass.g - l[1] * k) + Math.abs(this._glass.b - l[2] * k) > 0.01) {
             this._glass.setRGB(l[0] * k, l[1] * k, l[2] * k);
             this._syncHousing();

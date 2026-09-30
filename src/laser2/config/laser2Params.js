@@ -158,6 +158,8 @@ export const LASER2_PARAMS_SCHEMA = {
     visibility:  num(1, 0, 3, 0.01, 'Visibilité des faisceaux', 'render', false),
     forwardScatter: num(35, 0, 90, 1, 'Diffusion vers l\'avant (%)', 'render', false),
     audienceMask: bool(false, 'Masquage du public (sol et joueurs)', 'render'),
+    sourceGlow:   num(1, 0, 4, 0.05, 'Point lumineux à la sortie', 'render', false),
+    sourceGlowRadius: num(0.4, 0.1, 3, 0.05, 'Taille du point de sortie (m)', 'render', false),
 };
 
 export function defaultLaser2Params() {

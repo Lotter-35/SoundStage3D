@@ -312,3 +312,52 @@ export function createLaser2ImpactMaterial() {
         ...baseOptions(),
     });
 }
+
+// ── Point lumineux à la sortie du laser (billboard face caméra) ────────────
+// Même principe que l'éclat de buse des anciens lasers : cœur blanc très localisé + aura à la couleur
+// émise. Vu de face (dans l'axe de sortie) il est bien plus fort que vu de derrière.
+// Halo ramené à zéro avant le bord du quad (jamais carré, même avec le bloom).
+export function createLaser2SourceMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: {},
+        vertexShader: /* glsl */`
+            attribute vec2 aCorner;       // -1..1
+            attribute vec4 aP;            // sortie.xyz, rayon du point (m)
+            attribute vec4 aF;            // axe de sortie.xyz, -
+            attribute vec4 aC;            // chroma.rgb, intensité
+            varying vec2 vD;              // position dans le quad (m)
+            flat varying float vHalf;
+            flat varying float vR;
+            flat varying vec4 vCol;
+            void main() {
+                vec3 toCam = normalize(cameraPosition - aP.xyz);
+                float facing = 0.3 + 0.7 * smoothstep(-0.2, 0.6, dot(toCam, aF.xyz));
+                float hs = max(0.9, aP.w * 2.25);
+                vec4 mv = viewMatrix * vec4(aP.xyz, 1.0);
+                mv.xy += aCorner * hs;
+                vD = aCorner * hs;
+                vHalf = hs;
+                vR = aP.w;
+                vCol = vec4(aC.rgb, aC.w * facing);
+                gl_Position = projectionMatrix * mv;
+            }
+        `,
+        fragmentShader: /* glsl */`
+            varying vec2 vD;
+            flat varying float vHalf;
+            flat varying float vR;
+            flat varying vec4 vCol;
+            void main() {
+                float d = length(vD);
+                if (d >= vHalf) discard;
+                float s = d / max(0.05, vR);
+                float core = exp(-s * s * 12.0) * vCol.w * 4.0;
+                float aura = exp(-s * 3.2) * 0.8 * vCol.w * 4.0 * (1.0 - smoothstep(0.6 * vHalf, vHalf, d));
+                vec3 col = mix(vCol.rgb, vec3(1.0), clamp(core * 0.9, 0.0, 1.0));
+                float a = clamp(core * 0.9 + aura * 0.6, 0.0, 1.0);
+                gl_FragColor = vec4(col * a, 1.0);
+            }
+        `,
+        ...baseOptions(),
+    });
+}
