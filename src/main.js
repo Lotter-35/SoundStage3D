@@ -42,6 +42,7 @@ import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=17';
 import { SpotManager } from './spot/SpotManager.js?v=6';
 import { LedBarManager } from './ledbar/LedBarManager.js';
+import { Laser2Manager } from './laser2/Laser2Manager.js';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
@@ -280,6 +281,16 @@ window.__SS3D.ledBarManager = ledBarManager;
     }
 }
 
+// ─── Nouveau laser (moteur de points + galvos, pilotable ILDA / DMX) ───
+// Même horloge commune que les lyres : chaque joueur dessine le même point au même instant.
+const laser2Manager = new Laser2Manager({ scene, camera, renderer, clock: () => spotManager.clock() });
+window.__SS3D.laser2Manager = laser2Manager;
+// 2 nouveaux lasers de test à côté des 2 anciens (x = ±12, y = 14), tournés vers le public.
+// Identifiants fixes : chaque client crée les mêmes lasers sans doublon avec l'état réseau.
+for (const [k, x] of [[1, -14.2], [2, 14.2]]) {
+    laser2Manager.addLaser(new THREE.Vector3(x, 14, 0.19), { pitch: 4 }, `laser2-stage-${k}`);
+}
+
 // Console des lyres (sélection matricielle, couleurs, visée, effets) — touche L
 const spotConsole = new SpotConsolePanel({ spotManager, ambiancePanel, scene, camera, renderer, listener });
 window.__SS3D.spotConsole = spotConsole;
@@ -408,6 +419,7 @@ function earlyFrame() {
         laserManager.updateAll(dt, _earlySweep);
         strobeManager.updateAll(dt);
         spotManager.update(dt);
+        laser2Manager.update();
         hazeVolume.update(dt);
         lightPoolGate.update();
         if (dirShadowCache) dirShadowCache.update(camera);
@@ -3813,6 +3825,9 @@ function renderFrame() {
     if (spotManager) {
         spotManager.update(dt);
     }
+
+    // Nouveaux lasers : simulation des galvos sur l'horloge commune → faisceaux et nappes batchés
+    laser2Manager.update();
 
     // Brouillard de salle : sources de lumière de la frame (strobes, lyres, lasers)
     if (hazeVolume) {
