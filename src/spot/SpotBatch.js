@@ -11,6 +11,7 @@
 
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { mergeVertices } from 'three/addons/utils/BufferGeometryUtils.js';
 import { getSmokeNoiseTexture } from '../laser/LaserSmokeNoise.js';
 import { resolveResolutionScale } from '../render/resolutionScale.js';
 import { enableLightsBloom } from '../laser/LaserManager.js';
@@ -73,9 +74,16 @@ class InstanceStream {
 
 function makeConeGeometry() {
     // Cylindre unitaire fermé : xy = direction radiale (rayon 1), z ∈ [0, 1] = fraction de la portée
-    const src = new THREE.CylinderGeometry(1, 1, 1, 32, 1, false);
+    // Décalé d'un demi-segment : aucune arête dans les plans de symétrie du faisceau. Une caméra exactement
+    // dans un tel plan (point d'apparition face à la lyre centrale) voyait l'arête passer par le centre des
+    // pixels et la colonne n'était couverte par aucun triangle (trait vertical sombre d'un pixel).
+    let src = new THREE.CylinderGeometry(1, 1, 1, 32, 1, false, Math.PI / 32);
     src.rotateX(Math.PI / 2);
     src.translate(0, 0, 0.5);
+    // Sommets de la couture (angle 0 et 2π) fusionnés : maillage étanche
+    src.deleteAttribute('normal');
+    src.deleteAttribute('uv');
+    src = mergeVertices(src, 1e-5);
     const geo = new THREE.InstancedBufferGeometry();
     geo.setIndex(src.getIndex());
     geo.setAttribute('position', src.getAttribute('position'));
