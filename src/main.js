@@ -43,6 +43,7 @@ import { StrobeManager } from './strobe/StrobeManager.js?v=17';
 import { SpotManager } from './spot/SpotManager.js?v=6';
 import { LedBarManager } from './ledbar/LedBarManager.js';
 import { Laser2Manager } from './laser2/Laser2Manager.js';
+import { ildaLibrary } from './laser2/ilda/IldaLibrary.js';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
@@ -953,6 +954,9 @@ const patchReporter = new PatchReporter({
     room: () => (mp.connected && mp.roomId ? mp.roomId : null),
 });
 patchReporter.start();
+// Bibliothèque ILDA : liste des formes chargée au démarrage, puis mise à jour poussée par le serveur
+ildaLibrary.refresh();
+mp.onIldaIndex((index) => ildaLibrary.setIndex(index));
 mp.onFixtureStateRequest((keys) => encodeFixtureStates({ spotManager, ledBarManager, strobeManager, laserManager }, keys));
 let playerAvatars = null;
 let _mpPosAccum = 0;

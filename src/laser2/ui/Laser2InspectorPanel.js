@@ -7,6 +7,8 @@
  *   - modèle de boîtier : applique sa fiche technique ; modifier une valeur → « Personnalisé »
  *   - aperçu 2D du tracé (comme la fenêtre de prévisualisation d'un logiciel laser) :
  *     consigne envoyée aux galvos (gris) et trajectoire réelle des miroirs (couleur émise)
+ *   - source « Fichier ILDA » : banque puis forme de la bibliothèque du serveur (listes mises à jour
+ *     en direct quand un fichier est ajouté dans server/storage/ilda)
  *   - informations : points par image, images/s (scintillement), primitives
  *   - chaque modification est synchronisée en multijoueur (laser2_update)
  * ─────────────────────────────────────────────────────────────
@@ -16,6 +18,7 @@ import GUI from 'lil-gui';
 import { makeDraggable } from '../../ui/draggable.js';
 import { LASER2_PARAMS_SCHEMA, LASER2_FOLDERS, HARDWARE_PRESETS } from '../config/laser2Params.js';
 import { RING } from '../Laser2Scanner.js';
+import { ildaLibrary } from '../ilda/IldaLibrary.js';
 
 const PER_FIXTURE_FOLDERS = new Set(['place']);
 const HARDWARE_KEYS = new Set(['powerR', 'powerG', 'powerB', 'scanner', 'divergence', 'aperture']);
@@ -58,6 +61,7 @@ export class Laser2InspectorPanel {
     close() {
         clearInterval(this._timer);
         this._timer = null;
+        if (this._unsubIlda) { this._unsubIlda(); this._unsubIlda = null; }
         if (this.gui) {
             this.gui.destroy();
             this.gui = null;
@@ -73,6 +77,7 @@ export class Laser2InspectorPanel {
         for (const c of Object.values(this.controllers)) {
             try { c.updateDisplay(); } catch (_) {}
         }
+        if (this._ildaState && this._laser.params.ildaFile !== this._ildaState.file) this._rebuildIldaPicker();
         this._refreshVisibility();
     }
 
@@ -191,6 +196,7 @@ export class Laser2InspectorPanel {
         for (const [key, s] of Object.entries(LASER2_PARAMS_SCHEMA)) {
             const folder = folders[s.folder];
             if (!folder) continue;
+            if (key === 'ildaFile') { this._buildIldaPicker(folder); continue; }
             let ctrl;
             if (s.options) ctrl = folder.add(p, key, s.options);
             else if (s.color) ctrl = folder.addColor(p, key);
@@ -271,10 +277,65 @@ export class Laser2InspectorPanel {
             c.stroke();
         }
         const st = s.stats;
+        if (laser.params.source === 'Fichier ILDA' && !s._doc) {
+            this._info.textContent = laser.params.ildaFile ? 'Chargement de la forme ILDA…' : 'Choisis une forme ILDA';
+            return;
+        }
         const hz = st.frameHz;
         const flicker = hz < 20 ? ' <span style="color:#ff8a65">⚠ scintille</span>' : '';
-        this._info.innerHTML = `${st.points} points · <b>${hz.toFixed(0)} images/s</b>${flicker}<br>`
+        const anim = st.frames > 1 ? ` · animation ${st.frames} images` : '';
+        this._info.innerHTML = `${st.points} points · <b>${hz.toFixed(0)} images/s</b>${flicker}${anim}<br>`
             + `${st.beams} faisceaux · ${st.sheets} nappes · ${(this.laser2Manager.cpuMs || 0).toFixed(2)} ms`;
+    }
+
+    // ── Choix de la forme ILDA (banque → forme) ─────────────────────────
+    _buildIldaPicker(folder) {
+        this._ildaFolder = folder;
+        this._ildaState = { bank: '', file: '' };
+        this._ildaInfo = document.createElement('div');
+        this._ildaInfo.style.cssText = 'padding:4px 8px 6px;font-size:10.5px;line-height:1.4;color:#9aa6bd;';
+        folder.$children.appendChild(this._ildaInfo);
+        this._ildaBankCtrl = null;
+        this._ildaFileCtrl = null;
+        this._rebuildIldaPicker();
+        if (this._unsubIlda) this._unsubIlda();
+        this._unsubIlda = ildaLibrary.onChange(() => this._rebuildIldaPicker());
+        ildaLibrary.ensureLoaded();
+    }
+
+    _rebuildIldaPicker() {
+        const laser = this._laser;
+        const folder = this._ildaFolder;
+        if (!laser || !folder || !this.gui) return;
+        const banks = ildaLibrary.bankNames;
+        const cur = laser.params.ildaFile;
+        const entry = ildaLibrary.entry(cur);
+        const st = this._ildaState;
+        st.bank = entry ? entry.bank : (banks.includes(st.bank) ? st.bank : (banks[0] || ''));
+        const files = ildaLibrary.filesOf(st.bank);
+        const fileOptions = {};
+        for (const f of files) fileOptions[f.name] = f.path;
+        st.file = entry ? cur : '';
+        if (!entry) fileOptions['— choisir —'] = '';
+
+        if (this._ildaBankCtrl) this._ildaBankCtrl.destroy();
+        if (this._ildaFileCtrl) this._ildaFileCtrl.destroy();
+        this._ildaBankCtrl = folder.add(st, 'bank', banks.length ? banks : ['(vide)']).name('Banque ILDA')
+            .onChange(() => { st.file = ''; this._rebuildIldaPicker(); });
+        this._ildaFileCtrl = folder.add(st, 'file', fileOptions).name('Forme ILDA')
+            .onChange((path) => { if (path) this._setParam('ildaFile', path); });
+        // Placés juste après « Source »
+        const anchor = this.controllers.source && this.controllers.source.domElement;
+        if (anchor && anchor.parentElement) {
+            anchor.after(this._ildaBankCtrl.domElement);
+            this._ildaBankCtrl.domElement.after(this._ildaFileCtrl.domElement);
+            this._ildaFileCtrl.domElement.after(this._ildaInfo);
+        }
+        const total = ildaLibrary.index.banks.reduce((n, b) => n + b.files.length, 0);
+        this._ildaInfo.textContent = total
+            ? (cur && !entry ? `Forme « ${cur} » introuvable sur le serveur.` : `${total} formes dans ${banks.length} banque(s) · dossier server/storage/ilda`)
+            : 'Aucune forme : dépose des fichiers .ild dans server/storage/ilda (un sous-dossier = une banque).';
+        this._refreshVisibility();
     }
 
     _show(key, visible) {
@@ -287,9 +348,19 @@ export class Laser2InspectorPanel {
     _refreshVisibility() {
         const p = this._laser && this._laser.params;
         if (!p) return;
-        const beams = p.pattern === 'Faisceaux (éventail)' || p.pattern === 'Nappe + faisceaux';
+        const ilda = p.source === 'Fichier ILDA';
+        const beams = !ilda && (p.pattern === 'Faisceaux (éventail)' || p.pattern === 'Nappe + faisceaux');
+        this._show('pattern', !ilda);
         this._show('beamCount', beams);
-        this._show('beamDwell', beams || p.pattern === 'Point fixe');
+        this._show('beamDwell', beams || (!ilda && p.pattern === 'Point fixe'));
+        for (const k of ['density', 'cornerPoints', 'blankPoints']) this._show(k, !ilda);
+        const fixed = p.playMode === 'Image fixe';
+        this._show('playMode', ilda);
+        this._show('ildaFps', ilda && !fixed);
+        this._show('ildaFrame', ilda && fixed);
+        this._show('ildaColor', ilda);
+        for (const c of [this._ildaBankCtrl, this._ildaFileCtrl]) if (c) { if (ilda) c.show(); else c.hide(); }
+        if (this._ildaInfo) this._ildaInfo.style.display = ilda ? '' : 'none';
         this._show('strobeRate', p.shutter === 'Strobe');
         this._show('threshold', p.modulation === 'Analogique');
     }

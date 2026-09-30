@@ -14,6 +14,7 @@ import { LASER2_PARAMS_SCHEMA, HARDWARE_PRESETS, defaultLaser2Params } from './c
 import { Laser2Scanner, displayColor } from './Laser2Scanner.js';
 import { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE } from './Laser2Batch.js';
 import { cullObstacles, laser2Hit, playersInCone, SURF_SKY, SURF_PLAYER } from './Laser2Collision.js';
+import { ildaLibrary } from './ilda/IldaLibrary.js';
 import { getLaser2HousingInstancer, APERTURE_Z, BODY } from './Laser2Housing.js';
 
 const DEG = Math.PI / 180;
@@ -163,6 +164,15 @@ export class Laser2Fixture {
 
     // ── Mise à jour par image ─────────────────────────────────────────────
     update() {
+        // Forme ILDA : prise dans la bibliothèque partagée (chargée en arrière-plan à la première demande)
+        if (this.params.source === 'Fichier ILDA') {
+            ildaLibrary.ensureLoaded();
+            const doc = ildaLibrary.get(this.params.ildaFile);
+            if (doc !== this.scanner._doc) {
+                this.scanner.setDocument(doc);
+                this._cfgDirty = true;
+            }
+        }
         if (this._cfgDirty) {
             this.scanner.configure(this.params);
             this._cfgDirty = false;

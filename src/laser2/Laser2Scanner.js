@@ -68,9 +68,20 @@ export class Laser2Scanner {
         this.px = 0; this.vx = 0;
         this.py = 0; this.vy = 0;
 
-        this.frame = new LaserFrame(512);
+        this._patternFrame = new LaserFrame(512);
+        this._emptyFrame = new LaserFrame(1);
+        this._emptyFrame.push(0, 0, 0, 0, 0);
+        this.frame = this._patternFrame;     // image en cours de dessin
+        this.frames = [this._patternFrame];  // images de la source (animation ILDA : plusieurs)
+        this._doc = null;                    // forme ILDA (bibliothèque partagée)
         this._frameKey = '';
         this._cfgKey = '';
+        this._animated = false;
+        this._fixedIdx = 0;
+        // Image courante de la simulation (_locate)
+        this._lf = this._patternFrame;
+        this._li = 0;
+        this._lNext = Infinity;
 
         // Primitives (angles + puissances moyennes, en unités affichées)
         this.beams = new Float32Array(64 * 5);   // ax, ay, dr, dg, db
@@ -81,16 +92,37 @@ export class Laser2Scanner {
 
         this._static = false;
         this._staticSince = -1;
-        this.stats = { points: 0, frameHz: 0, window: 0, beams: 0, sheets: 0 };
+        this.stats = { points: 0, frameHz: 0, window: 0, beams: 0, sheets: 0, frames: 1 };
+    }
+
+    /** Forme ILDA à projeter (null : rien, en attendant son chargement) */
+    setDocument(doc) {
+        if (doc === this._doc) return;
+        this._doc = doc;
+        this._docSerial = (this._docSerial || 0) + 1;
     }
 
     // ── Configuration (à chaque changement de paramètres) ─────────────────
     configure(p) {
-        const frameKey = `${p.pattern}|${p.density}|${p.cornerPoints}|${p.blankPoints}|${p.beamCount}|${p.beamDwell}`;
-        if (frameKey !== this._frameKey) {
-            buildPatternFrame(p, this.frame);
-            this._frameKey = frameKey;
+        const ilda = p.source === 'Fichier ILDA';
+        let frameKey;
+        if (ilda) {
+            const doc = this._doc;
+            this.frames = doc && doc.frames.length ? doc.frames : [this._emptyFrame];
+            frameKey = `ilda|${doc ? doc.path : ''}|${this._docSerial || 0}|${this.frames.length}|${p.playMode}|${p.ildaFps}|${p.ildaFrame}|${p.ildaColor}`;
+            this._docRef = doc;
+        } else {
+            frameKey = `${p.pattern}|${p.density}|${p.cornerPoints}|${p.blankPoints}|${p.beamCount}|${p.beamDwell}`;
+            if (frameKey !== this._frameKey || this.frames[0] !== this._patternFrame) buildPatternFrame(p, this._patternFrame);
+            this.frames = [this._patternFrame];
         }
+        this._frameKey = frameKey;
+        const N = this.frames.length;
+        this._animated = N > 1 && p.playMode !== 'Image fixe';
+        this._pingPong = p.playMode === 'Aller-retour';
+        this._fixedIdx = Math.max(0, Math.min(N - 1, Math.round(p.ildaFrame)));
+        this.fps = Math.max(1, p.ildaFps);
+        this.frame = this.frames[this._animated ? 0 : this._fixedIdx];
         this.pps = Math.max(1000, p.scanRate * 1000);
         const rated = scannerPps(p.scanner);
         // Servo : pulsation propre ∝ vitesse nominale ; accélération / vitesse maximales calées sur
@@ -117,7 +149,9 @@ export class Laser2Scanner {
         let bal = Infinity;
         for (let c = 0; c < 3; c++) if (pw[c] > 0) bal = Math.min(bal, pw[c] * EFFICACY[c]);
         if (!Number.isFinite(bal)) bal = 0;
-        this.lvl = [_rgb[0] * dim, _rgb[1] * dim, _rgb[2] * dim];
+        // Fichier ILDA : ses propres couleurs (× dimmer) ou sa luminosité teintée par la couleur du laser
+        this.mono = ilda && p.ildaColor === 'Couleur du laser';
+        this.lvl = ilda && !this.mono ? [dim, dim, dim] : [_rgb[0] * dim, _rgb[1] * dim, _rgb[2] * dim];
         this.chan = [pw[0] > 0 ? bal : 0, pw[1] > 0 ? bal : 0, pw[2] > 0 ? bal : 0];
         this.ttl = p.modulation !== 'Analogique';
         this.thr = p.threshold / 100;
@@ -161,7 +195,7 @@ export class Laser2Scanner {
         const kNow = Math.floor(t * pps);
         const win = this._windowSamples();
         const canFreeze = this.persistence !== 'Caméra' && this.rotSpeed === 0 && this.shutter !== 'Strobe'
-            && this.frame.n <= Math.round(EYE_WINDOW * pps);
+            && !this._animated && this.frame.n <= Math.round(EYE_WINDOW * pps);
 
         // Image fixe redessinée en boucle : après 3 images simulées, le résultat ne change plus
         if (canFreeze && this._static) return false;
@@ -176,6 +210,11 @@ export class Laser2Scanner {
         if (kNow <= this.k) return false;
         this._simulate(this.k + 1, kNow);
         this.k = kNow;
+        // Image en cours (animation) : fenêtre de persistance et statistiques
+        if (this._animated) {
+            this._locate(kNow);
+            this.frame = this._lf;
+        }
 
         this._extract(kNow - win + 1, kNow + 1);
         this.version++;
@@ -188,15 +227,47 @@ export class Laser2Scanner {
         this.stats.points = n;
         this.stats.frameHz = pps / n;
         this.stats.window = win / pps;
+        this.stats.frames = this.frames.length;
         this.stats.beams = this.beamCount;
         this.stats.sheets = this.sheetCount;
         return true;
     }
 
+    /**
+     * Image et point dessinés à l'échantillon k (déterministe : même résultat chez tous les joueurs).
+     * Animation : l'image f occupe le créneau de temps [f / fps, (f + 1) / fps[ et y est redessinée
+     * en boucle depuis le début du créneau. Résultat dans _lf (image), _li (point), _lNext (créneau suivant).
+     */
+    _locate(k) {
+        if (!this._animated) {
+            const f = this.frames[this._fixedIdx] || this.frames[0];
+            this._lf = f;
+            this._li = ((k % f.n) + f.n) % f.n;
+            this._lNext = Infinity;
+            return;
+        }
+        const pps = this.pps, fps = this.fps, N = this.frames.length;
+        const slot = Math.floor(k * fps / pps);
+        let idx;
+        if (this._pingPong) {
+            const P = 2 * N - 2;
+            const m = ((slot % P) + P) % P;
+            idx = m < N ? m : P - m;
+        } else {
+            idx = ((slot % N) + N) % N;
+        }
+        const f = this.frames[idx];
+        const start = Math.ceil(slot * pps / fps);
+        this._lf = f;
+        this._li = (((k - start) % f.n) + f.n) % f.n;
+        this._lNext = Math.ceil((slot + 1) * pps / fps);
+    }
+
     /** Consigne des miroirs pour l'échantillon k (rad) */
     _command(k) {
-        const f = this.frame;
-        const i = ((k % f.n) + f.n) % f.n;
+        this._locate(k);
+        const f = this._lf;
+        const i = this._li;
         let x = f.x[i], y = f.y[i];
         if (this.rot0 !== 0 || this.rotSpeed !== 0) {
             const a = this.rot0 + this.rotSpeed * (k / this.pps);
@@ -215,9 +286,12 @@ export class Laser2Scanner {
     }
 
     _simulate(k0, k1) {
-        const f = this.frame;
-        const n = f.n;
-        const fx = f.x, fy = f.y, fr = f.r, fg = f.g, fb = f.b;
+        this._locate(k0);
+        let f = this._lf;
+        let n = f.n;
+        let fx = f.x, fy = f.y, fr = f.r, fg = f.g, fb = f.b;
+        let next = this._lNext;
+        const mono = this.mono;
         const T = 1 / this.pps;
         const sub = this.sub, h = T / sub;
         const wn2 = this.wn * this.wn, c2 = 2 * this.zeta * this.wn;
@@ -234,12 +308,22 @@ export class Laser2Scanner {
         const a0 = this.rot0 + this.rotSpeed * k0 * T;
         let rc = Math.cos(a0), rs = Math.sin(a0);
         const dc = Math.cos(this.rotSpeed * T), ds = Math.sin(this.rotSpeed * T);
-        let i = ((k0 % n) + n) % n;
-        let j = (((k0 - this.shift) % n) + n) % n;   // couleur émise : point d'il y a `shift` échantillons
+        const shift = this.shift;
+        let i = this._li;
+        let j = (((i - shift) % n) + n) % n;   // couleur émise : point d'il y a `shift` échantillons
         let px = this.px, vx = this.vx, py = this.py, vy = this.vy;
         const AX = this.ax, AY = this.ay, UX = this.ux, UY = this.uy, PR = this.pr, PG = this.pg, PB = this.pb;
 
         for (let k = k0; k <= k1; k++) {
+            if (k >= next) {
+                // Image suivante de l'animation
+                this._locate(k);
+                f = this._lf; n = f.n;
+                fx = f.x; fy = f.y; fr = f.r; fg = f.g; fb = f.b;
+                next = this._lNext;
+                i = this._li;
+                j = (((i - shift) % n) + n) % n;
+            }
             let x = fx[i], y = fy[i];
             if (rot) {
                 const xr = x * rc - y * rs;
@@ -298,7 +382,13 @@ export class Laser2Scanner {
                 on = ph - Math.floor(ph) < 0.3;
             }
             if (on) {
-                const vr = fr[j] * lr, vg = fg[j] * lg, vb = fb[j] * lb;
+                let vr, vg, vb;
+                if (mono) {
+                    const m = fr[j] > fg[j] ? (fr[j] > fb[j] ? fr[j] : fb[j]) : (fg[j] > fb[j] ? fg[j] : fb[j]);
+                    vr = m * lr; vg = m * lg; vb = m * lb;
+                } else {
+                    vr = fr[j] * lr; vg = fg[j] * lg; vb = fb[j] * lb;
+                }
                 if (ttl) {
                     r = vr >= 0.5 ? cr : 0; g = vg >= 0.5 ? cg : 0; b = vb >= 0.5 ? cb : 0;
                 } else {

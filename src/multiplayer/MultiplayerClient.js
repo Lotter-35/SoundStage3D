@@ -56,6 +56,7 @@ export class MultiplayerClient {
         this._onQueueSync = null;
         this._onQueueStateSync = null;
         this._onPlaylistsSync = null;
+        this._onIldaIndex = null;
         this._onRoomClosed = null;
         this._onRoomNotFound = null;
         this._onReady = null;    // called when room is created/joined
@@ -375,6 +376,11 @@ export class MultiplayerClient {
     }
 
     /** Register callback for playlist list updates from server */
+    /** Bibliothèque ILDA du serveur modifiée (fichier ajouté, modifié ou supprimé) */
+    onIldaIndex(cb) {
+        this._onIldaIndex = cb;
+    }
+
     onPlaylistsSync(cb) {
         this._onPlaylistsSync = cb;
     }
@@ -729,6 +735,10 @@ export class MultiplayerClient {
 
             case 'PONG':
                 this.clock.onPong(msg);
+                break;
+
+            case 'ILDA_INDEX':
+                if (this._onIldaIndex) this._onIldaIndex(msg.index);
                 break;
 
             case 'FIXTURE_STATE_REQUEST':

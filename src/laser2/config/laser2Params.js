@@ -24,6 +24,10 @@ export const PATTERNS = [
     'Sinusoïde',
 ];
 
+export const SOURCES = ['Motif interne', 'Fichier ILDA'];
+export const PLAY_MODES = ['Boucle', 'Aller-retour', 'Image fixe'];
+export const ILDA_COLOR_MODES = ['Couleurs du fichier', 'Couleur du laser'];
+
 export const SHUTTER_MODES = ['Ouvert', 'Fermé', 'Strobe'];
 export const PERSISTENCE_MODES = ['Œil', 'Caméra'];
 export const MODULATIONS = ['Analogique', 'TTL (tout ou rien)'];
@@ -62,7 +66,14 @@ export const LASER2_PARAMS_SCHEMA = {
     roll:        num(0, -180, 180, 1, 'Rotation (Roll)', 'place', false),
 
     // ── 🖼️ Contenu ──
+    source:      opt(SOURCES, 'Motif interne', 'Source', 'content'),
     pattern:     opt(PATTERNS, 'Faisceaux (éventail)', 'Motif', 'content'),
+    // Forme ILDA : chemin dans la bibliothèque du serveur (« Banque/forme.ild »), choisie par banque dans le panneau
+    ildaFile:    { value: '', label: 'Forme ILDA', folder: 'content', dmx: true, custom: true },
+    playMode:    opt(PLAY_MODES, 'Boucle', 'Lecture', 'content'),
+    ildaFps:     num(30, 1, 60, 1, 'Vitesse d\'animation (images/s)', 'content'),
+    ildaFrame:   num(0, 0, 999, 1, 'Image affichée (image fixe)', 'content'),
+    ildaColor:   opt(ILDA_COLOR_MODES, 'Couleurs du fichier', 'Couleurs', 'content'),
     scanRate:    num(30, 5, 60, 0.5, 'Vitesse de dessin (kpps)', 'content'),
     beamCount:   num(8, 1, 64, 1, 'Nombre de faisceaux', 'content'),
     beamDwell:   num(14, 1, 60, 1, 'Points par faisceau', 'content'),

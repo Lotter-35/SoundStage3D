@@ -33,6 +33,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const { WebSocketServer, WebSocket } = require('ws');
+const { initIldaLibrary, handleIldaRequest } = require('./ildaLibrary');
 
 const PORT = process.env.PORT || 8068;
 const ROOT_DIR = path.resolve(__dirname, '..');
@@ -835,6 +836,9 @@ function broadcastAll(data) {
     }
 }
 
+// Bibliothèque ILDA (server/storage/ilda) : un fichier ajouté ou modifié est annoncé à tous les joueurs
+initIldaLibrary(STORAGE_DIR, (index) => broadcastAll({ type: 'ILDA_INDEX', index }));
+
 function getPlayersSnapshot(room) {
     const players = [];
     for (const [id, client] of room.clients) {
@@ -997,6 +1001,9 @@ const server = http.createServer((req, res) => {
         });
         return;
     }
+
+    // Endpoint: /api/ilda — bibliothèque de formes ILDA des nouveaux lasers
+    if (handleIldaRequest(req, res, url)) return;
 
     // Endpoint: /api/shows — shows de la régie lumière
     if (url.pathname === '/api/shows' || url.pathname.startsWith('/api/shows/')) {
