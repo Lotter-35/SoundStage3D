@@ -286,10 +286,11 @@ function defaultLightingState() {
         // Lyres Spot : { id: { id, params } }. Les 9 lyres posées au spawn dans src/main.js (spot-stage-1…9)
         // y figurent d'office (params vides = réglages du spawn), comme les lasers et le stroboscope :
         // sinon l'état complet envoyé à la connexion, qui retire les lyres inconnues, les supprimerait.
-        spots: Object.fromEntries(Array.from({ length: 9 }, (_, i) => {
-            const id = `spot-stage-${i + 1}`;
-            return [id, { id, params: {} }];
-        })),
+        // + les 4 lyres posées sur le toit de la tour régie FOH (spot-foh-1…4)
+        spots: Object.fromEntries([
+            ...Array.from({ length: 9 }, (_, i) => `spot-stage-${i + 1}`),
+            ...Array.from({ length: 4 }, (_, i) => `spot-foh-${i + 1}`),
+        ].map(id => [id, { id, params: {} }])),
         spotGlobals: {},  // réglages communs des lyres (fumée, qualité, éclairage réel)
         spotFx: {},       // effets de la console en cours : { id: définition }
         // Barres LED : { id: { id, params } }. Les 4 barres posées au spawn dans src/main.js (ledbar-stage-1…4)
