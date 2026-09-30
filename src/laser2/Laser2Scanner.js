@@ -267,7 +267,9 @@ export class Laser2Scanner {
 
         if (!(kNow - this.k < RING - 64) || kNow < this.k - 2) {
             // Premier appel, saut d'horloge ou longue pause : on repart un peu avant la fenêtre
-            const warm = Math.min(RING - 64 - win, 400 + this.frame.n);
+            // Animation : de quoi couvrir les créneaux complets de la persistance
+            const span = this._animated ? Math.ceil((Math.round(EYE_WINDOW * this.fps) + 1) * pps / this.fps) : 0;
+            const warm = Math.min(RING - 64 - win, 400 + this.frame.n + span);
             this.k = kNow - win - warm;
             const u = this._command(this.k);
             this.px = u[0]; this.py = u[1]; this.vx = 0; this.vy = 0;
@@ -281,7 +283,17 @@ export class Laser2Scanner {
             this.frame = this._lf;
         }
 
-        this._extract(kNow - win + 1, kNow + 1);
+        if (this._animated && this.persistence !== 'Caméra') {
+            // Animation : persistance calée sur des créneaux d'image COMPLETS (le dernier terminé et ceux
+            // d'avant, ~40 ms) : chaque image compte entière, la luminosité ne papillote pas
+            const s = Math.floor(kNow * this.fps / pps);
+            const m = Math.max(1, Math.round(EYE_WINDOW * this.fps));
+            const k1 = Math.ceil(s * pps / this.fps);
+            const k0 = Math.max(Math.ceil((s - m) * pps / this.fps), kNow - (RING - 64) + 1);
+            this._extract(k0, k1);
+        } else {
+            this._extract(kNow - win + 1, kNow + 1);
+        }
         this.version++;
 
         if (canFreeze) {
@@ -309,6 +321,7 @@ export class Laser2Scanner {
             this._lf = f;
             this._li = ((k % f.n) + f.n) % f.n;
             this._lNext = Infinity;
+            this._lTail = Infinity;
             return;
         }
         const pps = this.pps, fps = this.fps, N = this.frames.length;
@@ -323,9 +336,15 @@ export class Laser2Scanner {
         }
         const f = this.frames[idx];
         const start = Math.ceil(slot * pps / fps);
+        const next = Math.ceil((slot + 1) * pps / fps);
+        // Comme un vrai logiciel laser : l'image n'est jamais coupée en plein dessin. Seuls des passages
+        // COMPLETS sont dessinés dans le créneau ; le reste du créneau, le laser attend éteint sur le
+        // dernier point (sinon la partie déjà tracée reçoit plus d'énergie : bandes qui scintillent).
+        const reps = Math.max(1, Math.floor((next - start) / f.n));
         this._lf = f;
-        this._li = (((k - start) % f.n) + f.n) % f.n;
-        this._lNext = Math.ceil((slot + 1) * pps / fps);
+        this._lNext = next;
+        this._lTail = start + Math.min(next - start, reps * f.n);
+        this._li = k >= this._lTail ? f.n - 1 : (((k - start) % f.n) + f.n) % f.n;
     }
 
     /** Consigne des miroirs pour l'échantillon k (rad) */
@@ -390,6 +409,7 @@ export class Laser2Scanner {
         let n = f.n;
         let fx = f.x, fy = f.y, fr = f.r, fg = f.g, fb = f.b;
         let next = this._lNext;
+        let tail = this._lTail;
         const mono = this.mono;
         const T = 1 / this.pps;
         const sub = this.sub, h = T / sub;
@@ -423,9 +443,13 @@ export class Laser2Scanner {
                 f = this._lf; n = f.n;
                 fx = f.x; fy = f.y; fr = f.r; fg = f.g; fb = f.b;
                 next = this._lNext;
+                tail = this._lTail;
                 i = this._li;
                 j = (((i - shift) % n) + n) % n;
             }
+            // Fin de créneau : attente éteinte sur le dernier point de l'image
+            const hold = k >= tail;
+            if (hold) { i = n - 1; j = n - 1; }
             if (k >= nextFx) {
                 this._timeFx(k * T);
                 nextFx = k + CHUNK;
@@ -476,7 +500,7 @@ export class Laser2Scanner {
             if (py > lim) { py = lim; vy = 0; } else if (py < -lim) { py = -lim; vy = 0; }
 
             let r = 0, g = 0, b = 0;
-            let on = open;
+            let on = open && !hold;
             if (on && strobe) {
                 const ph = k * T * rate;
                 on = ph - Math.floor(ph) < 0.3;
