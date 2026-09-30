@@ -15,13 +15,13 @@
 import * as THREE from 'three';
 
 const DRAG_THRESHOLD = 6; // pixels avant de commencer un rectangle
-const KIND_LABELS = { laser: 'lasers', strobe: 'stroboscopes', spot: 'lyres', ledbar: 'barres LED', light: 'lumières' };
-const KIND_LABEL_ONE = { laser: 'laser', strobe: 'stroboscope', spot: 'lyre', ledbar: 'barre LED', light: 'lumière' };
+const KIND_LABELS = { laser: 'lasers', strobe: 'stroboscopes', spot: 'lyres', ledbar: 'barres LED', laser2: 'lasers (points)', light: 'lumières' };
+const KIND_LABEL_ONE = { laser: 'laser', strobe: 'stroboscope', spot: 'lyre', ledbar: 'barre LED', laser2: 'laser (points)', light: 'lumière' };
 /** Réglages propres à chaque appareil : jamais recopiés sur le reste de la sélection */
 const PER_FIXTURE_KEYS = new Set(['posX', 'posY', 'posZ', 'yaw', 'pitch', 'roll', 'position', 'rotation', 'target',
     'dmxAddress', 'dmxUniverse', 'dmx']);
 /** Message émis par l'inspecteur d'un type d'appareil quand un réglage change */
-const UPDATE_CATEGORY = { laser: 'laser_param', strobe: 'strobe_update', spot: 'spot_update', ledbar: 'ledbar_update', light: 'light_update' };
+const UPDATE_CATEGORY = { laser: 'laser_param', strobe: 'strobe_update', spot: 'spot_update', ledbar: 'ledbar_update', laser2: 'laser2_update', light: 'light_update' };
 
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
@@ -82,6 +82,7 @@ export class FixtureSelection {
     }
 
     _kindOfFixture(obj) {
+        if (obj && obj.isLaser2) return 'laser2';
         return obj && obj.isLedBar ? 'ledbar' : 'spot';
     }
 
@@ -101,6 +102,7 @@ export class FixtureSelection {
         if (ap.strobeManager) for (const s of ap.strobeManager.getAllStrobes()) out.push({ kind: 'strobe', obj: s });
         if (ap.spotManager) for (const s of ap.spotManager.getAllSpots()) out.push({ kind: 'spot', obj: s });
         if (ap.ledBarManager) for (const b of ap.ledBarManager.getAllBars()) out.push({ kind: 'ledbar', obj: b });
+        if (ap.laser2Manager) for (const l of ap.laser2Manager.getAllLasers()) out.push({ kind: 'laser2', obj: l });
         // Lumières posées : seulement quand leurs repères sont visibles (panneau Ambiance ouvert)
         if (ap.isOpen) {
             for (const e of ap.lights) {
@@ -138,6 +140,11 @@ export class FixtureSelection {
             const hit = rc.intersectObjects(ap.ledBarManager.getBarObjects(), false)[0];
             const b = hit && ap.ledBarManager.getBarFromObject(hit.object);
             if (b) return { kind: 'ledbar', obj: b };
+        }
+        if (ap.laser2Manager && ap.laser2Manager.count > 0) {
+            const hit = rc.intersectObjects(ap.laser2Manager.getLaserObjects(), false)[0];
+            const l = hit && ap.laser2Manager.getLaserFromObject(hit.object);
+            if (l) return { kind: 'laser2', obj: l };
         }
         if (ap.isOpen) {
             const meshes = [];
@@ -323,7 +330,7 @@ export class FixtureSelection {
                     rotation: { angle: obj.params.angle || 0, tilt: obj.params.tilt || 0, roll: obj.params.roll || 0 },
                 },
             });
-        } else if (kind === 'spot' || kind === 'ledbar') {
+        } else if (kind === 'spot' || kind === 'ledbar' || kind === 'laser2') {
             ap._emitSync({ category: `${kind}_update`, id: obj.id, data: obj.getPlacement(), immediate });
         } else if (kind === 'light') {
             const l = obj.light;
@@ -380,7 +387,7 @@ export class FixtureSelection {
                 lasersRemoved = true;
             } else if (kind === 'strobe') {
                 ap.strobeManager.removeStrobe(obj.id); // envoie strobe_remove
-            } else if (kind === 'spot' || kind === 'ledbar') {
+            } else if (kind === 'spot' || kind === 'ledbar' || kind === 'laser2') {
                 ap.deleteSelectedSpot(obj);
             } else if (kind === 'light') {
                 ap.removeLight(obj);
@@ -482,7 +489,7 @@ export class FixtureSelection {
         tc.addEventListener('dragging-changed', (event) => {
             if (!this._groupActive || event.value) return;
             for (const it of this.items.values()) {
-                if (it.kind === 'spot' || it.kind === 'ledbar') it.obj.isBeingDragged = false;
+                if (it.kind === 'spot' || it.kind === 'ledbar' || it.kind === 'laser2') it.obj.isBeingDragged = false;
                 this._emitPlacement(it, true);
             }
         });
