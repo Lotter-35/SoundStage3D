@@ -1007,6 +1007,10 @@ try {
     await mp.connect();
     _mpReady = true;
     console.log(`[MP] Connected — role: ${mp.role}, room: ${mp.roomId}`);
+    if (mp.persistent) {
+        console.log(`[MP] Salle permanente ${mp.roomId} : le monde est sauvegardé sur le serveur`);
+        if (controls.inviteBtn) controls.inviteBtn.title = `Salle permanente ${mp.roomId} : toutes les modifications du monde sont sauvegardées (même après un redémarrage du serveur)`;
+    }
 
     // Instantiate player avatars renderer — filter own avatar by server-assigned clientId
     playerAvatars = new PlayerAvatars(scene, mp.clientId);

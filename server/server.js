@@ -78,11 +78,13 @@ const STORAGE_DIR = process.env.SS3D_STORAGE_DIR ? path.resolve(process.env.SS3D
 const AUDIO_STORAGE_DIR = path.join(STORAGE_DIR, 'audio');
 const PLAYLISTS_DIR = path.join(STORAGE_DIR, 'playlists');
 const SHOWS_DIR = path.join(STORAGE_DIR, 'shows'); // shows de la régie lumière (groupes, patterns…)
+const WORLDS_DIR = path.join(STORAGE_DIR, 'worlds'); // mondes des salles permanentes (?room=NOM)
 
 try {
     fs.mkdirSync(AUDIO_STORAGE_DIR, { recursive: true });
     fs.mkdirSync(PLAYLISTS_DIR, { recursive: true });
     fs.mkdirSync(SHOWS_DIR, { recursive: true });
+    fs.mkdirSync(WORLDS_DIR, { recursive: true });
 } catch (e) {
     console.error('[Storage] Error initializing storage directories:', e);
 }
@@ -273,6 +275,75 @@ function generateRoomId() {
     } while (rooms.has(id));
     return id;
 }
+
+// ─── Salles permanentes (monde sauvegardé) ───────────────────────────────────
+// ?room=NOM avec un nom choisi (ex. SPECTACLE) : la salle garde son monde (lumières, lasers, stroboscopes,
+// lyres, barres LED, brouillard, ambiance, réglages son) dans storage/worlds/NOM.json, même quand elle se vide
+// et après un redémarrage du serveur. Première visite : copie du monde par défaut.
+// Les codes générés automatiquement (6 caractères sans I, O, 0, 1) restent des salles temporaires.
+const WORLD_NAME_RE = /^[A-Z0-9_-]{2,32}$/;
+const GENERATED_ROOM_RE = /^[A-HJ-NP-Z2-9]{6}$/;
+const WORLD_SAVE_DELAY_MS = 1000;
+
+function isPermanentRoomName(id) {
+    return WORLD_NAME_RE.test(id) && !GENERATED_ROOM_RE.test(id);
+}
+
+function worldPath(name) {
+    return path.join(WORLDS_DIR, `${name}.json`);
+}
+
+function loadWorld(name) {
+    try {
+        const data = JSON.parse(fs.readFileSync(worldPath(name), 'utf-8'));
+        return data && typeof data === 'object' ? data : null;
+    } catch (_) {
+        return null; // pas encore de sauvegarde (ou fichier illisible) : monde par défaut
+    }
+}
+
+/** Écriture atomique du monde d'une salle permanente */
+function saveWorldNow(room) {
+    if (!room.persistent) return;
+    if (room.worldSaveTimer) { clearTimeout(room.worldSaveTimer); room.worldSaveTimer = null; }
+    try {
+        const file = worldPath(room.persistent);
+        const tmp = `${file}.tmp`;
+        fs.writeFileSync(tmp, JSON.stringify({
+            name: room.persistent,
+            savedAt: Date.now(),
+            lightingVersion: room.lightingVersion || 1,
+            lightingState: room.lightingState,
+            dspState: room.dspState,
+        }), 'utf-8');
+        fs.renameSync(tmp, file);
+    } catch (e) {
+        console.error(`[Monde] Sauvegarde de ${room.persistent} impossible :`, e.message);
+    }
+}
+
+/** Réglages son sauvegardés, complétés par les réglages ajoutés depuis (nouvelles clés par défaut) */
+function mergeDspState(saved) {
+    const out = defaultDspState();
+    for (const [bus, params] of Object.entries(saved || {})) {
+        if (params && typeof params === 'object') out[bus] = { ...(out[bus] || {}), ...params };
+    }
+    return out;
+}
+
+/** Sauvegarde groupée (au plus une écriture par seconde pendant les modifications) */
+function scheduleWorldSave(room) {
+    if (!room.persistent || room.worldSaveTimer) return;
+    room.worldSaveTimer = setTimeout(() => saveWorldNow(room), WORLD_SAVE_DELAY_MS);
+}
+
+function flushAllWorlds() {
+    for (const room of rooms.values()) if (room.worldSaveTimer) saveWorldNow(room);
+}
+for (const sig of ['SIGINT', 'SIGTERM']) {
+    process.on(sig, () => { flushAllWorlds(); process.exit(0); });
+}
+process.on('exit', flushAllWorlds);
 
 // Generate a unique client ID
 let _clientCounter = 0;
@@ -513,6 +584,82 @@ function applyLightingChange(state, msg) {
         state.ledBars = fresh.ledBars; // barres LED du spawn conservées
         state.haze = {};
     }
+}
+
+/**
+ * Crée une salle dont ce client est le premier joueur (maître).
+ * @param {string|null} persistentName nom de la salle permanente (monde sauvegardé), null = salle temporaire
+ */
+function createRoom(ws, clientId, roomId, persistentName) {
+    const world = persistentName ? loadWorld(persistentName) : null;
+    const room = {
+        masterId: clientId,
+        clients: new Map([[clientId, ws]]),
+        dspState: world ? mergeDspState(world.dspState) : defaultDspState(),
+        lightingState: world ? { ...defaultLightingState(), ...(world.lightingState || {}) } : defaultLightingState(),
+        playback: { currentTime: 0, isPlaying: false, timestamp: Date.now() },
+        sine: { active: false, frequency: 440, volume: 50 },
+        trackName: '',
+        audioBuffer: null,
+        audioMime: null,
+        queue: [],
+        currentQueueIndex: -1,
+        currentTrack: null,
+        manualQueue: [],
+        contextQueue: [],
+        isShuffle: false,
+        queueVersion: 1,
+        lightingVersion: (world && world.lightingVersion) || 1,
+        persistent: persistentName,
+        worldSaveTimer: null,
+        loadedPlaylistId: null,
+        loadedPlaylistName: null,
+        lastAdvanceTime: 0,
+        audioTracks: new Map(),
+        players: {},
+        readyClients: new Set(),
+        createdAt: Date.now(),
+        isPlayingTriggered: false,
+        isAwaitingReady: false,
+        readyTimeout: null,
+    };
+    rooms.set(roomId, room);
+    ws.roomId = roomId;
+
+    console.log(`[Room] Created: ${roomId} by ${clientId}${persistentName ? (world ? ' (salle permanente, monde sauvegardé)' : ' (salle permanente, nouveau monde)') : ''}`);
+    if (persistentName && !world) saveWorldNow(room);
+    send(ws, {
+        type: 'ROOM_CREATED',
+        roomId,
+        clientId,
+        isFirstInRoom: true,
+        color: ws.color,
+        publicIp: publicIp || null,
+        webPort: 8067,
+        audioPort: PORT,
+        dspState: room.dspState,
+        lightingState: room.lightingState,
+        lightingVersion: room.lightingVersion || 1,
+        playback: room.playback,
+        sine: room.sine,
+        trackName: room.trackName,
+        audioUrl: room.audioBuffer ? `/audio/${roomId}` : null,
+        queue: room.queue || [],
+        currentQueueIndex: room.currentQueueIndex !== undefined ? room.currentQueueIndex : -1,
+        currentTrack: room.currentTrack || null,
+        manualQueue: room.manualQueue || [],
+        contextQueue: room.contextQueue || [],
+        isShuffle: Boolean(room.isShuffle),
+        queueVersion: room.queueVersion || 1,
+        loadedPlaylistId: room.loadedPlaylistId || null,
+        loadedPlaylistName: room.loadedPlaylistName || null,
+        playlists: getPlaylistsList(),
+        players: getPlayersSnapshot(room),
+        serverTime: Date.now(),
+        sweepTime: 0,
+        persistent: Boolean(persistentName),
+    });
+    return room;
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1134,79 +1281,18 @@ wss.on('connection', (ws) => {
 
             // ─── CREATE_ROOM ──────────────────────────────────────────────
             case 'CREATE_ROOM': {
-                const roomId = generateRoomId();
-                const room = {
-                    masterId: clientId,
-                    clients: new Map([[clientId, ws]]),
-                    dspState: defaultDspState(),
-                    lightingState: defaultLightingState(),
-                    playback: { currentTime: 0, isPlaying: false, timestamp: Date.now() },
-                    sine: { active: false, frequency: 440, volume: 50 },
-                    trackName: '',
-                    audioBuffer: null,
-                    audioMime: null,
-                    queue: [],
-                    currentQueueIndex: -1,
-                    currentTrack: null,
-                    manualQueue: [],
-                    contextQueue: [],
-                    isShuffle: false,
-                    queueVersion: 1,
-                    lightingVersion: 1,
-                    loadedPlaylistId: null,
-                    loadedPlaylistName: null,
-                    lastAdvanceTime: 0,
-                    audioTracks: new Map(),
-                    players: {},
-                    readyClients: new Set(),
-                    createdAt: Date.now(),
-                    isPlayingTriggered: false,
-                    isAwaitingReady: false,
-                    readyTimeout: null,
-                };
-                rooms.set(roomId, room);
-                ws.roomId = roomId;
-
-                console.log(`[Room] Created: ${roomId} by ${clientId}`);
-                send(ws, {
-                    type: 'ROOM_CREATED',
-                    roomId,
-                    clientId,
-                    isFirstInRoom: true,
-                    color: ws.color,
-                    publicIp: publicIp || null,
-                    webPort: 8067,
-                    audioPort: PORT,
-                    dspState: room.dspState,
-                    lightingState: room.lightingState,
-                    lightingVersion: room.lightingVersion || 1,
-                    playback: room.playback,
-                    sine: room.sine,
-                    trackName: room.trackName,
-                    audioUrl: room.audioBuffer ? `/audio/${roomId}` : null,
-                    queue: room.queue || [],
-                    currentQueueIndex: room.currentQueueIndex !== undefined ? room.currentQueueIndex : -1,
-                    currentTrack: room.currentTrack || null,
-                    manualQueue: room.manualQueue || [],
-                    contextQueue: room.contextQueue || [],
-                    isShuffle: Boolean(room.isShuffle),
-                    queueVersion: room.queueVersion || 1,
-                    loadedPlaylistId: room.loadedPlaylistId || null,
-                    loadedPlaylistName: room.loadedPlaylistName || null,
-                    playlists: getPlaylistsList(),
-                    players: getPlayersSnapshot(room),
-                    serverTime: Date.now(),
-                    sweepTime: 0,
-                });
+                createRoom(ws, clientId, generateRoomId(), null);
                 break;
             }
 
             // ─── JOIN_ROOM ────────────────────────────────────────────────
             case 'JOIN_ROOM': {
-                const { roomId } = msg;
+                const roomId = String(msg.roomId || '').toUpperCase();
                 const room = rooms.get(roomId);
                 if (!room) {
-                    send(ws, { type: 'ROOM_NOT_FOUND', roomId });
+                    // Salle permanente : (re)créée depuis son monde sauvegardé (ou le monde par défaut)
+                    if (isPermanentRoomName(roomId)) createRoom(ws, clientId, roomId, roomId);
+                    else send(ws, { type: 'ROOM_NOT_FOUND', roomId });
                     return;
                 }
 
@@ -1245,6 +1331,7 @@ wss.on('connection', (ws) => {
                     players: getPlayersSnapshot(room),
                     serverTime: Date.now(),
                     sweepTime: Math.max(0, (Date.now() - (room.createdAt || Date.now())) / 1000),
+                    persistent: Boolean(room.persistent),
                 });
 
                 sendDmxState(ws, room);
@@ -1324,6 +1411,7 @@ wss.on('connection', (ws) => {
                 // Update server-side DSP state (source of truth)
                 if (room.dspState[bus]) {
                     room.dspState[bus][param] = value;
+                    scheduleWorldSave(room);
                 }
 
                 // Broadcast to everyone EXCEPT the sender (sender already applied locally)
@@ -1344,6 +1432,7 @@ wss.on('connection', (ws) => {
                 room.lightingVersion = (room.lightingVersion || 1) + 1;
                 console.log(`[Lighting] Change from ${clientId} in ${ws.roomId} (v${room.lightingVersion}): cat=${msg.category}, id=${msg.id}`);
                 applyLightingChange(room.lightingState, msg);
+                scheduleWorldSave(room);
 
                 // Broadcast to everyone EXCEPT the sender (sender already applied locally)
                 broadcastRoom(room, {
@@ -2139,6 +2228,7 @@ wss.on('connection', (ws) => {
             // Destroy empty room only when everyone has left
             if (room.readyTimeout) clearTimeout(room.readyTimeout);
             sendRegies(room, { type: 'ROOM_CLOSED' });
+            saveWorldNow(room); // salle permanente : monde écrit sur le disque avant de libérer la mémoire
             rooms.delete(ws.roomId);
             console.log(`[Room] Destroyed: ${ws.roomId} (empty)`);
         } else {

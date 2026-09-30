@@ -501,6 +501,7 @@ export class MultiplayerClient {
                 this.role = 'master';
                 this.isFirstInRoom = true;
                 this.roomId = msg.roomId;
+                this.persistent = Boolean(msg.persistent); // salle permanente : monde sauvegardé sur le serveur
                 this.clientId = msg.clientId;
                 this.color = msg.color || '#00d2ff';
                 this.publicIp = msg.publicIp || this.publicIp;
@@ -547,6 +548,7 @@ export class MultiplayerClient {
                 this.role = 'guest';
                 this.isFirstInRoom = false;
                 this.roomId = msg.roomId;
+                this.persistent = Boolean(msg.persistent); // salle permanente : monde sauvegardé sur le serveur
                 this.clientId = msg.clientId;
                 this.color = msg.color || '#00d2ff';
                 this.publicIp = msg.publicIp || this.publicIp;
