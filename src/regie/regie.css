@@ -440,3 +440,60 @@ select.field { padding: 0 4px; background: var(--bg); cursor: pointer; }
 .insp-label { color: var(--text-2); }
 .insp-row select.field { width: 100%; }
 .insp-help { padding: 6px 12px; font-size: 11px; line-height: 1.5; }
+
+/* Mode Live : grille de pads */
+.live { display: flex; flex-direction: column; min-height: 0; }
+.live .panel-head { gap: 8px; }
+.live-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr); }
+.live-body.editing { grid-template-columns: 200px minmax(0, 1fr) 260px; }
+.live-grid-wrap { min-width: 0; overflow: auto; padding: 10px; }
+.live-grid { display: grid; gap: 6px; align-items: stretch; }
+.live-corner { display: flex; align-items: center; padding: 0 4px; font-size: 11px; }
+.btn.scene { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 26px; }
+.scene-icon { display: inline-flex; color: var(--text-3); }
+.scene-icon svg { width: 8px; height: 8px; }
+.btn.scene:hover .scene-icon { color: var(--ok); }
+.live-row-head { display: flex; flex-direction: column; justify-content: center; gap: 4px; padding: 4px 8px; background: var(--panel-head); border: 1px solid var(--line); border-radius: 2px; min-width: 0; }
+.live-body.editing .live-row-head { flex-direction: row; align-items: center; }
+.live-row-head .field { flex: 1; min-width: 0; }
+.live-row-name { display: flex; align-items: center; justify-content: space-between; gap: 4px; }
+.live-row-name .name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.live-row-head .range { width: 90px; }
+.live-add { margin-top: 10px; }
+
+.pad {
+    position: relative;
+    height: 66px;
+    padding: 7px 8px;
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    overflow: hidden;
+    background: var(--raised);
+    border: 1px solid var(--line-strong);
+    border-radius: 2px;
+    cursor: pointer;
+    user-select: none;
+    touch-action: none;
+}
+.pad:hover { background: var(--raised-hover); }
+.pad.empty { background: transparent; border-style: dashed; border-color: var(--line); cursor: default; }
+.live-body.editing .pad.empty { cursor: pointer; }
+.pad-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pad-meta { font-size: 10px; color: var(--text-3); }
+.pad-prog { position: absolute; left: 0; bottom: 0; width: 0; height: 2px; background: var(--ok); }
+.pad.playing { border-color: var(--ok); background: rgba(63, 191, 106, 0.13); }
+.pad.pending { border-color: var(--warn); animation: pad-armed 0.5s steps(1) infinite; }
+.pad.stopping { border-color: var(--warn); }
+.pad.stopping .pad-prog { background: var(--warn); }
+.pad.flash { border-left-width: 3px; }
+.pad.sel { box-shadow: inset 0 0 0 1px var(--accent); border-color: var(--accent); }
+.pad.drop { border-color: var(--accent); border-style: solid; background: var(--accent-dim); }
+@keyframes pad-armed { 50% { border-color: var(--line-strong); } }
+
+.live-shelf { border-right: 1px solid var(--line-strong); }
+.live-shelf-list { flex: 1; overflow-y: auto; }
+.shelf-item { display: flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-bottom: 1px solid var(--line); cursor: grab; }
+.shelf-item:hover { background: var(--raised); }
+.shelf-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.shelf-item .count { color: var(--text-3); }

@@ -15,8 +15,18 @@ export function newId(prefix) {
     return `${prefix}${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`;
 }
 
+export const LIVE_COLS = 8;
+
+/** Page Live par défaut : 4 rangées de 8 pads vides, lancement à la mesure */
+function emptyLive() {
+    return {
+        cols: LIVE_COLS, quantize: 4, fade: 0, speed: 1,
+        rows: [1, 2, 3, 4].map((i) => ({ id: newId('r'), name: `Rangée ${i}`, level: 1, pads: new Array(LIVE_COLS).fill(null) })),
+    };
+}
+
 function emptyShow(name) {
-    return { id: newId('s'), name, version: 1, createdAt: Date.now(), updatedAt: 0, bpm: 120, groups: [], patterns: [] };
+    return { id: newId('s'), name, version: 1, createdAt: Date.now(), updatedAt: 0, bpm: 120, groups: [], patterns: [], live: emptyLive() };
 }
 
 /** Complète un show lu sur le serveur (champs manquants, points triés) */
@@ -25,6 +35,15 @@ function normalize(show) {
     if (!Array.isArray(s.groups)) s.groups = [];
     if (!Array.isArray(s.patterns)) s.patterns = [];
     if (!(s.bpm > 0)) s.bpm = 120;
+    if (!s.live || typeof s.live !== 'object' || !Array.isArray(s.live.rows)) s.live = emptyLive();
+    const live = s.live;
+    if (!(live.cols > 0)) live.cols = LIVE_COLS;
+    if (!(live.speed > 0)) live.speed = 1;
+    for (const r of live.rows) {
+        if (!Array.isArray(r.pads)) r.pads = [];
+        while (r.pads.length < live.cols) r.pads.push(null);
+        if (!(r.level >= 0)) r.level = 1;
+    }
     for (const p of s.patterns) {
         if (!Array.isArray(p.tracks)) p.tracks = [];
         if (!(p.length > 0)) p.length = 16;

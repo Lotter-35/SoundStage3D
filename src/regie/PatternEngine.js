@@ -10,9 +10,14 @@
  *
  * Les patterns en lecture s'ajoutent par-dessus les réglages manuels ; le dernier lancé passe
  * au-dessus des précédents sur les canaux qu'ils partagent.
+ *
+ * Lecture (clé = pattern depuis l'éditeur, ou pad du mode Live) : départ calé sur le temps ou la
+ * mesure (en attente jusque-là), fondu d'entrée et de sortie (mélange avec ce qui est dessous),
+ * rangée exclusive (lancer un pad arrête l'autre pad de sa rangée au même moment), niveau de
+ * rangée (intensité seulement) et vitesse globale (×½, ×1, ×2…) sans saut de position.
  */
 
-import { writeAttribute, attributeType } from './attributes.js';
+import { writeAttribute, attributeType, scaleIntensity } from './attributes.js';
 
 export const SHAPES = [
     ['sine', 'Sinus'], ['triangle', 'Triangle'], ['square', 'Carré'], ['saw', 'Dent de scie'],
@@ -131,8 +136,13 @@ export class PatternEngine {
         this.store = store;
         this.tempo = tempo;
         this.getShow = getShow;
-        /** @type {Map<string, {startBeat: number}>} patterns en lecture, du plus ancien au plus récent */
+        /**
+         * Lectures en cours, de la plus ancienne à la plus récente (dessinées dans cet ordre)
+         * @type {Map<string, {patternId: string, startBeat: number, fadeIn: number, stopBeat: number|null,
+         *   fadeOut: number, row: string|null, level: (() => number)|null}>}
+         */
         this.playing = new Map();
+        this.speed = 1;
         this.version = 0;
         this._targetCache = new Map();
     }
@@ -142,24 +152,93 @@ export class PatternEngine {
         return show ? show.patterns.find((p) => p.id === id) || null : null;
     }
 
-    isPlaying(id) {
-        return this.playing.has(id);
+    isPlaying(key) {
+        const pb = this.playing.get(key);
+        return Boolean(pb) && pb.stopBeat === null;
     }
 
-    /** Lance un pattern, calé sur le temps en cours (il passe au-dessus des autres) */
-    play(id, t) {
-        this.playing.delete(id);
-        this.playing.set(id, { startBeat: Math.floor(this.tempo.beatAt(t)) });
+    /** Un pattern joue-t-il, depuis l'éditeur ou un pad ? */
+    isPatternPlaying(patternId) {
+        for (const pb of this.playing.values()) if (pb.patternId === patternId && pb.stopBeat === null) return true;
+        return false;
+    }
+
+    /**
+     * État d'une lecture à l'heure t : 'pending' (attend son départ), 'playing', 'stopping'
+     * (arrêt programmé ou fondu de sortie) ou null
+     */
+    state(key, t) {
+        const pb = this.playing.get(key);
+        if (!pb) return null;
+        const beat = this.tempo.beatAt(t);
+        if (beat < pb.startBeat) return 'pending';
+        if (pb.stopBeat !== null) return 'stopping';
+        return 'playing';
+    }
+
+    /** Prochain départ calé sur `q` temps (1 = temps, 4 = mesure, 0 = tout de suite) */
+    _quantized(beat, q) {
+        if (!(q > 0)) return beat;
+        const k = Math.ceil(beat / q - 1e-6) * q;
+        return k;
+    }
+
+    /**
+     * Lance une lecture ; elle passe au-dessus des autres
+     * @param {string} key   identifiant de la lecture (pattern ou pad)
+     * @param {number} t     heure serveur de la trame en préparation
+     * @param {object} [o]
+     * @param {string} [o.pattern]   pattern joué (par défaut : key)
+     * @param {number} [o.quantize]  départ calé sur ce nombre de temps (sans : calé sur le temps en cours)
+     * @param {number} [o.fade]      fondu d'entrée (et de sortie de la lecture remplacée), en temps
+     * @param {string} [o.row]       rangée exclusive
+     * @param {() => number} [o.level] niveau d'intensité (0…1)
+     */
+    play(key, t, o = {}) {
+        const beat = this.tempo.beatAt(t);
+        const startBeat = o.quantize === undefined ? Math.floor(beat) : this._quantized(beat, o.quantize);
+        const fade = Math.max(0, o.fade || 0);
+        if (o.row) {
+            for (const [k, pb] of this.playing) {
+                if (k === key || pb.row !== o.row || pb.stopBeat !== null) continue;
+                pb.stopBeat = Math.max(startBeat, pb.startBeat);
+                pb.fadeOut = fade;
+            }
+        }
+        this.playing.delete(key);
+        this.playing.set(key, {
+            patternId: o.pattern || key, startBeat, fadeIn: o.quantize === undefined ? 0 : fade,
+            stopBeat: null, fadeOut: 0, row: o.row || null, level: o.level || null,
+        });
         this.version++;
     }
 
-    stop(id) {
-        if (this.playing.delete(id)) this.version++;
+    /**
+     * Arrête une lecture (tout de suite, ou au prochain temps / à la prochaine mesure, avec fondu)
+     * @param {object} [o] { quantize, fade } comme pour play()
+     */
+    stop(key, t, o = {}) {
+        const pb = this.playing.get(key);
+        if (!pb) return;
+        const fade = Math.max(0, o.fade || 0);
+        if (t === undefined || (!(o.quantize > 0) && fade === 0)) {
+            this.playing.delete(key);
+        } else {
+            const beat = this.tempo.beatAt(t);
+            pb.stopBeat = Math.max(pb.startBeat, this._quantized(beat, o.quantize));
+            pb.fadeOut = fade;
+        }
+        this.version++;
     }
 
-    toggle(id, t) {
-        if (this.playing.has(id)) this.stop(id);
-        else this.play(id, t);
+    toggle(key, t, o) {
+        if (this.isPlaying(key)) this.stop(key, t, o);
+        else this.play(key, t, o);
+    }
+
+    /** Arrête la lecture en cours d'une rangée */
+    stopRow(row, t, o) {
+        for (const [k, pb] of this.playing) if (pb.row === row && pb.stopBeat === null) this.stop(k, t, o);
     }
 
     stopAll() {
@@ -168,11 +247,30 @@ export class PatternEngine {
         this.version++;
     }
 
-    /** Temps local (0…longueur) d'un pattern en lecture, ou null */
-    localBeat(pattern, t) {
-        const pb = this.playing.get(pattern.id);
+    /** Vitesse de toutes les lectures ; chacune garde sa position (pas de saut) */
+    setSpeed(v, t) {
+        const speed = Math.max(0.125, Math.min(8, Number(v) || 1));
+        if (speed === this.speed) return;
+        const beat = this.tempo.beatAt(t);
+        for (const pb of this.playing.values()) {
+            if (beat > pb.startBeat) pb.startBeat = beat - ((beat - pb.startBeat) * this.speed) / speed;
+        }
+        this.speed = speed;
+        this.version++;
+    }
+
+    /** Position (0…longueur, en temps du pattern) d'une lecture à l'heure t, ou null */
+    localBeatOf(key, pattern, t) {
+        const pb = this.playing.get(key);
         if (!pb) return null;
-        return mod(this.tempo.beatAt(t) - pb.startBeat, Math.max(0.25, pattern.length || 4));
+        const beat = this.tempo.beatAt(t);
+        if (beat < pb.startBeat) return null;
+        return mod((beat - pb.startBeat) * this.speed, Math.max(0.25, pattern.length || 4));
+    }
+
+    /** Position d'un pattern lancé depuis l'éditeur, ou null */
+    localBeat(pattern, t) {
+        return this.localBeatOf(pattern.id, pattern, t);
     }
 
     /** Projecteurs visés par une piste (groupe ou liste), dans l'ordre du décalage */
@@ -202,15 +300,42 @@ export class PatternEngine {
     apply(frameOf, t) {
         if (this.playing.size === 0) return;
         const beat = this.tempo.beatAt(t);
-        for (const [id, pb] of this.playing) {
-            const pat = this._pattern(id);
+        for (const [key, pb] of this.playing) {
+            const pat = this._pattern(pb.patternId);
             if (!pat) {
-                this.playing.delete(id);
+                this.playing.delete(key);
                 this.version++;
                 continue;
             }
+            if (beat < pb.startBeat) continue; // en attente de son départ
+            // Poids : fondu d'entrée, puis arrêt (net ou fondu de sortie)
+            let w = pb.fadeIn > 0 ? (beat - pb.startBeat) / pb.fadeIn : 1;
+            if (pb.stopBeat !== null && beat >= pb.stopBeat) {
+                if (!(pb.fadeOut > 0) || beat >= pb.stopBeat + pb.fadeOut) {
+                    this.playing.delete(key);
+                    this.version++;
+                    continue;
+                }
+                w = Math.min(w, 1 - (beat - pb.stopBeat) / pb.fadeOut);
+            }
+            w = Math.max(0, Math.min(1, w));
+            if (w <= 0) continue;
+            const level = pb.level ? Math.max(0, Math.min(1, pb.level())) : 1;
             const L = Math.max(0.25, pat.length || 4);
-            const b = mod(beat - pb.startBeat, L);
+            const b = mod((beat - pb.startBeat) * this.speed, L);
+
+            // Fondu : on écrit dans les univers puis on mélange avec ce qu'il y avait dessous
+            let target = frameOf;
+            let snaps = null;
+            if (w < 1) {
+                snaps = new Map();
+                target = (n) => {
+                    const f = frameOf(n);
+                    if (!snaps.has(n)) snaps.set(n, f.slice());
+                    return f;
+                };
+            }
+            const touched = level < 1 ? new Set() : null;
             for (const tr of pat.tracks) {
                 if (tr.mute) continue;
                 const fixtures = this.targetsOf(tr);
@@ -219,7 +344,18 @@ export class PatternEngine {
                     const v = sampleTrack(tr, b, L, i, n);
                     if (v === null) continue;
                     const f = fixtures[i];
-                    writeAttribute(frameOf(f.universe), f, tr.attr, v);
+                    writeAttribute(target(f.universe), f, tr.attr, v);
+                    if (touched) touched.add(f);
+                }
+            }
+            // Niveau de rangée : intensité des projecteurs du pattern (qu'il la pilote ou non)
+            if (touched) for (const f of touched) scaleIntensity(target(f.universe), f, level);
+            if (snaps) {
+                for (const [n, before] of snaps) {
+                    const f = frameOf(n);
+                    for (let i = 0; i < f.length; i++) {
+                        if (f[i] !== before[i]) f[i] = Math.round(before[i] + (f[i] - before[i]) * w);
+                    }
                 }
             }
         }

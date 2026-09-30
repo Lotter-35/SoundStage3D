@@ -54,6 +54,7 @@ shows.onChange(() => {
     _showId = show.id;
     engine.stopAll();
     tempo.setBpm(show.bpm);
+    engine.setSpeed(show.live ? show.live.speed : 1, client.clock.now());
     // Groupes de l'étape 2 (gardés sur ce poste) : repris une fois dans le show
     const legacy = takeLegacyGroups();
     if (legacy.length && show.groups.length === 0) {

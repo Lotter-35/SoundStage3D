@@ -170,6 +170,22 @@ export function writeAttribute(frame, f, attr, value) {
     }
 }
 
+/** Multiplie l'intensité (dimmer) d'un projecteur dans l'univers de sortie par k (0…1) */
+export function scaleIntensity(frame, f, k) {
+    const w = compile(f, 'dimmer');
+    if (!w || w.kind !== 'ch') return;
+    const c = w.c;
+    const i = c.address - 1;
+    if (c.fineAddress) {
+        const j = c.fineAddress - 1;
+        const v16 = Math.round(((frame[i] << 8) | frame[j]) * k);
+        frame[i] = v16 >> 8;
+        frame[j] = v16 & 255;
+    } else {
+        frame[i] = Math.round(frame[i] * k);
+    }
+}
+
 export function hasAttribute(f, attr) {
     return compile(f, attr) !== null;
 }

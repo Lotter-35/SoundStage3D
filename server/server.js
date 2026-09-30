@@ -73,7 +73,8 @@ const MIME_TYPES = {
 };
 
 // ─── Server Persistent Storage (Playlists & Audio files) ───────────────────────
-const STORAGE_DIR = path.resolve(__dirname, 'storage');
+// SS3D_STORAGE_DIR : autre dossier de stockage (serveur de test, pour ne pas toucher aux vrais shows et playlists)
+const STORAGE_DIR = process.env.SS3D_STORAGE_DIR ? path.resolve(process.env.SS3D_STORAGE_DIR) : path.resolve(__dirname, 'storage');
 const AUDIO_STORAGE_DIR = path.join(STORAGE_DIR, 'audio');
 const PLAYLISTS_DIR = path.join(STORAGE_DIR, 'playlists');
 const SHOWS_DIR = path.join(STORAGE_DIR, 'shows'); // shows de la régie lumière (groupes, patterns…)
