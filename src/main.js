@@ -3472,6 +3472,7 @@ function updateFpsCounter(dt, renderMs = 0) {
     if (fpsEl) {
         const dyn = dynamicResolution.factor;
         fpsEl.textContent = dyn < 1 ? `${_fps} FPS · ${Math.round(dyn * 100)} %` : _fps + ' FPS';
+        fpsEl.title = `Résolution dynamique : ${Math.round(dyn * 100)} % · GPU ${dynamicResolution.gpuMs.toFixed(1)} ms · cible ${dynamicResolution.targetHz} FPS`;
     }
 
     _debugAccum = 0;

@@ -20,7 +20,8 @@ const UP_DELAY_MS = 3000;
 const MAX_UP_DELAY_MS = 30000;
 const BOUNCE_MS = 10000;       // baisse moins de 10 s après une remontée = va-et-vient
 const MIN_SAMPLES = 20;        // mesures depuis le dernier changement avant de décider
-const WINDOW = 31;             // mesures gardées pour la médiane
+const WINDOW = 31;
+const DOWN_BAN_MS = 30000;     // après une baisse inutile             // mesures gardées pour la médiane
 const REFRESH_RATES = [60, 75, 90, 100, 120, 144];
 const MAX_TARGET_HZ = 144;
 
@@ -60,6 +61,8 @@ export class DynamicResolution {
     /** @param {'off'|'auto'|number} mode */
     setMode(mode) {
         this.mode = mode;
+        this._downFrom = null;
+        this._downBan = null;
         this._reset();
         if (mode === 'off' && this.level !== 0) this._setLevel(0, performance.now());
     }
@@ -112,16 +115,31 @@ export class DynamicResolution {
         const budget = (1000 / this.targetHz) * HEADROOM;
         const since = now - this._lastChange;
         const f = STEPS[this.level];
-        if (this.gpuMs > budget && since >= DOWN_DELAY_MS && this.level < STEPS.length - 1) {
+        // Baisse inutile : la mesure n'a presque pas bougé → la limite n'est pas le nombre de pixels
+        // (temps CPU du rendu, compté dans la minuterie). Retour à la résolution d'avant, plus de baisse
+        // tant que la mesure ne dépasse pas nettement celle qui l'avait déclenchée.
+        if (this._downFrom && this.gpuMs > this._downFrom.ms * 0.9) {
+            this._downBan = { until: now + DOWN_BAN_MS, ms: this._downFrom.ms * 1.15 };
+            const back = this._downFrom.level;
+            this._downFrom = null;
+            this._setLevel(back, now);
+            return;
+        }
+        this._downFrom = null;
+        const banned = this._downBan && now < this._downBan.until && this.gpuMs < this._downBan.ms;
+        if (this.gpuMs > budget && !banned && since >= DOWN_DELAY_MS && this.level < STEPS.length - 1) {
             // Coût ≈ proportionnel au nombre de pixels : palier qui ramène la mesure dans le budget
             const want = f * Math.sqrt(budget / this.gpuMs);
             let level = this.level + 1;
             while (level < STEPS.length - 1 && STEPS[level] > want) level++;
             if (now - this._lastUp < BOUNCE_MS) this._upDelay = Math.min(MAX_UP_DELAY_MS, this._upDelay * 2);
+            const from = { level: this.level, ms: this.gpuMs };
             this._setLevel(level, now);
+            this._downFrom = from;
         } else if (this.level > 0 && since >= this._upDelay) {
             const up = STEPS[this.level - 1];
-            const predicted = this.gpuMs * (up * up) / (f * f);
+            // Une partie du temps ne dépend pas des pixels (ombres, CPU) : on n'en compte que les 2/3
+            const predicted = this.gpuMs * (1 / 3 + (2 / 3) * (up * up) / (f * f));
             if (predicted < budget * UP_MARGIN) {
                 this._lastUp = now;
                 this._setLevel(this.level - 1, now);
