@@ -52,6 +52,7 @@ import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
 import { DynamicResolution } from './render/DynamicResolution.js';
+import { FixtureSelection } from './ui/FixtureSelection.js';
 import { setDynamicResolutionFactor } from './render/resolutionScale.js';
 import { DirShadowCache } from './render/dirShadowCache.js';
 import { OptionsPanel } from './ui/OptionsPanel.js';
@@ -283,6 +284,11 @@ window.__SS3D.ledBarManager = ledBarManager;
 const spotConsole = new SpotConsolePanel({ spotManager, ambiancePanel, scene, camera, renderer, listener });
 window.__SS3D.spotConsole = spotConsole;
 ambiancePanel.spotConsole = spotConsole;
+
+// Sélection multiple des lumières (rectangle à la souris en mode curseur, Ctrl + clic) : déplacer,
+// régler ou supprimer plusieurs lumières d'un coup
+const fixtureSelection = new FixtureSelection({ ambiancePanel, camera, renderer, scene, listener, LightingSync });
+window.__SS3D.fixtureSelection = fixtureSelection;
 
 // ─── Brouillard de salle (fumée éclairée par les strobes / lyres, après leurs faisceaux) ───
 const hazeVolume = new HazeVolume({ scene, camera, laserManager, strobeManager, spotManager });
@@ -3780,6 +3786,7 @@ function renderFrame() {
     if (ambiancePanel) {
         ambiancePanel.update(dt);
     }
+    fixtureSelection.update();
 
     // Avancer l'horloge partagée du balayage laser avec le delta temps réel
     _sharedSweepTime += dt;

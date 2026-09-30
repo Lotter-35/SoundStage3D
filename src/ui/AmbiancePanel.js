@@ -250,6 +250,15 @@ export class AmbiancePanel {
         // Éviter tout conflit avec la caméra / listener pendant le glissement du gizmo
         this.transformControls.addEventListener('dragging-changed', (event) => {
             this.isDraggingGizmo = event.value;
+            // Gizmo de groupe (sélection multiple, FixtureSelection) : chaque élément est envoyé par la sélection
+            if (this._groupGizmoActive) {
+                if (!event.value) this._dragEndTime = performance.now();
+                if (this.listener) {
+                    if (event.value) this.listener.resetMovement();
+                    this.listener.controls.enabled = !event.value;
+                }
+                return;
+            }
 
             // Indiquer au boîtier laser qu'il est en cours de manipulation (pour ne pas écraser sa rotation dans la render loop)
             if (this.selectedLaser && this.selectedLaser.pod && this.selectedLaser.pod.housing) {
@@ -316,7 +325,7 @@ export class AmbiancePanel {
 
         // Quand le gizmo déplace ou pivote la lumière ou sa cible, synchroniser les repères et l'UI
         this.transformControls.addEventListener('change', () => {
-            if (this._isSwitchingLight) return;
+            if (this._isSwitchingLight || this._groupGizmoActive) return;
 
             // ── Cas 1 : Gizmo attaché à un Laser ──
             if (this.selectedLaser && this.transformControls.object === this.selectedLaser.getHousingGroup()) {
