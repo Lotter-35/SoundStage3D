@@ -12,14 +12,18 @@
  * ─────────────────────────────────────────────────────────────
  */
 
-import { SpotBatch, SpotVolumePass } from './SpotBatch.js?v=3';
-import { SpotFixture } from './SpotFixture.js?v=2';
+import { SpotBatch, SpotVolumePass } from './SpotBatch.js?v=4';
+import { SpotFixture, SPOT_BEAM_RANGE } from './SpotFixture.js?v=2';
+import { LENS_RADIUS } from './SpotHousing.js?v=2';
 import { SpotLightPool } from './SpotLightPool.js?v=2';
 import { getSpotHousingInstancer } from './SpotHousing.js?v=2';
 import { DmxPatch } from '../dmx/DmxPatch.js';
 import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
 import { SpotEffects } from './console/SpotEffects.js';
 import { RES_QUALITY } from '../ui/ClientOptions.js';
+
+/** Résolution des faisceaux quand la caméra est dans l'un d'eux (× la qualité choisie) */
+const INSIDE_RES_FACTOR = 0.65;
 
 function makeId() {
     return 'spot-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
@@ -66,6 +70,25 @@ export class SpotManager {
         this._updateHooks = [];
         // Autres projecteurs rendus par le même batch (barres LED) : { count, update(dt), pushInstances(batch) }
         this._sources = [];
+        // Caméra dans un faisceau : faisceaux calculés en résolution réduite (on est ébloui, le détail
+        // ne se voit pas) — le faisceau couvre tout l'écran, c'est le cas qui coûte le plus
+        this._insideScale = 1;
+        this._insideHold = 0;
+    }
+
+    /** Vrai si la caméra est dans le cône d'une lyre allumée ou dans les faisceaux d'une barre LED */
+    _cameraInsideBeam() {
+        const c = this.camera.position;
+        for (const s of this._spots.values()) {
+            if (s.flux <= 1e-4) continue;
+            const dx = c.x - s.lensPos.x, dy = c.y - s.lensPos.y, dz = c.z - s.lensPos.z;
+            const z = dx * s.axis.x + dy * s.axis.y + dz * s.axis.z;
+            if (z <= 0 || z > SPOT_BEAM_RANGE) continue;
+            const r = LENS_RADIUS + z * s.tanLight;
+            if (dx * dx + dy * dy + dz * dz - z * z <= r * r) return true;
+        }
+        for (const src of this._sources) if (src.cameraInsideBeam) return true;
+        return false;
     }
 
     /** Branche une autre famille de projecteurs sur le batch des faisceaux (barres LED…) */
@@ -209,7 +232,7 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
-        this.volumePass.setResolutionScale(RES_QUALITY[g.beamQuality] || 0.5);
+        this.volumePass.setResolutionScale((RES_QUALITY[g.beamQuality] || 0.5) * this._insideScale);
         this.pool.setShadows(g.lightShadows);
     }
 
@@ -246,6 +269,15 @@ export class SpotManager {
         u.uTime.value = this._time;
 
         this.volumePass.enabled = this._hasPass && this.batch.volumes.count > 0;
+
+        // Résolution réduite tant que la caméra est dans un faisceau (maintenue 0,5 s : pas de va-et-vient)
+        if (this.volumePass.enabled && this._cameraInsideBeam()) this._insideHold = 0.5;
+        else this._insideHold = Math.max(0, this._insideHold - dt);
+        const want = this._insideHold > 0 ? INSIDE_RES_FACTOR : 1;
+        if (want !== this._insideScale) {
+            this._insideScale = want;
+            this.volumePass.setResolutionScale((RES_QUALITY[this.globals.beamQuality] || 0.5) * want);
+        }
         this.pool.update(this._spots.values(), this.camera, this.globals.realLights, dt);
     }
 

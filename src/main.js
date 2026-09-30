@@ -38,7 +38,7 @@ import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=17';
-import { SpotManager } from './spot/SpotManager.js?v=4';
+import { SpotManager } from './spot/SpotManager.js?v=6';
 import { LedBarManager } from './ledbar/LedBarManager.js';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';

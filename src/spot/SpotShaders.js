@@ -435,6 +435,48 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture) {
                 vec3 satThr = colMask * (64.0 / 0.035);
 
                 vec3 sum = vec3(0.0);
+                // ── Caméra DANS le faisceau (on est visé) : faisceau plein écran, le cas qui faisait ramer ──
+                // Intégrale ANALYTIQUE de l'éclairement le long du rayon (∫ dt / z² exacte) ; fumée, phase,
+                // image de la fenêtre et ombre lues une seule fois au point pondéré par l'éclairement.
+                // 1 échantillon au lieu de 6 à 18 : le détail fin ne se voit pas dans un faisceau qui éblouit.
+                if (inside) {
+                    nS = 0.0; // saute la boucle d'intégration
+                    float zs = 2.0 / (invIn + invOut);
+                    bool axial = abs(dv) > 1e-4;
+                    float ts = axial ? clamp((zs - cv) / dv, tin, tout) : 0.5 * (tin + tout);
+                    float I = axial ? (invIn - invOut) / dv : span * invIn * invIn;
+                    vec3 P = ro + rd * ts;
+                    vec3 lp = P - apex;
+                    float zA = max(dot(lp, W), 1e-3);
+                    vec3 rad = lp - W * zA;
+                    vec2 g = vec2(dot(rad, R), dot(rad, U)) * (invTanHalf / zA);
+                    float zl = max(zA - apexDist, 0.0);
+                    float r2 = dot(g, g);
+                    vec3 gate;
+                    if (plainGate && r2 < plainR2) {
+                        gate = G.T0.rgb * (1.0 - 0.2 * r2);
+                    } else {
+                        float blur = frostBlur + min(0.14, abs(log(zl + 0.5) - logFocus) * 0.035);
+                        gate = gateImage(G, g, blur);
+                        // Rayon qui traverse le faisceau de biais : 2e lecture au milieu du trajet (demi-couleurs, gobos)
+                        vec3 P2 = ro + rd * (0.5 * (tin + tout));
+                        vec3 lp2 = P2 - apex;
+                        float zA2 = max(dot(lp2, W), 1e-3);
+                        vec3 rad2 = lp2 - W * zA2;
+                        vec2 g2 = vec2(dot(rad2, R), dot(rad2, U)) * (invTanHalf / zA2);
+                        gate = mix(gate, gateImage(G, g2, blur), 0.35);
+                    }
+                    bool blocked = false;
+                    if (hasOcc) {
+                        vec3 sd = P - vLens.xyz;
+                        blocked = segBlocked(vLens.xyz, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8);
+                    }
+                    if (!blocked) {
+                        float fade = 1.0 - smoothstep(fadeStart, L, zl);
+                        float cosT = dot(lp, -rd) / max(1e-4, length(lp));
+                        sum = gate * (irr0 * I * fade * hazeFromNoise(hazeNoise(P, true)) * phase(cosT));
+                    }
+                }
                 bool lastBlocked = false;
                 float lastNoise = 0.0;
                 bool haveNoise = false;

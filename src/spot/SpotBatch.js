@@ -16,7 +16,7 @@ import { enableLightsBloom } from '../laser/LaserManager.js';
 import { getGoboTexture } from './SpotGoboLibrary.js';
 import {
     SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial
-} from './SpotShaders.js?v=3';
+} from './SpotShaders.js?v=4';
 
 export const VOLUME_STRIDE = 12; // lentille.xyz, ligne | axe.xyz, longueur | droite.xyz, poids
 export const GLARE_STRIDE = 8;   // lentille.xyz, ligne | axe.xyz, poids
