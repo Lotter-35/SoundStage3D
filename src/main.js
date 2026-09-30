@@ -958,6 +958,7 @@ const patchReporter = new PatchReporter({
 });
 patchReporter.start();
 // Bibliothèque ILDA : liste des formes chargée au démarrage, puis mise à jour poussée par le serveur
+ildaLibrary.setBase(mp.httpUrl);
 ildaLibrary.refresh();
 mp.onIldaIndex((index) => ildaLibrary.setIndex(index));
 mp.onFixtureStateRequest((keys) => encodeFixtureStates({ spotManager, ledBarManager, strobeManager, laserManager, laser2Manager }, keys));

@@ -19,12 +19,18 @@ class IldaLibrary {
         this._cache = new Map();      // chemin → { mtime, doc, loading }
         this._listeners = new Set();
         this._requested = false;
+        this.base = '';               // adresse du serveur Node (le jeu peut être servi par un autre serveur)
+    }
+
+    /** Adresse HTTP du serveur Node (ex. http://localhost:8068) : la bibliothèque est servie par lui */
+    setBase(url) {
+        this.base = String(url || '').replace(/\/+$/, '');
     }
 
     /** Charge l'index depuis le serveur (une fois ; ensuite il est poussé par le serveur) */
     refresh() {
         this._requested = true;
-        return fetch('/api/ilda', { cache: 'no-cache' })
+        return fetch(`${this.base}/api/ilda`, { cache: 'no-cache' })
             .then(r => (r.ok ? r.json() : null))
             .then(idx => { if (idx && Array.isArray(idx.banks)) this.setIndex(idx); })
             .catch(() => { /* pas de serveur Node : bibliothèque vide */ });
@@ -78,7 +84,7 @@ class IldaLibrary {
         if (c && c.loading) return null;
         c = { mtime: e.mtime, doc: null, loading: true };
         this._cache.set(path, c);
-        fetch(`/api/ilda/file?p=${encodeURIComponent(path)}`)
+        fetch(`${this.base}/api/ilda/file?p=${encodeURIComponent(path)}`)
             .then(r => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(`HTTP ${r.status}`))))
             .then(buf => {
                 const parsed = parseIlda(buf);
