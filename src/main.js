@@ -309,7 +309,7 @@ const fixtureSelection = new FixtureSelection({ ambiancePanel, camera, renderer,
 window.__SS3D.fixtureSelection = fixtureSelection;
 
 // ─── Brouillard de salle (fumée éclairée par les strobes / lyres, après leurs faisceaux) ───
-const hazeVolume = new HazeVolume({ scene, camera, laserManager, strobeManager, spotManager });
+const hazeVolume = new HazeVolume({ scene, camera, laserManager, strobeManager, spotManager, laser2Manager });
 ambiancePanel.hazeVolume = hazeVolume;
 hazeVolume.ambiancePanel = ambiancePanel;
 ambiancePanel.setHazePanel(new HazePanel({ haze: hazeVolume, ambiancePanel }));

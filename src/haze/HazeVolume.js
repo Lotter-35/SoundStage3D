@@ -6,7 +6,8 @@
  *
  * Chaque frame (CPU, ~0,05 ms) :
  *   - collecte des sources : stroboscopes (flash en cours), lyres (lumière le long du faisceau),
- *     lumières des lasers ; soleil / lune et lumière ambiante
+ *     lumières des lasers, nouveaux lasers (lumière le long des faisceaux et des nappes, sans
+ *     lumière three.js) ; soleil / lune et lumière ambiante
  *   - priorité : « Strobes prioritaires » ou « La plus forte gagne »
  *   - au-delà du nombre maximal de lumières, les sources proches sont REGROUPÉES (énergie et
  *     couleur moyenne conservées) → une lyre bleue à gauche et une rouge à droite restent deux
@@ -28,6 +29,7 @@ import { RES_AUTO } from '../render/resolutionScale.js';
 const STROBE_K = 1.0;
 const SPOT_K = 12.0;
 const LASER_K = 1.0;
+const LASER2_K = 6.0;   // nouveaux lasers : puissance affichée × longueur dans la fumée
 const SCENE_K = 1.0;
 const BEAM_MAX = 40;    // longueur (m) de faisceau de lyre prise en compte dans la fumée
 const BEAM_POINTS = 3;  // une lyre = 3 sources réparties le long de son faisceau
@@ -71,13 +73,16 @@ export class HazeVolume {
      * @param {import('../laser/LaserManager.js').LaserManager} o.laserManager
      * @param {import('../strobe/StrobeManager.js').StrobeManager} [o.strobeManager]
      * @param {import('../spot/SpotManager.js').SpotManager} [o.spotManager]
+     * @param {import('../laser2/Laser2Manager.js').Laser2Manager} [o.laser2Manager]
      */
-    constructor({ scene, camera, laserManager, strobeManager, spotManager }) {
+    constructor({ scene, camera, laserManager, strobeManager, spotManager, laser2Manager }) {
         this.scene = scene;
         this.camera = camera;
         this.laserManager = laserManager;
         this.strobeManager = strobeManager;
         this.spotManager = spotManager;
+        this.laser2Manager = laser2Manager || null;
+        this._l2bins = Array.from({ length: BEAM_POINTS }, () => ({ w: 0, x: 0, y: 0, z: 0, xx: 0, r: 0, g: 0, b: 0, len: 0 }));
         this.params = defaultHazeParams();
 
         this.material = createHazeMaterial(getSmokeNoiseTexture());
@@ -292,6 +297,12 @@ export class HazeVolume {
             }
         }
 
+        // 3 bis. Nouveaux lasers : la fumée s'éclaire LE LONG des faisceaux et des nappes (géométrie déjà
+        //       calculée et coupée sur les surfaces / joueurs par le cœur laser), aucune lumière three.js
+        if (p.useLasers && this.laser2Manager) {
+            for (const l of this.laser2Manager.getAllLasers()) this._laser2Sources(l, take, out);
+        }
+
         // 4. Lampes posées (point, spot, panneau) : même la plus faible éclaire la fumée autour d'elle
         if (p.useScene) {
             for (const l of this._sceneLights) {
@@ -332,6 +343,75 @@ export class HazeVolume {
         }
         out.sort((a, b) => b.score - a.score);
         return out;
+    }
+
+    /**
+     * Un nouveau laser → BEAM_POINTS sources réparties le long de ses rayons (1er tiers, milieu, dernier tiers
+     * de chaque faisceau / nappe). La fumée reçoit une lumière proportionnelle à la puissance et à la longueur
+     * de rayon qui la traverse : un rayon coupé court (joueur, décor) éclaire moins. Chaque source est
+     * étalée sur la zone qu'elle représente (éventail large = lumière large, pas de point visible).
+     */
+    _laser2Sources(l, take, out) {
+        const bins = this._l2bins;
+        for (const b of bins) { b.w = 0; b.x = 0; b.y = 0; b.z = 0; b.xx = 0; b.r = 0; b.g = 0; b.b = 0; b.len = 0; }
+        const K = this.params.laserGain * LASER2_K / BEAM_POINTS;
+        const add = (ox, oy, oz, dx, dy, dz, len, power, cr, cg, cb, lateral) => {
+            if (!(power > 1e-5)) return;
+            const e = power * K * (len / BEAM_MAX);
+            for (let j = 0; j < BEAM_POINTS; j++) {
+                const t = len * (j + 0.5) / BEAM_POINTS;
+                const x = ox + dx * t, y = oy + dy * t, z = oz + dz * t;
+                const b = bins[j];
+                const hw = lateral * t * 0.5;
+                b.w += e; b.x += x * e; b.y += y * e; b.z += z * e;
+                b.xx += (x * x + y * y + z * z + hw * hw) * e;
+                b.r += cr * e; b.g += cg * e; b.b += cb * e;
+                if (len > b.len) b.len = len;
+            }
+        };
+        // Faisceaux : origine, fin, chroma, puissance
+        // (tampons du worker : ignorés s'ils ne contiennent pas les données annoncées)
+        const B = l.beamData;
+        const nb = B.length >= l.beamN * 17 ? l.beamN : 0;
+        for (let i = 0; i < nb; i++) {
+            const o = i * 17;
+            let dx = B[o + 4] - B[o], dy = B[o + 5] - B[o + 1], dz = B[o + 6] - B[o + 2];
+            const L = Math.hypot(dx, dy, dz);
+            if (L < 1e-3) continue;
+            dx /= L; dy /= L; dz /= L;
+            add(B[o], B[o + 1], B[o + 2], dx, dy, dz, Math.min(L, BEAM_MAX), B[o + 11], B[o + 8], B[o + 9], B[o + 10], 0);
+        }
+        // Nappes : origine, bords A et B, arc total, chroma, puissance de la nappe entière (→ part de ce morceau)
+        const S = l.sheetData;
+        const ns = S.length >= l.sheetN * 21 ? l.sheetN : 0;
+        for (let i = 0; i < ns; i++) {
+            const o = i * 21;
+            let ax = S[o + 4] - S[o], ay = S[o + 5] - S[o + 1], az = S[o + 6] - S[o + 2];
+            let bx = S[o + 8] - S[o], by = S[o + 9] - S[o + 1], bz = S[o + 10] - S[o + 2];
+            const la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz);
+            if (la < 1e-3 || lb < 1e-3) continue;
+            ax /= la; ay /= la; az /= la; bx /= lb; by /= lb; bz /= lb;
+            const piece = Math.acos(Math.min(1, ax * bx + ay * by + az * bz));
+            let mx = ax + bx, my = ay + by, mz = az + bz;
+            const ml = Math.hypot(mx, my, mz) || 1;
+            mx /= ml; my /= ml; mz /= ml;
+            const power = S[o + 15] * piece / Math.max(S[o + 11], 1e-5);
+            add(S[o], S[o + 1], S[o + 2], mx, my, mz, Math.min((la + lb) * 0.5, BEAM_MAX), power, S[o + 12], S[o + 13], S[o + 14], piece);
+        }
+        for (const b of bins) {
+            if (b.w <= 1e-5) continue;
+            const c = take();
+            c.x = b.x / b.w; c.y = b.y / b.w; c.z = b.z / b.w;
+            c.dx = 0; c.dy = 0; c.dz = 0; c.cos = -1; c.cosIn = 1; c.range = 0;
+            c.r = b.r; c.g = b.g; c.b = b.b;
+            c.power = (b.r + b.g + b.b) / 3;
+            c.strobe = false;
+            // Étalement : dispersion des rayons regroupés + longueur du tronçon représenté
+            const varr = Math.max(0, b.xx / b.w - (c.x * c.x + c.y * c.y + c.z * c.z));
+            c.soft = Math.max(1.5, Math.sqrt(varr) + 0.7 * b.len / BEAM_POINTS);
+            c.n = 1;
+            out.push(c);
+        }
     }
 
     /**
