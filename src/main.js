@@ -50,6 +50,7 @@ import { HazePanel } from './haze/ui/HazePanel.js';
 import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
+import { DeviceLights } from './render/deviceLights.js';
 import { DirShadowCache } from './render/dirShadowCache.js';
 import { OptionsPanel } from './ui/OptionsPanel.js';
 
@@ -309,6 +310,13 @@ lightPoolGate.addPool(laserManager._laserLights);
 lightPoolGate.addPool([...strobeManager.lightPool.shadowSlots, ...strobeManager.lightPool.plainSlots].map(s => s.light));
 lightPoolGate.addPool(spotManager.pool.slots.map(s => s.light));
 window.__SS3D.lightPoolGate = lightPoolGate;
+
+// Test de performance (Ambiance › Outils 3D) : retire vraiment de la scène les lumières des appareils
+const deviceLights = new DeviceLights();
+deviceLights.addLights(lightPoolGate.lights);
+deviceLights.onChange((removed) => { spotManager.pool.disabled = removed; });
+ambiancePanel.deviceLights = deviceLights;
+window.__SS3D.deviceLights = deviceLights;
 
 // Ombre du soleil : décor fixe mis en cache, seuls les personnages sont redessinés à chaque image
 const dirShadowCache = dirLight && dirLight.castShadow ? new DirShadowCache(renderer, scene, dirLight) : null;

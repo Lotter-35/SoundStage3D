@@ -4309,6 +4309,15 @@ export class AmbiancePanel {
             this.setShowSpotCones(v);
         });
 
+        // Test de performance : lumières Three.js des lasers, strobes et lyres retirées de la scène (pas masquées)
+        toolsState.deviceLights = !(this.deviceLights && this.deviceLights.removed);
+        const cDeviceLights = fTools.add(toolsState, 'deviceLights').name('🧪 Lumières des appareils');
+        cDeviceLights.onChange(val => {
+            if (this.deviceLights) this.deviceLights.setRemoved(!val);
+        });
+        cDeviceLights.domElement.title = 'Décoché : supprime les lumières Three.js des lasers, strobes et lyres '
+            + '(soleil, ciel et lumières posées gardés). Recoché : les remet (recompilation des shaders, petit gel).';
+
         this._cGizmoMode = fTools.add(toolsState, 'gizmoMode', ['translate', 'rotate']).name('Mode Gizmo');
         this._cGizmoMode.onChange(mode => {
             this.setGizmoMode(mode);

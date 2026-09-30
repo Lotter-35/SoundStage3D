@@ -278,7 +278,7 @@ export class SpotManager {
             this._insideScale = want;
             this.volumePass.setResolutionScale((RES_QUALITY[this.globals.beamQuality] || 0.5) * want);
         }
-        this.pool.update(this._spots.values(), this.camera, this.globals.realLights, dt);
+        this.pool.update(this._spots.values(), this.camera, this.globals.realLights && !this.pool.disabled, dt);
     }
 
     dispose() {
