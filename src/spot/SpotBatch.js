@@ -171,8 +171,21 @@ export class SpotBatch {
     assemble(fixtures, sources = null) {
         this.volumes.begin();
         this.glares.begin();
-        for (const f of fixtures) f.pushInstances(this);
-        if (sources) for (const s of sources) s.pushInstances(this);
+        // Projecteurs dont le faisceau est affiché (un faisceau à prisme compte pour un)
+        let n = 0;
+        for (const f of fixtures) {
+            const before = this.volumes.count;
+            f.pushInstances(this);
+            if (this.volumes.count > before) n++;
+        }
+        if (sources) {
+            for (const s of sources) {
+                const before = this.volumes.count;
+                s.pushInstances(this);
+                if (this.volumes.count > before) n++;
+            }
+        }
+        this.volumeSources = n;
         this.volumes.end();
         this.glares.end();
         this.paramsTexture.needsUpdate = true;

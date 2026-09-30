@@ -21,6 +21,7 @@ import { DmxPatch } from '../dmx/DmxPatch.js';
 import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
 import { SpotEffects } from './console/SpotEffects.js';
 import { RES_QUALITY } from '../ui/ClientOptions.js';
+import { nextBusyState, BUSY_RES_FACTOR } from '../render/resolutionScale.js';
 
 /** Résolution des faisceaux quand la caméra est dans l'un d'eux (× la qualité choisie) */
 const INSIDE_RES_FACTOR = 0.65;
@@ -73,6 +74,7 @@ export class SpotManager {
         // Caméra dans un faisceau : faisceaux calculés en résolution réduite (on est ébloui, le détail
         // ne se voit pas) — le faisceau couvre tout l'écran, c'est le cas qui coûte le plus
         this._insideScale = 1;
+        this._busy = false;
         this._insideHold = 0;
     }
 
@@ -225,6 +227,15 @@ export class SpotManager {
         this._applyGlobals();
     }
 
+    _beamSetting() {
+        return RES_QUALITY[this.globals.beamQuality] || 0.5;
+    }
+
+    /** Résolution des faisceaux : qualité choisie × caméra dans un faisceau × beaucoup de faisceaux (mode auto) */
+    _applyVolumeResolution() {
+        this.volumePass.setResolutionScale(this._beamSetting(), this._insideScale * (this._busy ? BUSY_RES_FACTOR : 1));
+    }
+
     _applyGlobals() {
         const g = this.globals;
         const u = this.batch.volumeMaterial.uniforms;
@@ -232,7 +243,7 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
-        this.volumePass.setResolutionScale(RES_QUALITY[g.beamQuality] || 0.5, this._insideScale);
+        this._applyVolumeResolution();
         this.pool.setShadows(g.lightShadows);
     }
 
@@ -274,9 +285,12 @@ export class SpotManager {
         if (this.volumePass.enabled && this._cameraInsideBeam()) this._insideHold = 0.5;
         else this._insideHold = Math.max(0, this._insideHold - dt);
         const want = this._insideHold > 0 ? INSIDE_RES_FACTOR : 1;
-        if (want !== this._insideScale) {
+        // Beaucoup de faisceaux à l'écran (mode auto) : un cran de résolution en moins
+        const busy = nextBusyState(this._busy, this.volumePass.enabled ? (this.batch.volumeSources || 0) : 0, this._beamSetting());
+        if (want !== this._insideScale || busy !== this._busy) {
             this._insideScale = want;
-            this.volumePass.setResolutionScale(RES_QUALITY[this.globals.beamQuality] || 0.5, want);
+            this._busy = busy;
+            this._applyVolumeResolution();
         }
         this.pool.update(this._spots.values(), this.camera, this.globals.realLights && !this.pool.disabled, dt);
     }

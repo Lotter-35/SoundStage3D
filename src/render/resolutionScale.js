@@ -24,3 +24,22 @@ export function autoResolutionScale(width, height) {
 export function resolveResolutionScale(setting, width, height) {
     return setting === 'auto' ? autoResolutionScale(width, height) : setting;
 }
+
+// ── Charge : beaucoup de nappes laser / faisceaux de lyres à l'écran ──
+// En mode auto seulement (un réglage fixe est respecté tel quel), leur résolution baisse d'un cran
+// (½ par axe : ¼ des pixels) au-delà de BUSY_ON instances et remonte sous BUSY_OFF (pas de va-et-vient).
+// Mesuré en 4K à 50 lasers / 50 lyres : −3,7 ms.
+export const BUSY_ON = 24;
+export const BUSY_OFF = 16;
+export const BUSY_RES_FACTOR = 0.5;
+
+/**
+ * @param {boolean} busy état précédent
+ * @param {number} count instances affichées
+ * @param {number|'auto'} setting réglage choisi
+ * @returns {boolean} nouvel état
+ */
+export function nextBusyState(busy, count, setting) {
+    if (setting !== 'auto') return false;
+    return busy ? count > BUSY_OFF : count >= BUSY_ON;
+}

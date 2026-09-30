@@ -300,12 +300,14 @@ export class LaserBatch {
         this.panImpacts.begin();
         this.glows.begin();
 
+        let fanSources = 0; // lasers dont la nappe est affichée
         for (const laser of lasers) {
             if (!laser.renderable) continue;
             const out = laser.output;
             if (laser._drawBeams) this.beams.append(out.beams, out.beamCount);
             if (laser._drawImpacts) this.impacts.append(out.impacts, out.impactCount);
             if (laser._drawFan) {
+                if (out.fanCount > 0) fanSources++;
                 this.fans.append(out.fans, out.fanCount);
                 this.panImpacts.append(out.panImpacts, out.panImpactCount);
             }
@@ -315,6 +317,7 @@ export class LaserBatch {
             }
         }
 
+        this.fanSources = fanSources;
         this.beams.end();
         this.impacts.end();
         this.fans.end();

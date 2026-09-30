@@ -29,6 +29,7 @@ import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
 import { setLaserDisplayRange } from './LaserShaders.js';
+import { nextBusyState, BUSY_RES_FACTOR } from '../render/resolutionScale.js';
 
 // Layer 1 : Lasers uniquement (Bloom Laser + Aberration Chromatique Laser)
 export const BLOOM_LASER_LAYER = 1;
@@ -1035,9 +1036,16 @@ export class LaserManager {
         return true;
     }
 
-    /** Résolution des nappes PAN (0.5 = demi-résolution, 1 = pleine) — option locale du joueur */
+    /** Résolution des nappes PAN (0.5 = demi-résolution, 1 = pleine, 'auto' = selon l'écran) — option locale du joueur */
     setFanQuality(scale) {
-        if (this._fanPass) this._fanPass.setResolutionScale(scale);
+        this._fanQuality = scale;
+        this._applyFanResolution();
+    }
+
+    _applyFanResolution() {
+        if (this._fanPass && this._fanQuality !== undefined) {
+            this._fanPass.setResolutionScale(this._fanQuality, this._fanBusy ? BUSY_RES_FACTOR : 1);
+        }
     }
 
     /** Fumée des nappes calculée une fois par pixel (masque partagé) — option locale du joueur */
@@ -1102,7 +1110,15 @@ export class LaserManager {
             const renderLaser = Boolean(globalLaserPostParams.laserBloomEnabled && this._laserBloomComposer) && layerHasVisibleObject(BLOOM_LASER_LAYER);
             const renderLights = Boolean(globalLaserPostParams.lightsBloomEnabled && this._lightsBloomComposer) && layerHasVisibleObject(BLOOM_LIGHTS_LAYER);
 
-            if (this._fanPass) this._fanPass.enabled = this._fanPass.hasFans;
+            if (this._fanPass) {
+                this._fanPass.enabled = this._fanPass.hasFans;
+                // Beaucoup de nappes à l'écran (mode auto) : un cran de résolution en moins
+                const busy = nextBusyState(Boolean(this._fanBusy), this._fanPass.enabled ? (this._batch.fanSources || 0) : 0, this._fanQuality);
+                if (busy !== Boolean(this._fanBusy)) {
+                    this._fanBusy = busy;
+                    this._applyFanResolution();
+                }
+            }
 
             // Aucun effet actif : rendu direct à l'écran (même image, beaucoup moins de travail GPU)
             if (this._canRenderDirect(renderLaser, renderLights)) {
