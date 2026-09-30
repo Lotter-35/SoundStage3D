@@ -25,6 +25,8 @@ import { ildaLive } from './ilda/IldaLive.js';
 
 /** Rayon de capture autour de l'œil (m) : pupille + marge de tête (un faisceau de 1 cm reste « visé ») */
 const EYE_R = 0.05;
+/** Même chose autour du centre de la tête du personnage (les yeux sont à ~8 cm devant) */
+const HEAD_EYE_R = 0.1;
 /** Puissance reçue (unités affichées) donnant ~63 % d'éblouissement */
 const DAZZLE_P0 = 0.08;
 
@@ -262,9 +264,26 @@ export class Laser2Manager {
      */
     _updateDazzle() {
         const cam = this.camera;
-        _eye.setFromMatrixPosition(cam.matrixWorld);
         cam.getWorldDirection(_fwd);
-        let best = 0, bestLaser = null;
+        const st = { best: 0, laser: null };
+        // Œil = caméra (1ère personne) ET tête du personnage local : en 3ème personne la caméra est derrière
+        // la tête, qui arrête le faisceau → c'est le personnage qui est ébloui (« le rayon dans la tête »)
+        _eye.setFromMatrixPosition(cam.matrixWorld);
+        this._dazzleAt(_eye, st, EYE_R);
+        const pc = this.playerCollider;
+        const local = pc && pc.enabled !== false ? pc._localPlayerData : null;
+        if (local && local.active && local.head) this._dazzleAt(_eye.copy(local.head), st, HEAD_EYE_R);
+        const col = _rgb;
+        if (st.laser && st.best > 0.005) {
+            const m = Math.max(col[0], col[1], col[2], 1e-6);
+            const hex = '#' + col.map(v => Math.round(255 * v / m).toString(16).padStart(2, '0')).join('');
+            this.dazzle.setExternal(st.best, st.laser.origin, hex);
+        }
+    }
+
+    /** Éblouissement vu depuis le point _eye (meilleur laser et sa couleur dans st / _rgb) */
+    _dazzleAt(_eye, st, eyeR) {
+        let best = st.best, bestLaser = st.laser;
         const col = _rgb;
         for (const l of this._lasers.values()) {
             const O = l.origin;
@@ -275,7 +294,7 @@ export class Laser2Manager {
             if (ex * l.fwd.x + ey * l.fwd.y + ez * l.fwd.z <= 0) continue;
             const look = Math.max(0.1, Math.min(1, -(ex * _fwd.x + ey * _fwd.y + ez * _fwd.z) / r * 0.7 + 0.3));
             const div = l.params.divergence * 1e-3, ap = l.params.aperture * 1e-3;
-            const R = Math.max(0.5 * (ap + r * div), 0.005) + EYE_R;
+            const R = Math.max(0.5 * (ap + r * div), 0.005) + eyeR;
             let P = 0, cr = 0, cg = 0, cb = 0;
 
             const B = l.beamData;
@@ -326,11 +345,8 @@ export class Laser2Manager {
                 col[0] = cr / P; col[1] = cg / P; col[2] = cb / P;
             }
         }
-        if (bestLaser && best > 0.005) {
-            const m = Math.max(col[0], col[1], col[2], 1e-6);
-            const hex = '#' + col.map(v => Math.round(255 * v / m).toString(16).padStart(2, '0')).join('');
-            this.dazzle.setExternal(best, bestLaser.origin, hex);
-        }
+        st.best = best;
+        st.laser = bestLaser;
     }
 
     dispose() {
