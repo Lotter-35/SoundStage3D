@@ -6,6 +6,12 @@
       "runtimeExecutable": "node",
       "runtimeArgs": ["server/server.js"],
       "port": 8068
+    },
+    {
+      "name": "soundstage-test",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["-e", "process.env.PORT='8069';process.env.SS3D_STORAGE_DIR='C:/Users/apadu/AppData/Local/Temp/claude/C--Users-apadu-Documents--DEV-SoundStage3D/8ee7e614-081a-42e2-8f75-b4ff1aa681c5/scratchpad/storage-test';require('./server/server.js')"],
+      "port": 8069
     }
   ]
 }
