@@ -373,7 +373,7 @@ export class SpotInspectorPanel {
         let html = `Univers <b>${spot.params.dmxUniverse}</b> · canaux <b>${a0} → ${a1}</b> (${fp} canaux)`;
         if (overflow) html += `<br><span style="color:#ff8a65">⚠ La plage dépasse l'adresse 512</span>`;
         if (conflicts.length) {
-            html += `<br><span style="color:#ff8a65">⚠ Chevauche : ${conflicts.map(c => 'Lyre #' + c.number).join(', ')}</span>`;
+            html += `<br><span style="color:#ff8a65">⚠ Chevauche : ${conflicts.map(c => c.displayName || ('Lyre #' + c.number)).join(', ')}</span>`;
         } else if (!overflow) {
             html += `<br><span style="color:#7ee2a8">✓ Aucun conflit d'adresse</span>`;
         }

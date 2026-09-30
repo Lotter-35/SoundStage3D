@@ -1853,7 +1853,7 @@ body {
 /* Laser Show & Stroboscope panels — top-left floating draggable */
 #laser-panel-wrap,
 #strobe-panel-wrap,
-#spot-panel-wrap,
+#spot-panel-wrap, #ledbar-panel-wrap,
 #haze-panel-wrap,
 #options-panel-wrap {
     position: fixed;
@@ -1864,7 +1864,7 @@ body {
 }
 #laser-panel-wrap.hidden,
 #strobe-panel-wrap.hidden,
-#spot-panel-wrap.hidden,
+#spot-panel-wrap.hidden, #ledbar-panel-wrap.hidden,
 #haze-panel-wrap.hidden,
 #options-panel-wrap.hidden {
     display: none !important;
@@ -1872,7 +1872,7 @@ body {
 
 #laser-panel,
 #strobe-panel,
-#spot-panel,
+#spot-panel, #ledbar-panel,
 #haze-panel,
 #options-panel {
     width: 340px;
@@ -1953,7 +1953,7 @@ body {
 #ambiance-panel-wrap .lil-gui.root,
 #laser-panel-wrap .lil-gui.root,
 #strobe-panel-wrap .lil-gui.root,
-#spot-panel-wrap .lil-gui.root,
+#spot-panel-wrap .lil-gui.root, #ledbar-panel-wrap .lil-gui.root,
 #haze-panel-wrap .lil-gui.root,
 #options-panel-wrap .lil-gui.root {
     position: static !important;
@@ -1980,7 +1980,7 @@ body {
 #ambiance-panel-wrap .lil-gui,
 #laser-panel-wrap .lil-gui,
 #strobe-panel-wrap .lil-gui,
-#spot-panel-wrap .lil-gui,
+#spot-panel-wrap .lil-gui, #ledbar-panel-wrap .lil-gui,
 #haze-panel-wrap .lil-gui,
 #options-panel-wrap .lil-gui {
     --width: 340px;
@@ -2001,7 +2001,7 @@ body {
 #ambiance-panel-wrap .lil-gui input,
 #laser-panel-wrap .lil-gui input,
 #strobe-panel-wrap .lil-gui input,
-#spot-panel-wrap .lil-gui input,
+#spot-panel-wrap .lil-gui input, #ledbar-panel-wrap .lil-gui input,
 #haze-panel-wrap .lil-gui input,
 #options-panel-wrap .lil-gui input,
 #sine-panel .lil-gui input {
@@ -2016,7 +2016,7 @@ body {
 #ambiance-panel-wrap .lil-gui.root > .children,
 #laser-panel-wrap .lil-gui.root > .children,
 #strobe-panel-wrap .lil-gui.root > .children,
-#spot-panel-wrap .lil-gui.root > .children,
+#spot-panel-wrap .lil-gui.root > .children, #ledbar-panel-wrap .lil-gui.root > .children,
 #haze-panel-wrap .lil-gui.root > .children,
 #options-panel-wrap .lil-gui.root > .children,
 #sine-panel .lil-gui.root > .children {
@@ -2037,13 +2037,13 @@ body {
 #ambiance-panel-wrap .lil-gui,
 #laser-panel-wrap .lil-gui,
 #strobe-panel-wrap .lil-gui,
-#spot-panel-wrap .lil-gui,
+#spot-panel-wrap .lil-gui, #ledbar-panel-wrap .lil-gui,
 #haze-panel-wrap .lil-gui,
 #options-panel-wrap .lil-gui,
 #ambiance-panel-wrap .lil-gui *,
 #laser-panel-wrap .lil-gui *,
 #strobe-panel-wrap .lil-gui *,
-#spot-panel-wrap .lil-gui *,
+#spot-panel-wrap .lil-gui *, #ledbar-panel-wrap .lil-gui *,
 #haze-panel-wrap .lil-gui *,
 #options-panel-wrap .lil-gui *,
 #sine-panel .lil-gui,
@@ -2061,13 +2061,13 @@ body {
 #ambiance-panel-wrap .lil-gui::-webkit-scrollbar,
 #laser-panel-wrap .lil-gui::-webkit-scrollbar,
 #strobe-panel-wrap .lil-gui::-webkit-scrollbar,
-#spot-panel-wrap .lil-gui::-webkit-scrollbar,
+#spot-panel-wrap .lil-gui::-webkit-scrollbar, #ledbar-panel-wrap .lil-gui::-webkit-scrollbar,
 #haze-panel-wrap .lil-gui::-webkit-scrollbar,
 #options-panel-wrap .lil-gui::-webkit-scrollbar,
 #ambiance-panel-wrap .lil-gui *::-webkit-scrollbar,
 #laser-panel-wrap .lil-gui *::-webkit-scrollbar,
 #strobe-panel-wrap .lil-gui *::-webkit-scrollbar,
-#spot-panel-wrap .lil-gui *::-webkit-scrollbar,
+#spot-panel-wrap .lil-gui *::-webkit-scrollbar, #ledbar-panel-wrap .lil-gui *::-webkit-scrollbar,
 #haze-panel-wrap .lil-gui *::-webkit-scrollbar,
 #options-panel-wrap .lil-gui *::-webkit-scrollbar,
 #sine-panel .lil-gui::-webkit-scrollbar,
@@ -2084,7 +2084,7 @@ body {
 #ambiance-panel-wrap .lil-gui .children,
 #laser-panel-wrap .lil-gui .children,
 #strobe-panel-wrap .lil-gui .children,
-#spot-panel-wrap .lil-gui .children,
+#spot-panel-wrap .lil-gui .children, #ledbar-panel-wrap .lil-gui .children,
 #haze-panel-wrap .lil-gui .children,
 #options-panel-wrap .lil-gui .children,
 .dsp-panel-slot .lil-gui .controller,
@@ -2093,7 +2093,7 @@ body {
 #ambiance-panel-wrap .lil-gui .controller,
 #laser-panel-wrap .lil-gui .controller,
 #strobe-panel-wrap .lil-gui .controller,
-#spot-panel-wrap .lil-gui .controller,
+#spot-panel-wrap .lil-gui .controller, #ledbar-panel-wrap .lil-gui .controller,
 #haze-panel-wrap .lil-gui .controller,
 #options-panel-wrap .lil-gui .controller,
 #sine-panel .lil-gui .children,
@@ -2120,13 +2120,13 @@ body {
 #env-panel-wrap .lil-gui .controller[style*="display: none"],
 #user-panel-wrap .lil-gui .controller[style*="display: none"],
 #ambiance-panel-wrap .lil-gui .controller[style*="display: none"],
-#laser-panel-wrap .lil-gui .controller[style*="display: none"], #spot-panel-wrap .lil-gui .controller[style*="display: none"],
+#laser-panel-wrap .lil-gui .controller[style*="display: none"], #spot-panel-wrap .lil-gui .controller[style*="display: none"], #ledbar-panel-wrap .lil-gui .controller[style*="display: none"],
 #haze-panel-wrap .lil-gui .controller[style*="display: none"],
 #options-panel-wrap .lil-gui .controller[style*="display: none"],
 #sine-panel .lil-gui .controller[style*="display: none"],
 .dsp-panel-slot .lil-gui .controller.hidden,
 #ambiance-panel-wrap .lil-gui .controller.hidden,
-#laser-panel-wrap .lil-gui .controller.hidden, #spot-panel-wrap .lil-gui .controller.hidden,
+#laser-panel-wrap .lil-gui .controller.hidden, #spot-panel-wrap .lil-gui .controller.hidden, #ledbar-panel-wrap .lil-gui .controller.hidden,
 #haze-panel-wrap .lil-gui .controller.hidden,
 #options-panel-wrap .lil-gui .controller.hidden,
 .lil-gui .controller.hidden {
@@ -2152,7 +2152,7 @@ body {
 #ambiance-panel-wrap .lil-gui .controller > .name,
 #laser-panel-wrap .lil-gui .controller > .name,
 #strobe-panel-wrap .lil-gui .controller > .name,
-#spot-panel-wrap .lil-gui .controller > .name,
+#spot-panel-wrap .lil-gui .controller > .name, #ledbar-panel-wrap .lil-gui .controller > .name,
 #haze-panel-wrap .lil-gui .controller > .name,
 #options-panel-wrap .lil-gui .controller > .name {
     flex: 0 0 124px !important;
@@ -2187,7 +2187,7 @@ body {
 #ambiance-panel-wrap .lil-gui .controller .widget,
 #laser-panel-wrap .lil-gui .controller .widget,
 #strobe-panel-wrap .lil-gui .controller .widget,
-#spot-panel-wrap .lil-gui .controller .widget,
+#spot-panel-wrap .lil-gui .controller .widget, #ledbar-panel-wrap .lil-gui .controller .widget,
 #haze-panel-wrap .lil-gui .controller .widget,
 #options-panel-wrap .lil-gui .controller .widget,
 #sine-panel .lil-gui .controller .widget {
@@ -2206,7 +2206,7 @@ body {
 #ambiance-panel-wrap .lil-gui .controller.number .slider,
 #laser-panel-wrap .lil-gui .controller.number .slider,
 #strobe-panel-wrap .lil-gui .controller.number .slider,
-#spot-panel-wrap .lil-gui .controller.number .slider,
+#spot-panel-wrap .lil-gui .controller.number .slider, #ledbar-panel-wrap .lil-gui .controller.number .slider,
 #haze-panel-wrap .lil-gui .controller.number .slider,
 #options-panel-wrap .lil-gui .controller.number .slider,
 #sine-panel .lil-gui .controller.number .slider {
@@ -2224,7 +2224,7 @@ body {
 #ambiance-panel-wrap .lil-gui .controller.number input,
 #laser-panel-wrap .lil-gui .controller.number input,
 #strobe-panel-wrap .lil-gui .controller.number input,
-#spot-panel-wrap .lil-gui .controller.number input,
+#spot-panel-wrap .lil-gui .controller.number input, #ledbar-panel-wrap .lil-gui .controller.number input,
 #haze-panel-wrap .lil-gui .controller.number input,
 #options-panel-wrap .lil-gui .controller.number input {
     flex: 0 0 38px !important;
@@ -2243,7 +2243,7 @@ body {
 .power-folder,
 #laser-panel-wrap .lil-gui .power-folder,
 #strobe-panel-wrap .lil-gui .power-folder,
-#spot-panel-wrap .lil-gui .power-folder,
+#spot-panel-wrap .lil-gui .power-folder, #ledbar-panel-wrap .lil-gui .power-folder,
 #haze-panel-wrap .lil-gui .power-folder,
 #options-panel-wrap .lil-gui .power-folder {
     border-left: 3px solid #00a2ff !important;
@@ -2257,7 +2257,7 @@ body {
 .power-folder .slider-fg,
 #laser-panel-wrap .lil-gui .power-folder .slider-fg,
 #strobe-panel-wrap .lil-gui .power-folder .slider-fg,
-#spot-panel-wrap .lil-gui .power-folder .slider-fg,
+#spot-panel-wrap .lil-gui .power-folder .slider-fg, #ledbar-panel-wrap .lil-gui .power-folder .slider-fg,
 #haze-panel-wrap .lil-gui .power-folder .slider-fg,
 #options-panel-wrap .lil-gui .power-folder .slider-fg {
     background: #2196f3 !important;
@@ -2268,7 +2268,7 @@ body {
 .power-folder .controller.number input,
 #laser-panel-wrap .lil-gui .power-folder input,
 #strobe-panel-wrap .lil-gui .power-folder input,
-#spot-panel-wrap .lil-gui .power-folder input,
+#spot-panel-wrap .lil-gui .power-folder input, #ledbar-panel-wrap .lil-gui .power-folder input,
 #haze-panel-wrap .lil-gui .power-folder input,
 #options-panel-wrap .lil-gui .power-folder input {
     color: #29b6f6 !important;
@@ -2279,7 +2279,7 @@ body {
 
 #laser-panel-wrap .lil-gui .slider-fg,
 #strobe-panel-wrap .lil-gui .slider-fg,
-#spot-panel-wrap .lil-gui .slider-fg,
+#spot-panel-wrap .lil-gui .slider-fg, #ledbar-panel-wrap .lil-gui .slider-fg,
 #haze-panel-wrap .lil-gui .slider-fg,
 #options-panel-wrap .lil-gui .slider-fg {
     background: #2196f3 !important;
@@ -2287,7 +2287,7 @@ body {
 }
 
 /* Lil-gui nested subfolders (sous-catégories pour les 3 axes de balayage) */
-#laser-panel-wrap .lil-gui .folder .folder, #spot-panel-wrap .lil-gui .folder .folder,
+#laser-panel-wrap .lil-gui .folder .folder, #spot-panel-wrap .lil-gui .folder .folder, #ledbar-panel-wrap .lil-gui .folder .folder,
 #haze-panel-wrap .lil-gui .folder .folder,
 #options-panel-wrap .lil-gui .folder .folder {
     margin: 4px 4px 6px 6px;
@@ -2295,7 +2295,7 @@ body {
     border: 1px solid rgba(255, 255, 255, 0.07);
     border-radius: 4px;
 }
-#laser-panel-wrap .lil-gui .folder .folder > .title, #spot-panel-wrap .lil-gui .folder .folder > .title,
+#laser-panel-wrap .lil-gui .folder .folder > .title, #spot-panel-wrap .lil-gui .folder .folder > .title, #ledbar-panel-wrap .lil-gui .folder .folder > .title,
 #haze-panel-wrap .lil-gui .folder .folder > .title,
 #options-panel-wrap .lil-gui .folder .folder > .title {
     font-size: 11px;
@@ -2326,7 +2326,7 @@ body {
 #ambiance-panel-wrap .lil-gui .lil-reset-btn,
 #laser-panel-wrap .lil-gui .lil-reset-btn,
 #strobe-panel-wrap .lil-gui .lil-reset-btn,
-#spot-panel-wrap .lil-gui .lil-reset-btn,
+#spot-panel-wrap .lil-gui .lil-reset-btn, #ledbar-panel-wrap .lil-gui .lil-reset-btn,
 #haze-panel-wrap .lil-gui .lil-reset-btn,
 #options-panel-wrap .lil-gui .lil-reset-btn,
 #sine-panel .lil-gui .lil-reset-btn {
@@ -2369,7 +2369,7 @@ body {
 #ambiance-panel-wrap .lil-gui.root > .title,
 #laser-panel-wrap .lil-gui.root > .title,
 #strobe-panel-wrap .lil-gui.root > .title,
-#spot-panel-wrap .lil-gui.root > .title,
+#spot-panel-wrap .lil-gui.root > .title, #ledbar-panel-wrap .lil-gui.root > .title,
 #haze-panel-wrap .lil-gui.root > .title,
 #options-panel-wrap .lil-gui.root > .title,
 .lil-gui.root > .title {
@@ -3459,7 +3459,7 @@ body {
     will-change: opacity;
 }
 
-#ambiance-panel-wrap .lil-gui .lil-reset-btn:hover, #laser-panel-wrap .lil-gui .lil-reset-btn:hover, #strobe-panel-wrap .lil-gui .lil-reset-btn:hover, #spot-panel-wrap .lil-gui .lil-reset-btn:hover, #haze-panel-wrap .lil-gui .lil-reset-btn:hover, #options-panel-wrap .lil-gui .lil-reset-btn:hover { color: #fff !important; border-color: rgba(255, 255, 255, 0.5) !important; background: rgba(255, 255, 255, 0.15) !important; }
+#ambiance-panel-wrap .lil-gui .lil-reset-btn:hover, #laser-panel-wrap .lil-gui .lil-reset-btn:hover, #strobe-panel-wrap .lil-gui .lil-reset-btn:hover, #spot-panel-wrap .lil-gui .lil-reset-btn:hover, #ledbar-panel-wrap .lil-gui .lil-reset-btn:hover, #haze-panel-wrap .lil-gui .lil-reset-btn:hover, #options-panel-wrap .lil-gui .lil-reset-btn:hover { color: #fff !important; border-color: rgba(255, 255, 255, 0.5) !important; background: rgba(255, 255, 255, 0.15) !important; }
 
 /* ─── Mode Cinéma (Touche F1) : Immersion 3D totale, 0 interface, 0 texte ─── */
 body.cinematic-mode > *:not(#canvas):not(#dazzle-overlay):not(#afterimage-overlay),
@@ -3468,7 +3468,7 @@ body.cinematic-mode #now-playing,
 body.cinematic-mode #fps-counter,
 body.cinematic-mode #laser-panel-wrap,
 body.cinematic-mode #strobe-panel-wrap,
-body.cinematic-mode #spot-panel-wrap,
+body.cinematic-mode #spot-panel-wrap, body.cinematic-mode #ledbar-panel-wrap,
 body.cinematic-mode #haze-panel-wrap,
 body.cinematic-mode #options-panel-wrap,
 body.cinematic-mode #ambiance-panel-wrap,

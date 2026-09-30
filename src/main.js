@@ -22,14 +22,14 @@ import { MicrophoneInput } from './audio/microphone.js';
 import { VoiceReceiver } from './audio/voiceReceiver.js';
 
 import { Controls } from './ui/controls.js?v=160';
-import { AmbiancePanel } from './ui/AmbiancePanel.js?v=306';
+import { AmbiancePanel } from './ui/AmbiancePanel.js?v=307';
 import { makeDraggable } from './ui/draggable.js';
 import { DSP_DEFAULTS } from './config/dsp-defaults.js';
 import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStorage.js?v=2';
 import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=156';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=5';
-import { LightingSync } from './multiplayer/LightingSync.js?v=10';
+import { LightingSync } from './multiplayer/LightingSync.js?v=11';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=186';
 import { LaserManager } from './laser/LaserManager.js?v=307';
@@ -38,7 +38,8 @@ import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=17';
-import { SpotManager } from './spot/SpotManager.js?v=3';
+import { SpotManager } from './spot/SpotManager.js?v=4';
+import { LedBarManager } from './ledbar/LedBarManager.js';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
 import { HazeVolume } from './haze/HazeVolume.js';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
@@ -208,6 +209,30 @@ window.__SS3D.spotManager = spotManager;
 for (let i = 0; i < 9; i++) {
     const { spot } = spotManager.addSpot(new THREE.Vector3(-12 + i * 3, 3.0, -0.6), {}, `spot-stage-${i + 1}`);
     spotManager._autoPatch(spot);
+}
+
+// ─── Barres LED motorisées (tilt 360°, rendues par le batch des lyres, prêtes pour le DMX) ───
+const ledBarManager = new LedBarManager({ scene, spotManager });
+ambiancePanel.setLedBarManager(ledBarManager);
+window.__SS3D.ledBarManager = ledBarManager;
+
+// 4 barres de 16 LED en hauteur sur le côté intérieur des poteaux avant (x = ±17), sous et au-dessus
+// des line arrays, visant le centre de la scène (perpendiculaires aux lasers qui tirent vers le public).
+// Identifiants fixes : chaque client crée les mêmes barres sans doublon avec l'état réseau.
+{
+    const aim = new THREE.Vector3(0, 3.5, -5);
+    let k = 0;
+    for (const side of [-1, 1]) {
+        for (const y of [5.5, 16.5]) {
+            const pos = new THREE.Vector3(side * 16.62, y, 0);
+            const dx = aim.x - pos.x, dz = aim.z - pos.z;
+            const { bar } = ledBarManager.addBar(pos, {
+                yaw: Math.round(THREE.MathUtils.radToDeg(Math.atan2(dx, dz)) * 10) / 10,
+                tilt: Math.round(THREE.MathUtils.radToDeg(Math.atan2(aim.y - y, Math.hypot(dx, dz))) * 10) / 10,
+            }, `ledbar-stage-${++k}`);
+            ledBarManager._autoPatch(bar);
+        }
+    }
 }
 
 // Console des lyres (sélection matricielle, couleurs, visée, effets) — touche L

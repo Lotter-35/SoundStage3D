@@ -17,6 +17,7 @@ import { globalLaserPostParams, enableBloom } from '../laser/LaserManager.js?v=2
 import { LaserInspectorPanel } from '../laser/ui/LaserInspectorPanel.js?v=200';
 import { StrobeInspectorPanel } from '../strobe/ui/StrobeInspectorPanel.js?v=8';
 import { SpotInspectorPanel } from '../spot/ui/SpotInspectorPanel.js';
+import { LedBarInspectorPanel } from '../ledbar/ui/LedBarInspectorPanel.js';
 import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
@@ -70,6 +71,9 @@ export class AmbiancePanel {
         this.selectedSpot = null;
         this.spotManager = null;
         this._spotInspectorPanel = null;
+        // Barres LED : sélectionnées dans le même emplacement que les lyres (selectedSpot, isLedBar = true)
+        this.ledBarManager = null;
+        this._ledBarInspectorPanel = null;
         this.lights = []; // [{ id, name, light, type, isBuiltin, markerMesh, helper, defaultConfig }]
         this._nextId = 1;
 
@@ -200,6 +204,32 @@ export class AmbiancePanel {
     }
 
     /**
+     * Injecte le LedBarManager (barres LED motorisées) et initialise son panneau d'inspection.
+     * @param {import('../ledbar/LedBarManager.js').LedBarManager} ledBarManager
+     */
+    setLedBarManager(ledBarManager) {
+        this.ledBarManager = ledBarManager;
+        this._ledBarInspectorPanel = new LedBarInspectorPanel({ ledBarManager, ambiancePanel: this });
+        this._buildGui();
+    }
+
+    /** Catégorie réseau d'un projecteur de l'emplacement « lyre » (lyre Spot ou barre LED) */
+    _fixtureCategory(fixture) {
+        return fixture && fixture.isLedBar ? 'ledbar' : 'spot';
+    }
+
+    /** Panneau d'inspection d'un projecteur de l'emplacement « lyre » */
+    _fixturePanel(fixture) {
+        return fixture && fixture.isLedBar ? this._ledBarInspectorPanel : this._spotInspectorPanel;
+    }
+
+    /** Vrai si l'inspecteur d'une lyre ou d'une barre LED est ouvert */
+    _isFixturePanelOpen() {
+        return Boolean((this._spotInspectorPanel && this._spotInspectorPanel.isOpen)
+            || (this._ledBarInspectorPanel && this._ledBarInspectorPanel.isOpen));
+    }
+
+    /**
      * Injecte le système d'Illumination Globale Statique
      * @param {object} staticGI
      */
@@ -247,7 +277,7 @@ export class AmbiancePanel {
                 } else if (this.selectedSpot) {
                     this.selectedSpot.isBeingDragged = false;
                     this._emitSync({
-                        category: 'spot_update',
+                        category: `${this._fixtureCategory(this.selectedSpot)}_update`,
                         id: this.selectedSpot.id,
                         data: this.selectedSpot.getPlacement(),
                         immediate: true,
@@ -355,10 +385,11 @@ export class AmbiancePanel {
                 const spot = this.selectedSpot;
                 spot.isBeingDragged = true;
                 spot.syncFromGizmo();
-                if (this._spotInspectorPanel && this._spotInspectorPanel.isOpen) {
-                    this._spotInspectorPanel.syncFromSpot();
+                const panel = this._fixturePanel(spot);
+                if (panel && panel.isOpen) {
+                    if (spot.isLedBar) panel.syncFromBar(); else panel.syncFromSpot();
                 }
-                this._emitSync({ category: 'spot_update', id: spot.id, data: spot.getPlacement() });
+                this._emitSync({ category: `${this._fixtureCategory(spot)}_update`, id: spot.id, data: spot.getPlacement() });
                 return;
             }
 
@@ -1892,8 +1923,12 @@ export class AmbiancePanel {
         this._updateAllHelpersVisibility();
         this._rebuildInspectorGui();
 
-        if (this._spotInspectorPanel) {
-            this._spotInspectorPanel.openForSpot(spot);
+        if (spot.isLedBar) {
+            if (this._spotInspectorPanel && this._spotInspectorPanel.isOpen) this._spotInspectorPanel.close();
+            if (this._ledBarInspectorPanel) this._ledBarInspectorPanel.openForBar(spot);
+        } else {
+            if (this._ledBarInspectorPanel && this._ledBarInspectorPanel.isOpen) this._ledBarInspectorPanel.close();
+            if (this._spotInspectorPanel) this._spotInspectorPanel.openForSpot(spot);
         }
     }
 
@@ -1901,7 +1936,7 @@ export class AmbiancePanel {
      * Désélectionne la lyre Spot actuelle et détache le Gizmo
      */
     deselectSpot() {
-        if (!this.selectedSpot && !(this._spotInspectorPanel && this._spotInspectorPanel.isOpen)) return;
+        if (!this.selectedSpot && !this._isFixturePanelOpen()) return;
         if (this.selectedSpot) this.selectedSpot.isBeingDragged = false;
         this.selectedSpot = null;
         if (this.transformControls && this.transformControls.object && !this.selectedEntry && !this.selectedLaser && !this.selectedStrobe) {
@@ -1912,11 +1947,22 @@ export class AmbiancePanel {
         if (this._spotInspectorPanel && this._spotInspectorPanel.isOpen) {
             this._spotInspectorPanel.close();
         }
+        if (this._ledBarInspectorPanel && this._ledBarInspectorPanel.isOpen) {
+            this._ledBarInspectorPanel.close();
+        }
         this._rebuildInspectorGui();
     }
 
     /** Duplique une lyre (réglages identiques, décalée de 0.8 m, nouvelle adresse DMX libre) */
     duplicateSelectedSpot(spot = this.selectedSpot) {
+        if (spot && spot.isLedBar) {
+            if (!this.ledBarManager) return null;
+            const res = this.ledBarManager.duplicateBar(spot.id);
+            if (!res) return null;
+            this._emitSync({ category: 'ledbar_add', data: { id: res.id, params: { ...res.bar.params } } });
+            this.selectSpot(res.bar);
+            return res;
+        }
         if (!spot || !this.spotManager) return null;
         const res = this.spotManager.duplicateSpot(spot.id);
         if (!res) return null;
@@ -1926,6 +1972,15 @@ export class AmbiancePanel {
     }
 
     deleteSelectedSpot(spot = this.selectedSpot) {
+        if (spot && spot.isLedBar) {
+            if (!this.ledBarManager) return;
+            const id = spot.id;
+            if (this.selectedSpot === spot) this.deselectSpot();
+            this.ledBarManager.removeBar(id);
+            this._emitSync({ category: 'ledbar_remove', id });
+            this._rebuildInspectorGui();
+            return;
+        }
         if (!spot || !this.spotManager) return;
         const id = spot.id;
         if (this.selectedSpot === spot) this.deselectSpot();
@@ -1937,6 +1992,12 @@ export class AmbiancePanel {
     /** Copie la configuration complète de la lyre (JSON) dans le presse-papiers */
     exportSelectedSpot(spot = this.selectedSpot) {
         if (!spot) return;
+        if (spot.isLedBar) {
+            const json = JSON.stringify({ name: spot.displayName, type: 'LedBarFixture', params: spot.params }, null, 2);
+            try { navigator.clipboard.writeText(json); } catch (_) {}
+            console.log('[Barre LED] Configuration :', json);
+            return;
+        }
         const json = JSON.stringify({ name: `Lyre Spot #${spot.number}`, type: 'SpotFixture', params: spot.params }, null, 2);
         try { navigator.clipboard.writeText(json); } catch (_) {}
         console.log('[Lyre Spot] Configuration :', json);
@@ -2015,7 +2076,7 @@ export class AmbiancePanel {
     handleCanvasClick(event) {
         const isLaserOpen = Boolean(this._laserInspectorPanel && this._laserInspectorPanel.isOpen);
         const isStrobeOpen = Boolean(this._strobeInspectorPanel && this._strobeInspectorPanel.isOpen);
-        const isSpotOpen = Boolean(this._spotInspectorPanel && this._spotInspectorPanel.isOpen);
+        const isSpotOpen = this._isFixturePanelOpen();
         // Mode curseur (Tab / Échap) : le clic sur une lampe ouvre directement ses réglages, même panneau Ambiance fermé
         const cursorMode = Boolean(!this.isOpen && this.listener && this.listener.controls && !this.listener.controls.isLocked
             && !(this.spotConsole && this.spotConsole.isOpen));
@@ -2069,6 +2130,19 @@ export class AmbiancePanel {
                 if (spot) {
                     this._lastFixturePick = performance.now();
                     this.selectSpot(spot);
+                    return;
+                }
+            }
+        }
+
+        // ── Tester les barres LED ──
+        if (this.ledBarManager && this.ledBarManager.count > 0) {
+            const barHits = this.raycaster.intersectObjects(this.ledBarManager.getBarObjects(), false);
+            if (barHits.length > 0) {
+                const bar = this.ledBarManager.getBarFromObject(barHits[0].object);
+                if (bar) {
+                    this._lastFixturePick = performance.now();
+                    this.selectSpot(bar);
                     return;
                 }
             }
@@ -2208,6 +2282,25 @@ export class AmbiancePanel {
                     this._emitSync({ category: 'spot_add', data: { id, params: { ...spot.params } } });
                     this.selectSpot(spot);
                     this._logSceneProbe('🎯 Lyre Spot');
+                    return null;
+                }
+
+            case '💡 Barre LED':
+                if (!this.ledBarManager) {
+                    console.warn('[AmbiancePanel] LedBarManager non disponible. Appelez setLedBarManager() depuis main.js.');
+                    return null;
+                }
+                {
+                    // Posée devant le joueur à hauteur des yeux, faisceaux dirigés à l'opposé de la caméra
+                    const barPos = spawnPos.clone();
+                    barPos.y = Math.max(1.5, barPos.y);
+                    const { id, bar } = this.ledBarManager.addBar(barPos, {
+                        yaw: this.camera ? Math.round(THREE.MathUtils.radToDeg(Math.atan2(
+                            barPos.x - this.camera.position.x, barPos.z - this.camera.position.z))) : 0,
+                    });
+                    this._emitSync({ category: 'ledbar_add', data: { id, params: { ...bar.params } } });
+                    this.selectSpot(bar);
+                    this._logSceneProbe('💡 Barre LED');
                     return null;
                 }
 
@@ -4236,6 +4329,7 @@ export class AmbiancePanel {
             'RectAreaLight',
             '⚡ Stroboscope',
             '🎯 Lyre Spot',
+            '💡 Barre LED',
             '🔴 LaserPod',
         ]).name('Type');
 
@@ -4243,7 +4337,7 @@ export class AmbiancePanel {
         const cAddIntensity = fAdd.add(this.creationParams, 'intensity', 0.1, 20.0, 0.1).name('Intensité');
 
         const updateAddInputsVisibility = (type) => {
-            const isCustom = type === '🔴 LaserPod' || type === '⚡ Stroboscope' || type === '🎯 Lyre Spot' || (typeof type === 'string' && (type.includes('Laser') || type.includes('Stroboscope')));
+            const isCustom = type === '🔴 LaserPod' || type === '⚡ Stroboscope' || type === '🎯 Lyre Spot' || type === '💡 Barre LED' || (typeof type === 'string' && (type.includes('Laser') || type.includes('Stroboscope')));
             if (isCustom) {
                 if (cAddColor.hide) cAddColor.hide();
                 if (cAddColor.domElement) {
@@ -4440,9 +4534,16 @@ export class AmbiancePanel {
             });
         }
 
+        // 5. Barres LED
+        if (this.ledBarManager) {
+            this.ledBarManager.getAllBars().forEach(bar => {
+                lightOptions[`💡 Barre LED #${bar.number}`] = `ledbar_${bar.id}`;
+            });
+        }
+
         let currentSelectedId = '';
         if (this.selectedSpot) {
-            currentSelectedId = `spot_${this.selectedSpot.id}`;
+            currentSelectedId = `${this._fixtureCategory(this.selectedSpot)}_${this.selectedSpot.id}`;
         } else if (this.selectedEntry) {
             currentSelectedId = this.selectedEntry.id;
         } else if (this.selectedLaser) {
@@ -4464,6 +4565,11 @@ export class AmbiancePanel {
                 if (laser) {
                     this.selectLaser(laser);
                 }
+                return;
+            }
+            if (typeof id === 'string' && id.startsWith('ledbar_')) {
+                const bar = this.ledBarManager ? this.ledBarManager.getBar(id.slice(7)) : null;
+                if (bar) this.selectSpot(bar);
                 return;
             }
             if (typeof id === 'string' && id.startsWith('spot_')) {
@@ -4498,7 +4604,7 @@ export class AmbiancePanel {
                 deleteSpot: () => this.deleteSelectedSpot(spot),
             };
 
-            const fSpotActions = this.fInspector.addFolder(`🎯 Lyre Spot #${spot.number} - Actions`);
+            const fSpotActions = this.fInspector.addFolder(`${spot.isLedBar ? '💡 Barre LED' : '🎯 Lyre Spot'} #${spot.number} - Actions`);
             fSpotActions.open();
             fSpotActions.add(spotActions, 'exportSpot').name('💾 Exporter');
             fSpotActions.add(spotActions, 'duplicateSpot').name('📋 Dupliquer');
@@ -5191,7 +5297,7 @@ export class AmbiancePanel {
                     e.stopPropagation();
                     return;
                 }
-                if (this.selectedSpot || (this._spotInspectorPanel && this._spotInspectorPanel.isOpen)) {
+                if (this.selectedSpot || this._isFixturePanelOpen()) {
                     this.deselectSpot();
                     e.stopPropagation();
                     return;
