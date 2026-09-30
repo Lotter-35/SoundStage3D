@@ -3,7 +3,7 @@
  * ─────────────────────────────────────────────────────────────
  * Un nouveau laser posé dans la scène, côté jeu (fil principal) :
  *   - paramètres (panneau, réseau multijoueur, DMX)
- *   - placement (gizmo), repère monde, boîtier instancié + lentille à la couleur émise
+ *   - placement (gizmo), repère monde, boîtier 3D de l'ancien laser (instancié) avec vitre à la couleur émise
  *   - la simulation et la géométrie sont calculées par le cœur (core/, dans un Web Worker) :
  *     le laser lui envoie ses réglages quand ils changent et reçoit sa géométrie prête à dessiner
  * ─────────────────────────────────────────────────────────────
@@ -12,7 +12,8 @@
 import * as THREE from 'three';
 import { LASER2_PARAMS_SCHEMA, HARDWARE_PRESETS, defaultLaser2Params } from './config/laser2Params.js';
 import { decode as decodeDmx, getFootprint } from './Laser2Profile.js';
-import { getLaser2HousingInstancer, APERTURE_Z, BODY } from './Laser2Housing.js';
+// Même module (même ?v) que l'ancien laser : les boîtiers partagent leurs InstancedMesh
+import { LaserPodHousing, flushHousings } from '../laser/LaserPodHousing.js?v=3';
 
 const DEG = Math.PI / 180;
 const PLACEMENT_KEYS = new Set(['posX', 'posY', 'posZ', 'yaw', 'pitch', 'roll']);
@@ -39,12 +40,13 @@ export class Laser2Fixture {
         this.group.userData.laser2Instance = this;
         scene.add(this.group);
 
-        this._instancer = getLaser2HousingInstancer(scene);
-        this._slot = this._instancer.alloc();
-        this.pickMesh = new THREE.Mesh(this._instancer.pickGeometry, this._instancer.pickMaterial);
+        // Boîtier 3D de l'ancien laser (sortie du faisceau à l'origine du modèle, face vers +Z)
+        this.housing = new LaserPodHousing(scene);
+        this.housing.group.traverse(o => { o.userData.laser2Instance = this; });
+        this._glass = new THREE.Color(0, 0, 0);
+        this.pickMesh = new THREE.Mesh(this.housing._instancer.pickGeometry, this.housing._instancer.pickMaterial);
         this.pickMesh.name = 'laser2-pick';
         this.pickMesh.userData.laser2Instance = this;
-        this.pickMesh.scale.set(BODY.w + 0.1, BODY.h + 0.1, BODY.d + 0.1);
         this.group.add(this.pickMesh);
 
         this.isBeingDragged = false;
@@ -143,9 +145,17 @@ export class Laser2Fixture {
         this.right.setFromMatrixColumn(m, 0).normalize();
         this.up.setFromMatrixColumn(m, 1).normalize();
         this.fwd.setFromMatrixColumn(m, 2).normalize();
-        this.origin.set(0, 0, APERTURE_Z).applyMatrix4(m);
-        this._instancer.write(this._slot, m);
+        this.origin.setFromMatrixPosition(m);
+        this._syncHousing();
         this._dirtyTransform = true;
+    }
+
+    /** Boîtier : même position / orientation que le laser (convention de l'ancien boîtier : tilt = -pitch) */
+    _syncHousing() {
+        const p = this.params;
+        const on = this._glass.r + this._glass.g + this._glass.b > 0.02;
+        this.housing.update(this.origin, p.yaw, -p.pitch, p.roll, on ? 1 : 0, this._glass);
+        flushHousings(this.scene);
     }
 
     /** Repère envoyé au cœur : sortie du faisceau, axes droite / haut / avant */
@@ -170,14 +180,19 @@ export class Laser2Fixture {
         this.impactData = item.impactData; this.impactN = item.impactN;
         if (item.stats) this.stats = item.stats;
         const l = item.lens;
-        this._instancer.lensColor(this._slot, l[0], l[1], l[2]);
+        const m = Math.max(l[0], l[1], l[2]);
+        const k = m > 1 ? 1 / m : 1;
+        if (Math.abs(this._glass.r - l[0] * k) + Math.abs(this._glass.g - l[1] * k) + Math.abs(this._glass.b - l[2] * k) > 0.01) {
+            this._glass.setRGB(l[0] * k, l[1] * k, l[2] * k);
+            this._syncHousing();
+        }
     }
 
     dispose() {
         if (this.patch) this.patch.unregister(this);
         this.scene.remove(this.group);
-        if (this._slot) this._instancer.free(this._slot);
-        this._slot = null;
+        if (this.housing) this.housing.dispose();
+        this.housing = null;
         this.beamN = 0;
         this.sheetN = 0;
         this.impactN = 0;

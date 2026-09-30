@@ -6,7 +6,7 @@
  *   - mise à jour sur l'horloge commune (même image chez tous les joueurs)
  *   - calcul (galvos, faisceaux, collisions) dans un Web Worker (core/) : le fil principal envoie
  *     les réglages quand ils changent et l'heure à chaque image, puis dessine la géométrie reçue
- *   - rendu batché : 3 draw calls (faisceaux, nappes, impacts), 3 pour tous les boîtiers
+ *   - rendu batché : 3 draw calls (faisceaux, nappes, impacts) ; boîtiers de l'ancien laser (instanciés)
  *   - éblouissement réaliste : puissance reçue par l'œil (faisceau fixe = très fort, balayé = flash)
  *
  * Coexiste avec l'ancien système laser (src/laser/), voué à être supprimé.
@@ -17,7 +17,6 @@ import * as THREE from 'three';
 import { Laser2Fixture } from './Laser2Fixture.js';
 import { Laser2Batch, BEAM_STRIDE, SHEET_STRIDE } from './Laser2Batch.js';
 import { LASER2_UNIFORMS } from './Laser2Shaders.js';
-import { getLaser2HousingInstancer } from './Laser2Housing.js';
 import { Laser2Host } from './core/Laser2Host.js';
 import { packPlayers } from './core/Collision.js';
 import { buildLaser2ObstacleGroups } from './Laser2Obstacles.js';
@@ -53,7 +52,6 @@ export class Laser2Manager {
         this._lasers = new Map();
         this._nextNumber = 1;
         this.batch = new Laser2Batch(scene);
-        this._instancer = getLaser2HousingInstancer(scene);
         this.cpuMs = 0;           // coût sur le fil principal (ms / image, lissé)
         this.coreMs = 0;          // coût du calcul (worker ou direct)
         this.prims = 0;
@@ -225,7 +223,6 @@ export class Laser2Manager {
         const t = this.clock();
         LASER2_UNIFORMS.uTime.value = t;    // volutes sur l'horloge commune
         this.host.frame(t, players, this.previewId);
-        this._instancer.flush();
         if (this.dazzle && this.camera) this._updateDazzle();
         this.cpuMs += (performance.now() - t0 - this.cpuMs) * 0.05;
     }
@@ -249,7 +246,6 @@ export class Laser2Manager {
             if (l) l.preview = r.preview;
         }
         this.batch.assemble(this._lasers.values(), this.camera, this.renderer);
-        this._instancer.flush();
         this.coreMs += (r.ms - this.coreMs) * 0.05;
         this.prims = r.prims;
         this.shared = r.shared;
