@@ -41,30 +41,43 @@ export const OPTION_FOLDERS = [
     { id: 'input',   title: '🖱️ Contrôles' },
 ];
 
+/** Sous-dossiers (fermés sauf `open`) : option.sub → dossier dans son dossier principal */
+export const OPTION_SUBFOLDERS = {
+    effects: [
+        { id: 'res',   title: '📐 Résolution des effets', open: true },
+        { id: 'haze',  title: '🌫️ Brouillard' },
+        { id: 'spot',  title: '🔦 Lyres' },
+        { id: 'laser', title: '🔴 Lasers' },
+        { id: 'grass', title: '🌿 Herbe' },
+    ],
+};
+
 const num = (value, min, max, step, label, folder, hint) => ({ value, min, max, step, label, folder, hint });
 const opt = (options, value, label, folder, hint) => ({ options, value, label, folder, hint });
 const bool = (value, label, folder, hint) => ({ value, label, folder, hint });
+/** Range une option dans un sous-dossier (voir OPTION_SUBFOLDERS) */
+const sub = (id, o) => ({ ...o, sub: id });
 
-/** Ordre d'affichage = ordre de déclaration */
+/** Ordre d’affichage = ordre de déclaration */
 export const CLIENT_OPTIONS_SCHEMA = {
     // ── Affichage ──
-    renderScale:      num(100, 25, 200, 5, 'Échelle de rendu (%)', 'display', '100 % = résolution de l\'écran (plafonnée à 1,5× sur écran haute densité)'),
-    dynamicResolution: bool(true, 'Résolution dynamique', 'display', 'Baisse l’échelle de rendu (jusqu’à 67 %) quand la carte graphique ne tient pas les FPS visés ; l’échelle de rendu choisie reste le maximum'),
-    dynamicResolutionTarget: num(100, 30, 100, 5, 'Résolution dynamique : FPS visés (% de l’écran)', 'display', '100 % = fréquence de l’écran (ex. 120 Hz → 120 FPS, 50 % → 60 FPS). Mise à jour quand la fenêtre change d’écran'),
+    renderScale:      num(100, 25, 200, 5, 'Échelle rendu (%)', 'display', '100 % = résolution de l\'écran (plafonnée à 1,5× sur écran haute densité)'),
+    dynamicResolution: bool(true, 'Rés. dynamique', 'display', 'Baisse l’échelle de rendu (jusqu’à 67 %) quand la carte graphique ne tient pas les FPS visés ; l’échelle de rendu choisie reste le maximum'),
+    dynamicResolutionTarget: num(100, 30, 100, 5, 'FPS visés (% écran)', 'display', '100 % = fréquence de l’écran (ex. 120 Hz → 120 FPS, 50 % → 60 FPS). Mise à jour quand la fenêtre change d’écran'),
     sharpness:        num(0, 0, 1, 0.01, 'Netteté', 'display', 'Accentuation des contours en post-traitement'),
     antialiasing:     opt(AA_MODES, AA_MODES[0], 'Anticrénelage', 'display'),
 
     // ── Effets & performance ──
-    hazeResolution:   opt([RES_AUTO, '1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'], RES_AUTO, 'Brouillard : résolution', 'effects', 'Auto : pleine résolution jusqu’en 1080p, ½ en 4K'),
-    hazeSegments:     num(2, 1, 8, 1, 'Brouillard : tranches de calcul', 'effects'),
-    hazeMaxLights:    num(6, 1, 8, 1, 'Brouillard : lumières max', 'effects'),
-    spotBeamQuality:  opt(RES_QUALITY_NAMES, RES_AUTO, 'Lyres : qualité des faisceaux', 'effects', 'Auto : pleine résolution jusqu’en 1080p, ½ en 4K'),
-    spotRealLights:   bool(true, 'Lyres : éclairage réel de la scène', 'effects'),
-    spotShadows:      bool(false, 'Lyres : ombres portées (2 max)', 'effects'),
-    laserRange:       num(300, 20, 3000, 10, 'Lasers : distance d\'affichage (m)', 'effects'),
-    laserFanQuality:  opt(RES_QUALITY_NAMES, RES_AUTO, 'Lasers : qualité des nappes', 'effects', 'Plus la résolution est basse, moins la fumée des nappes coûte à calculer. Auto : pleine résolution jusqu’en 1080p, ½ en 4K'),
-    laserSharedSmoke: bool(true, 'Lasers : fumée partagée (nappes superposées)', 'effects', 'La fumée des nappes superposées n\'est calculée qu\'une fois par pixel'),
-    grassDistance:    num(0, 0, 60, 1, 'Herbe : distance d\'affichage (m)', 'effects', '0 = pas d\'herbe'),
+    hazeResolution:   sub('res', opt([RES_AUTO, '1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'], RES_AUTO, 'Brouillard', 'effects', 'Résolution du brouillard. Auto : pleine résolution jusqu’en 1080p, ½ en 4K')),
+    spotBeamQuality:  sub('res', opt(RES_QUALITY_NAMES, RES_AUTO, 'Lyres', 'effects', 'Résolution des faisceaux des lyres. Auto : pleine résolution jusqu’en 1080p, ½ en 4K')),
+    laserFanQuality:  sub('res', opt(RES_QUALITY_NAMES, RES_AUTO, 'Lasers', 'effects', 'Résolution des nappes laser : plus elle est basse, moins la fumée des nappes coûte à calculer. Auto : pleine résolution jusqu’en 1080p, ½ en 4K')),
+    hazeSegments:     sub('haze', num(2, 1, 8, 1, 'Tranches', 'effects', 'Tranches de calcul du brouillard')),
+    hazeMaxLights:    sub('haze', num(6, 1, 8, 1, 'Lumières max', 'effects', 'Nombre maximal de lumières qui éclairent le brouillard')),
+    spotRealLights:   sub('spot', bool(true, 'Éclairage réel', 'effects', 'Les lyres éclairent réellement la scène')),
+    spotShadows:      sub('spot', bool(false, 'Ombres (2 max)', 'effects', 'Ombres portées des lyres (2 au maximum)')),
+    laserRange:       sub('laser', num(300, 20, 3000, 10, 'Distance (m)', 'effects', 'Distance d’affichage des lasers')),
+    laserSharedSmoke: sub('laser', bool(true, 'Fumée partagée', 'effects', 'La fumée des nappes superposées n’est calculée qu’une fois par pixel')),
+    grassDistance:    sub('grass', num(0, 0, 60, 1, 'Distance (m)', 'effects', 'Distance d’affichage de l’herbe (0 = pas d’herbe)')),
 
     // ── Son ──
     localVolume:      num(100, 0, 1000, 1, 'Volume local (%)', 'audio'),

@@ -9,7 +9,7 @@
 
 import GUI from 'lil-gui';
 import { makeDraggable } from './draggable.js';
-import { clientOptions, CLIENT_OPTIONS_SCHEMA, OPTION_FOLDERS } from './ClientOptions.js';
+import { clientOptions, CLIENT_OPTIONS_SCHEMA, OPTION_FOLDERS, OPTION_SUBFOLDERS } from './ClientOptions.js';
 
 export class OptionsPanel {
     /** @param {HTMLElement|null} button bouton de la barre du bas */
@@ -84,11 +84,19 @@ export class OptionsPanel {
         }
 
         const folders = {};
-        for (const f of OPTION_FOLDERS) folders[f.id] = this.gui.addFolder(f.title);
+        const subfolders = {};
+        for (const f of OPTION_FOLDERS) {
+            folders[f.id] = this.gui.addFolder(f.title);
+            for (const sf of OPTION_SUBFOLDERS[f.id] || []) {
+                const folder = folders[f.id].addFolder(sf.title);
+                if (!sf.open) folder.close();
+                subfolders[f.id + '/' + sf.id] = folder;
+            }
+        }
 
         const v = this._values;
         for (const [key, s] of Object.entries(CLIENT_OPTIONS_SCHEMA)) {
-            const folder = folders[s.folder];
+            const folder = (s.sub && subfolders[s.folder + '/' + s.sub]) || folders[s.folder];
             let ctrl;
             if (s.options) ctrl = folder.add(v, key, s.options);
             else if (typeof s.value === 'boolean') ctrl = folder.add(v, key);
