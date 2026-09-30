@@ -55,7 +55,7 @@ const TAU = Math.PI * 2;
 
 /** Réglages qui changent le dessin (tout sauf placement, patch DMX et rendu) */
 const SCANNER_KEYS = Object.entries(LASER2_PARAMS_SCHEMA)
-    .filter(([k, s]) => !['place', 'dmx'].includes(s.folder) && !['visibility', 'forwardScatter', 'audienceMask'].includes(k))
+    .filter(([k, s]) => !['place', 'dmx', 'smoke'].includes(s.folder) && !['visibility', 'forwardScatter', 'audienceMask'].includes(k))
     .map(([k]) => k);
 
 /**

@@ -16,6 +16,7 @@
 import * as THREE from 'three';
 import { Laser2Fixture } from './Laser2Fixture.js';
 import { Laser2Batch, BEAM_STRIDE, SHEET_STRIDE } from './Laser2Batch.js';
+import { LASER2_UNIFORMS } from './Laser2Shaders.js';
 import { getLaser2HousingInstancer } from './Laser2Housing.js';
 import { Laser2Host } from './core/Laser2Host.js';
 import { packPlayers } from './core/Collision.js';
@@ -221,7 +222,9 @@ export class Laser2Manager {
         this._players = packPlayers(this.playerCollider, this._players);
         // Mode worker : envoie une copie (le tableau est réutilisé d'une image à l'autre)
         const players = this.host.mode === 'worker' ? this._players.slice(0, this._playersLen()) : this._players;
-        this.host.frame(this.clock(), players, this.previewId);
+        const t = this.clock();
+        LASER2_UNIFORMS.uTime.value = t;    // volutes sur l'horloge commune
+        this.host.frame(t, players, this.previewId);
         this._instancer.flush();
         if (this.dazzle && this.camera) this._updateDazzle();
         this.cpuMs += (performance.now() - t0 - this.cpuMs) * 0.05;

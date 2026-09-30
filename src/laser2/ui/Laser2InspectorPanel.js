@@ -212,7 +212,7 @@ export class Laser2InspectorPanel {
         for (const f of LASER2_FOLDERS) {
             const folder = this.gui.addFolder(f.title);
             if (f.power && folder.domElement) folder.domElement.classList.add('power-folder');
-            if (f.id === 'place' || f.id === 'dmx' || f.id === 'effects' || f.id === 'hardware' || f.id === 'render') folder.close();
+            if (f.id === 'place' || f.id === 'dmx' || f.id === 'effects' || f.id === 'smoke' || f.id === 'hardware' || f.id === 'render') folder.close();
             folders[f.id] = folder;
         }
 
@@ -416,6 +416,7 @@ export class Laser2InspectorPanel {
         this._show('sweepShape', p.sweepX > 0 || p.sweepY > 0);
         this._show('waveSpeed', p.waveAmp > 0);
         this._show('colorSpeed', p.colorMode !== 'Fixe');
+        for (const k of ['smokeAmount', 'smokeScale', 'smokeSpeed', 'smokeContrast', 'smokeBeams']) this._show(k, p.smokeOn);
         this._show('ildaColor', ilda || live);
         for (const c of [this._ildaBankCtrl, this._ildaFileCtrl]) if (c) { if (ilda) c.show(); else c.hide(); }
         if (this._ildaInfo) this._ildaInfo.style.display = ilda ? '' : 'none';

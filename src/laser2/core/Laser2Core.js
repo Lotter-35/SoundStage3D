@@ -131,6 +131,11 @@ export class LaserCore {
         const g = Math.min(0.9, p.forwardScatter / 100);
         const vis = p.visibility;
         this._ap = ap; this._div = div; this._g = g; this._vis = vis;
+        // Volutes : intensité, taille (m), vitesse, contraste (faisceaux : plus discrètes)
+        const sm = p.smokeOn ? p.smokeAmount / 100 : 0;
+        const sm4 = this._smoke || (this._smoke = [0, 0, 0, 0]);
+        sm4[0] = sm; sm4[1] = Math.max(0.1, p.smokeScale); sm4[2] = (p.smokeSpeed / 100) * 1.5; sm4[3] = p.smokeContrast / 100;
+        const smB = p.smokeBeams ? sm * 0.6 : 0;
         this.impactN = 0;
         let lr = 0, lg = 0, lb = 0;
 
@@ -155,6 +160,7 @@ export class LaserCore {
             B[o + 4] = O.x + _dA.x * t; B[o + 5] = O.y + _dA.y * t; B[o + 6] = O.z + _dA.z * t; B[o + 7] = div;
             B[o + 8] = _D[0] / M; B[o + 9] = _D[1] / M; B[o + 10] = _D[2] / M; B[o + 11] = M * vis;
             B[o + 12] = g;
+            B[o + 13] = smB; B[o + 14] = sm4[1]; B[o + 15] = sm4[2]; B[o + 16] = sm4[3];
             if (h.id !== SURF_SKY) {
                 _P0.set(B[o + 4], B[o + 5], B[o + 6]);
                 this._pushImpact(_P0, _P0, h, ap + t * div, M * vis, _D, M);
@@ -251,6 +257,8 @@ export class LaserCore {
         const m = Math.max(_D[0], _D[1], _D[2]);
         S[o + 12] = _D[0] / m; S[o + 13] = _D[1] / m; S[o + 14] = _D[2] / m; S[o + 15] = M * this._vis;
         S[o + 16] = this._g;
+        const sm4 = this._smoke;
+        S[o + 17] = sm4[0]; S[o + 18] = sm4[1]; S[o + 19] = sm4[2]; S[o + 20] = sm4[3];
         // Trait lumineux sur la surface touchée par les deux bords
         if (h0.id === h1.id && h0.id !== SURF_SKY) {
             const tm = (h0.t + h1.t) * 0.5;

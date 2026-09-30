@@ -59,6 +59,7 @@ export const LASER2_FOLDERS = [
     { id: 'effects',  title: '✨ Effets' },
     { id: 'color',    title: '🎨 Couleur & Intensité', power: true },
     { id: 'hardware', title: '⚙️ Boîtier (fiche technique)' },
+    { id: 'smoke',    title: '🌫️ Volutes' },
     { id: 'render',   title: '👁️ Rendu' },
 ];
 
@@ -143,6 +144,14 @@ export const LASER2_PARAMS_SCHEMA = {
     modulation:  opt(MODULATIONS, 'Analogique', 'Modulation', 'hardware', false),
     threshold:   num(6, 0, 40, 0.5, 'Seuil des diodes (%)', 'hardware', false),
     colorShift:  num(6, 0, 20, 1, 'Décalage couleur (points)', 'hardware', false),
+
+    // ── 🌫️ Volutes (hors DMX) : fumée qui bouge dans les nappes, identique chez tous les joueurs ──
+    smokeOn:       bool(true, 'Volutes', 'smoke', false),
+    smokeAmount:   num(55, 0, 100, 1, 'Intensité (%)', 'smoke', false),
+    smokeScale:    num(2.5, 0.3, 10, 0.1, 'Taille des volutes (m)', 'smoke', false),
+    smokeSpeed:    num(25, 0, 100, 1, 'Vitesse (%)', 'smoke', false),
+    smokeContrast: num(50, 0, 100, 1, 'Contraste (%)', 'smoke', false),
+    smokeBeams:    bool(true, 'Aussi dans les faisceaux', 'smoke', false),
 
     // ── 👁️ Rendu (hors DMX) ──
     persistence: opt(PERSISTENCE_MODES, 'Œil', 'Persistance', 'render', false),

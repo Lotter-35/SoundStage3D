@@ -72,13 +72,13 @@ export class Laser2Batch {
         beamGeo.setAttribute('aCorner', new THREE.Float32BufferAttribute([-1, 0, 0, 1, 0, 0, -1, 1, 0, 1, 1, 0], 3));
         beamGeo.setIndex([0, 1, 2, 2, 1, 3]);
         beamGeo.instanceCount = 0;
-        this.beams = new InstanceStream(beamGeo, BEAM_STRIDE, [['aO', 0, 4], ['aE', 4, 4], ['aC', 8, 4], ['aG', 12, 1]], 256);
+        this.beams = new InstanceStream(beamGeo, BEAM_STRIDE, [['aO', 0, 4], ['aE', 4, 4], ['aC', 8, 4], ['aG', 12, 1], ['aS', 13, 4]], 256);
 
         const sheetGeo = new THREE.InstancedBufferGeometry();
         sheetGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0], 3));
         sheetGeo.setAttribute('aCornerId', new THREE.Float32BufferAttribute([0, 1, 2], 1));
         sheetGeo.instanceCount = 0;
-        this.sheets = new InstanceStream(sheetGeo, SHEET_STRIDE, [['aO', 0, 4], ['aA', 4, 4], ['aB', 8, 4], ['aC', 12, 4], ['aG', 16, 1]], 512);
+        this.sheets = new InstanceStream(sheetGeo, SHEET_STRIDE, [['aO', 0, 4], ['aA', 4, 4], ['aB', 8, 4], ['aC', 12, 4], ['aG', 16, 1], ['aS', 17, 4]], 512);
 
         const impGeo = new THREE.InstancedBufferGeometry();
         impGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3));

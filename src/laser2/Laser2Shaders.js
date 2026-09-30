@@ -15,8 +15,51 @@
 
 import * as THREE from 'three';
 
+// ── Volutes : texture de bruit 3D (32³, 32 Ko) répétable, générée une fois ─────
+const SMOKE_SIZE = 32;
+
+function createSmokeTexture() {
+    const N = SMOKE_SIZE, N3 = N * N * N;
+    // Valeurs pseudo-aléatoires déterministes (mêmes volutes chez tous les joueurs)
+    let a = new Float32Array(N3), b = new Float32Array(N3);
+    let seed = 20240917;
+    for (let i = 0; i < N3; i++) {
+        seed = (seed * 1664525 + 1013904223) >>> 0;
+        a[i] = seed / 4294967296;
+    }
+    // Lissage (flou 3D séparable, bords rebouclés) : bruit doux au lieu de pixels aléatoires
+    const idx = (x, y, z) => ((z + N) % N) * N * N + ((y + N) % N) * N + ((x + N) % N);
+    for (let pass = 0; pass < 2; pass++) {
+        for (const axis of [0, 1, 2]) {
+            for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+                let sum = 0;
+                for (let d = -2; d <= 2; d++) {
+                    sum += a[axis === 0 ? idx(x + d, y, z) : axis === 1 ? idx(x, y + d, z) : idx(x, y, z + d)];
+                }
+                b[idx(x, y, z)] = sum / 5;
+            }
+            const t = a; a = b; b = t;
+        }
+    }
+    // Contraste ramené sur 0…1
+    let lo = Infinity, hi = -Infinity;
+    for (let i = 0; i < N3; i++) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); }
+    const data = new Uint8Array(N3);
+    for (let i = 0; i < N3; i++) data[i] = Math.round(((a[i] - lo) / (hi - lo)) * 255);
+    const tex = new THREE.Data3DTexture(data, N, N, N);
+    tex.format = THREE.RedFormat;
+    tex.type = THREE.UnsignedByteType;
+    tex.minFilter = tex.magFilter = THREE.LinearFilter;
+    tex.wrapS = tex.wrapT = tex.wrapR = THREE.RepeatWrapping;
+    tex.unpackAlignment = 1;
+    tex.needsUpdate = true;
+    return tex;
+}
+
 /** Réglages globaux partagés par les deux matériaux */
 export const LASER2_UNIFORMS = {
+    uSmokeTex:  { value: createSmokeTexture() },
+    uTime:      { value: 0 },              // horloge commune (s) : volutes identiques chez tous
     uPixelK:    { value: 0.001 },          // taille d'un pixel (m) par mètre de profondeur
     uRange:     { value: new THREE.Vector2(600, 1000) }, // fondu de fin de portée
     uGain:      { value: 0.1 },            // gain d'affichage
@@ -34,8 +77,27 @@ const PHASE = /* glsl */`
 
 const COMMON = /* glsl */`
     ${PHASE}
+    precision highp sampler3D;
+    uniform sampler3D uSmokeTex;
+    uniform float uTime;
     uniform float uGain;
     uniform float uGamma;
+    /**
+     * Volutes au point p (monde) : deux lectures du bruit, la seconde déformée par la première
+     * (les volutes s'enroulent), qui dérivent avec le temps. s = intensité, taille (m), vitesse, contraste.
+     * Au-delà de 200 m (dist), les volutes s'effacent et la texture n'est plus lue.
+     */
+    float smoke(vec3 p, vec4 s, float dist) {
+        float fade = s.x * (1.0 - smoothstep(120.0, 200.0, dist));
+        if (fade <= 0.001) return 1.0;
+        vec3 q = p / s.y;
+        vec3 drift = vec3(0.11, 0.045, 0.08) * uTime * s.z;
+        float n1 = texture(uSmokeTex, q * 0.25 + drift).r;
+        float n2 = texture(uSmokeTex, q * 0.63 - drift * 1.7 + vec3(n1 * 0.35)).r;
+        float n = n1 * 0.6 + n2 * 0.4;
+        n = clamp((n - 0.5) * (1.0 + 4.0 * s.w) + 0.5, 0.0, 1.0);
+        return mix(1.0, 0.15 + 1.7 * n, fade);
+    }
     vec3 shade(vec3 chroma, float L) {
         return chroma * (uGain * pow(max(L, 0.0), uGamma));
     }
@@ -62,13 +124,17 @@ export function createLaser2BeamMaterial() {
             attribute vec4 aE;            // bout.xyz, divergence (rad)
             attribute vec4 aC;            // chroma.rgb (max = 1), puissance affichée
             attribute float aG;           // diffusion vers l'avant (g)
+            attribute vec4 aS;            // volutes : intensité, taille, vitesse, contraste
             uniform float uPixelK;
             ${PHASE}
 
             varying float vSide;
             varying float vDist;
             varying float vLum;
+            varying vec3 vWorld;
+            varying float vCam;
             flat varying vec3 vChroma;
+            flat varying vec4 vSmoke;
 
             void main() {
                 vec3 O = aO.xyz;
@@ -98,6 +164,9 @@ export function createLaser2BeamMaterial() {
                 vChroma = aC.rgb;
                 vSide = aCorner.x;
                 vDist = r;
+                vWorld = P;
+                vCam = -vP.z;
+                vSmoke = aS;
                 gl_Position = projectionMatrix * vec4(vP, 1.0);
             }
         `,
@@ -107,12 +176,15 @@ export function createLaser2BeamMaterial() {
             varying float vSide;
             varying float vDist;
             varying float vLum;
+            varying vec3 vWorld;
+            varying float vCam;
             flat varying vec3 vChroma;
+            flat varying vec4 vSmoke;
             void main() {
                 float x = abs(vSide);
                 float prof = (1.0 - x * x) * (1.0 - x) * 1.8;   // profil gaussien approché (aire ≈ 1)
                 float fade = 1.0 - smoothstep(uRange.x, uRange.y, vDist);
-                vec3 c = shade(vChroma, vLum) * prof * fade;
+                vec3 c = shade(vChroma, vLum) * prof * fade * smoke(vWorld, vSmoke, vCam);
                 gl_FragColor = vec4(c, 1.0);
             }
         `,
@@ -131,8 +203,10 @@ export function createLaser2SheetMaterial() {
             attribute vec4 aB;            // B.xyz, angle A→B (rad)
             attribute vec4 aC;            // chroma.rgb, puissance affichée
             attribute float aG;
+            attribute vec4 aS;            // volutes
 
             varying vec3 vWorld;
+            flat varying vec4 vSmoke;
             flat varying vec3 vO;
             flat varying vec3 vN;
             flat varying vec4 vPar;       // diamètre, divergence, angle, g
@@ -145,6 +219,7 @@ export function createLaser2SheetMaterial() {
                 vN = normalize(cross(aA.xyz - aO.xyz, aB.xyz - aO.xyz) + vec3(0.0, 1e-7, 0.0));
                 vPar = vec4(aO.w, aA.w, aB.w, aG);
                 vCol = aC;
+                vSmoke = aS;
                 gl_Position = projectionMatrix * viewMatrix * vec4(P, 1.0);
             }
         `,
@@ -156,6 +231,7 @@ export function createLaser2SheetMaterial() {
             flat varying vec3 vN;
             flat varying vec4 vPar;
             flat varying vec4 vCol;
+            flat varying vec4 vSmoke;
             void main() {
                 vec3 d = vWorld - vO;
                 float r = length(d);
@@ -166,7 +242,8 @@ export function createLaser2SheetMaterial() {
                 float cosA = max(abs(dot(vN, view)), 0.25);
                 float L = vCol.w / w / cosA * phaseHG(dot(dir, -view), vPar.w);
                 float fade = 1.0 - smoothstep(uRange.x, uRange.y, r);
-                gl_FragColor = vec4(shade(vCol.rgb, L) * fade, 1.0);
+                float camDist = length(vWorld - cameraPosition);
+                gl_FragColor = vec4(shade(vCol.rgb, L) * fade * smoke(vWorld, vSmoke, camDist), 1.0);
             }
         `,
         ...baseOptions(),
