@@ -302,7 +302,9 @@ export function createLaser2ImpactMaterial() {
                 float d = length(vec2(a, vUV.y));
                 float k = d / (0.5 * w);
                 float core = exp(-2.0 * k * k);
-                float glow = exp(-d / halo) * 0.18;
+                // Halo ramené à zéro avant le bord du quad (sinon coupé net → carré, amplifié par le bloom)
+                float R = 0.5 * w + 2.0 * halo;
+                float glow = max(0.0, exp(-d / halo) - exp(-R / halo)) * 0.18 * (1.0 - smoothstep(0.6 * R, R, d));
                 vec3 c = shade(vChroma, vDim.w) * uImpactK * (core + glow);
                 gl_FragColor = vec4(c, 1.0);
             }
