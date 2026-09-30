@@ -304,13 +304,25 @@ export function getFootprint(mode) {
     return (LAYOUTS[mode] || LAYOUTS[DMX_MODES[1]]).length;
 }
 
-/** Description lisible des canaux d'un mode (panneau DMX) */
+/**
+ * Description lisible des canaux d'un mode (panneau DMX, régie) :
+ * { address, name, intensity? (canal de dimmer), fine? (octet fin), fineAddress? (octet fin d'un canal 16 bits) }
+ */
 export function describeChannels(mode, startAddress = 1) {
     const layout = LAYOUTS[mode] || LAYOUTS[DMX_MODES[1]];
-    return layout.map(([key, part], i) => ({
-        address: startAddress + i,
-        name: CH[key].name + (part === 'fine' ? ' (fine)' : ''),
-    }));
+    return layout.map(([key, part], i) => {
+        const out = {
+            address: startAddress + i,
+            name: CH[key].name + (part === 'fine' ? ' (fine)' : ''),
+        };
+        if (key === 'dimmer') out.intensity = true;
+        if (part === 'fine') out.fine = true;
+        else if (CH[key].wide) {
+            const j = layout.findIndex(([k, p]) => k === key && p === 'fine');
+            if (j >= 0) out.fineAddress = startAddress + j;
+        }
+        return out;
+    });
 }
 
 /** Couleur #rrggbb → drapeaux CMY [0…1] (soustractif : C = 1 − R …) */

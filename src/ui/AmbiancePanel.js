@@ -3045,6 +3045,7 @@ export class AmbiancePanel {
         paramsCopy.angle = srcParams.angle !== undefined ? srcParams.angle : 0;
         paramsCopy.tilt  = srcParams.tilt  !== undefined ? srcParams.tilt  : 0;
         paramsCopy.roll  = srcParams.roll  !== undefined ? srcParams.roll  : 0;
+        paramsCopy.dmxAddress = 0; // nouvelle adresse DMX libre
 
         const srcPos = laser.getPosition ? laser.getPosition() : laser.getHousingGroup().position;
         const newPos = srcPos.clone();

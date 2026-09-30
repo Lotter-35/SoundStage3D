@@ -74,7 +74,7 @@ const CHANNELS = [
     { name: 'Zoom droite (0 = suit le zoom global)',
       dec: (v, o) => { o.zoomSplit = v > 0; if (v > 0) o.zoomRight = zoomDec(v); },
       enc: p => (p.zoomSplit ? Math.max(1, zoomEnc(p.zoomRight)) : 0) },
-    { name: 'Master Dimmer', wide: true,
+    { name: 'Master Dimmer', wide: true, intensity: true,
       dec: (v16, o) => { o.dimmer = (v16 / 65535) * 100; },
       enc: p => round(clamp(p.dimmer / 100, 0, 1) * 65535) },
     { name: 'Obturateur / Strobe',
@@ -144,13 +144,21 @@ export function getFootprint(mode, pixelCount) {
     return STANDARD_FOOTPRINT + (isPixelMode(mode) ? 4 * pixelCount : 0);
 }
 
-/** Liste des canaux (adresse + nom) pour le moniteur du panneau */
+/**
+ * Liste des canaux pour le moniteur du panneau et la régie :
+ * { address, name, intensity? (canal de dimmer), fine? (octet fin), fineAddress? (octet fin d'un canal 16 bits) }
+ */
 export function describeChannels(mode, startAddress, pixelCount) {
     const out = [];
     let a = startAddress;
     for (const c of CHANNELS) {
-        out.push({ address: a++, name: c.name });
-        if (c.wide) out.push({ address: a++, name: c.name + ' fine' });
+        const ch = { address: a++, name: c.name };
+        if (c.intensity) ch.intensity = true;
+        out.push(ch);
+        if (c.wide) {
+            ch.fineAddress = a;
+            out.push({ address: a++, name: c.name + ' fine', fine: true, intensity: Boolean(c.intensity) || undefined });
+        }
     }
     if (isPixelMode(mode)) {
         for (let i = 0; i < pixelCount; i++) {

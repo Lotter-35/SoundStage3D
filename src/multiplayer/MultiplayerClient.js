@@ -71,6 +71,19 @@ export class MultiplayerClient {
         return this.clock.now();
     }
 
+    /** Liste des projecteurs de la scène, pour la régie (voir src/dmx/PatchReporter.js) */
+    sendPatchReport(fixtures) {
+        this._send({ type: 'PATCH_REPORT', fixtures });
+    }
+
+    /**
+     * Demande de la régie : valeurs DMX équivalentes aux réglages actuels de projecteurs
+     * @param {(keys: string[]) => object} cb  renvoie { clé: { universe, address, values } }
+     */
+    onFixtureStateRequest(cb) {
+        this._onFixtureStateRequest = cb;
+    }
+
     /** Trames DMX reçues de la régie (déjà décodées, voir src/dmx/DmxProtocol.js) */
     onDmx(cb) {
         this._dmxListeners.push(cb);
@@ -714,6 +727,14 @@ export class MultiplayerClient {
 
             case 'PONG':
                 this.clock.onPong(msg);
+                break;
+
+            case 'FIXTURE_STATE_REQUEST':
+                if (this._onFixtureStateRequest) {
+                    let states = {};
+                    try { states = this._onFixtureStateRequest(msg.keys || []); } catch (e) { console.error('[MP] FIXTURE_STATE', e); }
+                    this._send({ type: 'FIXTURE_STATE', regieId: msg.regieId, requestId: msg.requestId, states });
+                }
                 break;
 
             case 'ERROR':

@@ -14,6 +14,7 @@
 import GUI from 'lil-gui';
 import { makeDraggable } from '../../ui/draggable.js';
 import { LASER_PARAMS_SCHEMA } from '../config/laserParams.js';
+import { describeChannels, encode as encodeDmx } from '../LaserProfile.js';
 
 export class LaserInspectorPanel {
     /**
@@ -93,6 +94,7 @@ export class LaserInspectorPanel {
                 try { ctrl.updateDisplay(); } catch (_) {}
             }
         }
+        this._refreshDmxInfo();
     }
 
     onSync(cb) {
@@ -190,6 +192,22 @@ export class LaserInspectorPanel {
             ctrl.domElement.appendChild(resetBtn);
         }
         return ctrl;
+    }
+
+    /** Plage de canaux, conflits et valeurs DMX équivalentes aux réglages */
+    _refreshDmxInfo() {
+        const laser = this._currentLaser;
+        if (!laser || !this._dmxInfoEl) return;
+        const p = laser.params;
+        const fp = laser.dmxFootprint;
+        const conflicts = laser._patch ? laser._patch.conflictsOf(laser) : [];
+        const values = encodeDmx(p);
+        const lines = describeChannels(p.dmxMode, p.dmxAddress).map((c, i) => `${c.address} · ${c.name} : ${values[i]}`);
+        let html = `Univers <b>${p.dmxUniverse}</b> · canaux <b>${p.dmxAddress} → ${p.dmxAddress + fp - 1}</b> (${fp} canaux)`;
+        if (conflicts.length) html += `<br><span style="color:#ff8a65">Chevauche ${conflicts.length} autre(s) projecteur(s)</span>`;
+        html += `<br><span style="opacity:.75">${p.dmxControl ? 'Piloté par le DMX : les réglages suivent la régie.' : 'Piloté par cet inspecteur (DMX ignoré).'}</span>`;
+        html += `<div style="margin-top:4px;opacity:.7;font-family:monospace">${lines.join('<br>')}</div>`;
+        this._dmxInfoEl.innerHTML = html;
     }
 
     /**
@@ -674,6 +692,33 @@ export class LaserInspectorPanel {
             fVisual.add(p, 'giImpactDistance', 2, 40, 0.5).name('Portée impact').onChange(v => laser.setParam('giImpactDistance', v)),
             'giImpactDistance'
         );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 8. DMX (patch, pilotage par la régie)
+        // ══════════════════════════════════════════════════════════════════
+        const fDmx = this.gui.addFolder('📡 DMX');
+        fDmx.close();
+        const onPatch = (key) => (v) => { laser.setParam(key, v); this._refreshDmxInfo(); };
+        this.controllers.dmxControl = this._setupController(
+            fDmx.add(p, 'dmxControl').name('Piloté par le DMX').onChange(onPatch('dmxControl')),
+            'dmxControl'
+        );
+        this.controllers.dimmer = this._setupController(
+            fDmx.add(p, 'dimmer', 0, 100, 1).name('Dimmer (%)').onChange(v => laser.setParam('dimmer', v)),
+            'dimmer'
+        );
+        this.controllers.dmxUniverse = this._setupController(
+            fDmx.add(p, 'dmxUniverse', 1, 64, 1).name('Univers').onChange(onPatch('dmxUniverse')),
+            'dmxUniverse'
+        );
+        this.controllers.dmxAddress = this._setupController(
+            fDmx.add(p, 'dmxAddress', 1, 512, 1).name('Adresse').onChange(onPatch('dmxAddress')),
+            'dmxAddress'
+        );
+        this._dmxInfoEl = document.createElement('div');
+        this._dmxInfoEl.style.cssText = 'padding:6px 8px;font-size:11px;line-height:1.5;opacity:.85';
+        fDmx.$children.appendChild(this._dmxInfoEl);
+        this._refreshDmxInfo();
 
         // ══════════════════════════════════════════════════════════════════
         // 9. Position & Orientation 3D (Déplace TOUT : Boîtier + Faisceau)

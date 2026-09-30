@@ -428,6 +428,8 @@ export class LaserManager {
 
         this._lasers = new Map();   // Map<id (number), LaserShow>
         this._nextId = 1;
+        /** @type {import('../dmx/DmxPatch.js').DmxPatch|null} patch DMX commun (celui des lyres, branché par main.js) */
+        this.patch = null;
 
         // Rendu batché partagé par tous les lasers (5 draw calls au total)
         this._batch = new LaserBatch(scene, enableLaserBloom);
@@ -751,6 +753,7 @@ export class LaserManager {
         const laserShow = new LaserShow(this.scene, position.clone(), paramOverrides, this._batch);
         laserShow.laserId = id;
         this._lasers.set(id, laserShow);
+        this._attachPatch(laserShow);
 
         // Warm-up / Précompilation des shaders batchés (1 seule fois pour tous les lasers, 0 stutter)
         if (!this._batchCompiled && this.renderer && this.camera && typeof this.renderer.compile === 'function') {
@@ -769,10 +772,42 @@ export class LaserManager {
     removeLaser(id) {
         const laser = this._lasers.get(id);
         if (!laser) return;
+        if (this.patch) this.patch.unregister(laser);
         laser.dispose();
         this._lasers.delete(id);
         this._updateBloomState();
         console.log(`[LaserManager] Laser #${id} supprimé`);
+    }
+
+    /**
+     * Branche le patch DMX commun : les lasers y sont inscrits et ceux sans adresse
+     * en reçoivent une (à partir de l'univers 4).
+     * @param {import('../dmx/DmxPatch.js').DmxPatch} patch
+     */
+    setPatch(patch) {
+        this.patch = patch;
+        for (const laser of this._lasers.values()) this._attachPatch(laser);
+    }
+
+    _attachPatch(laser) {
+        if (!this.patch) return;
+        laser._patch = this.patch;
+        laser._autoPatch = (l) => this._autoPatchLaser(l);
+        this.patch.register(laser);
+        if (!(laser.params.dmxAddress >= 1)) this._autoPatchLaser(laser);
+    }
+
+    /** Première adresse libre, en passant à l'univers suivant quand le courant est plein */
+    _autoPatchLaser(laser) {
+        for (let u = Math.max(1, laser.dmxUniverse | 0); u <= 64; u++) {
+            const addr = this.patch.findFreeAddress(u, laser.dmxFootprint, laser);
+            if (addr > 0) {
+                laser.params.dmxUniverse = u;
+                laser.params.dmxAddress = addr;
+                this.patch.invalidate(laser);
+                return;
+            }
+        }
     }
 
     /** Retourne un laser par son id */

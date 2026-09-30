@@ -13,6 +13,7 @@
 
 import GUI from 'lil-gui';
 import { makeDraggable } from '../../ui/draggable.js';
+import { describeChannels, encode as encodeDmx } from '../StrobeProfile.js';
 
 export const STROBE_DEFAULTS = {
     power:           45.0,
@@ -147,6 +148,7 @@ export class StrobeInspectorPanel {
         for (const c of Object.values(this.controllers)) {
             try { c.updateDisplay(); } catch (_) {}
         }
+        this._refreshDmxInfo();
     }
 
     /**
@@ -177,6 +179,22 @@ export class StrobeInspectorPanel {
             ctrl.domElement.appendChild(resetBtn);
         }
         return ctrl;
+    }
+
+    /** Plage de canaux, conflits et valeurs DMX équivalentes aux réglages */
+    _refreshDmxInfo() {
+        const strobe = this._currentStrobe;
+        if (!strobe || !this._dmxInfoEl) return;
+        const p = strobe.params;
+        const fp = strobe.dmxFootprint;
+        const conflicts = strobe._patch ? strobe._patch.conflictsOf(strobe) : [];
+        const values = encodeDmx(p);
+        const lines = describeChannels(p.dmxMode, p.dmxAddress).map((c, i) => `${c.address} · ${c.name} : ${values[i]}`);
+        let html = `Univers <b>${p.dmxUniverse}</b> · canaux <b>${p.dmxAddress} → ${p.dmxAddress + fp - 1}</b> (${fp} canaux)`;
+        if (conflicts.length) html += `<br><span style="color:#ff8a65">Chevauche ${conflicts.length} autre(s) projecteur(s)</span>`;
+        html += `<br><span style="opacity:.75">${p.dmxControl ? 'Piloté par le DMX : les réglages suivent la régie.' : 'Piloté par ce panneau (DMX ignoré).'}</span>`;
+        html += `<div style="margin-top:4px;opacity:.7;font-family:monospace">${lines.join('<br>')}</div>`;
+        this._dmxInfoEl.innerHTML = html;
     }
 
     /**
@@ -375,6 +393,29 @@ export class StrobeInspectorPanel {
             'strobeRandom',
             STROBE_DEFAULTS.strobeRandom
         );
+
+        // ══════════════════════════════════════════════════════════════════
+        // 3b. DMX (patch, pilotage par la régie)
+        // ══════════════════════════════════════════════════════════════════
+        const fDmx = this.gui.addFolder('📡 DMX');
+        fDmx.close();
+        const onPatch = (key) => (v) => { strobe.setParam(key, v); this._refreshDmxInfo(); };
+        this._setupController(
+            fDmx.add(p, 'dmxControl').name('Piloté par le DMX').onChange(onPatch('dmxControl')),
+            'dmxControl',
+            false
+        );
+        this._setupController(
+            fDmx.add(p, 'dimmer', 0, 100, 1).name('Dimmer (%)').onChange(v => strobe.setParam('dimmer', v)),
+            'dimmer',
+            100
+        );
+        this.controllers.dmxUniverse = fDmx.add(p, 'dmxUniverse', 1, 64, 1).name('Univers').onChange(onPatch('dmxUniverse'));
+        this.controllers.dmxAddress = fDmx.add(p, 'dmxAddress', 1, 512, 1).name('Adresse').onChange(onPatch('dmxAddress'));
+        this._dmxInfoEl = document.createElement('div');
+        this._dmxInfoEl.style.cssText = 'padding:6px 8px;font-size:11px;line-height:1.5;opacity:.85';
+        fDmx.$children.appendChild(this._dmxInfoEl);
+        this._refreshDmxInfo();
 
         // ══════════════════════════════════════════════════════════════════
         // 4. Position & Orientation 3D

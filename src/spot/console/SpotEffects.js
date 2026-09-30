@@ -130,7 +130,7 @@ export class SpotEffects {
             const step = e.spread ? 1 / (speed * Math.max(1, n)) : e.offset;
             for (let i = 0; i < n; i++) {
                 const f = spots.get(e.ids[i]);
-                if (!f) continue;
+                if (!f || f.dmxControlled) continue; // la régie DMX a la priorité
                 const local = now - e.start - i * step;
                 if (local <= 0) continue; // cette lyre n'a pas encore démarré
                 const w = Math.min(1, local / FADE_IN) * wEnd;

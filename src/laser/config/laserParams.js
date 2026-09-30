@@ -97,6 +97,14 @@ export const LASER_PARAMS_SCHEMA = {
     fogGlowCoupling:     { value: 1.0,       min: 0,    max: 3,    step: 0.05,  label: 'Couplage fumée/glow',    group: 'glow' },
     impactGlowIntensity: { value: 1.0,       min: 0,    max: 3,    step: 0.05,  label: 'Intensité halo impact',  group: 'glow' },
     impactGlowRadius:    { value: 1.0,       min: 0.2,  max: 3,    step: 0.1,   label: 'Rayon halo impact',      group: 'glow' },
+
+    // ── DMX (profil : LaserProfile.js) ── adresse 0 = attribuée automatiquement (univers 4 par défaut)
+    dimmer:              { value: 100,       min: 0,    max: 100,  step: 1,     label: 'Dimmer (%)',             group: 'dmx' },
+    dmxUniverse:         { value: 4,         min: 1,    max: 64,   step: 1,     label: 'Univers',                group: 'dmx' },
+    dmxAddress:          { value: 0,         min: 0,    max: 512,  step: 1,     label: 'Adresse',                group: 'dmx' },
+    dmxMode:             { value: 'Standard (21 canaux)', options: ['Standard (21 canaux)'],
+                                                                                 label: 'Mode DMX',              group: 'dmx', type: 'select' },
+    dmxControl:          { value: false,                                         label: 'Piloté par le DMX',      group: 'dmx', type: 'bool' },
 };
 
 /**

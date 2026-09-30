@@ -31,6 +31,7 @@ import {
     clamp
 } from './config/laserConstants.js?v=2';
 import { createLaserParams } from './config/laserParams.js?v=27';
+import { getFootprint as getDmxFootprint, decode as decodeDmx } from './LaserProfile.js';
 import { PARAM_TEXELS, boostLaserSaturation } from './LaserShaders.js';
 import { LaserOutput } from './LaserBatch.js';
 import { LaserPod } from './LaserPod.js?v=3';
@@ -58,6 +59,9 @@ function sigNum(v) {
     return v ? 1 : 0;
 }
 
+/** Paramètres qui changent la place du laser dans le patch DMX */
+const PATCH_KEYS = new Set(['dmxUniverse', 'dmxAddress', 'dmxMode', 'dmxControl']);
+
 export class LaserShow {
     /**
      * @param {THREE.Scene} scene
@@ -71,6 +75,11 @@ export class LaserShow {
 
         // Params individuels — chaque laser a les siens
         this.params = createLaserParams(paramOverrides);
+
+        /** @type {import('../dmx/DmxPatch.js').DmxPatch|null} patch DMX commun (branché par le LaserManager) */
+        this._patch = null;
+        this._autoPatch = null;   // attribution d'une adresse libre (fournie par le LaserManager)
+        this.dmxDirty = false;
 
         // Groupe racine pour le raycasting et le gizmo
         this.group = new THREE.Group();
@@ -204,10 +213,28 @@ export class LaserShow {
         }
     }
 
+    // ── Patch DMX ─────────────────────────────────────────────────────────
+    get dmxUniverse() { return this.params.dmxUniverse; }
+    get dmxAddress() { return this.params.dmxAddress; }
+    get dmxFootprint() { return getDmxFootprint(this.params.dmxMode); }
+    get dmxControlled() { return Boolean(this.params.dmxControl); }
+
+    /** Décode les canaux DMX du laser (appelé par DmxPatch si l'univers a changé) — local, non renvoyé au réseau */
+    applyDmx(universe) {
+        const { params } = decodeDmx(universe, this.params.dmxAddress, this.params.dmxMode);
+        for (const k in params) this.params[k] = params[k];
+        this.dmxDirty = true;
+    }
+
     /** Modifie un paramètre en live */
     setParam(key, value) {
         this.params[key] = value;
         this._onParamChanged(key, value);
+        if (PATCH_KEYS.has(key) && this._patch) {
+            // Adresse remise à 0 (réinitialisation) : une adresse libre est attribuée à nouveau
+            if (key === 'dmxAddress' && !(value >= 1) && this._autoPatch) this._autoPatch(this);
+            this._patch.invalidate(this);
+        }
     }
 
     _onParamChanged(key, value) {
@@ -415,6 +442,10 @@ export class LaserShow {
             const t = strobeTime * p.strobeSpeed;
             strobeFactor = (t - Math.floor(t)) < 0.5 ? 1.0 : 0.0;
         }
+
+        // Dimmer (DMX) : module la puissance réglée (calibration de la machine)
+        const dimmer = clamp((p.dimmer ?? 100) / 100, 0, 1);
+        strobeFactor *= dimmer;
 
         const effectiveBeamPower = p.beamPower * p.masterPower * strobeFactor;
         const effectivePanPower  = p.panPower  * p.masterPower * strobeFactor;

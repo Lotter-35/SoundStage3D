@@ -6,6 +6,8 @@
  *   - horloge commune avec le serveur (ServerClock) pour dater les trames DMX
  *   - horloge musicale de la salle (REGIE_PLAYBACK)
  *   - envoi / réception des paquets DMX binaires
+ *   - liste des projecteurs de la salle (PATCH), prise de main (LIGHTING_CHANGE),
+ *     capture de l'état actuel des projecteurs (FIXTURE_STATE)
  *   - reconnexion automatique à la même salle
  * ─────────────────────────────────────────────────────────────
  */
@@ -39,6 +41,8 @@ export class RegieClient {
         this.playback = { currentTime: 0, isPlaying: false, timestamp: 0 };
         this.trackName = '';
         this.playerCount = 0;
+        this._requests = new Map();  // demandes FIXTURE_STATE en attente
+        this._requestId = 0;
     }
 
     on(name, cb) {
@@ -143,6 +147,14 @@ export class RegieClient {
             case 'PONG':
                 this.clock.onPong(msg);
                 break;
+            case 'PATCH':
+                this._emit('patch', Array.isArray(msg.fixtures) ? msg.fixtures : []);
+                break;
+            case 'FIXTURE_STATE': {
+                const done = this._requests.get(msg.requestId);
+                if (done) done(msg.states || {});
+                break;
+            }
             case 'ERROR':
                 // Serveur lancé avant l'arrivée de la régie : il ne connaît pas REGIE_JOIN
                 if (String(msg.message || '').includes('REGIE_JOIN')) {
@@ -180,6 +192,29 @@ export class RegieClient {
         if (!this.canSend()) return false;
         this._ws.send(bytes);
         return true;
+    }
+
+    /** Modification de réglages de projecteurs, comme depuis le jeu (appliquée par tous les joueurs) */
+    sendLighting(change) {
+        this._sendJson({ ...change, type: 'LIGHTING_CHANGE' });
+    }
+
+    /**
+     * Valeurs DMX équivalentes aux réglages actuels de projecteurs, calculées par un joueur
+     * @param {string[]} keys clés « type:id »
+     * @returns {Promise<Object<string, {universe: number, address: number, values: number[]}>|null>} null si pas de réponse
+     */
+    requestFixtureState(keys, timeout = 1500) {
+        const requestId = ++this._requestId;
+        return new Promise((resolve) => {
+            const timer = setTimeout(() => { this._requests.delete(requestId); resolve(null); }, timeout);
+            this._requests.set(requestId, (states) => {
+                clearTimeout(timer);
+                this._requests.delete(requestId);
+                resolve(states);
+            });
+            this._sendJson({ type: 'FIXTURE_STATE_REQUEST', requestId, keys });
+        });
     }
 
     _sendJson(m) {

@@ -29,6 +29,7 @@ import { saveLastAudio, loadLastAudio, clearLastAudio } from './audio/audioStora
 import { setupAudioDebugProbes, probeFrameSpike, probeSpatialAudio, probeAudioClock, probeHeartbeatSeek, probeMetersTime } from './audio/debugProbes.js?v=4';
 import { MultiplayerClient } from './multiplayer/MultiplayerClient.js?v=157';
 import { DmxReceiver } from './dmx/DmxReceiver.js';
+import { PatchReporter, collectPatch, encodeFixtureStates } from './dmx/PatchReporter.js';
 import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=5';
 import { LightingSync } from './multiplayer/LightingSync.js?v=11';
 import { DanceManager } from './scene/DanceManager.js';
@@ -212,6 +213,15 @@ const dmxReceiver = new DmxReceiver({
     now: () => mp.serverNow(),
 });
 window.__SS3D.dmxReceiver = dmxReceiver;
+// Un seul patch DMX pour toute la scène : lyres et barres LED (univers 1…), stroboscopes (3…), lasers (4…)
+strobeManager.setPatch(spotManager.patch);
+laserManager.setPatch(spotManager.patch);
+
+/** Trames DMX arrivées à leur heure → univers → réglages des projecteurs pilotés, avant leur mise à jour */
+function applyDmxInputs() {
+    dmxReceiver.update();
+    spotManager.patch.update();
+}
 
 // 9 lyres de base posées sur la scène, sur le bord avant (z = -0.6), alignées sur les line arrays (x = ±12) et les subs.
 // Identifiants fixes : chaque client crée les mêmes lyres sans doublon avec l'état réseau.
@@ -363,9 +373,9 @@ function earlyFrame() {
         updateFohTower(_earlySweep, camera, listener ? listener.feetPosition : null);
         ambiancePanel.update(dt);
         _earlySweep += dt;
+        applyDmxInputs();
         laserManager.updateAll(dt, _earlySweep);
         strobeManager.updateAll(dt);
-        dmxReceiver.update();
         spotManager.update(dt);
         hazeVolume.update(dt);
         lightPoolGate.update();
@@ -890,6 +900,14 @@ const mpPort = (window.location.port === '8067') ? '8068' : (window.location.por
 const mpProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const mp = new MultiplayerClient(`${mpProto}://${mpHost}:${mpPort}`);
 mp.onDmx((packet) => dmxReceiver.push(packet));
+// Liste des projecteurs pour la régie lumière (envoyée au serveur quand elle change)
+const patchReporter = new PatchReporter({
+    collect: () => collectPatch({ spotManager, ledBarManager, strobeManager, laserManager }),
+    send: (fixtures) => mp.sendPatchReport(fixtures),
+    room: () => (mp.connected && mp.roomId ? mp.roomId : null),
+});
+patchReporter.start();
+mp.onFixtureStateRequest((keys) => encodeFixtureStates({ spotManager, ledBarManager, strobeManager, laserManager }, keys));
 let playerAvatars = null;
 let _mpPosAccum = 0;
 const MP_POS_INTERVAL = 1 / 20; // 20 fps position sync
@@ -3700,6 +3718,9 @@ function renderFrame() {
         playerLaserCollider.update();
     }
 
+    // DMX de la régie : appliqué avant la mise à jour des lasers, stroboscopes et lyres
+    applyDmxInputs();
+
     // Update all active lasers (balayage fluide 100% synchrone entre tous les joueurs, indépendant de la musique)
     if (laserManager) {
         laserManager.updateAll(dt, _sharedSweepTime);
@@ -3712,7 +3733,6 @@ function renderFrame() {
 
     // Lyres Spot : DMX → mécanique → faisceaux batchés → lumières réelles
     if (spotManager) {
-        dmxReceiver.update();
         spotManager.update(dt);
     }
 

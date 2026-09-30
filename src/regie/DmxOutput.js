@@ -8,6 +8,9 @@
  * À chaque tick (30 par seconde), seules les plages modifiées depuis le dernier envoi partent,
  * datées « maintenant + avance » sur l'horloge du serveur : les jeux les appliquent à cette heure.
  *
+ * Le grand master et le blackout agissent à la sortie, sur les seuls canaux d'intensité
+ * (dimmers) des projecteurs patchés : les réglages (faders) restent intacts.
+ *
  * Le tick vient d'un Worker : les minuteries d'un onglet caché sont ralenties à 1 par seconde,
  * pas celles d'un Worker (la régie continue d'émettre quand on passe sur l'onglet du jeu).
  * ─────────────────────────────────────────────────────────────
@@ -46,6 +49,12 @@ export class DmxOutput {
         /** @type {Map<number, Uint8Array>} dernier état envoyé ou reçu, par univers */
         this._sent = new Map();
         this.lookahead = 100;   // avance des trames sur l'heure d'affichage (ms)
+        this._master = 1;       // grand master (0…1)
+        this._blackout = false;
+        /** @type {Map<number, {address: number, fineAddress?: number}[]>} canaux d'intensité par univers */
+        this._intensity = new Map();
+        /** @type {Map<number, Uint8Array>} sorties après master / blackout */
+        this._frames = new Map();
         this.version = 0;       // incrémenté à chaque changement (rafraîchissement de l'interface)
         this._ticker = null;
         this._win = { t: performance.now(), outBytes: 0, outPackets: 0, inBytes: 0 };
@@ -86,6 +95,60 @@ export class DmxOutput {
         return u;
     }
 
+    get master() { return this._master; }
+    set master(v) {
+        const k = Math.max(0, Math.min(1, Number(v) || 0));
+        if (k === this._master) return;
+        this._master = k;
+        this.version++;
+    }
+
+    get blackout() { return this._blackout; }
+    set blackout(on) {
+        if (Boolean(on) === this._blackout) return;
+        this._blackout = Boolean(on);
+        this.version++;
+    }
+
+    /**
+     * Canaux d'intensité soumis au master et au blackout
+     * @param {Map<number, {address: number, fineAddress?: number}[]>} map
+     */
+    setIntensityChannels(map) {
+        this._intensity = map;
+        this.version++;
+    }
+
+    /** Univers tel qu'il part vers les jeux (après master et blackout) */
+    output(n) {
+        const u = this.universes.get(n);
+        return u ? this._frame(n, u) : undefined;
+    }
+
+    _frame(n, u) {
+        const k = this._blackout ? 0 : this._master;
+        const list = this._intensity.get(n);
+        if (k >= 1 || !list || list.length === 0) return u;
+        let f = this._frames.get(n);
+        if (!f) {
+            f = new Uint8Array(DMX_UNIVERSE_SIZE);
+            this._frames.set(n, f);
+        }
+        f.set(u);
+        for (const c of list) {
+            const i = c.address - 1;
+            if (c.fineAddress) {
+                const j = c.fineAddress - 1;
+                const v16 = Math.round(((u[i] << 8) | u[j]) * k);
+                f[i] = (v16 >> 8) & 255;
+                f[j] = v16 & 255;
+            } else {
+                f[i] = Math.round(u[i] * k);
+            }
+        }
+        return f;
+    }
+
     get(universe, address) {
         const u = this.universes.get(universe);
         return u ? u[address - 1] : 0;
@@ -120,7 +183,7 @@ export class DmxOutput {
         const blocks = [];
         for (const [n, u] of this.universes) {
             const prev = this._sentCopy(n);
-            for (const b of diffUniverse(n, prev, u)) blocks.push(b);
+            for (const b of diffUniverse(n, prev, this._frame(n, u))) blocks.push(b);
         }
         if (blocks.length === 0) return;
         const bytes = encodeDmxPacket(blocks, this._now() + this.lookahead);

@@ -15,6 +15,10 @@
 
 import * as THREE from 'three';
 import { getStrobeHousingInstancer } from './StrobeHousingInstancer.js';
+import { DMX_MODES, getFootprint, decode as decodeDmx } from './StrobeProfile.js';
+
+/** Paramètres qui changent la place du stroboscope dans le patch DMX */
+const PATCH_KEYS = new Set(['dmxUniverse', 'dmxAddress', 'dmxMode', 'dmxControl']);
 
 // Boîte invisible de sélection à la souris (partagée : jamais dessinée, seulement lancée de rayons)
 const _pickMaterial = new THREE.MeshBasicMaterial({ visible: false });
@@ -58,6 +62,13 @@ export class StrobeLight {
             pulseWidth:      50.0,        // Durée du flash (% de la période : 1% à 100%)
             strobeRandom:    false,       // Mode éclairs aléatoires
 
+            // ── DMX ── (adresse 0 = attribuée automatiquement à l'arrivée dans le patch, univers 3 par défaut)
+            dimmer:          100,         // Dimmer (%) : module la puissance et l'éclat de l'écran
+            dmxUniverse:     3,
+            dmxAddress:      0,
+            dmxMode:         DMX_MODES[0],
+            dmxControl:      false,       // Piloté par le DMX (la régie a la main)
+
             // ── Position & Orientation ──
             posX:            position.x,
             posY:            position.y,
@@ -67,6 +78,10 @@ export class StrobeLight {
             roll:            0,           // Rotation axiale (-180° à 180°)
             ...params
         };
+
+        /** @type {import('../dmx/DmxPatch.js').DmxPatch|null} patch DMX commun (branché par le StrobeManager) */
+        this._patch = null;
+        this.dmxDirty = false;
 
         // État interne de l'animation
         this._strobeTimer = 0;
@@ -97,6 +112,19 @@ export class StrobeLight {
         this.scene.add(this.group);
         this._instancer.add(this);
         this._ready = true;
+    }
+
+    // ── Patch DMX ─────────────────────────────────────────────────────────
+    get dmxUniverse() { return this.params.dmxUniverse; }
+    get dmxAddress() { return this.params.dmxAddress; }
+    get dmxFootprint() { return getFootprint(this.params.dmxMode); }
+    get dmxControlled() { return Boolean(this.params.dmxControl); }
+
+    /** Décode les canaux DMX du stroboscope (appelé par DmxPatch si l'univers a changé) — local, non renvoyé au réseau */
+    applyDmx(universe) {
+        const { params } = decodeDmx(universe, this.params.dmxAddress, this.params.dmxMode);
+        for (const k in params) this.params[k] = params[k];
+        this.dmxDirty = true;
     }
 
     /** Envoie une modification aux autres joueurs (ignoré pendant l'application d'un message reçu) */
@@ -139,7 +167,8 @@ export class StrobeLight {
         const c = 1.5;
         const logMultiplier = Math.max(0.1, Math.log(1.0 + c * ratio) / Math.log(1.0 + c));
 
-        return p.power * 2.0 * logMultiplier;
+        const dimmer = Math.max(0, Math.min(1, (p.dimmer ?? 100) / 100));
+        return p.power * 2.0 * logMultiplier * dimmer;
     }
 
     /**
@@ -194,6 +223,7 @@ export class StrobeLight {
      */
     setParam(key, value) {
         this.params[key] = value;
+        if (PATCH_KEYS.has(key) && this._patch) this._patch.invalidate(this);
 
         switch (key) {
             case 'color':
@@ -313,11 +343,14 @@ export class StrobeLight {
             }
         }
 
+        // Dimmer à zéro : ni lumière ni écran allumé
+        const dimmer = Math.max(0, Math.min(1, (p.dimmer ?? 100) / 100));
+        if (dimmer < 0.001) isFlash = false;
         this.flash = isFlash;
 
         // L'éclairage réel (intensité, ombre) est appliqué par le StrobeLightPool à partir de `flash` ;
         // l'écran (couleur × éclat pendant le flash, réflecteur éteint sinon) par l'instancieur des boîtiers
-        if (isFlash) this.screenColor.set(p.color).multiplyScalar(Math.max(1.0, p.emissivePower || 2.0));
+        if (isFlash) this.screenColor.set(p.color).multiplyScalar(Math.max(1.0, p.emissivePower || 2.0) * dimmer);
     }
 
     /**

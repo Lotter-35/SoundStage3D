@@ -1163,7 +1163,42 @@ wss.on('connection', (ws) => {
                 ws.isRegie = true;
                 console.log(`[Régie] ${clientId} ouvre la régie de ${roomId} (${room.regies.size} régie(s))`);
                 send(ws, { ...regiePlaybackMessage(room), type: 'REGIE_JOINED', roomId, clientId });
+                if (room.patchFixtures) send(ws, { type: 'PATCH', fixtures: room.patchFixtures });
                 sendDmxState(ws, room);
+                break;
+            }
+
+            // ─── FIXTURE_STATE_REQUEST (régie) → un joueur → FIXTURE_STATE (régie) ──
+            // Valeurs DMX équivalentes aux réglages actuels des projecteurs : la régie les reprend
+            // avant de prendre la main, pour que la lumière ne change pas à la prise de contrôle.
+            case 'FIXTURE_STATE_REQUEST': {
+                if (!ws.roomId || !ws.isRegie) return;
+                const room = rooms.get(ws.roomId);
+                if (!room) return;
+                const target = room.clients.get(room.masterId) || room.clients.values().next().value;
+                send(target, { type: 'FIXTURE_STATE_REQUEST', regieId: clientId, requestId: msg.requestId, keys: Array.isArray(msg.keys) ? msg.keys.slice(0, 2000) : [] });
+                break;
+            }
+
+            case 'FIXTURE_STATE': {
+                if (!ws.roomId || ws.isRegie) return;
+                const room = rooms.get(ws.roomId);
+                const regie = room && room.regies ? room.regies.get(msg.regieId) : null;
+                if (regie) send(regie, { type: 'FIXTURE_STATE', requestId: msg.requestId, states: msg.states || {} });
+                break;
+            }
+
+            // ─── PATCH_REPORT (liste des projecteurs du jeu, pour les régies) ──
+            // Chaque joueur l'envoie quand elle change (src/dmx/PatchReporter.js) ; identique chez tous.
+            case 'PATCH_REPORT': {
+                if (!ws.roomId || ws.isRegie) return;
+                const room = rooms.get(ws.roomId);
+                if (!room || !Array.isArray(msg.fixtures) || msg.fixtures.length > 2000) return;
+                const json = JSON.stringify(msg.fixtures);
+                if (json.length > 512 * 1024 || json === room.patchJson) return;
+                room.patchJson = json;
+                room.patchFixtures = msg.fixtures;
+                sendRegies(room, { type: 'PATCH', fixtures: msg.fixtures });
                 break;
             }
 
