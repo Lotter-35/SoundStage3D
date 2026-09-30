@@ -666,6 +666,9 @@ export function createGlareMaterial(paramsTexture) {
                 float lum = T0.w * iAxis.w * T7.y / (1.0 + 30.0 * T2.x);
                 vColor = T0.rgb * lum * (inBeam * 0.06 + side * 0.004);
                 float size = 0.45 + inBeam * (0.9 + dist * 0.035);
+                // Petites sources (LED des barres) : halo proportionnel à la lentille (lyres : inchangé)
+                float lensR = texelFetch(uSpotParams, ivec2(4, row), 0).w;
+                if (lensR < 0.05) size *= max(0.1, lensR * 9.0);
                 vec4 mv = viewMatrix * vec4(iLens.xyz + iAxis.xyz * 0.01, 1.0);
                 mv.xy += (uv - 0.5) * size;
                 vUv = uv;

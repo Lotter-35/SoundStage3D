@@ -12,7 +12,7 @@
  * ─────────────────────────────────────────────────────────────
  */
 
-import { SpotBatch, SpotVolumePass } from './SpotBatch.js?v=2';
+import { SpotBatch, SpotVolumePass } from './SpotBatch.js?v=3';
 import { SpotFixture } from './SpotFixture.js?v=2';
 import { SpotLightPool } from './SpotLightPool.js?v=2';
 import { getSpotHousingInstancer } from './SpotHousing.js?v=2';
@@ -64,6 +64,18 @@ export class SpotManager {
         this.effects = new SpotEffects();
         this._clock = () => this._time;
         this._updateHooks = [];
+        // Autres projecteurs rendus par le même batch (barres LED) : { count, update(dt), pushInstances(batch) }
+        this._sources = [];
+    }
+
+    /** Branche une autre famille de projecteurs sur le batch des faisceaux (barres LED…) */
+    addSource(source) {
+        this._sources.push(source);
+    }
+
+    _sourcesActive() {
+        for (const s of this._sources) if (s.count > 0) return true;
+        return false;
     }
 
     /** Horloge partagée (même valeur chez tous les joueurs) utilisée par les effets */
@@ -211,7 +223,7 @@ export class SpotManager {
     // ── Boucle ────────────────────────────────────────────────────────────
 
     update(dt) {
-        if (this._spots.size === 0) {
+        if (this._spots.size === 0 && !this._sourcesActive()) {
             this.volumePass.enabled = false;
             this.batch.glareMesh.visible = false;
             this.pool.update(this._spots.values(), this.camera, false, dt);
@@ -222,7 +234,8 @@ export class SpotManager {
         this.patch.update();
         this.effects.apply(this._spots, this.clock());
         for (const s of this._spots.values()) s.update(dt);
-        this.batch.assemble(this._spots.values());
+        for (const src of this._sources) src.update(dt);
+        this.batch.assemble(this._spots.values(), this._sources);
         getSpotHousingInstancer(this.scene).flush();
 
         // Fumée : même vent que les nappes laser

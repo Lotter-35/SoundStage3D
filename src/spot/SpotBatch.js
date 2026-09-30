@@ -16,7 +16,7 @@ import { enableLightsBloom } from '../laser/LaserManager.js';
 import { getGoboTexture } from './SpotGoboLibrary.js';
 import {
     SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial
-} from './SpotShaders.js?v=2';
+} from './SpotShaders.js?v=3';
 
 export const VOLUME_STRIDE = 12; // lentille.xyz, ligne | axe.xyz, longueur | droite.xyz, poids
 export const GLARE_STRIDE = 8;   // lentille.xyz, ligne | axe.xyz, poids
@@ -167,10 +167,11 @@ export class SpotBatch {
     }
 
     /** Assemble les faisceaux et éblouissements de toutes les lyres */
-    assemble(fixtures) {
+    assemble(fixtures, sources = null) {
         this.volumes.begin();
         this.glares.begin();
         for (const f of fixtures) f.pushInstances(this);
+        if (sources) for (const s of sources) s.pushInstances(this);
         this.volumes.end();
         this.glares.end();
         this.paramsTexture.needsUpdate = true;
