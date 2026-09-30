@@ -335,6 +335,125 @@ function applyQuarterBloomWeights(pass) {
     tints[4].set(0, 0, 0);
 }
 
+// Échantillonnage bicubique (B-spline, 4 lectures bilinéaires) : agrandir un niveau de flou très réduit
+// (1/16, 1/32 de l'image) en bilinéaire donne un halo en pyramide → carré / losange autour des petites
+// sources lumineuses. La B-spline cubique donne un halo lisse et rond.
+const BICUBIC_GLSL = /* glsl */`
+    vec4 bsplineW(float v) {
+        vec4 n = vec4(1.0, 2.0, 3.0, 4.0) - v;
+        vec4 s = n * n * n;
+        float x = s.x;
+        float y = s.y - 4.0 * s.x;
+        float z = s.z - 4.0 * s.y + 6.0 * s.x;
+        return vec4(x, y, z, 6.0 - x - y - z) * (1.0 / 6.0);
+    }
+    vec4 textureBicubic(sampler2D t, vec2 uv) {
+        vec2 size = vec2(textureSize(t, 0));
+        vec2 st = uv * size - 0.5;
+        vec2 f = fract(st);
+        st -= f;
+        vec4 xc = bsplineW(f.x), yc = bsplineW(f.y);
+        vec4 c = st.xxyy + vec2(-0.5, 1.5).xyxy;
+        vec4 s = vec4(xc.xz + xc.yw, yc.xz + yc.yw);
+        vec4 o = (c + vec4(xc.yw, yc.yw) / s) / size.xxyy;
+        vec4 s0 = texture2D(t, o.xz), s1 = texture2D(t, o.yz), s2 = texture2D(t, o.xw), s3 = texture2D(t, o.yw);
+        float sx = s.x / (s.x + s.y), sy = s.z / (s.z + s.w);
+        return mix(mix(s3, s2, sx), mix(s1, s0, sx), sy);
+    }
+`;
+
+/**
+ * Flou gaussien d'un niveau de bloom, vraiment rond : celui de three.js (r160) coupe sa gaussienne à 1 σ
+ * (σ = rayon du noyau), ce qui en fait presque un flou « boîte » → halo CARRÉ, séparable en X puis Y.
+ * Ici : σ = 0,6 × rayon (même taille de halo apparente), coupée à 3 σ, et deux texels voisins lus en une seule
+ * lecture bilinéaire (poids et décalage combinés) : à peu près le même nombre de lectures qu'avant.
+ */
+function roundBloomBlur(material, kernelRadius) {
+    const sigma = 0.6 * kernelRadius;
+    const reach = Math.ceil(3 * sigma);
+    const g = (x) => Math.exp(-0.5 * x * x / (sigma * sigma));
+    const weights = [g(0)];
+    const offsets = [0];
+    for (let i = 1; i <= reach; i += 2) {
+        const w1 = g(i), w2 = i + 1 <= reach ? g(i + 1) : 0;
+        weights.push(w1 + w2);
+        offsets.push((i * w1 + (i + 1) * w2) / (w1 + w2));
+    }
+    const n = weights.length;
+    material.defines = { NUM_TAPS: n };
+    material.uniforms.gaussianCoefficients.value = weights;
+    material.uniforms.tapOffsets = { value: offsets };
+    material.fragmentShader = /* glsl */`
+        varying vec2 vUv;
+        uniform sampler2D colorTexture;
+        uniform vec2 invSize;
+        uniform vec2 direction;
+        uniform float gaussianCoefficients[NUM_TAPS];
+        uniform float tapOffsets[NUM_TAPS];
+        void main() {
+            float weightSum = gaussianCoefficients[0];
+            vec3 diffuseSum = texture2D(colorTexture, vUv).rgb * weightSum;
+            for (int i = 1; i < NUM_TAPS; i++) {
+                float w = gaussianCoefficients[i];
+                vec2 uvOffset = direction * invSize * tapOffsets[i];
+                diffuseSum += (texture2D(colorTexture, vUv + uvOffset).rgb + texture2D(colorTexture, vUv - uvOffset).rgb) * w;
+                weightSum += 2.0 * w;
+            }
+            gl_FragColor = vec4(diffuseSum / weightSum, 1.0);
+        }
+    `;
+    material.needsUpdate = true;
+}
+
+/**
+ * Bloom sans halos carrés : flous gaussiens ronds (roundBloomBlur), niveaux de flou et image finale
+ * agrandis en bicubique (mêmes uniformes, mêmes réglages)
+ */
+function smoothBloomUpsampling(pass) {
+    if (!pass || pass._smoothUpsampling) return;
+    pass._smoothUpsampling = true;
+    const kernels = [3, 5, 7, 9, 11]; // rayons des 5 niveaux dans UnrealBloomPass (r160)
+    pass.separableBlurMaterials.forEach((m, i) => roundBloomBlur(m, kernels[i] || 11));
+    const cm = pass.compositeMaterial;
+    cm.fragmentShader = /* glsl */`
+        varying vec2 vUv;
+        uniform sampler2D blurTexture1;
+        uniform sampler2D blurTexture2;
+        uniform sampler2D blurTexture3;
+        uniform sampler2D blurTexture4;
+        uniform sampler2D blurTexture5;
+        uniform float bloomStrength;
+        uniform float bloomRadius;
+        uniform float bloomFactors[NUM_MIPS];
+        uniform vec3 bloomTintColors[NUM_MIPS];
+        ${BICUBIC_GLSL}
+        float lerpBloomFactor(const in float factor) {
+            return mix(factor, 1.2 - factor, bloomRadius);
+        }
+        void main() {
+            gl_FragColor = bloomStrength * (
+                lerpBloomFactor(bloomFactors[0]) * vec4(bloomTintColors[0], 1.0) * texture2D(blurTexture1, vUv) +
+                lerpBloomFactor(bloomFactors[1]) * vec4(bloomTintColors[1], 1.0) * textureBicubic(blurTexture2, vUv) +
+                lerpBloomFactor(bloomFactors[2]) * vec4(bloomTintColors[2], 1.0) * textureBicubic(blurTexture3, vUv) +
+                lerpBloomFactor(bloomFactors[3]) * vec4(bloomTintColors[3], 1.0) * textureBicubic(blurTexture4, vUv) +
+                lerpBloomFactor(bloomFactors[4]) * vec4(bloomTintColors[4], 1.0) * textureBicubic(blurTexture5, vUv));
+        }
+    `;
+    cm.needsUpdate = true;
+    // Ajout du halo (quart → demi-résolution) : même agrandissement lisse
+    const bm = pass.blendMaterial;
+    bm.fragmentShader = /* glsl */`
+        uniform float opacity;
+        uniform sampler2D tDiffuse;
+        varying vec2 vUv;
+        ${BICUBIC_GLSL}
+        void main() {
+            gl_FragColor = opacity * textureBicubic(tDiffuse, vUv);
+        }
+    `;
+    bm.needsUpdate = true;
+}
+
 // Nombre de lumières ponctuelles émises par les lasers : créées dès le départ (éteintes) et
 // jamais retirées → le nombre de lumières de la scène ne change pas quand on pose un laser
 // (pas de recompilation de tous les shaders éclairés).
@@ -551,6 +670,7 @@ export class LaserManager {
             );
             this._laserBloomPass.enabled = globalLaserPostParams.laserBloomEnabled;
             applyQuarterBloomWeights(this._laserBloomPass);
+            smoothBloomUpsampling(this._laserBloomPass);
             this._laserBloomComposer.addPass(this._laserBloomPass);
 
             // Aberration chromatique : UNIQUEMENT SUR LE LASER
@@ -607,6 +727,7 @@ export class LaserManager {
             );
             this._lightsBloomPass.enabled = globalLaserPostParams.lightsBloomEnabled;
             applyQuarterBloomWeights(this._lightsBloomPass);
+            smoothBloomUpsampling(this._lightsBloomPass);
             this._lightsBloomComposer.addPass(this._lightsBloomPass);
 
             // Alias de compatibilité pour DazzleEffect
