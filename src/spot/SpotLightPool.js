@@ -24,7 +24,7 @@ import { LENS_RADIUS } from './SpotHousing.js?v=2';
 export const SPOT_LIGHT_POOL_MAX = 8;
 const TEXTURE_UNITS_RESERVED = 10;
 const MAP_SIZE = 256;
-const LIGHT_SCALE = 20;
+const LIGHT_SCALE = 60; // 3x plus puissant (était 20)
 const FADE_RATE = 4; // par seconde
 
 const _throwPt = new THREE.Vector3();

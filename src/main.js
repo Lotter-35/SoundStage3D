@@ -6,8 +6,8 @@ import './scene/softShadows.js?v=3';
 import './render/skipDarkLights.js'; // lumières éteintes ignorées par le GPU (avant toute compilation de shader)
 
 import { createStage } from './scene/stage.js?v=190';
-import { createFohTower } from './scene/fohTower.js?v=1';
-import { Listener } from './scene/listener.js?v=160';
+import { createFohTower, updateFohTower, getRegieTriggerMesh } from './scene/fohTower.js?v=2';
+import { Listener } from './scene/listener.js?v=161';
 import { createHitboxVisualizer } from './scene/collision.js?v=157';
 import { createSkybox, updateSkybox } from './scene/skybox.js';
 import { createVegetation, updateVegetation, setGrassQuality } from './scene/vegetation.js?v=2';
@@ -210,6 +210,28 @@ for (let i = 0; i < 9; i++) {
     spotManager._autoPatch(spot);
 }
 
+// 4 vraies lyres motorisées posées sur le toit de la tour régie FOH (au-dessus du sweet spot, tournées vers la scène)
+const FOH_SPOT_X = [-2.2, -0.6, 0.6, 2.2];
+const FOH_SPOT_COLORS = ['#00f0ff', '#ff3366', '#00f0ff', '#ff3366'];
+for (let i = 0; i < FOH_SPOT_X.length; i++) {
+    const x = FOH_SPOT_X[i];
+    const { spot } = spotManager.addSpot(
+        new THREE.Vector3(x, 8.05, 57.4),
+        {
+            yaw: 180,           // orientées vers la scène (-Z)
+            tilt: 36,           // plongeantes vers la scène et le public
+            pan: 0,
+            dimmer: 100,
+            color: FOH_SPOT_COLORS[i],
+            zoom: 16,
+            beamIntensity: 1.0,
+            mount: 'Posé au sol',
+        },
+        `spot-foh-${i + 1}`
+    );
+    spotManager._autoPatch(spot);
+}
+
 // Console des lyres (sélection matricielle, couleurs, visée, effets) — touche L
 const spotConsole = new SpotConsolePanel({ spotManager, ambiancePanel, scene, camera, renderer, listener });
 window.__SS3D.spotConsole = spotConsole;
@@ -304,6 +326,7 @@ function earlyFrame() {
         listener.update(dt);
         updateSkybox(skybox, camera);
         updateVegetation(camera);
+        updateFohTower(_earlySweep, camera, listener ? listener.feetPosition : null);
         ambiancePanel.update(dt);
         _earlySweep += dt;
         laserManager.updateAll(dt, _earlySweep);
@@ -3187,6 +3210,26 @@ canvas.addEventListener('click', () => {
     if (ambiancePanel && ambiancePanel.consumeFixturePick()) {
         return;
     }
+    // Clic sur l'étiquette volante "VUE RÉGIE"
+    const regieTrigger = getRegieTriggerMesh();
+    if (regieTrigger && listener) {
+        const raycaster = new THREE.Raycaster();
+        const pointer = new THREE.Vector2();
+        if (listener.isLocked) {
+            pointer.set(0, 0); // Viseur au centre de l'écran
+        } else if (e) {
+            const rect = canvas.getBoundingClientRect();
+            pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+            pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        }
+        raycaster.setFromCamera(pointer, camera);
+        const hits = raycaster.intersectObject(regieTrigger, true);
+        if (hits.length > 0 && hits[0].distance < 14.0) {
+            listener.toggleRegieView();
+            return;
+        }
+    }
+
     if (!listener.isLocked) {
         listener.lock();
     }
@@ -3473,9 +3516,9 @@ function renderFrame() {
         _mpPosAccum += dt;
         if (_mpPosAccum >= MP_POS_INTERVAL) {
             _mpPosAccum = 0;
-            const pos = listener.position;
-            // Use character heading (model direction) not camera yaw — gives correct avatar orientation
             const c3d = listener._character3D;
+            const pos = (c3d && c3d.position) ? c3d.position : listener.position;
+            // Use character heading (model direction) not camera yaw — gives correct avatar orientation
             let anim = 'idle';
             if (c3d?.currentDanceId) {
                 anim = `dance:${c3d.currentDanceId}:${c3d.danceRestartCounter}`;
@@ -3554,6 +3597,8 @@ function renderFrame() {
 
     // Show/hide grass chunks near camera
     updateVegetation(camera);
+    // Animation de l'étiquette volante de régie (lévitation, orientation billboard, pulsation)
+    updateFohTower(now * 0.001, camera, listener ? listener.feetPosition : null);
 
     // Update dynamic shadow camera to encompass both stage and player seamlessly
     if (dirLight && listener) {
