@@ -396,6 +396,9 @@ select.field { padding: 0 4px; background: var(--bg); cursor: pointer; }
 .menu-row .count { color: var(--text-3); }
 .menu-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 10px; }
 .menu-actions .field { flex: 1; min-width: 0; }
+.lib-menu { width: 340px; }
+.lib-list { max-height: min(560px, 70vh); }
+.lib-cat { padding: 8px 10px 4px; font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; border-bottom: 1px solid var(--line); }
 
 /* Vue Patterns : liste · éditeur · réglages de la piste */
 .patterns { display: grid; grid-template-columns: 220px minmax(0, 1fr) 290px; min-height: 0; }

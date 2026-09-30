@@ -18,6 +18,7 @@
  */
 
 import { writeAttribute, attributeType, scaleIntensity } from './attributes.js';
+import { kindTargetKeys } from './targets.js';
 
 export const SHAPES = [
     ['sine', 'Sinus'], ['triangle', 'Triangle'], ['square', 'Carré'], ['saw', 'Dent de scie'],
@@ -277,11 +278,13 @@ export class PatternEngine {
     targetsOf(tr) {
         const store = this.store;
         const tgt = tr.target || {};
-        const key = `${store.version}|${tgt.group || ''}|${(tgt.keys || []).join(',')}|${tr.order || 'patch'}`;
+        const key = `${store.version}|${tgt.kind || ''}|${tgt.group || ''}|${(tgt.keys || []).join(',')}|${tr.order || 'patch'}`;
         const cached = this._targetCache.get(tr.id);
         if (cached && cached.key === key) return cached.list;
         let keys = [];
-        if (tgt.group) {
+        if (tgt.kind) {
+            keys = kindTargetKeys(store, tgt.kind);
+        } else if (tgt.group) {
             const g = store.groups.find((x) => x.id === tgt.group);
             keys = g ? store.groupKeys(g) : [];
         } else if (Array.isArray(tgt.keys)) {

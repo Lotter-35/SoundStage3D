@@ -7,6 +7,7 @@
 import { h } from './dom.js';
 import { attributesFor, attributeLabel, attributeType } from '../attributes.js';
 import { SHAPES, ORDERS, INTERPS } from '../PatternEngine.js';
+import { kindTargetOptions } from '../targets.js';
 
 export const SWATCHES = ['#ffffff', '#ff1a1a', '#ff6a00', '#ffd000', '#9dff00', '#00ff4c',
     '#00ffd5', '#00b3ff', '#1a3cff', '#8c1aff', '#ff1ad9', '#000000'];
@@ -113,13 +114,14 @@ export class TrackInspector {
         const els = [];
 
         // ── Cible et attribut ──
-        const targetOptions = store.groups.map((g) => [`g:${g.id}`, `${g.name} (${store.groupKeys(g).length})`]);
-        let targetValue = tr.target && tr.target.group ? `g:${tr.target.group}` : 'keys';
+        const targetOptions = [...kindTargetOptions(store), ...store.groups.map((g) => [`g:${g.id}`, `${g.name} (${store.groupKeys(g).length})`])];
+        let targetValue = tr.target && tr.target.kind ? `k:${tr.target.kind}` : tr.target && tr.target.group ? `g:${tr.target.group}` : 'keys';
         if (targetValue === 'keys') targetOptions.unshift(['keys', `Liste · ${fixtures.length} projecteur${fixtures.length > 1 ? 's' : ''}`]);
         if (store.selection.size) targetOptions.push(['sel', `Sélection actuelle (${store.selection.size})`]);
         els.push(row('Cible', select(targetOptions, targetValue, (v) => {
             if (v === 'sel') tr.target = { keys: store.selected().map((f) => `${f.kind}:${f.id}`) };
             else if (v.startsWith('g:')) tr.target = { group: v.slice(2) };
+            else if (v.startsWith('k:')) tr.target = { kind: v.slice(2) };
             this._changed(true, true);
         })));
         const attrs = attributesFor(fixtures);

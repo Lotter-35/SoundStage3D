@@ -12,6 +12,8 @@ import { TrackInspector } from './TrackInspector.js';
 import { attributesFor, attributeLabel, attributeType } from '../attributes.js';
 import { newId } from '../ShowStore.js';
 import { fixtureKey } from '../fixtureTypes.js';
+import { kindTargetOptions, kindTargetKeys, targetName } from '../targets.js';
+import { PATTERN_LIBRARY, LIBRARY_CATEGORIES, addToShow } from '../PatternLibrary.js';
 
 const HEAD_W = 180; // largeur des en-têtes de piste (px)
 const GRIDS = [['1', '1 temps'], ['0.5', '1/2 temps'], ['0.25', '1/4 temps'], ['0.125', '1/8 temps'], ['0', 'Libre']];
@@ -61,6 +63,7 @@ export class PatternsView {
             h('div', { class: 'panel-head' }, [
                 h('span', { class: 'title', text: 'Patterns' }),
                 h('span', { class: 'grow' }),
+                h('button', { class: 'btn', text: 'Bibliothèque', title: 'Patterns pré-programmés (valables dans toutes les salles)', onclick: (e) => { e.stopPropagation(); this._toggleLibrary(e.currentTarget); } }),
                 h('button', { class: 'btn', text: 'Nouveau', title: 'Nouveau pattern (avec une piste d’intensité sur la sélection, s’il y en a une)', onclick: () => this._newPattern() }),
             ]),
             this.$list,
@@ -214,11 +217,10 @@ export class PatternsView {
             onEdit: () => this.shows.touch(),
         });
         const fixtures = this.engine.targetsOf(tr);
-        const g = tr.target && tr.target.group ? this.store.groups.find((x) => x.id === tr.target.group) : null;
-        const targetName = g ? g.name : `${fixtures.length} projecteur${fixtures.length > 1 ? 's' : ''}`;
+        const tName = targetName(this.store, tr.target, fixtures.length);
         const head = h('div', { class: 'lane-head', onclick: () => this._selectTrack(tr.id) }, [
             h('div', { class: 'lane-title', text: attributeLabel(tr.attr) }),
-            h('div', { class: 'lane-sub dim', text: `${targetName} · ${tr.mode === 'wave' ? 'générateur' : 'points'}${tr.mute ? ' · muette' : ''}` }),
+            h('div', { class: 'lane-sub dim', text: `${tName} · ${tr.mode === 'wave' ? 'générateur' : 'points'}${tr.mute ? ' · muette' : ''}` }),
         ]);
         const rowEl = h('div', { class: `lane-row${tr.id === this.trackId ? ' sel' : ''}`, 'data-id': tr.id }, [head, lane.canvas]);
         lane.canvas.addEventListener('pointerdown', () => { if (this.trackId !== tr.id) this._selectTrack(tr.id); });
@@ -233,7 +235,7 @@ export class PatternsView {
         const targetSel = h('select', { class: 'field', title: 'Cible de la nouvelle piste' });
         const attrSel = h('select', { class: 'field', title: 'Attribut piloté' });
         const fillTargets = () => {
-            const opts = store.groups.map((g) => [`g:${g.id}`, `${g.name} (${store.groupKeys(g).length})`]);
+            const opts = [...store.groups.map((g) => [`g:${g.id}`, `${g.name} (${store.groupKeys(g).length})`]), ...kindTargetOptions(store)];
             if (store.selection.size) opts.unshift(['sel', `Sélection actuelle (${store.selection.size})`]);
             targetSel.replaceChildren(...opts.map(([v, l]) => h('option', { value: v, text: l })));
             fillAttrs();
@@ -241,6 +243,7 @@ export class PatternsView {
         const targetFixtures = () => {
             const v = targetSel.value;
             if (v === 'sel') return store.selected();
+            if (v.startsWith('k:')) return kindTargetKeys(store, v.slice(2)).map((k) => store.get(k)).filter(Boolean);
             const g = store.groups.find((x) => `g:${x.id}` === v);
             return g ? store.groupKeys(g).map((k) => store.get(k)).filter(Boolean) : [];
         };
@@ -253,7 +256,7 @@ export class PatternsView {
         const add = h('button', { class: 'btn', text: 'Ajouter la piste', onclick: () => {
             const v = targetSel.value;
             if (!v || !attrSel.value) return;
-            const target = v === 'sel' ? { keys: store.selected().map(fixtureKey) } : { group: v.slice(2) };
+            const target = v === 'sel' ? { keys: store.selected().map(fixtureKey) } : v.startsWith('k:') ? { kind: v.slice(2) } : { group: v.slice(2) };
             const tr = defaultTrack(target, attrSel.value);
             p.tracks.push(tr);
             this.shows.touch();
@@ -261,10 +264,7 @@ export class PatternsView {
             this._editorKey = '';
             this.inspector.setTrack(tr);
         } });
-        const empty = !store.groups.length && !store.selection.size;
-        return h('div', { class: 'pat-add' }, empty
-            ? [h('span', { class: 'dim', text: 'Pour ajouter une piste : sélectionne des projecteurs ou crée un groupe.' })]
-            : [h('span', { class: 'dim', text: 'Nouvelle piste' }), targetSel, attrSel, add]);
+        return h('div', { class: 'pat-add' }, [h('span', { class: 'dim', text: 'Nouvelle piste' }), targetSel, attrSel, add]);
     }
 
     _selectTrack(id) {
@@ -325,10 +325,9 @@ export class PatternsView {
             const sub = lane.head.querySelector('.lane-sub');
             const tr = lane.track;
             const fixtures = this.engine.targetsOf(tr);
-            const g = tr.target && tr.target.group ? this.store.groups.find((x) => x.id === tr.target.group) : null;
-            const targetName = g ? g.name : `${fixtures.length} projecteur${fixtures.length > 1 ? 's' : ''}`;
+            const tName = targetName(this.store, tr.target, fixtures.length);
             lane.head.querySelector('.lane-title').textContent = attributeLabel(tr.attr);
-            sub.textContent = `${targetName} · ${tr.mode === 'wave' ? 'générateur' : 'points'}${tr.mute ? ' · muette' : ''}`;
+            sub.textContent = `${tName} · ${tr.mode === 'wave' ? 'générateur' : 'points'}${tr.mute ? ' · muette' : ''}`;
         }
     }
 
@@ -382,7 +381,67 @@ export class PatternsView {
         this.$playhead.style.left = `${HEAD_W + (b / p.length) * w}px`;
     }
 
+    // ── Bibliothèque de patterns pré-programmés ───────────────────────────
+    _toggleLibrary(anchor) {
+        if (this.$lib) { this._closeLibrary(); return; }
+        const show = this.shows.show;
+        if (!show) return;
+        const menu = h('div', { class: 'menu lib-menu', onclick: (e) => e.stopPropagation() });
+        const r = anchor.getBoundingClientRect();
+        menu.style.left = `${Math.round(r.left)}px`;
+        menu.style.top = `${Math.round(r.bottom + 4)}px`;
+        document.body.appendChild(menu);
+        this.$lib = menu;
+        this._onLibDoc = () => this._closeLibrary();
+        setTimeout(() => document.addEventListener('click', this._onLibDoc), 0);
+        this._renderLibrary();
+    }
+
+    _closeLibrary() {
+        if (!this.$lib) return;
+        this.$lib.remove();
+        this.$lib = null;
+        document.removeEventListener('click', this._onLibDoc);
+    }
+
+    _renderLibrary() {
+        const show = this.shows.show;
+        if (!this.$lib || !show) return;
+        const inShow = new Set(show.patterns.map((p) => p.lib).filter(Boolean));
+        const add = (def) => {
+            const p = addToShow(show, def);
+            this.shows.touch();
+            this.selectPattern(p.id);
+            this._renderLibrary();
+        };
+        const sections = [];
+        for (const [cat, label] of LIBRARY_CATEGORIES) {
+            const defs = PATTERN_LIBRARY.filter((d) => d.category === cat);
+            sections.push(h('div', { class: 'lib-cat dim', text: label }));
+            for (const def of defs) {
+                const has = inShow.has(def.id);
+                sections.push(h('div', { class: `menu-row${has ? ' sel' : ''}`, title: has ? 'Déjà dans le show : cliquer pour l’ouvrir' : 'Ajouter au show', onclick: () => add(def) }, [
+                    h('span', { class: 'name', text: def.name }),
+                    h('span', { class: 'count mono', text: has ? 'ajouté' : `${def.length} t` }),
+                ]));
+            }
+        }
+        const missing = PATTERN_LIBRARY.filter((d) => !inShow.has(d.id));
+        this.$lib.replaceChildren(
+            h('div', { class: 'menu-title dim', text: `Bibliothèque · ${PATTERN_LIBRARY.length} patterns (toutes les salles)` }),
+            h('div', { class: 'menu-list lib-list' }, sections),
+            h('div', { class: 'menu-actions' }, [
+                h('button', { class: 'btn', text: missing.length ? `Tout ajouter (${missing.length})` : 'Tout est ajouté', disabled: !missing.length, onclick: () => {
+                    for (const def of missing) addToShow(show, def);
+                    this.shows.touch();
+                    this._renderLibrary();
+                } }),
+            ]),
+        );
+    }
+
     dispose() {
         this._ro.disconnect();
+        this._closeLibrary();
     }
 }

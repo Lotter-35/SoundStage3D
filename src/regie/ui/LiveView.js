@@ -12,6 +12,7 @@
 
 import { h, ICONS } from './dom.js';
 import { newId } from '../ShowStore.js';
+import { fillLive } from '../PatternLibrary.js';
 
 const QUANT = [[0, 'Immédiat'], [1, 'Temps'], [4, 'Mesure']];
 const FADES = [[0, '0 s'], [0.5, '0,5 s'], [1, '1 s'], [2, '2 s'], [4, '4 s']];
@@ -66,6 +67,12 @@ export class LiveView {
                 h('span', { class: 'dim', text: 'Fondu' }), this.$fade,
                 h('span', { class: 'dim', text: 'Vitesse' }), this.$speed,
                 h('span', { class: 'grow' }),
+                h('button', { class: 'btn', text: 'Remplir (bibliothèque)', title: 'Place les patterns pré-programmés sur les pads vides : une rangée par famille (intensité, couleurs, mouvements, effets)', onclick: () => {
+                    const show = this.shows.show;
+                    if (!show) return;
+                    if (fillLive(show) > 0) this.shows.touch();
+                    this._key = '';
+                } }),
                 this.$edit,
                 h('button', { class: 'btn', text: 'Tout arrêter', onclick: () => this.engine.stopAll() }),
             ]),
