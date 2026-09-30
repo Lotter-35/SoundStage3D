@@ -123,7 +123,7 @@ export class LightingSync {
         }
 
         // Événements continus nécessitant un throttling (sliders, gizmo)
-        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'ledbar_update' || category === 'strobe_update' || category === 'haze') {
+        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'ledbar_update' || category === 'laser2_update' || category === 'strobe_update' || category === 'haze') {
             const idPart = (id !== undefined && id !== null) ? id : 'global';
             const throttleKey = event.throttleKey || `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
             this._sendThrottled(throttleKey, event);
@@ -293,6 +293,19 @@ export class LightingSync {
 
                 case 'ledbar_action':
                     if (msg.action === 'reset') this._ledBarManager()?.getBar(id)?.reset(msg.mode);
+                    break;
+
+                // ── 9. Nouveaux lasers (moteur de points) ──
+                case 'laser2_add':
+                    this._applyLaser2Add(data);
+                    break;
+
+                case 'laser2_update':
+                    this._applyLaser2Update(id, data);
+                    break;
+
+                case 'laser2_remove':
+                    this._applyLaser2Remove(id);
                     break;
 
                 // ── 6. Reset Global ──
@@ -902,6 +915,55 @@ export class LightingSync {
         }
     }
 
+    _laser2Manager() {
+        return this.ambiancePanel ? this.ambiancePanel.laser2Manager : null;
+    }
+
+    _applyLaser2Add(data) {
+        const lm = this._laser2Manager();
+        if (!lm || !data || !data.id || lm.getLaser(data.id)) return;
+        lm.addLaser(null, data.params || {}, data.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLaser2Update(id, data) {
+        const lm = this._laser2Manager();
+        const laser = lm && lm.getLaser(id);
+        if (!laser || !data) return;
+        // Ne pas écraser un laser que le joueur local est en train de déplacer au gizmo
+        if (this.ambiancePanel?.isDraggingGizmo && this.ambiancePanel.selectedSpot === laser) return;
+        laser.setParams(data);
+        const insp = this.ambiancePanel?._laser2InspectorPanel;
+        if (insp && insp.isOpen && insp.currentLaserId === id) insp.syncFromLaser();
+        if (this.ambiancePanel?.selectedSpot === laser && this.ambiancePanel.transformControls) {
+            this.ambiancePanel.transformControls.updateMatrixWorld(true);
+        }
+    }
+
+    _applyLaser2Remove(id) {
+        const lm = this._laser2Manager();
+        if (!lm || !id) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedSpot && this.ambiancePanel.selectedSpot.id === id) {
+            this.ambiancePanel.deselectSpot();
+        }
+        lm.removeLaser(id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLaser2FullState(lasers) {
+        const lm = this._laser2Manager();
+        if (!lm || !lasers || typeof lasers !== 'object') return;
+        const serverIds = new Set(Object.keys(lasers));
+        for (const l of lm.getAllLasers()) {
+            if (!serverIds.has(l.id)) this._applyLaser2Remove(l.id);
+        }
+        for (const [id, l] of Object.entries(lasers)) {
+            if (!l) continue;
+            if (lm.getLaser(id)) this._applyLaser2Update(id, l.params || {});
+            else this._applyLaser2Add({ id, params: l.params || {} });
+        }
+    }
+
     _spotPanelIsOn(id) {
         const insp = this.ambiancePanel?._spotInspectorPanel;
         return Boolean(insp && insp.isOpen && insp.currentSpotId === id);
@@ -1065,6 +1127,10 @@ export class LightingSync {
             // 8. Barres LED (serveur d'une ancienne version : pas de clé → barres locales conservées)
             if (state.ledBars) {
                 this._applyLedBarsFullState(state.ledBars);
+            }
+            // 9. Nouveaux lasers (salle sauvegardée avant leur arrivée : pas de clé → lasers locaux conservés)
+            if (state.laser2s) {
+                this._applyLaser2FullState(state.laser2s);
             }
             if (state.spotFx && this._spotManager()) {
                 this._spotManager().effects.setAll(state.spotFx);
