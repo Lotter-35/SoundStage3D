@@ -48,6 +48,14 @@ const MAP = {
         zoom: { ch: 'Écart' },
         strobe: { rate: 'Clignotement (0–9 non, 10–255 lent → rapide)' },
     },
+    laser2: {
+        dimmer: { ch: 'Dimmer' },
+        color: { rgb: ['Rouge', 'Vert', 'Bleu'] },
+        pan: { ch: 'Position X' },
+        tilt: { ch: 'Position Y' },
+        zoom: { ch: 'Taille X' },
+        strobe: { shutter: 'Obturateur / Strobe' },
+    },
 };
 
 export const CHANNEL_PREFIX = 'ch:';

@@ -10,14 +10,16 @@ import * as SpotProfile from '../spot/SpotProfile.js';
 import * as LedBarProfile from '../ledbar/LedBarProfile.js';
 import * as StrobeProfile from '../strobe/StrobeProfile.js';
 import * as LaserProfile from '../laser/LaserProfile.js';
+import * as Laser2Profile from '../laser2/Laser2Profile.js';
 
 export const KINDS = {
     spot:   { label: 'Lyre',      plural: 'Lyres',      profile: SpotProfile },
     ledbar: { label: 'Barre LED', plural: 'Barres LED', profile: LedBarProfile },
     strobe: { label: 'Strobe',    plural: 'Strobes',    profile: StrobeProfile },
     laser:  { label: 'Laser',     plural: 'Lasers',     profile: LaserProfile },
+    laser2: { label: 'Laser (points)', plural: 'Lasers (points)', profile: Laser2Profile },
 };
-export const KIND_ORDER = ['spot', 'ledbar', 'strobe', 'laser'];
+export const KIND_ORDER = ['spot', 'ledbar', 'strobe', 'laser', 'laser2'];
 
 export const fixtureKey = (f) => `${f.kind}:${f.id}`;
 export const fixtureName = (f) => `${(KINDS[f.kind] || { label: f.kind }).label} ${f.number}`;

@@ -291,8 +291,11 @@ laser2Manager.setPlayerCollider(playerLaserCollider);
 laser2Manager.setDazzle(laserManager._dazzle || null);
 // 2 nouveaux lasers de test à côté des 2 anciens (x = ±12, y = 14), tournés vers le public.
 // Identifiants fixes : chaque client crée les mêmes lasers sans doublon avec l'état réseau.
+// Patch DMX commun (univers 4 et suivants, comme les anciens lasers) : pilotables par la régie
+laser2Manager.setPatch(spotManager.patch);
 for (const [k, x] of [[1, -14.2], [2, 14.2]]) {
-    laser2Manager.addLaser(new THREE.Vector3(x, 14, 0.19), { pitch: 4 }, `laser2-stage-${k}`);
+    const { laser } = laser2Manager.addLaser(new THREE.Vector3(x, 14, 0.19), { pitch: 4 }, `laser2-stage-${k}`);
+    laser2Manager._autoPatch(laser);
 }
 
 // Console des lyres (sélection matricielle, couleurs, visée, effets) — touche L
@@ -949,7 +952,7 @@ const mp = new MultiplayerClient(`${mpProto}://${mpHost}:${mpPort}`);
 mp.onDmx((packet) => dmxReceiver.push(packet));
 // Liste des projecteurs pour la régie lumière (envoyée au serveur quand elle change)
 const patchReporter = new PatchReporter({
-    collect: () => collectPatch({ spotManager, ledBarManager, strobeManager, laserManager }),
+    collect: () => collectPatch({ spotManager, ledBarManager, strobeManager, laserManager, laser2Manager }),
     send: (fixtures) => mp.sendPatchReport(fixtures),
     room: () => (mp.connected && mp.roomId ? mp.roomId : null),
 });
@@ -957,7 +960,7 @@ patchReporter.start();
 // Bibliothèque ILDA : liste des formes chargée au démarrage, puis mise à jour poussée par le serveur
 ildaLibrary.refresh();
 mp.onIldaIndex((index) => ildaLibrary.setIndex(index));
-mp.onFixtureStateRequest((keys) => encodeFixtureStates({ spotManager, ledBarManager, strobeManager, laserManager }, keys));
+mp.onFixtureStateRequest((keys) => encodeFixtureStates({ spotManager, ledBarManager, strobeManager, laserManager, laser2Manager }, keys));
 let playerAvatars = null;
 let _mpPosAccum = 0;
 const MP_POS_INTERVAL = 1 / 20; // 20 fps position sync

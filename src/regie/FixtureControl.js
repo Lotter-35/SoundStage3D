@@ -50,6 +50,7 @@ function sendControl(client, fixtures, on) {
         else if (f.kind === 'ledbar') client.sendLighting({ category: 'ledbar_update', id: f.id, data: { dmxControl: on } });
         else if (f.kind === 'strobe') client.sendLighting({ category: 'strobe_update', id: f.id, data: { dmxControl: on } });
         else if (f.kind === 'laser') client.sendLighting({ category: 'laser_param', id: f.id, param: 'dmxControl', value: on });
+        else if (f.kind === 'laser2') client.sendLighting({ category: 'laser2_update', id: f.id, data: { dmxControl: on } });
     }
     if (Object.keys(spots).length > 0) client.sendLighting({ category: 'spot_multi', data: spots });
 }

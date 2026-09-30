@@ -3,32 +3,35 @@
  * ─────────────────────────────────────────────────────────────
  * Schéma de TOUS les paramètres du nouveau laser (moteur de points + galvos) :
  *   - valeur par défaut, bornes, pas, libellé, dossier du panneau
- *   - `dmx: true`  → réglage de show (pilotable plus tard par le profil DMX)
+ *   - `dmx: true`  → réglage de show (pilotable par le profil DMX, voir Laser2Profile.js)
  *   - `dmx: false` → installation / fiche technique du boîtier / rendu
  *
  * Couleurs : RGB dans le code (0…1), sélecteur de couleur classique (#rrggbb) dans le panneau.
  * ─────────────────────────────────────────────────────────────
  */
 
-/** Motifs du générateur interne (l'ordre servira au canal DMX « Motif ») */
-export const PATTERNS = [
-    'Mire ILDA',
-    'Faisceaux (éventail)',
-    'Nappe (ligne)',
-    'Nappe + faisceaux',
-    'Point fixe',
-    'Cercle (cône)',
-    'Carré',
-    'Triangle',
-    'Étoile',
-    'Sinusoïde',
+/**
+ * Motifs du générateur interne, rangés en BANQUES (canaux DMX « Banque » et « Motif »).
+ * Les animations sont des suites d'images jouées comme une animation ILDA.
+ */
+export const PATTERN_BANKS = [
+    { name: 'Faisceaux', patterns: ['Faisceaux (éventail)', 'Point fixe', 'Faisceaux en cercle', 'Double éventail', 'Faisceaux en croix', 'Faisceaux dispersés'] },
+    { name: 'Nappes & tunnels', patterns: ['Nappe (ligne)', 'Nappe + faisceaux', 'Nappe verticale', 'Cercle (cône)', 'Double cercle', 'Nappe en V', 'Nappe en croix'] },
+    { name: 'Graphiques', patterns: ['Mire ILDA', 'Carré', 'Triangle', 'Étoile', 'Losange', 'Cœur', 'Spirale', 'Sinusoïde', 'Zigzag'] },
+    { name: 'Animations', patterns: ['Cercle pulsant', 'Vague défilante', 'Tunnel qui s\'ouvre', 'Éventail qui s\'ouvre', 'Faisceaux qui balaient', 'Étoile qui respire'] },
 ];
+export const PATTERNS = PATTERN_BANKS.flatMap(b => b.patterns);
 
 export const SOURCES = ['Motif interne', 'Fichier ILDA'];
 export const PLAY_MODES = ['Boucle', 'Aller-retour', 'Image fixe'];
 export const ILDA_COLOR_MODES = ['Couleurs du fichier', 'Couleur du laser'];
 
 export const SHUTTER_MODES = ['Ouvert', 'Fermé', 'Strobe'];
+export const ZOOM_FX = ['Aucun', 'Pulse', 'Avant-arrière'];
+export const SWEEP_SHAPES = ['Sinus', 'Triangle', 'Carré', 'Cercle', 'Huit', 'Aléatoire'];
+export const COLOR_MODES = ['Fixe', 'Segments', 'Arc-en-ciel défilant', 'Chenillard', 'Aléatoire par point'];
+export const GRATINGS = ['Aucun', '×3', '×5', '×9'];
+export const DMX_MODES = ['Standard (36 canaux)'];
 export const PERSISTENCE_MODES = ['Œil', 'Caméra'];
 export const MODULATIONS = ['Analogique', 'TTL (tout ou rien)'];
 /** Vitesse nominale des scanners (points/s à 8°, norme ILDA) */
@@ -46,11 +49,14 @@ export const PRESET_NAMES = [...Object.keys(HARDWARE_PRESETS), 'Personnalisé'];
 const opt = (options, value, label, folder, dmx = true) => ({ value, options, label, folder, dmx });
 const num = (value, min, max, step, label, folder, dmx = true) => ({ value, min, max, step, label, folder, dmx });
 const color = (value, label, folder, dmx = true) => ({ value, label, folder, dmx, color: true });
+const bool = (value, label, folder, dmx = true) => ({ value, label, folder, dmx });
 
 export const LASER2_FOLDERS = [
     { id: 'place',    title: '📍 Placement' },
+    { id: 'dmx',      title: '🔌 DMX' },
     { id: 'content',  title: '🖼️ Contenu (motif)' },
     { id: 'geometry', title: '📐 Géométrie' },
+    { id: 'effects',  title: '✨ Effets' },
     { id: 'color',    title: '🎨 Couleur & Intensité', power: true },
     { id: 'hardware', title: '⚙️ Boîtier (fiche technique)' },
     { id: 'render',   title: '👁️ Rendu' },
@@ -65,6 +71,12 @@ export const LASER2_PARAMS_SCHEMA = {
     pitch:       num(0, -90, 90, 1, 'Inclinaison (Pitch)', 'place', false),
     roll:        num(0, -180, 180, 1, 'Rotation (Roll)', 'place', false),
 
+    // ── 🔌 DMX (patch, hors DMX) ──
+    dmxUniverse: num(4, 1, 64, 1, 'Univers', 'dmx', false),
+    dmxAddress:  num(1, 1, 512, 1, 'Adresse de départ', 'dmx', false),
+    dmxMode:     opt(DMX_MODES, 'Standard (36 canaux)', 'Mode DMX', 'dmx', false),
+    dmxControl:  bool(false, 'Piloté par le DMX', 'dmx', false),
+
     // ── 🖼️ Contenu ──
     source:      opt(SOURCES, 'Motif interne', 'Source', 'content'),
     pattern:     opt(PATTERNS, 'Faisceaux (éventail)', 'Motif', 'content'),
@@ -77,6 +89,8 @@ export const LASER2_PARAMS_SCHEMA = {
     scanRate:    num(30, 5, 60, 0.5, 'Vitesse de dessin (kpps)', 'content'),
     beamCount:   num(8, 1, 64, 1, 'Nombre de faisceaux', 'content'),
     beamDwell:   num(14, 1, 60, 1, 'Points par faisceau', 'content'),
+    fanSpread:   num(100, 0, 100, 0.1, 'Ouverture de l\'éventail (%)', 'content'),
+    fanBlend:    num(0, 0, 100, 1, 'Faisceaux ↔ nappe (%)', 'content'),
     density:     num(60, 5, 100, 1, 'Densité de points (%)', 'content'),
     cornerPoints: num(4, 0, 16, 1, 'Points d\'angle', 'content'),
     blankPoints: num(6, 0, 20, 1, 'Points de masquage', 'content'),
@@ -88,9 +102,29 @@ export const LASER2_PARAMS_SCHEMA = {
     offsetY:     num(0, -100, 100, 0.1, 'Position Y (%)', 'geometry'),
     rotation:    num(0, -180, 180, 0.5, 'Rotation Z (°)', 'geometry'),
     rotSpeed:    num(0, -100, 100, 1, 'Rotation continue (%)', 'geometry'),
+    rotX:        num(0, -180, 180, 0.5, 'Rotation 3D X (°)', 'geometry'),
+    rotXSpeed:   num(0, -100, 100, 1, 'Rotation 3D X continue (%)', 'geometry'),
+    rotY:        num(0, -180, 180, 0.5, 'Rotation 3D Y (°)', 'geometry'),
+    rotYSpeed:   num(0, -100, 100, 1, 'Rotation 3D Y continue (%)', 'geometry'),
+
+    // ── ✨ Effets ──
+    drawStart:   num(0, 0, 100, 0.1, 'Tracé : début (%)', 'effects'),
+    drawEnd:     num(100, 0, 100, 0.1, 'Tracé : fin (%)', 'effects'),
+    dots:        num(0, 0, 100, 1, 'Pointillés', 'effects'),
+    zoomFx:      opt(ZOOM_FX, 'Aucun', 'Zoom automatique', 'effects'),
+    zoomFxSpeed: num(30, 0, 100, 1, 'Vitesse du zoom (%)', 'effects'),
+    sweepX:      num(0, 0, 100, 0.1, 'Balayage X (amplitude %)', 'effects'),
+    sweepY:      num(0, 0, 100, 0.1, 'Balayage Y (amplitude %)', 'effects'),
+    sweepSpeed:  num(30, 0, 100, 1, 'Vitesse du balayage (%)', 'effects'),
+    sweepShape:  opt(SWEEP_SHAPES, 'Sinus', 'Forme du balayage', 'effects'),
+    waveAmp:     num(0, 0, 100, 1, 'Vague (amplitude %)', 'effects'),
+    waveSpeed:   num(40, 0, 100, 1, 'Vitesse de la vague (%)', 'effects'),
+    grating:     opt(GRATINGS, 'Aucun', 'Réseau de diffraction', 'effects'),
 
     // ── 🎨 Couleur & intensité ──
     color:       color('#20ff40', 'Couleur', 'color'),
+    colorMode:   opt(COLOR_MODES, 'Fixe', 'Effet de couleur', 'color'),
+    colorSpeed:  num(30, 0, 100, 1, 'Vitesse de l\'effet (%)', 'color'),
     dimmer:      num(100, 0, 100, 0.1, 'Dimmer (%)', 'color'),
     shutter:     opt(SHUTTER_MODES, 'Ouvert', 'Obturateur', 'color'),
     strobeRate:  num(8, 0.5, 25, 0.1, 'Fréquence strobe (Hz)', 'color'),
@@ -113,6 +147,7 @@ export const LASER2_PARAMS_SCHEMA = {
     persistence: opt(PERSISTENCE_MODES, 'Œil', 'Persistance', 'render', false),
     visibility:  num(1, 0, 3, 0.01, 'Visibilité des faisceaux', 'render', false),
     forwardScatter: num(35, 0, 90, 1, 'Diffusion vers l\'avant (%)', 'render', false),
+    audienceMask: bool(false, 'Masquage du public (sol et joueurs)', 'render'),
 };
 
 export function defaultLaser2Params() {

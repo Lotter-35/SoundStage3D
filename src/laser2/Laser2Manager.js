@@ -49,6 +49,27 @@ export class Laser2Manager {
         this._instancer = getLaser2HousingInstancer(scene);
         this.cpuMs = 0;
         this.dazzle = null;
+        this.patch = null;
+    }
+
+    /** Patch DMX commun (lyres, barres LED, strobes, lasers) : pilotage par la régie */
+    setPatch(patch) {
+        this.patch = patch;
+        for (const l of this._lasers.values()) l.attachPatch(patch);
+    }
+
+    /** Première adresse libre à partir de l'univers du laser (univers suivant quand il est plein) */
+    _autoPatch(laser) {
+        if (!this.patch) return;
+        for (let u = laser.dmxUniverse; u <= 64; u++) {
+            const addr = this.patch.findFreeAddress(u, laser.dmxFootprint, laser);
+            if (addr > 0) {
+                laser.params.dmxUniverse = u;
+                laser.params.dmxAddress = addr;
+                this.patch.invalidate(laser);
+                return;
+            }
+        }
     }
 
     /** Collider des joueurs (les faisceaux s'arrêtent sur les corps et y laissent leur trace) */
@@ -78,6 +99,10 @@ export class Laser2Manager {
             params: p,
         });
         this._lasers.set(laserId, laser);
+        if (this.patch) {
+            laser.attachPatch(this.patch);
+            if (!id && params.dmxAddress === undefined) this._autoPatch(laser);
+        }
         return { id: laserId, laser };
     }
 
@@ -94,6 +119,7 @@ export class Laser2Manager {
         if (!src) return null;
         const params = { ...src.params };
         params.posX += 0.6;
+        delete params.dmxAddress;
         return this.addLaser(null, params);
     }
 

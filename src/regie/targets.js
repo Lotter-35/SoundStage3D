@@ -14,11 +14,17 @@ export const KIND_TARGETS = [
     ['ledbar', 'Toutes les barres LED'],
     ['strobe', 'Tous les strobes'],
     ['laser', 'Tous les lasers'],
+    ['laser2', 'Tous les lasers (points / ILDA)'],
 ];
 
-/** Clés des projecteurs d'un type (ou de tous) présents dans la salle */
+/**
+ * Clés des projecteurs d'un type (ou de tous) présents dans la salle.
+ * « Tous les lasers » vise aussi les nouveaux lasers : les patterns laser de la bibliothèque les pilotent.
+ */
 export function kindTargetKeys(store, kind) {
-    return store.fixtures.filter((f) => kind === 'all' || f.kind === kind).map(fixtureKey);
+    return store.fixtures
+        .filter((f) => kind === 'all' || f.kind === kind || (kind === 'laser' && f.kind === 'laser2'))
+        .map(fixtureKey);
 }
 
 /** Options de cible par type, avec le nombre de projecteurs : [valeur, libellé] */

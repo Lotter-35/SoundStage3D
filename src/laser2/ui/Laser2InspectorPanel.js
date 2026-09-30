@@ -19,8 +19,10 @@ import { makeDraggable } from '../../ui/draggable.js';
 import { LASER2_PARAMS_SCHEMA, LASER2_FOLDERS, HARDWARE_PRESETS } from '../config/laser2Params.js';
 import { RING } from '../Laser2Scanner.js';
 import { ildaLibrary } from '../ilda/IldaLibrary.js';
+import { describeChannels, encode, getFootprint } from '../Laser2Profile.js';
+import { isAnimatedPattern } from '../Laser2Patterns.js';
 
-const PER_FIXTURE_FOLDERS = new Set(['place']);
+const PER_FIXTURE_FOLDERS = new Set(['place', 'dmx']);
 const HARDWARE_KEYS = new Set(['powerR', 'powerG', 'powerB', 'scanner', 'divergence', 'aperture']);
 const PREVIEW = 232;
 
@@ -97,7 +99,35 @@ export class Laser2InspectorPanel {
         laser.setParams(data);
         this._emit({ category: 'laser2_update', id: laser.id, data });
         if (Object.keys(data).length > 1) this.syncFromLaser();
+        if (key.startsWith('dmx')) this._refreshPatchInfo();
         this._refreshVisibility();
+    }
+
+    _refreshPatchInfo() {
+        const l = this._laser;
+        if (!l || !this._patchInfoEl) return;
+        const fp = getFootprint(l.params.dmxMode);
+        const a0 = l.params.dmxAddress, a1 = a0 + fp - 1;
+        const patch = this.laser2Manager.patch;
+        let html = `Univers <b>${l.params.dmxUniverse}</b> · canaux <b>${a0} → ${a1}</b> (${fp} canaux)`;
+        if (patch) {
+            const conflicts = patch.conflictsOf(l);
+            if (patch.overflows(l)) html += `<br><span style="color:#ff8a65">⚠ La plage dépasse l'adresse 512</span>`;
+            if (conflicts.length) html += `<br><span style="color:#ff8a65">⚠ Chevauche : ${conflicts.map(c => c.displayName || ('Lyre #' + c.number)).join(', ')}</span>`;
+            else if (!patch.overflows(l)) html += `<br><span style="color:#7ee2a8">✓ Aucun conflit d'adresse</span>`;
+        }
+        html += `<br><span style="opacity:.75">${l.params.dmxControl ? 'Piloté par le DMX : les réglages suivent la console.' : 'Piloté par ce panneau (DMX ignoré).'}</span>`;
+        this._patchInfoEl.innerHTML = html;
+    }
+
+    _refreshMonitor() {
+        const l = this._laser;
+        if (!l || !this._monitorEl || this._monitorEl.style.display === 'none') return;
+        const channels = describeChannels(l.params.dmxMode, l.params.dmxAddress);
+        const values = encode(l.params, l.params.dmxMode);
+        this._monitorEl.innerHTML = channels.map((c, i) =>
+            `<div style="display:flex;justify-content:space-between;gap:8px"><span style="opacity:.7">${String(c.address).padStart(3, '0')}</span><span style="flex:1">${c.name}</span><b>${values[i]}</b></div>`
+        ).join('');
     }
 
     _addResetButton(ctrl, onReset) {
@@ -181,7 +211,7 @@ export class Laser2InspectorPanel {
         for (const f of LASER2_FOLDERS) {
             const folder = this.gui.addFolder(f.title);
             if (f.power && folder.domElement) folder.domElement.classList.add('power-folder');
-            if (f.id === 'place' || f.id === 'hardware' || f.id === 'render') folder.close();
+            if (f.id === 'place' || f.id === 'dmx' || f.id === 'effects' || f.id === 'hardware' || f.id === 'render') folder.close();
             folders[f.id] = folder;
         }
 
@@ -206,6 +236,21 @@ export class Laser2InspectorPanel {
             this._addResetButton(ctrl, () => ctrl.setValue(s.value));
             this.controllers[key] = ctrl;
         }
+
+        // DMX : plage de canaux, conflits, moniteur
+        this._patchInfoEl = document.createElement('div');
+        this._patchInfoEl.style.cssText = 'padding:6px 8px;font-size:11px;line-height:1.5;color:#b8c2d6;';
+        folders.dmx.$children.appendChild(this._patchInfoEl);
+        const monitor = { open: false };
+        folders.dmx.add({ toggle: () => {
+            monitor.open = !monitor.open;
+            this._monitorEl.style.display = monitor.open ? 'block' : 'none';
+            this._refreshMonitor();
+        } }, 'toggle').name('📟 Moniteur des canaux DMX');
+        this._monitorEl = document.createElement('div');
+        this._monitorEl.style.cssText = 'display:none;max-height:240px;overflow:auto;padding:4px 8px 8px;font:11px/1.45 ui-monospace,Consolas,monospace;color:#cfd8ea;';
+        folders.dmx.$children.appendChild(this._monitorEl);
+        this._refreshPatchInfo();
 
         const fActions = this.gui.addFolder('⚙️ Actions');
         const actions = {
@@ -355,9 +400,18 @@ export class Laser2InspectorPanel {
         this._show('beamDwell', beams || (!ilda && p.pattern === 'Point fixe'));
         for (const k of ['density', 'cornerPoints', 'blankPoints']) this._show(k, !ilda);
         const fixed = p.playMode === 'Image fixe';
-        this._show('playMode', ilda);
-        this._show('ildaFps', ilda && !fixed);
-        this._show('ildaFrame', ilda && fixed);
+        const anim = ilda || isAnimatedPattern(p.pattern);
+        this._show('playMode', anim);
+        this._show('ildaFps', anim && !fixed);
+        this._show('ildaFrame', anim && fixed);
+        const fanLike = !ilda && /Faisceaux|éventail/i.test(p.pattern);
+        this._show('fanSpread', !ilda && (fanLike || /^Nappe/.test(p.pattern)));
+        this._show('fanBlend', fanLike);
+        this._show('zoomFxSpeed', p.zoomFx !== 'Aucun');
+        this._show('sweepSpeed', p.sweepX > 0 || p.sweepY > 0);
+        this._show('sweepShape', p.sweepX > 0 || p.sweepY > 0);
+        this._show('waveSpeed', p.waveAmp > 0);
+        this._show('colorSpeed', p.colorMode !== 'Fixe');
         this._show('ildaColor', ilda);
         for (const c of [this._ildaBankCtrl, this._ildaFileCtrl]) if (c) { if (ilda) c.show(); else c.hide(); }
         if (this._ildaInfo) this._ildaInfo.style.display = ilda ? '' : 'none';
@@ -368,6 +422,11 @@ export class Laser2InspectorPanel {
     _tick() {
         if (!this._laser) return;
         if (!this.laser2Manager.getLaser(this._laser.id)) { this.close(); return; }
+        if (this._laser.dmxDirty) {
+            this._laser.dmxDirty = false;
+            this.syncFromLaser();
+        }
+        if ((this._tickN = (this._tickN || 0) + 1) % 3 === 0) this._refreshMonitor();
         this._drawPreview();
     }
 }

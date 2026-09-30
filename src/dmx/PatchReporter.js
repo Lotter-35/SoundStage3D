@@ -12,6 +12,7 @@ import { encode as encodeSpot } from '../spot/SpotProfile.js';
 import { encode as encodeLedBar } from '../ledbar/LedBarProfile.js';
 import { encode as encodeStrobe } from '../strobe/StrobeProfile.js';
 import { encode as encodeLaser } from '../laser/LaserProfile.js';
+import { encode as encodeLaser2 } from '../laser2/Laser2Profile.js';
 
 const INTERVAL = 1000;
 const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
@@ -20,7 +21,7 @@ const r2 = (v) => Math.round((Number(v) || 0) * 100) / 100;
  * Projecteurs de la scène, au format lu par la régie
  * @returns {object[]}
  */
-export function collectPatch({ spotManager, ledBarManager, strobeManager, laserManager }) {
+export function collectPatch({ spotManager, ledBarManager, strobeManager, laserManager, laser2Manager }) {
     const out = [];
     const base = (f) => ({ universe: f.dmxUniverse, address: f.dmxAddress, footprint: f.dmxFootprint, control: f.dmxControlled });
     if (spotManager) {
@@ -47,6 +48,12 @@ export function collectPatch({ spotManager, ledBarManager, strobeManager, laserM
             out.push({ id: l.laserId, kind: 'laser', number: l.laserId + 1, mode: l.params.dmxMode, ...base(l), x: r2(pos.x), y: r2(pos.y), z: r2(pos.z), yaw: r2(l.params.angle) });
         }
     }
+    if (laser2Manager) {
+        for (const l of laser2Manager.getAllLasers()) {
+            const p = l.params;
+            out.push({ id: l.id, kind: 'laser2', number: l.number, mode: p.dmxMode, ...base(l), x: r2(p.posX), y: r2(p.posY), z: r2(p.posZ), yaw: r2(p.yaw) });
+        }
+    }
     return out;
 }
 
@@ -55,7 +62,7 @@ export function collectPatch({ spotManager, ledBarManager, strobeManager, laserM
  * pour que la régie reprenne la lumière telle qu'elle est avant de prendre la main
  * @returns {Object<string, {universe: number, address: number, values: number[]}>}
  */
-export function encodeFixtureStates({ spotManager, ledBarManager, strobeManager, laserManager }, keys) {
+export function encodeFixtureStates({ spotManager, ledBarManager, strobeManager, laserManager, laser2Manager }, keys) {
     const out = {};
     for (const key of keys) {
         const i = String(key).indexOf(':');
@@ -76,6 +83,9 @@ export function encodeFixtureStates({ spotManager, ledBarManager, strobeManager,
         } else if (kind === 'laser' && laserManager) {
             f = laserManager.getLaser(Number(id));
             if (f) bytes = encodeLaser(f.params);
+        } else if (kind === 'laser2' && laser2Manager) {
+            f = laser2Manager.getLaser(id);
+            if (f) bytes = encodeLaser2(f.params, f.params.dmxMode);
         }
         if (f && bytes) out[key] = { universe: f.dmxUniverse, address: f.dmxAddress, values: Array.from(bytes) };
     }

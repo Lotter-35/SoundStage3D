@@ -15,6 +15,8 @@ import { Laser2Scanner, displayColor } from './Laser2Scanner.js';
 import { BEAM_STRIDE, SHEET_STRIDE, IMPACT_STRIDE } from './Laser2Batch.js';
 import { cullObstacles, laser2Hit, playersInCone, SURF_SKY, SURF_PLAYER } from './Laser2Collision.js';
 import { ildaLibrary } from './ilda/IldaLibrary.js';
+import { decode as decodeDmx, getFootprint } from './Laser2Profile.js';
+import { SURF_GROUND } from './Laser2Collision.js';
 import { getLaser2HousingInstancer, APERTURE_Z, BODY } from './Laser2Housing.js';
 
 const DEG = Math.PI / 180;
@@ -26,6 +28,7 @@ const PLAYER_RANGE = 150;
 const MAX_DEPTH = 7;
 
 const PLACEMENT_KEYS = new Set(['posX', 'posY', 'posZ', 'yaw', 'pitch', 'roll']);
+const PATCH_KEYS = new Set(['dmxUniverse', 'dmxAddress', 'dmxMode', 'dmxControl']);
 
 const _D = [0, 0, 0];
 const _dA = new THREE.Vector3();
@@ -103,6 +106,26 @@ export class Laser2Fixture {
 
     get displayName() { return `Laser #${this.number}`; }
 
+    // ── Patch DMX (patch commun avec les lyres, barres LED, strobes) ──────
+    get dmxUniverse() { return this.params.dmxUniverse; }
+    get dmxAddress() { return this.params.dmxAddress; }
+    get dmxFootprint() { return getFootprint(this.params.dmxMode); }
+    get dmxControlled() { return Boolean(this.params.dmxControl); }
+
+    /** Trame DMX : les canaux du laser deviennent ses réglages (le panneau suit) */
+    applyDmx(universe) {
+        const { params } = decodeDmx(universe, this.params.dmxAddress, this.params.dmxMode);
+        for (const k in params) this.params[k] = params[k];
+        this._cfgDirty = true;
+        this.dmxDirty = true;
+    }
+
+    /** Branché au patch par le gestionnaire */
+    attachPatch(patch) {
+        this.patch = patch;
+        if (patch) patch.register(this);
+    }
+
     // ── Paramètres ────────────────────────────────────────────────────────
     setParam(key, value) {
         this.setParams({ [key]: value });
@@ -117,6 +140,7 @@ export class Laser2Fixture {
             if (!(k in LASER2_PARAMS_SCHEMA)) continue;
             this.params[k] = v;
             if (PLACEMENT_KEYS.has(k)) placement = true;
+            if (PATCH_KEYS.has(k) && this.patch) this.patch.invalidate(this);
         }
         this._cfgDirty = true;
         if (placement) this.applyTransform();
@@ -238,6 +262,8 @@ export class Laser2Fixture {
             lr += _D[0]; lg += _D[1]; lb += _D[2];
             this._dir(sc.beams[s], sc.beams[s + 1], _dA);
             const h = this._hit(_dA, _hitBeam);
+            // Masquage du public : le laser s'éteint dans les directions qui touchent le sol ou un joueur
+            if (this._masked(h)) continue;
             const t = h.t;
             const o = bn++ * BEAM_STRIDE;
             B[o] = O.x; B[o + 1] = O.y; B[o + 2] = O.z; B[o + 3] = ap;
@@ -318,7 +344,14 @@ export class Laser2Fixture {
         this._piece(sm, dm, hm, s1, d1, h1, depth + 1);
     }
 
+    /** Direction masquée (public) : impact au sol devant la scène ou sur un joueur */
+    _masked(h) {
+        if (!this.params.audienceMask) return false;
+        return h.id === SURF_PLAYER || h.id === SURF_GROUND;
+    }
+
     _emitPiece(s0, d0, h0, s1, d1, h1) {
+        if (this._masked(h0) || this._masked(h1)) return;
         const O = this.origin;
         const f = s1 - s0;
         const angle = this._angle * f;
@@ -361,6 +394,7 @@ export class Laser2Fixture {
     }
 
     dispose() {
+        if (this.patch) this.patch.unregister(this);
         this.scene.remove(this.group);
         if (this._slot) this._instancer.free(this._slot);
         this._slot = null;

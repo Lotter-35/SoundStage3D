@@ -27,8 +27,8 @@
  * ─────────────────────────────────────────────────────────────
  */
 
-import { buildPatternFrame, LaserFrame } from './Laser2Patterns.js';
-import { hexToRgb, scannerPps } from './config/laser2Params.js';
+import { buildPatternFrames, LaserFrame } from './Laser2Patterns.js';
+import { hexToRgb, scannerPps, LASER2_PARAMS_SCHEMA, SWEEP_SHAPES, COLOR_MODES, GRATINGS } from './config/laser2Params.js';
 
 const DEG = Math.PI / 180;
 export const RING = 16384;
@@ -51,6 +51,40 @@ const PRIM = [
 const EFFICACY = [0.75, 1.0, 0.5];
 
 const _rgb = [0, 0, 0];
+const TAU = Math.PI * 2;
+
+/** Réglages qui changent le dessin (tout sauf placement, patch DMX et rendu) */
+const SCANNER_KEYS = Object.entries(LASER2_PARAMS_SCHEMA)
+    .filter(([k, s]) => !['place', 'dmx'].includes(s.folder) && !['visibility', 'forwardScatter', 'audienceMask'].includes(k))
+    .map(([k]) => k);
+
+/** Effets dépendant du temps recalculés tous les CHUNK échantillons (≈ 0,5 ms : invisible) */
+const CHUNK = 16;
+
+/** Vitesse d'effet 0…100 % → cycles par seconde */
+const rate = (pct, max = 3) => 0.05 + max * Math.pow(Math.max(0, Math.min(100, pct)) / 100, 1.5);
+const tri = (x) => { const f = x - Math.floor(x); return f < 0.5 ? 4 * f - 1 : 3 - 4 * f; }; // -1…1
+const sq = (x) => (x - Math.floor(x) < 0.5 ? 1 : -1);
+function hash(a, b) {
+    const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+    return s - Math.floor(s);
+}
+/** Teinte (0…1) → RGB saturé */
+function hue(h, out) {
+    const x = (h - Math.floor(h)) * 6;
+    const i = Math.floor(x), f = x - i, q = 1 - f;
+    switch (i) {
+        case 0: out[0] = 1; out[1] = f; out[2] = 0; break;
+        case 1: out[0] = q; out[1] = 1; out[2] = 0; break;
+        case 2: out[0] = 0; out[1] = 1; out[2] = f; break;
+        case 3: out[0] = 0; out[1] = q; out[2] = 1; break;
+        case 4: out[0] = f; out[1] = 0; out[2] = 1; break;
+        default: out[0] = 1; out[1] = 0; out[2] = q;
+    }
+    return out;
+}
+const _hue = [0, 0, 0];
+const SEGMENT_HUES = [0, 1 / 6, 2 / 6, 3 / 6, 4 / 6, 5 / 6];
 
 export class Laser2Scanner {
     constructor() {
@@ -69,6 +103,7 @@ export class Laser2Scanner {
         this.py = 0; this.vy = 0;
 
         this._patternFrame = new LaserFrame(512);
+        this._patternPool = [this._patternFrame];
         this._emptyFrame = new LaserFrame(1);
         this._emptyFrame.push(0, 0, 0, 0, 0);
         this.frame = this._patternFrame;     // image en cours de dessin
@@ -112,9 +147,10 @@ export class Laser2Scanner {
             frameKey = `ilda|${doc ? doc.path : ''}|${this._docSerial || 0}|${this.frames.length}|${p.playMode}|${p.ildaFps}|${p.ildaFrame}|${p.ildaColor}`;
             this._docRef = doc;
         } else {
-            frameKey = `${p.pattern}|${p.density}|${p.cornerPoints}|${p.blankPoints}|${p.beamCount}|${p.beamDwell}`;
-            if (frameKey !== this._frameKey || this.frames[0] !== this._patternFrame) buildPatternFrame(p, this._patternFrame);
-            this.frames = [this._patternFrame];
+            frameKey = `${p.pattern}|${p.density}|${p.cornerPoints}|${p.blankPoints}|${p.beamCount}|${p.beamDwell}|${p.fanSpread}|${p.fanBlend}`;
+            if (frameKey !== this._frameKey || this._docRef !== 'pattern') this._patternFrames = buildPatternFrames(p, this._patternPool);
+            this.frames = this._patternFrames;
+            this._docRef = 'pattern';
         }
         this._frameKey = frameKey;
         const N = this.frames.length;
@@ -142,6 +178,26 @@ export class Laser2Scanner {
         this.rot0 = p.rotation * DEG;
         this.rotSpeed = (p.rotSpeed / 100) * 2 * Math.PI;  // 100 % = 1 tour/s
 
+        // Effets (tracé, pointillés, zoom, balayage, vague, rotations 3D, couleur, diffraction)
+        this.drawA = Math.min(p.drawStart, p.drawEnd) / 100;
+        this.drawB = Math.max(p.drawStart, p.drawEnd) / 100;
+        this.dotLen = p.dots > 0 ? Math.max(1, Math.round(2 + (1 - p.dots / 100) * 18)) : 0;
+        this.zoomMode = p.zoomFx === 'Pulse' ? 1 : p.zoomFx === 'Avant-arrière' ? 2 : 0;
+        this.zoomRate = rate(p.zoomFxSpeed);
+        this.swX = p.sweepX / 100; this.swY = p.sweepY / 100;
+        this.swRate = rate(p.sweepSpeed, 2);
+        this.swShape = Math.max(0, SWEEP_SHAPES.indexOf(p.sweepShape));
+        this.waveA = (p.waveAmp / 100) * 0.5;
+        this.waveW = TAU * (0.2 + 3 * p.waveSpeed / 100);
+        this.rx0 = p.rotX * DEG; this.rxSpeed = (p.rotXSpeed / 100) * TAU;
+        this.ry0 = p.rotY * DEG; this.rySpeed = (p.rotYSpeed / 100) * TAU;
+        this.colorMode = Math.max(0, COLOR_MODES.indexOf(p.colorMode));
+        this.colorRate = rate(p.colorSpeed, 2);
+        this.grating = [1, 3, 5, 9][Math.max(0, GRATINGS.indexOf(p.grating))];
+        this._dynamic = this.rotSpeed !== 0 || this.zoomMode !== 0 || this.swX > 0 || this.swY > 0
+            || this.waveA > 0 || this.rxSpeed !== 0 || this.rySpeed !== 0 || this.colorMode >= 2
+            || (this.colorMode === 1 && p.colorSpeed > 0);
+
         // Couleur et modulation (équilibrage des blancs : chaque source ramenée à la plus faible)
         hexToRgb(p.color, _rgb);
         const dim = Math.max(0, Math.min(1, p.dimmer / 100));
@@ -153,6 +209,7 @@ export class Laser2Scanner {
         this.mono = ilda && p.ildaColor === 'Couleur du laser';
         this.lvl = ilda && !this.mono ? [dim, dim, dim] : [_rgb[0] * dim, _rgb[1] * dim, _rgb[2] * dim];
         this.chan = [pw[0] > 0 ? bal : 0, pw[1] > 0 ? bal : 0, pw[2] > 0 ? bal : 0];
+        this.dimmer = dim;
         this.ttl = p.modulation !== 'Analogique';
         this.thr = p.threshold / 100;
         this.shift = Math.round(p.colorShift);
@@ -161,7 +218,7 @@ export class Laser2Scanner {
         this.divergence = p.divergence * 1e-3;
         this.persistence = p.persistence;
 
-        const cfgKey = `${frameKey}|${this.pps}|${rated}|${p.damping}|${p.maxAngle}|${p.sizeX}|${p.sizeY}|${p.offsetX}|${p.offsetY}|${p.rotation}|${p.rotSpeed}|${p.color}|${p.dimmer}|${pw}|${p.modulation}|${p.threshold}|${p.colorShift}|${p.shutter}|${p.strobeRate}|${p.divergence}|${p.persistence}`;
+        const cfgKey = `${frameKey}|${this._docSerial || 0}|` + SCANNER_KEYS.map(k => p[k]).join('|');
         if (cfgKey !== this._cfgKey) {
             this._cfgKey = cfgKey;
             this._staticSince = -1;
@@ -194,7 +251,7 @@ export class Laser2Scanner {
         const pps = this.pps;
         const kNow = Math.floor(t * pps);
         const win = this._windowSamples();
-        const canFreeze = this.persistence !== 'Caméra' && this.rotSpeed === 0 && this.shutter !== 'Strobe'
+        const canFreeze = this.persistence !== 'Caméra' && !this._dynamic && this.shutter !== 'Strobe'
             && !this._animated && this.frame.n <= Math.round(EYE_WINDOW * pps);
 
         // Image fixe redessinée en boucle : après 3 images simulées, le résultat ne change plus
@@ -268,21 +325,55 @@ export class Laser2Scanner {
         this._locate(k);
         const f = this._lf;
         const i = this._li;
-        let x = f.x[i], y = f.y[i];
-        if (this.rot0 !== 0 || this.rotSpeed !== 0) {
-            const a = this.rot0 + this.rotSpeed * (k / this.pps);
-            const c = Math.cos(a), s = Math.sin(a);
-            const xr = x * c - y * s;
-            y = x * s + y * c;
-            x = xr;
+        const t = k / this.pps;
+        this._timeFx(t);
+        const a = this.rot0 + this.rotSpeed * t;
+        return this._transform(f.x[i], f.y[i], Math.cos(a), Math.sin(a), _cmd);
+    }
+
+    /**
+     * Effets qui ne dépendent que du temps (horloge commune) : zoom automatique, balayage,
+     * rotations 3D, phase de la vague et des effets de couleur.
+     */
+    _timeFx(t) {
+        let z = 1;
+        if (this.zoomMode === 1) z = 1 - 0.5 * (0.5 - 0.5 * Math.cos(TAU * this.zoomRate * t));
+        else if (this.zoomMode === 2) z = 0.5 - 0.5 * Math.cos(TAU * this.zoomRate * t);
+        this._zs = z;
+        let sx = 0, sy = 0;
+        if (this.swX > 0 || this.swY > 0) {
+            const ph = this.swRate * t;
+            switch (this.swShape) {
+                case 0: sx = Math.sin(TAU * ph); sy = sx; break;                       // sinus
+                case 1: sx = tri(ph); sy = sx; break;                                   // triangle
+                case 2: sx = sq(ph); sy = sx; break;                                    // carré
+                case 3: sx = Math.cos(TAU * ph); sy = Math.sin(TAU * ph); break;        // cercle
+                case 4: sx = Math.sin(TAU * ph); sy = Math.sin(2 * TAU * ph); break;    // huit
+                default:                                                                // aléatoire (lisse)
+                    sx = 0.6 * Math.sin(TAU * ph * 1.13) + 0.4 * Math.sin(TAU * ph * 2.71 + 1.3);
+                    sy = 0.6 * Math.sin(TAU * ph * 0.87 + 2.1) + 0.4 * Math.sin(TAU * ph * 2.29 + 0.4);
+            }
         }
-        x = x * this.sx + this.ox;
-        y = y * this.sy + this.oy;
-        x = x < -1 ? -1 : x > 1 ? 1 : x;
-        y = y < -1 ? -1 : y > 1 ? 1 : y;
-        _cmd[0] = x * this.maxAngle;
-        _cmd[1] = y * this.maxAngle;
-        return _cmd;
+        this._swx = sx * this.swX;
+        this._swy = sy * this.swY;
+        this._c3x = Math.cos(this.rx0 + this.rxSpeed * t);
+        this._c3y = Math.cos(this.ry0 + this.rySpeed * t);
+        this._wph = this.waveW * t;
+        this._cph = this.colorRate * t;
+    }
+
+    /** Point de l'image → consigne des miroirs (rad) : vague, rotations 3D et Z, zoom, taille, position, balayage */
+    _transform(x, y, rc, rs, out) {
+        if (this.waveA > 0) y += this.waveA * Math.sin(x * 1.5 * TAU - this._wph);
+        x *= this._c3y;
+        y *= this._c3x;
+        const xr = x * rc - y * rs;
+        y = x * rs + y * rc;
+        x = xr * this._zs * this.sx + this.ox + this._swx;
+        y = y * this._zs * this.sy + this.oy + this._swy;
+        out[0] = (x < -1 ? -1 : x > 1 ? 1 : x) * this.maxAngle;
+        out[1] = (y < -1 ? -1 : y > 1 ? 1 : y) * this.maxAngle;
+        return out;
     }
 
     _simulate(k0, k1) {
@@ -297,13 +388,16 @@ export class Laser2Scanner {
         const wn2 = this.wn * this.wn, c2 = 2 * this.zeta * this.wn;
         const [p00, p01, p10, p11] = this.phi;
         const amax = this.amax, vmax = this.vmax, lim = this.maxAngle * 1.05;
-        const maxA = this.maxAngle, gx = this.sx, gy = this.sy, ox = this.ox, oy = this.oy;
+        let nextFx = k0;
+        const drawAll = this.drawA <= 0 && this.drawB >= 1;
+        const drawA = this.drawA, drawB = this.drawB, dotLen = this.dotLen;
+        const cmode = this.colorMode;
         const lr = this.lvl[0], lg = this.lvl[1], lb = this.lvl[2];
         const cr = this.chan[0], cg = this.chan[1], cb = this.chan[2];
         const ttl = this.ttl, thr = this.thr;
         const strobe = this.shutter === 'Strobe', open = this.shutter !== 'Fermé';
         const rate = this.strobeRate;
-        const rot = this.rot0 !== 0 || this.rotSpeed !== 0;
+        const rot = this.rotSpeed !== 0;
         // Rotation calculée de proche en proche (pas de cos / sin par point)
         const a0 = this.rot0 + this.rotSpeed * k0 * T;
         let rc = Math.cos(a0), rs = Math.sin(a0);
@@ -324,19 +418,17 @@ export class Laser2Scanner {
                 i = this._li;
                 j = (((i - shift) % n) + n) % n;
             }
-            let x = fx[i], y = fy[i];
+            if (k >= nextFx) {
+                this._timeFx(k * T);
+                nextFx = k + CHUNK;
+            }
+            this._transform(fx[i], fy[i], rc, rs, _cmd);
             if (rot) {
-                const xr = x * rc - y * rs;
-                y = x * rs + y * rc;
-                x = xr;
                 const cn = rc * dc - rs * ds;
                 rs = rs * dc + rc * ds;
                 rc = cn;
             }
-            x = x * gx + ox;
-            y = y * gy + oy;
-            const ux = (x < -1 ? -1 : x > 1 ? 1 : x) * maxA;
-            const uy = (y < -1 ? -1 : y > 1 ? 1 : y) * maxA;
+            const ux = _cmd[0], uy = _cmd[1];
 
             // Miroir X : solution exacte du servo linéaire, petites étapes bornées pendant les sauts
             let e = px - ux;
@@ -381,9 +473,32 @@ export class Laser2Scanner {
                 const ph = k * T * rate;
                 on = ph - Math.floor(ph) < 0.3;
             }
+            // Tracé progressif (début / fin) et pointillés : sur le point émis
+            if (on && !drawAll) {
+                const fr01 = j / n;
+                on = fr01 >= drawA && fr01 <= drawB;
+            }
+            if (on && dotLen > 0) on = ((j / dotLen) | 0) % 2 === 0;
             if (on) {
                 let vr, vg, vb;
-                if (mono) {
+                if (cmode > 0) {
+                    // Effets de couleur : luminosité du point × couleur de l'effet
+                    const m = fr[j] > fg[j] ? (fr[j] > fb[j] ? fr[j] : fb[j]) : (fg[j] > fb[j] ? fg[j] : fb[j]);
+                    const u = j / n, cph = this._cph;
+                    const dim = this.dimmer;
+                    if (cmode === 1) hue(SEGMENT_HUES[(Math.floor(u * 6 + cph) % 6 + 6) % 6], _hue);
+                    else if (cmode === 2) hue(u + cph, _hue);
+                    else if (cmode === 4) hue(hash(j, Math.floor(cph * 4)), _hue);
+                    if (cmode === 3) {
+                        // Chenillard : bande lumineuse qui parcourt le tracé (couleur du laser)
+                        let d = Math.abs(u - (cph - Math.floor(cph)));
+                        if (d > 0.5) d = 1 - d;
+                        const kk = 0.12 + 0.88 * Math.exp(-(d * d) / 0.006);
+                        vr = m * lr * kk; vg = m * lg * kk; vb = m * lb * kk;
+                    } else {
+                        vr = m * _hue[0] * dim; vg = m * _hue[1] * dim; vb = m * _hue[2] * dim;
+                    }
+                } else if (mono) {
                     const m = fr[j] > fg[j] ? (fr[j] > fb[j] ? fr[j] : fb[j]) : (fg[j] > fb[j] ? fg[j] : fb[j]);
                     vr = m * lr; vg = m * lg; vb = m * lb;
                 } else {
@@ -409,9 +524,46 @@ export class Laser2Scanner {
     _extract(k0, k1) {
         let tol = 7e-4;
         for (let pass = 0; pass < 4; pass++) {
-            if (this._extractPass(k0, k1, tol)) return;
+            if (this._extractPass(k0, k1, tol)) break;
             tol *= 2;
         }
+        if (this.grating > 1) this._applyGrating();
+    }
+
+    /**
+     * Réseau de diffraction : le faisceau est divisé en plusieurs faisceaux simultanés décalés d'un angle
+     * fixe (×3 en ligne, ×5 en croix, ×9 en grille), la puissance est partagée entre les copies.
+     */
+    _applyGrating() {
+        const offs = GRATING_OFFSETS[this.grating];
+        const m = offs.length;
+        const k = 1 / m;
+        const nb = this.beamCount, ns = this.sheetCount;
+        while (nb * m * 5 > this.beams.length) this.beams = grow(this.beams);
+        while (ns * m * 7 > this.sheets.length) this.sheets = grow(this.sheets);
+        const B = this.beams, S = this.sheets;
+        // Copies écrites de la fin vers le début (l'original est lu avant d'être écrasé)
+        for (let i = nb - 1; i >= 0; i--) {
+            const x = B[i * 5], y = B[i * 5 + 1], r = B[i * 5 + 2] * k, g = B[i * 5 + 3] * k, b = B[i * 5 + 4] * k;
+            for (let c = m - 1; c >= 0; c--) {
+                const o = (i * m + c) * 5;
+                B[o] = x + offs[c][0] * GRATING_ANGLE; B[o + 1] = y + offs[c][1] * GRATING_ANGLE;
+                B[o + 2] = r; B[o + 3] = g; B[o + 4] = b;
+            }
+        }
+        for (let i = ns - 1; i >= 0; i--) {
+            const q = i * 7;
+            const x0 = S[q], y0 = S[q + 1], x1 = S[q + 2], y1 = S[q + 3];
+            const r = S[q + 4] * k, g = S[q + 5] * k, b = S[q + 6] * k;
+            for (let c = m - 1; c >= 0; c--) {
+                const o = (i * m + c) * 7;
+                const dx = offs[c][0] * GRATING_ANGLE, dy = offs[c][1] * GRATING_ANGLE;
+                S[o] = x0 + dx; S[o + 1] = y0 + dy; S[o + 2] = x1 + dx; S[o + 3] = y1 + dy;
+                S[o + 4] = r; S[o + 5] = g; S[o + 6] = b;
+            }
+        }
+        this.beamCount = nb * m;
+        this.sheetCount = ns * m;
     }
 
     /** @returns {boolean} false si le budget de primitives est dépassé */
@@ -532,6 +684,14 @@ export class Laser2Scanner {
 }
 
 const _cmd = [0, 0];
+
+/** Écart angulaire entre deux ordres du réseau de diffraction (rad) */
+const GRATING_ANGLE = 4 * DEG;
+const GRATING_OFFSETS = {
+    3: [[-1, 0], [0, 0], [1, 0]],
+    5: [[0, 0], [-1, 0], [1, 0], [0, -1], [0, 1]],
+    9: [[-1, -1], [0, -1], [1, -1], [-1, 0], [0, 0], [1, 0], [-1, 1], [0, 1], [1, 1]],
+};
 
 /**
  * Matrice de transition exacte du servo linéaire sur une période d'échantillon T
