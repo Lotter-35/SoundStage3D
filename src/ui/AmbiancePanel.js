@@ -5288,7 +5288,9 @@ export class AmbiancePanel {
         // Raccourcis clavier (Échap pour quitter le mode Gizmo ou fermer le panneau)
         window.addEventListener('keydown', (e) => {
             // Suppr : supprime l'élément sélectionné (mêmes actions que les boutons « 🗑️ Supprimer »)
-            if (e.code === 'Delete' && this.isOpen && !this._importModalOpen && !this._exportModalOpen) {
+            // (panneau fermé : projecteur choisi au clic en mode curseur)
+            const fixtureSelected = Boolean(this.selectedLaser || this.selectedStrobe || this.selectedSpot);
+            if ((e.code === 'Delete' || e.key === 'Delete') && (this.isOpen || fixtureSelected) && !this._importModalOpen && !this._exportModalOpen) {
                 const t = e.target;
                 const typing = t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName));
                 if (!typing && this._deleteSelectedWithKey()) {

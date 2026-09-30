@@ -22,7 +22,7 @@ export class RoomsView {
 
         this.list = h('div', { class: 'rooms-list' });
         this.code = h('input', {
-            class: 'field', placeholder: 'Code de la salle', maxlength: '8', spellcheck: 'false',
+            class: 'field', placeholder: 'Code ou nom de la salle', maxlength: '32', spellcheck: 'false',
             onkeydown: (e) => { if (e.key === 'Enter') this._openCode(); },
         });
         this.error = h('div', { class: 'rooms-error', text: error });

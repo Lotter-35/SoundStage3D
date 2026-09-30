@@ -3298,7 +3298,7 @@ listener.onLockChange((locked) => {
 });
 
 // Re-lock on canvas click and ensure audio context is active
-canvas.addEventListener('click', () => {
+canvas.addEventListener('click', (e) => {
     // Si le panneau Ambiance est ouvert ou qu'un gizmo 3D est en cours de manipulation, ne pas verrouiller la souris
     if (ambiancePanel && (ambiancePanel.isOpen || ambiancePanel.isDraggingGizmo)) {
         return;

@@ -60,7 +60,7 @@ export class FixtureSelection {
 
         // Repères des éléments sélectionnés (cube filaire, toujours visible)
         this._markerGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
-        this._markerMat = new THREE.LineBasicMaterial({ color: 0x38bdf8, depthTest: false, transparent: true, opacity: 0.95 });
+        this._markerMat = new THREE.LineBasicMaterial({ color: 0xffffff, depthTest: false, transparent: true, opacity: 0.8 });
         this._markers = new THREE.Group();
         this._markers.name = 'fixture-selection-markers';
         this._markers.renderOrder = 999;
@@ -492,7 +492,7 @@ export class FixtureSelection {
             if (this.items.size < 2) return;
             const t = e.target;
             if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-            if (e.code === 'Delete') {
+            if (e.code === 'Delete' || e.key === 'Delete') {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 this.deleteAll();
@@ -529,42 +529,39 @@ export class FixtureSelection {
     _buildDom() {
         const r = document.createElement('div');
         r.style.cssText = 'position:fixed;display:none;z-index:9000;pointer-events:none;'
-            + 'border:1px solid #38bdf8;background:rgba(56,189,248,0.12);border-radius:2px;';
+            + 'border:1px solid rgba(255,255,255,0.7);background:rgba(255,255,255,0.06);';
         document.body.appendChild(r);
         this._rectEl = r;
 
+        // Bandeau sobre : texte, type réglé, deux actions
         const bar = document.createElement('div');
         bar.style.cssText = 'position:fixed;left:50%;bottom:64px;transform:translateX(-50%);z-index:9001;display:none;'
-            + 'align-items:center;gap:10px;padding:7px 10px 7px 14px;border-radius:10px;'
-            + 'background:rgba(12,14,20,0.92);border:1px solid rgba(56,189,248,0.45);color:#e2e8f0;'
-            + 'font:12px/1.2 system-ui,sans-serif;box-shadow:0 6px 24px rgba(0,0,0,0.45);white-space:nowrap;';
+            + 'align-items:center;gap:12px;padding:6px 8px 6px 12px;border-radius:3px;'
+            + 'background:#141414;border:1px solid #333;color:#ddd;font:12px/1.2 system-ui,sans-serif;white-space:nowrap;';
         const text = document.createElement('span');
-        const kindLabel = document.createElement('span');
-        kindLabel.textContent = 'Réglages :';
-        kindLabel.style.color = '#94a3b8';
+        const ctrl = 'background:#1c1c1c;color:#ddd;border:1px solid #333;border-radius:2px;padding:3px 8px;font:inherit;cursor:pointer;';
         const kindSel = document.createElement('select');
-        kindSel.title = 'Type de lumière dont l\'inspecteur est ouvert : ses réglages s\'appliquent à toutes les lumières de ce type';
-        kindSel.style.cssText = 'background:#1e293b;color:#e2e8f0;border:1px solid #334155;border-radius:6px;padding:3px 6px;font:inherit;';
+        kindSel.title = 'Réglages appliqués à toutes les lumières de ce type (inspecteur ouvert)';
+        kindSel.style.cssText = ctrl;
         kindSel.addEventListener('change', () => {
             this.primaryKind = kindSel.value;
             if (this.items.size >= 2) this._enterGroup();
         });
-        const btn = (label, title, fn, danger) => {
+        const btn = (label, title, fn) => {
             const b = document.createElement('button');
             b.type = 'button';
             b.textContent = label;
             b.title = title;
-            b.style.cssText = `background:${danger ? 'rgba(239,68,68,0.18)' : '#1e293b'};color:${danger ? '#fca5a5' : '#e2e8f0'};`
-                + `border:1px solid ${danger ? 'rgba(239,68,68,0.5)' : '#334155'};border-radius:6px;padding:4px 9px;font:inherit;cursor:pointer;`;
+            b.style.cssText = ctrl;
             b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
             return b;
         };
-        const del = btn('🗑️ Supprimer', 'Supprimer toutes les lumières sélectionnées (Suppr)', () => this.deleteAll(), true);
-        const close = btn('✕', 'Désélectionner (Échap)', () => this.deselectAll(), false);
+        const del = btn('Supprimer', 'Supprimer la sélection (Suppr)', () => this.deleteAll());
+        const close = btn('×', 'Désélectionner (Échap)', () => this.deselectAll());
         for (const el of [bar, kindSel]) {
             ['pointerdown', 'mousedown', 'click'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
         }
-        bar.append(text, kindLabel, kindSel, del, close);
+        bar.append(text, kindSel, del, close);
         document.body.appendChild(bar);
         this._bar = bar;
         this._barText = text;
@@ -587,12 +584,12 @@ export class FixtureSelection {
         }
         const kinds = this._kinds();
         const parts = [...kinds.entries()].map(([k, c]) => `${c} ${c > 1 ? KIND_LABELS[k] : KIND_LABEL_ONE[k]}`);
-        this._barText.innerHTML = `<b style="color:#38bdf8">${n} sélectionnées</b> <span style="color:#94a3b8">· ${parts.join(' · ')}</span>`;
+        this._barText.textContent = `${n} sélectionnées — ${parts.join(', ')}`;
         this._kindSel.innerHTML = '';
         for (const [k, c] of kinds) {
             const o = document.createElement('option');
             o.value = k;
-            o.textContent = `${KIND_LABELS[k]} (${c})`;
+            o.textContent = `Régler : ${KIND_LABELS[k]} (${c})`;
             this._kindSel.appendChild(o);
         }
         this._kindSel.value = this.primaryKind;
