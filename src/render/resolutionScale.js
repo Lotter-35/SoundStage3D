@@ -10,9 +10,17 @@ export const RES_AUTO = 'Auto (selon l\'écran)';
 export const AUTO_TARGET_PIXELS = 1920 * 1080;
 const AUTO_MIN_SCALE = 0.25;
 
+// Résolution dynamique (DynamicResolution.js) : fraction de l'échelle de rendu choisie actuellement appliquée.
+// Le mode auto et le MSAA auto raisonnent sur l'image SANS cette réduction : les effets baissent avec elle
+// (sinon ils reprendraient les pixels économisés) et le nombre d'échantillons ne change pas en cours de jeu.
+let _dynamicFactor = 1;
+export function setDynamicResolutionFactor(f) { _dynamicFactor = f; }
+export function getDynamicResolutionFactor() { return _dynamicFactor; }
+
 /** Échelle (par axe) du mode auto pour une image de width × height pixels */
 export function autoResolutionScale(width, height) {
-    const px = Math.max(1, width * height);
+    const f = _dynamicFactor;
+    const px = Math.max(1, (width * height) / (f * f));
     return Math.min(1, Math.max(AUTO_MIN_SCALE, Math.sqrt(AUTO_TARGET_PIXELS / px)));
 }
 

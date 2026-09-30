@@ -47,10 +47,12 @@ import { HazeVolume } from './haze/HazeVolume.js';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
 import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
-import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
+import { clientOptions, RES_QUALITY, DYN_RES_MODES } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
+import { DynamicResolution } from './render/DynamicResolution.js';
+import { setDynamicResolutionFactor } from './render/resolutionScale.js';
 import { DirShadowCache } from './render/dirShadowCache.js';
 import { OptionsPanel } from './ui/OptionsPanel.js';
 
@@ -2110,10 +2112,18 @@ controls.setCameraModeLabel(listener.cameraMode, listener.isFlying);
 // ─── ⚙️ Options du joueur (locales, sauvegardées dans le navigateur, jamais synchronisées) ───
 // Chaque option est appliquée tout de suite puis à chaque changement dans le menu.
 const _baseDpr = () => Math.min(window.devicePixelRatio || 1, 1.5);
-clientOptions.bind('renderScale', (pct) => {
-    renderer.setPixelRatio(Math.max(0.1, _baseDpr() * pct / 100));
+// Échelle de rendu choisie (plafond) × fraction de la résolution dynamique
+function applyPixelRatio() {
+    renderer.setPixelRatio(Math.max(0.1, _baseDpr() * clientOptions.get('renderScale') / 100 * dynamicResolution.factor));
     if (laserManager) laserManager.resize(window.innerWidth, window.innerHeight);
+}
+const dynamicResolution = new DynamicResolution(renderer, (factor) => {
+    setDynamicResolutionFactor(factor);
+    applyPixelRatio();
 });
+window.__SS3D.dynamicResolution = dynamicResolution;
+clientOptions.bind('dynamicResolution', (v) => dynamicResolution.setMode(DYN_RES_MODES[v] ?? 'off'));
+clientOptions.bind('renderScale', () => applyPixelRatio());
 clientOptions.bind('sharpness', (v) => laserManager && laserManager.setSharpness(v));
 clientOptions.bind('antialiasing', (mode) => laserManager && laserManager.setAntialiasing(mode));
 clientOptions.bind('hazeResolution', (v) => hazeVolume.setParam('resolution', v));
@@ -3459,7 +3469,10 @@ function updateFpsCounter(dt, renderMs = 0) {
 
     // Always update the small FPS counter
     const fpsEl = document.getElementById('fps-counter');
-    if (fpsEl) fpsEl.textContent = _fps + ' FPS';
+    if (fpsEl) {
+        const dyn = dynamicResolution.factor;
+        fpsEl.textContent = dyn < 1 ? `${_fps} FPS · ${Math.round(dyn * 100)} %` : _fps + ' FPS';
+    }
 
     _debugAccum = 0;
     _frameCount = 0;
@@ -3783,8 +3796,11 @@ function renderFrame() {
     // LaserManager.render() bascule automatiquement sur le composer quand des lasers
     // sont actifs, sinon fait un rendu direct renderer.render() comme fallback.
     const t0 = performance.now();
+    dynamicResolution.begin();
     laserManager.render();
+    dynamicResolution.end();
     const renderTime = performance.now() - t0;
+    dynamicResolution.update(now);
 
     // SONDE 1 : Détection des frames lentes (Three.js / Lasers / Ombres / Objets)
     probeFrameSpike(realFrameMs, renderTime, scene, renderer, laserManager);

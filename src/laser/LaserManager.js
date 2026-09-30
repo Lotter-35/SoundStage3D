@@ -29,7 +29,7 @@ import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
 import { setLaserDisplayRange } from './LaserShaders.js';
-import { nextBusyState, BUSY_RES_FACTOR } from '../render/resolutionScale.js';
+import { nextBusyState, BUSY_RES_FACTOR, getDynamicResolutionFactor } from '../render/resolutionScale.js';
 
 // Layer 1 : Lasers uniquement (Bloom Laser + Aberration Chromatique Laser)
 export const BLOOM_LASER_LAYER = 1;
@@ -1398,7 +1398,8 @@ export class LaserManager {
      */
     _autoSamples() {
         const rt = this._sceneRT;
-        const w = rt ? rt.width : 0;
+        // Largeur sans la résolution dynamique : le nombre d'échantillons ne change pas en cours de jeu
+        const w = rt ? rt.width / getDynamicResolutionFactor() : 0;
         return w >= 3000 ? 2 : 4;
     }
 
