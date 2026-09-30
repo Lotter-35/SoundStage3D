@@ -22,6 +22,7 @@ import { getStageObstacles } from '../laser/LaserSceneIntersector.js';
 import { createHazeMaterial, HAZE_MAX_LIGHTS } from './HazeShaders.js';
 import { HazePass } from './HazePass.js';
 import { defaultHazeParams, HAZE_PARAMS_SCHEMA } from './hazeParams.js';
+import { RES_AUTO } from '../render/resolutionScale.js';
 
 // Calibrage des puissances (unités différentes selon le type de source)
 const STROBE_K = 1.0;
@@ -56,7 +57,7 @@ const SUN_K = 0.25;
 const AMBIENT_K = 0.12;
 const LINK_K = 30; // densité du brouillard (m⁻¹) → densité de fumée des faisceaux des lyres
 
-const RES_SCALE = { '1/16 de résolution': 1 / 16, '1/8 de résolution': 0.125, 'Quart de résolution': 0.25, 'Demi-résolution': 0.5, 'Pleine résolution': 1.0 };
+const RES_SCALE = { [RES_AUTO]: 'auto', '1/16 de résolution': 1 / 16, '1/8 de résolution': 0.125, 'Quart de résolution': 0.25, 'Demi-résolution': 0.5, 'Pleine résolution': 1.0 };
 
 const _pos = new THREE.Vector3();
 const _tgt = new THREE.Vector3();

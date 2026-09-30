@@ -17,6 +17,7 @@
 
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { resolveResolutionScale } from '../render/resolutionScale.js';
 
 /**
  * Recomposition : image de la scène + nappes (demi-résolution) sur-échantillonnées en tenant compte de
@@ -112,6 +113,8 @@ export class LaserFanPass extends Pass {
         this.needsSwap = true;
         this.enabled = false;
         this.resolutionScale = FAN_RESOLUTION_SCALE;
+        this.resolutionSetting = this.resolutionScale;
+        this.resolutionFactor = 1;
         this._width = 1;
         this._height = 1;
 
@@ -151,14 +154,17 @@ export class LaserFanPass extends Pass {
         return this._hasOut ? this._out : null;
     }
 
-    setResolutionScale(scale) {
-        this.resolutionScale = scale;
+    /** @param {number|'auto'} scale échelle par axe (ou 'auto' : selon la taille de l'image), × factor */
+    setResolutionScale(scale, factor = 1) {
+        this.resolutionSetting = scale;
+        this.resolutionFactor = factor;
         this.setSize(this._width, this._height);
     }
 
     setSize(width, height) {
         this._width = width;
         this._height = height;
+        this.resolutionScale = resolveResolutionScale(this.resolutionSetting, width, height) * this.resolutionFactor;
         const w = Math.max(1, Math.round(width * this.resolutionScale));
         const h = Math.max(1, Math.round(height * this.resolutionScale));
         this.fanTarget.setSize(w, h);

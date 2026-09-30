@@ -6,6 +6,8 @@
  * par des « applicateurs » enregistrés par main.js.
  */
 
+import { RES_AUTO } from '../render/resolutionScale.js';
+
 const STORAGE_KEY = 'soundstage3d:options';
 
 export const AA_MODES = [
@@ -19,8 +21,10 @@ export const AA_MODES = [
     'Aucun (Désactivé)',
 ];
 
-/** Qualités de rendu des faisceaux de lyres / nappes laser → échelle de résolution (par axe) */
+/** Qualités de rendu des faisceaux de lyres / nappes laser → échelle de résolution (par axe) ;
+ *  « Auto » : pleine résolution jusqu'en 1080p, ~¾ en 1440p, ½ en 4K (voir render/resolutionScale.js) */
 export const RES_QUALITY = {
+    [RES_AUTO]: 'auto',
     'Pleine résolution': 1.0,
     'Demi-résolution': 0.5,
     'Quart de résolution': 0.25,
@@ -48,14 +52,14 @@ export const CLIENT_OPTIONS_SCHEMA = {
     antialiasing:     opt(AA_MODES, AA_MODES[0], 'Anticrénelage', 'display'),
 
     // ── Effets & performance ──
-    hazeResolution:   opt(['1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'], 'Demi-résolution', 'Brouillard : résolution', 'effects'),
+    hazeResolution:   opt([RES_AUTO, '1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'], RES_AUTO, 'Brouillard : résolution', 'effects', 'Auto : pleine résolution jusqu’en 1080p, ½ en 4K'),
     hazeSegments:     num(2, 1, 8, 1, 'Brouillard : tranches de calcul', 'effects'),
     hazeMaxLights:    num(6, 1, 8, 1, 'Brouillard : lumières max', 'effects'),
-    spotBeamQuality:  opt(RES_QUALITY_NAMES, 'Demi-résolution', 'Lyres : qualité des faisceaux', 'effects'),
+    spotBeamQuality:  opt(RES_QUALITY_NAMES, RES_AUTO, 'Lyres : qualité des faisceaux', 'effects', 'Auto : pleine résolution jusqu’en 1080p, ½ en 4K'),
     spotRealLights:   bool(true, 'Lyres : éclairage réel de la scène', 'effects'),
     spotShadows:      bool(false, 'Lyres : ombres portées (2 max)', 'effects'),
     laserRange:       num(300, 20, 3000, 10, 'Lasers : distance d\'affichage (m)', 'effects'),
-    laserFanQuality:  opt(RES_QUALITY_NAMES, 'Demi-résolution', 'Lasers : qualité des nappes', 'effects', 'Plus la résolution est basse, moins la fumée des nappes coûte à calculer'),
+    laserFanQuality:  opt(RES_QUALITY_NAMES, RES_AUTO, 'Lasers : qualité des nappes', 'effects', 'Plus la résolution est basse, moins la fumée des nappes coûte à calculer. Auto : pleine résolution jusqu’en 1080p, ½ en 4K'),
     laserSharedSmoke: bool(true, 'Lasers : fumée partagée (nappes superposées)', 'effects', 'La fumée des nappes superposées n\'est calculée qu\'une fois par pixel'),
     grassDistance:    num(0, 0, 60, 1, 'Herbe : distance d\'affichage (m)', 'effects', '0 = pas d\'herbe'),
 
@@ -121,6 +125,16 @@ class ClientOptionsStore {
         } else {
             if (this.values.antialiasing === 'MSAA 4x (Matériel - Recommandé)') this.values.antialiasing = AA_MODES[0];
             this.values._aaAuto = true;
+            migrated = true;
+        }
+        // Une seule fois : l'ancienne résolution par défaut des effets (½, trop grossière en 1080p) passe en Auto
+        if (saved && saved._resAuto) {
+            this.values._resAuto = true;
+        } else {
+            for (const k of ['hazeResolution', 'spotBeamQuality', 'laserFanQuality']) {
+                if (this.values[k] === 'Demi-résolution') this.values[k] = RES_AUTO;
+            }
+            this.values._resAuto = true;
             migrated = true;
         }
         if (!saved || migrated) this._save();

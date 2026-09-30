@@ -11,6 +11,8 @@
  * ─────────────────────────────────────────────────────────────
  */
 
+import { RES_AUTO } from '../../render/resolutionScale.js';
+
 // ── Roues de la machine (l'index 0 est toujours la position « ouverte ») ──
 
 /** Roue de couleurs fixes : filtres dichroïques (multipliés au mélange CMY) */
@@ -160,7 +162,7 @@ export const SPOT_GLOBAL_SCHEMA = {
     hazeContrast: { value: 0.65, min: 0, max: 1.5, step: 0.01, label: 'Volutes (contraste)' },
     hazeScale:    { value: 1.0,  min: 0.2, max: 4, step: 0.05, label: 'Taille des volutes' },
     scattering:   { value: 0.72, min: 0, max: 0.95, step: 0.01, label: 'Diffusion avant (Mie)' },
-    beamQuality:  { value: 'Demi-résolution', options: ['Pleine résolution', 'Demi-résolution', 'Quart de résolution', '1/8 de résolution', '1/16 de résolution'], label: 'Qualité des faisceaux' },
+    beamQuality:  { value: RES_AUTO, options: [RES_AUTO, 'Pleine résolution', 'Demi-résolution', 'Quart de résolution', '1/8 de résolution', '1/16 de résolution'], label: 'Qualité des faisceaux' },
     realLights:   { value: true, label: 'Éclairage réel de la scène' },
     lightShadows: { value: false, label: 'Ombres portées (2 lyres max)' },
 };

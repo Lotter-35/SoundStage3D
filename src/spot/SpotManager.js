@@ -232,7 +232,7 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
-        this.volumePass.setResolutionScale((RES_QUALITY[g.beamQuality] || 0.5) * this._insideScale);
+        this.volumePass.setResolutionScale(RES_QUALITY[g.beamQuality] || 0.5, this._insideScale);
         this.pool.setShadows(g.lightShadows);
     }
 
@@ -276,7 +276,7 @@ export class SpotManager {
         const want = this._insideHold > 0 ? INSIDE_RES_FACTOR : 1;
         if (want !== this._insideScale) {
             this._insideScale = want;
-            this.volumePass.setResolutionScale((RES_QUALITY[this.globals.beamQuality] || 0.5) * want);
+            this.volumePass.setResolutionScale(RES_QUALITY[this.globals.beamQuality] || 0.5, want);
         }
         this.pool.update(this._spots.values(), this.camera, this.globals.realLights && !this.pool.disabled, dt);
     }

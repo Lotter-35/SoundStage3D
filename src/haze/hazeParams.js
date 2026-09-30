@@ -6,8 +6,10 @@
  * ─────────────────────────────────────────────────────────────
  */
 
+import { RES_AUTO } from '../render/resolutionScale.js';
+
 export const HAZE_MODES = ['Strobes prioritaires', 'La plus forte gagne'];
-export const HAZE_RESOLUTIONS = ['1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'];
+export const HAZE_RESOLUTIONS = [RES_AUTO, '1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'];
 export const HAZE_BEAM_LINK = ['Indépendante', 'Liée au brouillard de salle'];
 
 const num = (value, min, max, step, label, folder) => ({ value, min, max, step, label, folder });
@@ -59,7 +61,7 @@ export const HAZE_PARAMS_SCHEMA = {
     edge:         num(8, 0, 20, 0.1, 'Bords doux (m)', 'box'),
 
     // ── Qualité ──
-    resolution:   opt(HAZE_RESOLUTIONS, 'Demi-résolution', 'Résolution', 'perf'),
+    resolution:   opt(HAZE_RESOLUTIONS, RES_AUTO, 'Résolution', 'perf'),
     maxLights:    num(6, 1, 8, 1, 'Nombre de lumières max', 'perf'),
     segments:     num(2, 1, 8, 1, 'Tranches de calcul', 'perf'),
 };

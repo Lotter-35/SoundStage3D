@@ -12,6 +12,7 @@
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { createHazeCompositeMaterial } from './HazeShaders.js';
+import { resolveResolutionScale } from '../render/resolutionScale.js';
 
 export class HazePass extends Pass {
     /**
@@ -26,6 +27,8 @@ export class HazePass extends Pass {
         this.sceneDepth = sceneDepth;
         this.needsSwap = true;
         this.resolutionScale = 0.25;
+        this.resolutionSetting = this.resolutionScale;
+        this.resolutionFactor = 1;
         this._w = 1;
         this._h = 1;
         this.target = new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false });
@@ -46,14 +49,17 @@ export class HazePass extends Pass {
         return this._hasOut ? this._out : null;
     }
 
-    setResolutionScale(s) {
-        this.resolutionScale = s;
+    /** @param {number|'auto'} s échelle par axe (ou 'auto' : selon la taille de l'image), × factor */
+    setResolutionScale(s, factor = 1) {
+        this.resolutionSetting = s;
+        this.resolutionFactor = factor;
         this.setSize(this._w, this._h);
     }
 
     setSize(width, height) {
         this._w = width;
         this._h = height;
+        this.resolutionScale = resolveResolutionScale(this.resolutionSetting, width, height) * this.resolutionFactor;
         this.target.setSize(Math.max(1, Math.round(width * this.resolutionScale)), Math.max(1, Math.round(height * this.resolutionScale)));
     }
 
