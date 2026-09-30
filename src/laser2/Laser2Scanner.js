@@ -579,7 +579,9 @@ export class Laser2Scanner {
         const N = k1 - k0;
         const inv = 1 / N;                                   // énergie → puissance moyenne
         const dwellTol = Math.max(this.divergence * 0.5, 2.5e-4);
-        const minSheet = dwellTol * 4;
+        // Une portion balayée reste une nappe même courte (couleur qui change à chaque point : nappe
+        // multicolore, pas une rangée de faisceaux). Seul un trajet quasi immobile devient un faisceau.
+        const minSheet = dwellTol;
         this.beamCount = 0;
         this.sheetCount = 0;
         let over = false;
