@@ -91,7 +91,7 @@ export class LiveView {
         const live = this.live;
         return {
             quantize: live.quantize,
-            fade: (live.fade * this.tempo.bpm) / 60,
+            fade: (live.fade * this.tempo.effectiveBpm()) / 60,
             row: row.id,
             level: () => row.level,
         };

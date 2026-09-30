@@ -557,14 +557,20 @@ function sendRegies(room, data) {
     for (const ws of room.regies.values()) send(ws, data);
 }
 
-/** Horloge musicale et état de la salle pour les régies */
+/** Horloge musicale et état de la salle pour les régies (avec le morceau en cours : timeline du show) */
 function regiePlaybackMessage(room) {
     const pb = room.playback || { currentTime: 0, isPlaying: false, timestamp: Date.now() };
+    let roomId = null;
+    for (const [id, r] of rooms) if (r === room) { roomId = id; break; }
+    let track = null;
+    if (room.currentTrack) track = { id: room.currentTrack.id, name: room.currentTrack.name, url: room.currentTrack.url || `/audio/track/${room.currentTrack.id}` };
+    else if (room.audioBuffer && roomId) track = { id: null, name: room.trackName || '', url: `/audio/${roomId}` };
     return {
         type: 'REGIE_PLAYBACK',
         serverTime: Date.now(),
         playback: { currentTime: pb.currentTime || 0, isPlaying: Boolean(pb.isPlaying), timestamp: pb.timestamp || Date.now() },
         trackName: room.trackName || '',
+        track,
         playerCount: room.clients.size,
     };
 }

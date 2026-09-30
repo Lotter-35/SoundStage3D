@@ -53,6 +53,7 @@ export class ShowBar {
     }
 
     tap() {
+        if (this.tempo.isFollowing()) return; // le tempo suit le morceau (timeline armée)
         const bpm = this.tempo.tap();
         if (this.shows.show && this.shows.show.bpm !== bpm) {
             this.shows.show.bpm = bpm;
@@ -152,7 +153,14 @@ export class ShowBar {
         this.$status.className = `tag${cls ? ` ${cls}` : ''}`;
         this.$status.title = shows.error || '';
         this.$status.style.display = text ? '' : 'none';
-        if (document.activeElement !== this.$bpm) this.$bpm.value = String(this.tempo.bpm);
+        const following = this.tempo.isFollowing();
+        if (following !== this._following) {
+            this._following = following;
+            this.$bpm.readOnly = following;
+            this.$bpm.classList.toggle('following', following);
+            this.$bpm.title = following ? 'Tempo du morceau en lecture (timeline du show armée)' : 'Tempo (temps par minute), enregistré dans le show';
+        }
+        if (document.activeElement !== this.$bpm) this.$bpm.value = String(this.tempo.effectiveBpm());
         const beat = this.tempo.beatNow();
         const i = Math.floor(beat) % 4;
         const flash = beat - Math.floor(beat) < 0.2;

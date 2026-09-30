@@ -26,7 +26,7 @@ function emptyLive() {
 }
 
 function emptyShow(name) {
-    return { id: newId('s'), name, version: 1, createdAt: Date.now(), updatedAt: 0, bpm: 120, groups: [], patterns: [], live: emptyLive() };
+    return { id: newId('s'), name, version: 1, createdAt: Date.now(), updatedAt: 0, bpm: 120, groups: [], patterns: [], live: emptyLive(), timelines: {} };
 }
 
 /** Complète un show lu sur le serveur (champs manquants, points triés) */
@@ -35,6 +35,14 @@ function normalize(show) {
     if (!Array.isArray(s.groups)) s.groups = [];
     if (!Array.isArray(s.patterns)) s.patterns = [];
     if (!(s.bpm > 0)) s.bpm = 120;
+    if (!s.timelines || typeof s.timelines !== 'object') s.timelines = {};
+    for (const tl of Object.values(s.timelines)) {
+        if (!Array.isArray(tl.lanes)) tl.lanes = [];
+        if (!Array.isArray(tl.markers)) tl.markers = [];
+        if (!(tl.bpm > 0)) tl.bpm = 120;
+        if (!Number.isFinite(tl.offset)) tl.offset = 0;
+        for (const l of tl.lanes) if (!Array.isArray(l.clips)) l.clips = [];
+    }
     if (!s.live || typeof s.live !== 'object' || !Array.isArray(s.live.rows)) s.live = emptyLive();
     const live = s.live;
     if (!(live.cols > 0)) live.cols = LIVE_COLS;

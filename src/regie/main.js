@@ -17,6 +17,7 @@ import { channelsOf } from './fixtureTypes.js';
 import { ShowStore } from './ShowStore.js';
 import { TempoClock } from './TempoClock.js';
 import { PatternEngine } from './PatternEngine.js';
+import { TimelinePlayer } from './TimelinePlayer.js';
 
 const PREFS_KEY = 'soundstage3d:regie';
 
@@ -45,7 +46,12 @@ client.on('patch', (fixtures) => store.setFixtures(fixtures));
 const shows = new ShowStore();
 const tempo = new TempoClock(() => client.clock.now());
 const engine = new PatternEngine({ store, tempo, getShow: () => shows.show });
-out.setLayer((frameOf, t) => engine.apply(frameOf, t));
+// Timeline du morceau en cours (show calé sur la musique), puis patterns de l'éditeur et du Live par-dessus
+const timeline = new TimelinePlayer({ shows, client, engine, tempo });
+out.setLayer((frameOf, t) => {
+    timeline.apply(frameOf, t);
+    engine.apply(frameOf, t);
+});
 
 let _showId = null;
 shows.onChange(() => {
@@ -105,7 +111,7 @@ function openRoom(roomId) {
     setRoomInUrl(roomId);
     client.join(roomId);
     out.start();
-    setView(new DeskView({ client, out, store, shows, tempo, engine, prefs, savePrefs, onLeave: () => showRooms() }));
+    setView(new DeskView({ client, out, store, shows, tempo, engine, timeline, prefs, savePrefs, onLeave: () => showRooms() }));
 }
 
 function showRooms(error = '') {
@@ -138,4 +144,4 @@ if (initial) openRoom(initial.toUpperCase());
 else showRooms();
 
 // Accès de débogage depuis la console du navigateur
-window.__regie = { client, out, store, shows, tempo, engine, get view() { return view; } };
+window.__regie = { client, out, store, shows, tempo, engine, timeline, get view() { return view; } };

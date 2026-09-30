@@ -4,12 +4,14 @@
  *   barre du haut : show (sauvegarde), salle, connexion, joueurs, horloge musicale, tempo,
  *                   avance des trames, débit, grand master et blackout
  *   gauche        : groupes, univers
- *   centre        : plan de la scène · liste des projecteurs (patch) · patterns · live · moniteur DMX
+ *   centre        : plan de la scène · liste des projecteurs (patch) · patterns · live · show (timeline
+ *                   calée sur la musique) · moniteur DMX
  *                   + sélection rapide et prise / reprise de main
  *   bas           : faders — canaux nommés de la sélection, ou canaux bruts d'un univers
  *
  * Raccourcis : B = blackout, T = tap tempo, Espace = lancer / arrêter le pattern affiché,
- * 1…8 (Live) = lancer la scène, Échap = rien de sélectionné, Ctrl+A = tout sélectionner.
+ * 1…8 (Live) = lancer la scène, Espace (Show) = lecture / pause de la salle,
+ * Échap = rien de sélectionné, Ctrl+A = tout sélectionner.
  */
 
 import { h, ICONS, fmtClock, fmtRate, pad3 } from './dom.js';
@@ -20,6 +22,7 @@ import { PatchView } from './PatchView.js';
 import { GroupsPanel } from './GroupsPanel.js';
 import { PatternsView } from './PatternsView.js';
 import { LiveView } from './LiveView.js';
+import { ShowView } from './ShowView.js';
 import { ShowBar } from './ShowBar.js';
 import { channelsOf, KINDS, KIND_ORDER } from '../fixtureTypes.js';
 import { takeControl, releaseControl } from '../FixtureControl.js';
@@ -36,7 +39,7 @@ const STATUS_TEXT = {
     lost: 'Reconnexion…',
 };
 
-const VIEWS = [['plan', 'Plan'], ['patch', 'Patch'], ['patterns', 'Patterns'], ['live', 'Live'], ['dmx', 'Moniteur DMX']];
+const VIEWS = [['plan', 'Plan'], ['patch', 'Patch'], ['patterns', 'Patterns'], ['live', 'Live'], ['show', 'Show'], ['dmx', 'Moniteur DMX']];
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
 /** Nom de canal sans ses précisions entre parenthèses (libellé de fader) */
@@ -51,11 +54,12 @@ export class DeskView {
      * @param {import('../ShowStore.js').ShowStore} o.shows
      * @param {import('../TempoClock.js').TempoClock} o.tempo
      * @param {import('../PatternEngine.js').PatternEngine} o.engine
+     * @param {import('../TimelinePlayer.js').TimelinePlayer} o.timeline
      * @param {object} o.prefs          réglages de la page (sauvegardés par main.js)
      * @param {() => void} o.savePrefs
      * @param {() => void} o.onLeave    retour au choix de la salle
      */
-    constructor({ client, out, store, shows, tempo, engine, prefs, savePrefs, onLeave }) {
+    constructor({ client, out, store, shows, tempo, engine, timeline, prefs, savePrefs, onLeave }) {
         this.client = client;
         this.out = out;
         this.store = store;
@@ -87,6 +91,7 @@ export class DeskView {
             now: () => client.clock.now(),
             playTime: () => client.clock.now() + out.lookahead,
         });
+        this.showView = new ShowView({ shows, client, timeline, prefs, savePrefs });
         this.live = new LiveView({
             shows, engine, tempo,
             now: () => client.clock.now(),
@@ -242,7 +247,7 @@ export class DeskView {
         this.prefs.view = id;
         this._savePrefs();
         for (const [k, b] of this.$viewBtns) b.classList.toggle('on', k === id);
-        const el = { plan: this.plan.el, patch: this.patch.el, patterns: this.patterns.el, live: this.live.el }[id] || this.monitor.el;
+        const el = { plan: this.plan.el, patch: this.patch.el, patterns: this.patterns.el, live: this.live.el, show: this.showView.el }[id] || this.monitor.el;
         this.$centerBody.replaceChildren(el);
         this.$uniTitle.style.display = id === 'dmx' ? '' : 'none';
         if (id === 'plan') this.plan.invalidate();
@@ -398,6 +403,9 @@ export class DeskView {
             // Touches de la rangée des chiffres (même place en AZERTY et en QWERTY)
             this.live.launchScene(Number(e.code.slice(5)) - 1);
             e.preventDefault();
+        } else if (e.key === ' ' && plain && this.view === 'show' && this.showView.tl) {
+            this.showView._togglePlay();
+            e.preventDefault();
         } else if (e.key === ' ' && plain && this.view === 'patterns' && this.patterns.pattern) {
             this.engine.toggle(this.patterns.pattern.id, this.client.clock.now() + this.out.lookahead);
             e.preventDefault();
@@ -458,6 +466,7 @@ export class DeskView {
         document.removeEventListener('keydown', this._onKey);
         this.plan.dispose();
         this.patterns.dispose();
+        this.showView.dispose();
         this.showBar.dispose();
     }
 
@@ -478,6 +487,7 @@ export class DeskView {
         else if (this.view === 'patch') this.patch.frame();
         else if (this.view === 'patterns') this.patterns.frame();
         else if (this.view === 'live') this.live.frame();
+        else if (this.view === 'show') this.showView.frame();
         this.groups.frame();
         this.showBar.frame();
 

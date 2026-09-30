@@ -497,3 +497,31 @@ select.field { padding: 0 4px; background: var(--bg); cursor: pointer; }
 .shelf-item:hover { background: var(--raised); }
 .shelf-item .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .shelf-item .count { color: var(--text-3); }
+.field.bpm.following { color: var(--ok); border-color: rgba(63, 191, 106, 0.45); }
+
+/* Vue Show : timeline calée sur la musique */
+.showv { display: flex; flex-direction: column; min-height: 0; }
+.showv-head { gap: 8px; }
+.showv-head .track-name { max-width: 240px; overflow: hidden; text-overflow: ellipsis; font-weight: 600; }
+.showv-head .pos { min-width: 120px; }
+.showv-head .btn.icon svg { width: 10px; height: 10px; }
+.btn.armed { color: var(--ok); border-color: rgba(63, 191, 106, 0.55); background: rgba(63, 191, 106, 0.12); }
+.showv-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 260px; }
+.showv-main { min-width: 0; min-height: 0; display: flex; }
+.showv-main > * { flex: 1; min-width: 0; }
+.showv-empty { display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding: 20px; }
+.showv-scroll { display: grid; grid-template-columns: 160px minmax(0, 1fr); align-content: start; overflow-y: auto; }
+.showv-heads { border-right: 1px solid var(--line-strong); background: var(--panel); }
+.showv-rowhead { display: flex; align-items: center; padding: 0 10px; font-size: 11px; border-bottom: 1px solid var(--line); }
+.showv-lanehead { display: flex; align-items: center; gap: 4px; padding: 0 4px 0 10px; border-bottom: 1px solid var(--line); }
+.showv-lanehead .name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: text; }
+.showv-lanehead .field { flex: 1; min-width: 0; height: 22px; }
+.showv-lanehead .btn.icon { width: 20px; height: 20px; font-size: 10px; }
+.showv-lanehead.muted .name { color: var(--text-3); }
+.showv-addlane { padding: 8px 10px; }
+.showv-canvas-wrap { min-width: 0; position: relative; }
+.showv-canvas { display: block; width: 100%; outline: none; }
+.showv-side { display: flex; flex-direction: column; }
+.showv-insp { flex: none; max-height: 55%; }
+.showv-shelf { flex: 1; min-height: 0; display: flex; flex-direction: column; border-top: 1px solid var(--line-strong); }
+.showv-head .btn.icon { width: auto; min-width: 24px; padding: 0 5px; }

@@ -322,40 +322,51 @@ export class PatternEngine {
             if (w <= 0) continue;
             const level = pb.level ? Math.max(0, Math.min(1, pb.level())) : 1;
             const L = Math.max(0.25, pat.length || 4);
-            const b = mod((beat - pb.startBeat) * this.speed, L);
+            this.applyPattern(pat, mod((beat - pb.startBeat) * this.speed, L), w, level, frameOf);
+        }
+    }
 
-            // Fondu : on écrit dans les univers puis on mélange avec ce qu'il y avait dessous
-            let target = frameOf;
-            let snaps = null;
-            if (w < 1) {
-                snaps = new Map();
-                target = (n) => {
-                    const f = frameOf(n);
-                    if (!snaps.has(n)) snaps.set(n, f.slice());
-                    return f;
-                };
+    /**
+     * Écrit un pattern à la position b (temps du pattern) dans les univers de sortie
+     * @param {object} pat
+     * @param {number} b      position dans la boucle (0…longueur)
+     * @param {number} w      poids (fondu : mélange avec ce qu'il y a dessous), 1 = plein
+     * @param {number} level  niveau d'intensité (0…1)
+     * @param {(universe: number) => Uint8Array} frameOf
+     */
+    applyPattern(pat, b, w, level, frameOf) {
+        const L = Math.max(0.25, pat.length || 4);
+        // Fondu : on écrit dans les univers puis on mélange avec ce qu'il y avait dessous
+        let target = frameOf;
+        let snaps = null;
+        if (w < 1) {
+            snaps = new Map();
+            target = (n) => {
+                const f = frameOf(n);
+                if (!snaps.has(n)) snaps.set(n, f.slice());
+                return f;
+            };
+        }
+        const touched = level < 1 ? new Set() : null;
+        for (const tr of pat.tracks) {
+            if (tr.mute) continue;
+            const fixtures = this.targetsOf(tr);
+            const n = fixtures.length;
+            for (let i = 0; i < n; i++) {
+                const v = sampleTrack(tr, b, L, i, n);
+                if (v === null) continue;
+                const f = fixtures[i];
+                writeAttribute(target(f.universe), f, tr.attr, v);
+                if (touched) touched.add(f);
             }
-            const touched = level < 1 ? new Set() : null;
-            for (const tr of pat.tracks) {
-                if (tr.mute) continue;
-                const fixtures = this.targetsOf(tr);
-                const n = fixtures.length;
-                for (let i = 0; i < n; i++) {
-                    const v = sampleTrack(tr, b, L, i, n);
-                    if (v === null) continue;
-                    const f = fixtures[i];
-                    writeAttribute(target(f.universe), f, tr.attr, v);
-                    if (touched) touched.add(f);
-                }
-            }
-            // Niveau de rangée : intensité des projecteurs du pattern (qu'il la pilote ou non)
-            if (touched) for (const f of touched) scaleIntensity(target(f.universe), f, level);
-            if (snaps) {
-                for (const [n, before] of snaps) {
-                    const f = frameOf(n);
-                    for (let i = 0; i < f.length; i++) {
-                        if (f[i] !== before[i]) f[i] = Math.round(before[i] + (f[i] - before[i]) * w);
-                    }
+        }
+        // Niveau de rangée : intensité des projecteurs du pattern (qu'il la pilote ou non)
+        if (touched) for (const f of touched) scaleIntensity(target(f.universe), f, level);
+        if (snaps) {
+            for (const [n, before] of snaps) {
+                const f = frameOf(n);
+                for (let i = 0; i < f.length; i++) {
+                    if (f[i] !== before[i]) f[i] = Math.round(before[i] + (f[i] - before[i]) * w);
                 }
             }
         }

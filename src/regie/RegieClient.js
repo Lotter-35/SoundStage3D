@@ -42,6 +42,8 @@ export class RegieClient {
         this.roomId = null;
         this.playback = { currentTime: 0, isPlaying: false, timestamp: 0 };
         this.trackName = '';
+        /** @type {{id: string|null, name: string, url: string}|null} morceau en cours de la salle */
+        this.track = null;
         this.playerCount = 0;
         this._requests = new Map();  // demandes FIXTURE_STATE en attente
         this._requestId = 0;
@@ -175,16 +177,37 @@ export class RegieClient {
     _applyPlayback(msg) {
         if (msg.playback) this.playback = msg.playback;
         if (msg.trackName !== undefined) this.trackName = msg.trackName;
+        if (msg.track !== undefined) this.track = msg.track;
         if (msg.playerCount !== undefined) this.playerCount = msg.playerCount;
         this._emit('playback');
     }
 
-    /** Temps musical de la salle (s), extrapolé sur l'horloge du serveur */
-    musicTime() {
+    /** Temps musical de la salle (s), extrapolé sur l'horloge du serveur (à l'heure serveur t, par défaut maintenant) */
+    musicTime(t = this.clock.now()) {
         const pb = this.playback;
         if (!pb) return 0;
-        const elapsed = pb.isPlaying ? Math.max(0, this.clock.now() - (pb.timestamp || 0)) / 1000 : 0;
+        const elapsed = pb.isPlaying ? Math.max(0, t - (pb.timestamp || 0)) / 1000 : 0;
         return (pb.currentTime || 0) + elapsed;
+    }
+
+    /** Adresse du fichier audio du morceau en cours (forme d'onde, BPM), ou null */
+    trackUrl() {
+        return this.track && this.track.url ? `${this._base.http}${this.track.url}` : null;
+    }
+
+    /**
+     * Commande de lecture pour toute la salle, comme depuis le lecteur du jeu
+     * @param {'play_pause'|'seek'} action
+     * @param {object} data  play_pause : { isPlaying, currentTime } ; seek : { currentTime }
+     */
+    sendAction(action, data) {
+        this._sendJson({ type: 'SYNC_ACTION', action, data });
+        // Affichage immédiat, sans attendre le retour du serveur
+        const pb = this.playback || {};
+        const now = this.clock.now();
+        if (action === 'seek') this.playback = { ...pb, currentTime: data.currentTime, timestamp: now };
+        if (action === 'play_pause') this.playback = { currentTime: data.currentTime ?? this.musicTime(), isPlaying: Boolean(data.isPlaying), timestamp: now };
+        this._emit('playback');
     }
 
     /** true si un paquet peut partir tout de suite (connecté, file d'envoi raisonnable) */

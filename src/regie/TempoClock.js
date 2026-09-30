@@ -5,6 +5,7 @@
  * les trames datées « maintenant + avance » sont calculées au bon temps musical.
  * Changer le BPM ré-ancre l'horloge (pas de saut de phase) ; le tap tempo règle le BPM
  * sur les derniers tapotements et cale un temps sur le dernier.
+ * Une source externe (la timeline du morceau en lecture) peut imposer temps et BPM : follow().
  */
 
 const MIN_BPM = 20;
@@ -22,10 +23,40 @@ export class TempoClock {
         this._t0 = now();
         this._b0 = 0;
         this._taps = [];
+        this._source = null;
+    }
+
+    /**
+     * Source prioritaire des temps : fn(t) → { beat, bpm } ou null (horloge propre)
+     * @param {(t: number) => ({beat: number, bpm: number}|null)} fn
+     */
+    follow(fn) {
+        this._source = fn;
+    }
+
+    _follow(t) {
+        return this._source ? this._source(t) : null;
+    }
+
+    /** true si le tempo suit en ce moment le morceau */
+    isFollowing() {
+        return Boolean(this._follow(this._now()));
+    }
+
+    /** BPM en vigueur (celui du morceau quand il est suivi) */
+    effectiveBpm() {
+        const s = this._follow(this._now());
+        return s ? s.bpm : this.bpm;
     }
 
     /** Temps musical (en temps, fractionnaire) à l'heure serveur t (ms) */
     beatAt(t) {
+        const s = this._follow(t);
+        if (s) return s.beat;
+        return this._own(t);
+    }
+
+    _own(t) {
         return this._b0 + ((t - this._t0) * this.bpm) / 60000;
     }
 
@@ -36,7 +67,7 @@ export class TempoClock {
     setBpm(bpm) {
         const b = clamp(Number(bpm) || this.bpm, MIN_BPM, MAX_BPM);
         const t = this._now();
-        this._b0 = this.beatAt(t);
+        this._b0 = this._own(t);
         this._t0 = t;
         this.bpm = Math.round(b * 10) / 10;
     }
@@ -44,7 +75,7 @@ export class TempoClock {
     /** Tapotement : BPM moyen des derniers intervalles, temps calé sur ce tapotement */
     tap() {
         const t = this._now();
-        const beat = this.beatAt(t); // avec l'ancien BPM (continuité de phase)
+        const beat = this._own(t); // avec l'ancien BPM (continuité de phase)
         const taps = this._taps;
         if (taps.length && t - taps[taps.length - 1] > TAP_RESET) taps.length = 0;
         taps.push(t);
