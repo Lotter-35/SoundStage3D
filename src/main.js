@@ -36,7 +36,7 @@ import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=186';
 import { LaserManager } from './laser/LaserManager.js?v=308';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
-import { initModelDropLoader } from './scene/modelDropLoader.js?v=234';
+import { initModelDropLoader, isModelGizmoDragging, consumeModelPick, shouldKeepCursorForModel } from './scene/modelDropLoader.js?v=235';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=17';
@@ -145,7 +145,7 @@ playerLaserCollider.setLocalPlayer(listener);
 registerPlayerCollider(playerLaserCollider);
 
 // ─── Drag & Drop 3D Model Loader (Debug) ─────────────────────────
-initModelDropLoader({ scene, camera });
+initModelDropLoader({ scene, camera, renderer, listener });
 
 // ─── Static Global Illumination (0 lag) ──────────────────────────
 const staticGI = new StaticGlobalIllumination({ scene, renderer });
@@ -1215,6 +1215,34 @@ try {
         }
     });
     mp.onConnectionState((state) => showConnectionBanner(state));
+
+    // ─── Salle permanente : position du joueur gardée (rechargement de la page) ─────────
+    // Sauvegardée dans ce navigateur toutes les 2 s et à la fermeture ; relue seulement au chargement de la
+    // page. Une reconnexion au serveur (serveur redémarré) ne recharge pas la page : le joueur qui a continué
+    // de jouer n'est jamais ramené en arrière.
+    if (mp.persistent && mp.roomId && listener && listener._character3D) {
+        const posKey = `soundstage3d:position:${mp.roomId}`;
+        const ch = listener._character3D;
+        try {
+            const saved = JSON.parse(localStorage.getItem(posKey) || 'null');
+            if (saved && [saved.x, saved.y, saved.z, saved.heading].every(Number.isFinite)) {
+                if (saved.flying && !listener.isFlying) listener.toggleFly();
+                ch.position.set(saved.x, saved.y, saved.z);
+                ch.onGround = false;              // retombe au sol s'il n'était pas en vol
+                ch.verticalVelocity = 0;
+                ch.heading = ch.targetHeading = ch.orbitYaw = saved.heading;
+                if (ch.model) { ch.model.position.copy(ch.position); ch.model.rotation.y = saved.heading + Math.PI; }
+            }
+        } catch (_) { /* stockage indisponible : spawn habituel */ }
+        const savePosition = () => {
+            try {
+                const p = ch.position;
+                localStorage.setItem(posKey, JSON.stringify({ x: p.x, y: p.y, z: p.z, heading: ch.heading, flying: Boolean(listener.isFlying) }));
+            } catch (_) { /* stockage indisponible */ }
+        };
+        setInterval(savePosition, 2000);
+        window.addEventListener('pagehide', savePosition);
+    }
 
     // Listen for DSP updates from server (applies to all peers)
     mp.onDspUpdate((bus, param, value) => {
@@ -3495,6 +3523,9 @@ canvas.addEventListener('click', (e) => {
     if (ambiancePanel && (ambiancePanel.isOpen || ambiancePanel.isDraggingGizmo)) {
         return;
     }
+    if (isModelGizmoDragging && isModelGizmoDragging()) {
+        return;
+    }
     // Console des lyres ouverte : les clics servent à sélectionner / viser
     if (spotConsole && spotConsole.isOpen) {
         return;
@@ -3507,6 +3538,10 @@ canvas.addEventListener('click', (e) => {
     }
     // Clic sur un projecteur en mode curseur : on ouvre ses réglages sans reprendre la souris
     if (ambiancePanel && ambiancePanel.consumeFixturePick()) {
+        return;
+    }
+    // Clic sur un modèle 3D déposé : on ne reprend pas la souris
+    if (consumeModelPick && consumeModelPick()) {
         return;
     }
     // Clic sur l'étiquette volante "VUE RÉGIE"
@@ -3532,6 +3567,7 @@ canvas.addEventListener('click', (e) => {
     if (!listener.isLocked) {
         // Gizmo de déplacement actif (lampe sélectionnée) : on reste en souris libre, Tab pour reprendre la caméra
         if (ambiancePanel && ambiancePanel.shouldKeepCursor()) return;
+        if (shouldKeepCursorForModel && shouldKeepCursorForModel()) return;
         listener.lock();
     }
 });
