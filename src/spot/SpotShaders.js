@@ -286,8 +286,10 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     float halfX = 0.5 * (T10.y - 1.0) * T10.z;
                     world = iLens.xyz + W * s + (R * position.x * (halfX + grow) + U * position.y * grow) * 1.43;
 #else
-                    // rayon réel du cône (enveloppe des facettes du prisme) à cette distance (+3 % : le polygone contient le cercle)
-                    float rad = (T4.w + s * T9.y) * 1.035;
+                    // rayon réel du cône (enveloppe des facettes du prisme) à cette distance (+3 % : le polygone contient le cercle) ;
+                    // à la sortie : lentille + marge de flou (tan(cône) × distance de l'apex)
+                    vec4 T7 = texelFetch(uSpotParams, ivec2(7, row), 0);
+                    float rad = (T7.z * T7.w + s * T9.y) * 1.035;
                     world = iLens.xyz + W * s + (R * position.x + U * position.y) * rad;
 #endif
                 vWorld = world;
@@ -440,7 +442,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     int i = lo + k;
                     if (i > hi) break;
                     float th = i < bSplitI ? bThL : bThR;
-                    float zA = s + bLedR / (th * bConeK);
+                    float zA = s + bLedR / th;   // faisceau visible = diamètre de la LED à la sortie
                     vec2 g = vec2(fx - float(i) * bPitch, y) / (zA * th);
                     float r2 = dot(g, g);
                     if (r2 >= (1.0 + edge) * (1.0 + edge)) continue;
@@ -608,7 +610,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 vec3 apex = vLens.xyz - W * apexDist;
                 // Cône enveloppe (toutes les facettes) : c'est lui qu'on intersecte
                 float tanEnv = T9.y;
-                float envDist = T4.w / tanEnv;
+                float envDist = T7.z * T7.w / tanEnv;   // rayon à la sortie : lentille + marge de flou
                 vec3 envApex = vLens.xyz - W * envDist;
 
                 // ── Intersection analytique rayon ↔ cône ──

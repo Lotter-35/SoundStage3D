@@ -247,7 +247,8 @@ export class SpotFixture {
         r[16] = m.animIn; r[17] = m.animAngle; r[18] = (1 - this.poolWeight) * (p.beamIntensity > 1e-3 ? Math.min(4, p.lightOutput / p.beamIntensity) : 0); // tache au sol ∝ lumière émise r[19] = LENS_RADIUS;
         r[20] = m.blades[0]; r[21] = m.bladeAngles[0]; r[22] = m.blades[1]; r[23] = m.bladeAngles[1];
         r[24] = m.blades[2]; r[25] = m.bladeAngles[2]; r[26] = m.blades[3]; r[27] = m.bladeAngles[3];
-        r[28] = m.bladeRot; r[29] = p.lensGlare; r[30] = tanCone; r[31] = LENS_RADIUS / tanCone;
+        // Apex à LENS / tan(zoom/2) : le faisceau visible (bord du zoom) a le diamètre de la lentille à la sortie
+        r[28] = m.bladeRot; r[29] = p.lensGlare; r[30] = tanCone; r[31] = LENS_RADIUS / tanHalf;
         r[32] = this.occluders[0]; r[33] = this.occluders[1]; r[34] = this.occluders[2]; r[35] = this.occluders[3];
         const pr = this.prism;
         r[36] = pr.count; r[37] = this.tanLight; r[38] = pr.mainW; r[39] = pr.facetW;

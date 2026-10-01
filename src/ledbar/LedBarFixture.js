@@ -390,7 +390,7 @@ export class LedBarFixture {
             r[16] = 0; r[17] = 0; r[18] = splashW; r[19] = LED_LENS_RADIUS;
             r[20] = 0; r[21] = 0; r[22] = 0; r[23] = 0;
             r[24] = 0; r[25] = 0; r[26] = 0; r[27] = 0;
-            r[28] = 0; r[29] = glare; r[30] = tanCone; r[31] = LED_LENS_RADIUS / tanCone;
+            r[28] = 0; r[29] = glare; r[30] = tanCone; r[31] = LED_LENS_RADIUS / tanHalf; // faisceau visible = diamètre de la LED
             r[32] = this.occluders[0]; r[33] = this.occluders[1]; r[34] = this.occluders[2]; r[35] = this.occluders[3];
             r[36] = 0; r[37] = tanCone; r[38] = 1; r[39] = 0;     // pas de prisme : enveloppe = cône de la LED
             r[44] = 0; r[45] = 0; r[46] = 0; r[47] = sMerge;      // faisceau individuel jusqu'au volume de la barre
