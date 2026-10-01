@@ -20,7 +20,7 @@ import { enableLightsBloom } from '../laser/LaserManager.js';
 import { getGoboTexture } from './SpotGoboLibrary.js';
 import {
     SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial,
-    createGateAtlasMaterial, GATE_ATLAS_SIDE, GATE_ATLAS_TILE
+    createGateAtlasMaterial, GATE_ATLAS_SIDE, GATE_ATLAS_TILE, createBeamResolveMaterial
 } from './SpotShaders.js?v=4';
 
 const GATE_TILES = GATE_ATLAS_SIDE * GATE_ATLAS_SIDE;
@@ -348,6 +348,17 @@ export class SpotVolumePass extends Pass {
             stencilBuffer: false,
         });
         this.volumeTarget.texture.generateMipmaps = false;
+        // Lissage temporel (calcul rapide) : deux historiques en alternance
+        this.temporal = true;
+        const histOpts = { type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false };
+        this._hist = [new THREE.WebGLRenderTarget(1, 1, histOpts), new THREE.WebGLRenderTarget(1, 1, histOpts)];
+        this._histIdx = 0;
+        this._histValid = false;
+        this._resolve = createBeamResolveMaterial();
+        this._resolveQuad = new FullScreenQuad(this._resolve);
+        this._frame = 0;
+        this._lastCamPos = new THREE.Vector3();
+        this._lastCamQuat = new THREE.Quaternion();
         this._composite = createCompositeMaterial();
         this._quad = new FullScreenQuad(this._composite);
         this._fwd = new THREE.Vector3();
@@ -380,6 +391,9 @@ export class SpotVolumePass extends Pass {
         const w = Math.max(1, Math.round(width * this.resolutionScale));
         const h = Math.max(1, Math.round(height * this.resolutionScale));
         this.volumeTarget.setSize(w, h);
+        for (const t of this._hist) t.setSize(w, h);
+        this._resolve.uniforms.uTexel.value.set(1 / w, 1 / h);
+        this._histValid = false;
         this.batch.volumeMaterial.uniforms.uInvRes.value.set(1 / w, 1 / h);
         this._composite.uniforms.uVolRes.value.set(w, h);
     }
@@ -398,6 +412,9 @@ export class SpotVolumePass extends Pass {
             u.uFar.value = cam.far;
             cam.getWorldDirection(this._fwd);
             u.uCamFwd.value.copy(this._fwd);
+            this._frame = (this._frame + 1) % 1024;
+            // Échantillons décalés d'une image à l'autre seulement avec le lissage temporel (sinon : scintillement)
+            u.uFrame.value = this.temporal ? this._frame : 0;
 
             renderer.getClearColor(this._clear);
             const oldAlpha = renderer.getClearAlpha();
@@ -413,18 +430,38 @@ export class SpotVolumePass extends Pass {
             renderer.setClearColor(this._clear, oldAlpha);
             renderer.autoClear = oldAutoClear;
             shadowMap.autoUpdate = oldShadowAuto;
-            this._composite.uniforms.tVolume.value = this.volumeTarget.texture;
+            let beams = this.volumeTarget.texture;
+            if (this.temporal) {
+                // Mouvement de la caméra : historique moins gardé (pas de traînée en tournant la tête)
+                const turn = this._lastCamQuat.angleTo(cam.quaternion);
+                const move = this._lastCamPos.distanceTo(cam.position);
+                this._lastCamQuat.copy(cam.quaternion);
+                this._lastCamPos.copy(cam.position);
+                const ru = this._resolve.uniforms;
+                ru.uAlpha.value = Math.min(1, 0.22 + turn * 6 + move * 0.6);
+                ru.tCur.value = this.volumeTarget.texture;
+                ru.tHist.value = this._hist[1 - this._histIdx].texture;
+                ru.uValid.value = this._histValid ? 1 : 0;
+                const write = this._hist[this._histIdx];
+                renderer.setRenderTarget(write);
+                this._resolveQuad.render(renderer);
+                this._histIdx = 1 - this._histIdx;
+                this._histValid = true;
+                beams = write.texture;
+            }
+            this._composite.uniforms.tVolume.value = beams;
             this._composite.uniforms.tDepth.value = depth;
             this._composite.uniforms.uNear.value = cam.near;
             this._composite.uniforms.uFar.value = cam.far;
             this._composite.uniforms.uUseDepth.value = this.resolutionScale < 0.999 ? 1 : 0;
             if (this.deferred) {
-                this._out.texture = this.volumeTarget.texture;
+                this._out.texture = beams;
                 this._out.useDepth = this.resolutionScale < 0.999;
                 this._hasOut = true;
                 return;
             }
         } else {
+            this._histValid = false;
             if (this.deferred) return;
             this._composite.uniforms.uUseDepth.value = 0;
             // Rien à ajouter : simple recopie
@@ -438,6 +475,8 @@ export class SpotVolumePass extends Pass {
 
     dispose() {
         this.volumeTarget.dispose();
+        for (const t of this._hist) t.dispose();
+        this._resolveQuad.dispose();
         this._composite.dispose();
         this._quad.dispose();
     }

@@ -254,6 +254,8 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
             uPhaseG:     { value: 0.72 },
             uWind:       { value: new THREE.Vector3() },
             uTime:       { value: 0 },
+            uFast:       { value: 1 },   // calcul rapide : 2 à 4 échantillons (lissés dans le temps) au lieu de 8 à 18
+            uFrame:      { value: 0 },   // n° d'image : décale les échantillons d'une image à l'autre
         },
         vertexShader: /* glsl */`
             uniform highp sampler2D uSpotParams;
@@ -366,8 +368,14 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 return 0.65 + 0.35 * hg;
             }
 
+            uniform float uFast;
+            uniform float uFrame;
             float ign(vec2 p) {
                 return fract(52.9829189 * fract(dot(p, vec2(0.06711056, 0.00583715))));
+            }
+            // Décalage des échantillons : différent à chaque image en calcul rapide (le lissage temporel fait la moyenne)
+            float jitter() {
+                return fract(ign(gl_FragCoord.xy) + uFrame * 0.61803399 * uFast);
             }
 
             // Prisme et raccourci du faisceau ouvert : lus une fois par pixel
@@ -512,12 +520,12 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 float zIn = max(qs + ds * tin + zOff, 1e-3);
                 float zOut = max(qs + ds * tout + zOff, 1e-3);
                 bool imp = abs(ds) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
-                float nS = clamp(ceil(span * 2.0), 5.0, imp ? 8.0 : 14.0);
+                float nS = uFast > 0.5 ? clamp(ceil(span * 1.2), 4.0, 6.0) : clamp(ceil(span * 2.0), 5.0, imp ? 8.0 : 14.0);
                 float dt = span / nS;
                 float invIn = 1.0 / zIn;
                 float invOut = 1.0 / zOut;
                 float impW = abs(invIn - invOut) / (abs(ds) * nS);
-                float jit = ign(gl_FragCoord.xy);
+                float jit = jitter();
                 float cs = qs + zOff;
 
                 vec3 sum = vec3(0.0);
@@ -712,14 +720,16 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 // Faisceau vu de côté : répartition régulière, inchangée.
                 bool imp = abs(dv) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
                 // Faisceau ouvert : rien à montrer le long du rayon à part la fumée → moins de pas
-                float nS = pPlain ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 8.0)
+                // Calcul rapide : moins d'échantillons, l'énergie reste exacte (échantillons répartis selon l'éclairement)
+                float nS = uFast > 0.5 ? (pPlain ? clamp(ceil(span * 1.0), 3.0, 4.0) : clamp(ceil(span * 1.2), 4.0, 6.0))
+                         : pPlain ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 8.0)
                          : (weight < 0.99 || pCount > 0) ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
                                                          : clamp(ceil(span * 2.6), 6.0, imp ? 8.0 : 18.0);
                 float dt = span / nS;
                 float invIn = 1.0 / zIn;
                 float invOut = 1.0 / zOut;
                 float impW = abs(invIn - invOut) / (abs(dv) * nS);
-                float jit = ign(gl_FragCoord.xy);
+                float jit = jitter();
 
                 // Pixel déjà blanc (saturé) : inutile de continuer à accumuler (sans effet visible).
                 // Seuil large (×64) : reste saturé même derrière le brouillard de salle.
@@ -1066,6 +1076,57 @@ export function createGateAtlasMaterial(paramsTexture, goboTexture) {
                 Gate G = loadGate(vRow);
                 vec2 g = (vUv * 2.0 - 1.0) * ${GATE_ATLAS_R.toFixed(2)};
                 gl_FragColor = vec4(gateImage(G, g, G.T2.z * 0.42), 1.0);
+            }
+        `,
+        depthTest: false,
+        depthWrite: false,
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 6. Lissage temporel des faisceaux (calcul rapide)
+// ─────────────────────────────────────────────────────────────────────────────
+/**
+ * Mélange l'image des faisceaux avec celle des images précédentes. L'historique est borné par le voisinage
+ * 3×3 de l'image courante (pas de traînée quand un faisceau bouge) ; mélange plus rapide quand la caméra bouge.
+ */
+export function createBeamResolveMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            tCur:   { value: null },
+            tHist:  { value: null },
+            uTexel: { value: new THREE.Vector2(1, 1) },
+            uAlpha: { value: 0.25 },
+            uValid: { value: 0 },
+        },
+        vertexShader: /* glsl */`
+            varying vec2 vUv;
+            void main() {
+                vUv = uv;
+                gl_Position = vec4(position.xy, 0.0, 1.0);
+            }
+        `,
+        fragmentShader: /* glsl */`
+            uniform sampler2D tCur;
+            uniform sampler2D tHist;
+            uniform vec2 uTexel;
+            uniform float uAlpha;
+            uniform float uValid;
+            varying vec2 vUv;
+            void main() {
+                vec4 c = texture2D(tCur, vUv);
+                if (uValid < 0.5) { gl_FragColor = c; return; }
+                vec4 mn = c, mx = c;
+                for (int y = -1; y <= 1; y++) {
+                    for (int x = -1; x <= 1; x++) {
+                        if (x == 0 && y == 0) continue;
+                        vec4 s = texture2D(tCur, vUv + vec2(float(x), float(y)) * uTexel);
+                        mn = min(mn, s);
+                        mx = max(mx, s);
+                    }
+                }
+                vec4 h = clamp(texture2D(tHist, vUv), mn, mx);
+                gl_FragColor = mix(h, c, uAlpha);
             }
         `,
         depthTest: false,

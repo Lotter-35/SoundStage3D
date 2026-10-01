@@ -263,6 +263,11 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
+        // Calcul des faisceaux : rapide (moins d'échantillons, même énergie) ou précis (ancien rendu)
+        const fast = g.beamRender !== 'Précis';
+        u.uFast.value = fast ? 1 : 0;
+        // Lissage temporel désactivé : il floute les gobos animés (moyenne de plusieurs images)
+        this.volumePass.temporal = false;
         this._applyVolumeResolution();
         this.pool.setShadows(g.lightShadows);
     }
