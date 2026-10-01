@@ -1,20 +1,5 @@
-"""
-ilda-gen.py — Générateur IDN direct pour les lasers de SoundStage3D (entrée « ILDA live »).
-
-Point d'entrée modulaire de l'application ILDA Generator Studio.
-"""
-
-import os
-import sys
-import tkinter as tk
-
-# S'assurer que le dossier contenant ilda-gen est dans sys.path pour les sous-modules
-CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
-if CURRENT_DIR not in sys.path:
-    sys.path.insert(0, CURRENT_DIR)
-
 try:
-    from .core import (
+    from .constants import (
         ILDA_MIN,
         ILDA_MAX,
         CANVAS_SIZE,
@@ -35,21 +20,15 @@ try:
         CORNER_POINTS,
         BLANK_POINTS,
         CORNER_ANGLE,
-        norm_to_canvas,
-        canvas_to_norm,
-        dist_pt_seg,
-        prepare_stroke,
-        is_corner,
-        Transform2D,
-        Layer,
-        SYM_MODES_MAPPING,
-        get_sym_mode_info,
-        compute_symmetry,
-        snap_polar,
     )
-    from .app import IDNGeneratorApp
+    from .geometry import norm_to_canvas, canvas_to_norm, dist_pt_seg
+    from .laser_stroke import prepare_stroke, is_corner
+    from .transform import Transform2D
+    from .layer import Layer
+    from .symmetry import SYM_MODES_MAPPING, get_sym_mode_info, compute_symmetry
+    from .grid import snap_polar
 except (ImportError, ValueError):
-    from core import (
+    from core.constants import (
         ILDA_MIN,
         ILDA_MAX,
         CANVAS_SIZE,
@@ -70,27 +49,18 @@ except (ImportError, ValueError):
         CORNER_POINTS,
         BLANK_POINTS,
         CORNER_ANGLE,
-        norm_to_canvas,
-        canvas_to_norm,
-        dist_pt_seg,
-        prepare_stroke,
-        is_corner,
-        Transform2D,
-        Layer,
-        SYM_MODES_MAPPING,
-        get_sym_mode_info,
-        compute_symmetry,
-        snap_polar,
     )
-    from app import IDNGeneratorApp
+    from core.geometry import norm_to_canvas, canvas_to_norm, dist_pt_seg
+    from core.laser_stroke import prepare_stroke, is_corner
+    from core.transform import Transform2D
+    from core.layer import Layer
+    from core.symmetry import SYM_MODES_MAPPING, get_sym_mode_info, compute_symmetry
+    from core.grid import snap_polar
 
 __all__ = [
-    "IDNGeneratorApp",
-    "Layer",
-    "Transform2D",
-    "CANVAS_SIZE",
     "ILDA_MIN",
     "ILDA_MAX",
+    "CANVAS_SIZE",
     "MAX_PAYLOAD",
     "LIVE_REFRESH_MS",
     "CMD_RT_CNLMSG",
@@ -113,25 +83,10 @@ __all__ = [
     "dist_pt_seg",
     "prepare_stroke",
     "is_corner",
+    "Transform2D",
+    "Layer",
     "SYM_MODES_MAPPING",
     "get_sym_mode_info",
     "compute_symmetry",
     "snap_polar",
 ]
-
-
-def main():
-    root = tk.Tk()
-    app = IDNGeneratorApp(root)
-
-    # Ouvrir un fichier de projet si passé en argument CLI
-    if len(sys.argv) > 1 and sys.argv[1].lower().endswith((".ildagen", ".json")):
-        target = sys.argv[1]
-        if os.path.exists(target):
-            app.open_project(target)
-
-    root.mainloop()
-
-
-if __name__ == "__main__":
-    main()

@@ -14,3 +14,9 @@ server/storage/
 *.exr
 *.blend
 src/assets/textures/scene/textures/*disp*
+
+# ILDA Generator saved projects & scratch tests
+tools/ilda-gen/save-ildagen/
+scratch/
+__pycache__/
+*.pyc
