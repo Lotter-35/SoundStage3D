@@ -331,6 +331,50 @@ export class SpotConsolePanel {
         const canvas = this.renderer.domElement;
         let down = null;
         canvas.addEventListener('pointerdown', (e) => { down = { x: e.clientX, y: e.clientY }; });
+
+        // Sélection rectangulaire dans la 3D (menu ouvert) : glisser dans la scène sélectionne les lyres du
+        // rectangle ; Ctrl / Maj : ajoute à la sélection
+        const rectEl = document.createElement('div');
+        rectEl.style.cssText = 'position:fixed;display:none;z-index:9000;pointer-events:none;'
+            + 'border:1px solid rgba(255,255,255,0.7);background:rgba(255,255,255,0.06);';
+        document.body.appendChild(rectEl);
+        let band = null;
+        canvas.addEventListener('pointerdown', (e) => {
+            if (!this.isOpen || e.button !== 0 || this._aiming) return;
+            if (this.listener && this.listener.controls && this.listener.controls.isLocked) return;
+            const tc = this.ambiancePanel && this.ambiancePanel.transformControls;
+            if (tc && (tc.axis !== null || tc.dragging)) return;   // manipulation du gizmo
+            band = { x: e.clientX, y: e.clientY, add: e.ctrlKey || e.metaKey || e.shiftKey, active: false };
+        });
+        window.addEventListener('pointermove', (e) => {
+            if (!band) return;
+            if (!band.active && Math.hypot(e.clientX - band.x, e.clientY - band.y) < 6) return;
+            band.active = true;
+            Object.assign(rectEl.style, {
+                display: 'block',
+                left: Math.min(band.x, e.clientX) + 'px', top: Math.min(band.y, e.clientY) + 'px',
+                width: Math.abs(e.clientX - band.x) + 'px', height: Math.abs(e.clientY - band.y) + 'px',
+            });
+        });
+        window.addEventListener('pointerup', (e) => {
+            const b = band;
+            band = null;
+            rectEl.style.display = 'none';
+            if (!b || !b.active) return;
+            const r = canvas.getBoundingClientRect();
+            const x0 = Math.min(b.x, e.clientX), x1 = Math.max(b.x, e.clientX);
+            const y0 = Math.min(b.y, e.clientY), y1 = Math.max(b.y, e.clientY);
+            const v = new THREE.Vector3();
+            this.camera.updateMatrixWorld();
+            const ids = [];
+            for (const s of this.spotManager.getAllSpots()) {
+                s.group.getWorldPosition(v).project(this.camera);
+                if (v.z < -1 || v.z > 1) continue;                    // derrière la caméra
+                const sx = r.left + (v.x + 1) / 2 * r.width, sy = r.top + (1 - v.y) / 2 * r.height;
+                if (sx >= x0 && sx <= x1 && sy >= y0 && sy <= y1) ids.push(s.id);
+            }
+            if (ids.length || !b.add) this.programmer.select(ids, b.add ? 'add' : 'set');
+        });
         canvas.addEventListener('click', (e) => {
             if (!this.isOpen || !down) return;
             if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return; // glisser ≠ clic
