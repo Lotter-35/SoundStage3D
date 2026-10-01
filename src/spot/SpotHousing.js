@@ -58,7 +58,7 @@ function buildParts() {
     }
     // Panneau avant : écran LCD, boutons, grille de ventilation
     add('base', 'gloss', new THREE.BoxGeometry(0.13, 0.065, 0.004), 0.08, 0.115, 0.171);
-    add('base', 'lcd', new THREE.PlaneGeometry(0.11, 0.048), 0.08, 0.115, 0.1735);
+    // (écran LCD du socle retiré : son bloom bleu brillait derrière la lyre)
     for (let i = 0; i < 4; i++) add('base', 'rubber', new THREE.BoxGeometry(0.016, 0.016, 0.008), -0.045 - i * 0.03, 0.125, 0.172);
     add('base', 'grille', new THREE.BoxGeometry(0.26, 0.035, 0.004), -0.03, 0.055, 0.171);
     add('base', 'grille', new THREE.BoxGeometry(0.30, 0.05, 0.004), 0, 0.09, -0.171);
