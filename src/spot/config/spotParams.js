@@ -129,7 +129,7 @@ export const SPOT_PARAMS_SCHEMA = {
     iris:         num(100, 20, 100, 1, 'Iris (% ouverture)', 'beam'),
 
     // ── 🔍 Optique ──
-    zoom:         num(14, 5, 48, 0.1, 'Zoom (° d’ouverture)', 'optics'),
+    zoom:         num(14, 2, 48, 0.1, 'Zoom (° d’ouverture)', 'optics'),
     focus:        num(50, 0, 100, 0.5, 'Focus (net loin ↔ près)', 'optics'),
 
     // ── 🔪 Couteaux ──

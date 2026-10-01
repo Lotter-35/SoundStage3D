@@ -1021,12 +1021,11 @@ export function createGlareMaterial(paramsTexture) {
                 vec2 p = vUv * 2.0 - 1.0;
                 float r = length(p);
                 if (r > 1.0) discard;
+                // Cœur et halo qui s'éteignent progressivement jusqu'au bord (pas de cercle visible sur le ciel)
                 float core = exp(-r * r * 26.0);
-                float halo = exp(-r * 4.5) * 0.35;
-                // Aigrettes (diffraction des lamelles de l'iris), visibles dans l'axe seulement
-                float ang = atan(p.y, p.x);
-                float spikes = pow(abs(cos(ang * 3.0)), 60.0) * exp(-r * 3.0) * vAlign * 0.6;
-                float k = (core + halo + spikes) * (1.0 - smoothstep(0.85, 1.0, r));
+                float edge = 1.0 - r;
+                float halo = 0.35 * exp(-r * 4.5) * edge * edge;
+                float k = core + halo;
                 gl_FragColor = vec4(vColor * k, 1.0);
             }
         `,

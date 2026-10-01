@@ -227,8 +227,8 @@ const CH = {
     },
     zoom: {
         name: 'Zoom',
-        dec: (v, out) => { out.zoom = 5 + (v / 255) * 43; },
-        enc: p => round(((p.zoom - 5) / 43) * 255),
+        dec: (v, out) => { out.zoom = 2 + (v / 255) * 46; },
+        enc: p => round(((p.zoom - 2) / 46) * 255),
     },
     focus: {
         name: 'Focus',

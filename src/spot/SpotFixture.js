@@ -244,7 +244,7 @@ export class SpotFixture {
         r[4] = m.colorB[0]; r[5] = m.colorB[1]; r[6] = m.colorB[2]; r[7] = m.split;
         r[8] = tanHalf; r[9] = m.iris; r[10] = m.frost; r[11] = this.focusDist;
         r[12] = m.goboFixedPos; r[13] = m.goboRotPos; r[14] = m.goboAngle; r[15] = m.animSlot;
-        r[16] = m.animIn; r[17] = m.animAngle; r[18] = 1 - this.poolWeight; r[19] = LENS_RADIUS;
+        r[16] = m.animIn; r[17] = m.animAngle; r[18] = (1 - this.poolWeight) * (p.beamIntensity > 1e-3 ? Math.min(4, p.lightOutput / p.beamIntensity) : 0); // tache au sol ∝ lumière émise r[19] = LENS_RADIUS;
         r[20] = m.blades[0]; r[21] = m.bladeAngles[0]; r[22] = m.blades[1]; r[23] = m.bladeAngles[1];
         r[24] = m.blades[2]; r[25] = m.bladeAngles[2]; r[26] = m.blades[3]; r[27] = m.bladeAngles[3];
         r[28] = m.bladeRot; r[29] = p.lensGlare; r[30] = tanCone; r[31] = LENS_RADIUS / tanCone;

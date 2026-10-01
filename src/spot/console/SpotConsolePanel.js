@@ -275,7 +275,7 @@ export class SpotConsolePanel {
                 mkSelect('Gobo rotatif', GOBO_ROT_WHEEL, 'goboRot'),
                 mkSelect('Prisme', PRISMS, 'prism'),
             ]),
-            this._slider('Zoom', 5, 48, 0.5, 14, v => v.toFixed(1) + '°', v => P.apply({ zoom: v }, { continuous: true })),
+            this._slider('Zoom', 2, 48, 0.5, 14, v => v.toFixed(1) + '°', v => P.apply({ zoom: v }, { continuous: true })),
             this._slider('Frost', 0, 100, 1, 0, v => v.toFixed(0) + ' %', v => P.apply({ frost: v }, { continuous: true })),
         ], true));
 
