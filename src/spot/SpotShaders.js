@@ -647,6 +647,17 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 // Faisceau ouvert (ni gobo, ni couteau, ni roue d'animation, ni demi-couleur) : à l'intérieur de
                 // l'iris moins sa marge de flou maximale, l'image de la fenêtre vaut exactement couleur × (1 − 0,2 r²)
                 pPlain = !G.hasFixed && !G.hasRot && !G.hasAnim && !G.anyBlade && !G.halfCol;
+                // Frost fort (≥ 70 %) : le motif des gobos est entièrement flouté dans le faisceau → transmission
+                // moyenne de chaque gobo (dernier niveau de mipmap), lue une fois ; la fenêtre redevient un disque
+                // flou (calcul exact rapide) au lieu de 3 roues × facettes × pas
+                if (!pPlain && G.T2.z >= 0.7 && !G.anyBlade && !G.halfCol) {
+                    float avg = 1.0;
+                    if (G.hasFixed) { float sl = mod(floor(G.T3.x + 0.5), 9.0); if (sl > 0.5) avg *= textureLod(uGobos, vec3(0.5, 0.5, sl), 10.0).r; }
+                    if (G.hasRot) { float sl = mod(floor(G.T3.y + 0.5), 8.0); if (sl > 0.5) avg *= textureLod(uGobos, vec3(0.5, 0.5, 8.0 + sl), 10.0).r; }
+                    if (G.hasAnim) avg *= mix(1.0, clamp(textureLod(uGobos, vec3(0.5, 0.5, 15.0 + G.T3.w), 10.0).r * 1.25, 0.0, 1.0), clamp(G.T4.x, 0.0, 1.0));
+                    G.T0.rgb *= avg;
+                    pPlain = true;
+                }
                 float plainR = min(G.T2.y, 1.0) - (0.012 + frostBlur + 0.14);
                 pPlainR2 = plainR > 0.0 ? plainR * plainR : -1.0;
                 float outR = min(G.T2.y, 1.0) + 0.012 + frostBlur + 0.14;
