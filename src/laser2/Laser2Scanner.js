@@ -13,7 +13,8 @@
  *     quand on dessine plus vite que les scanners, un amortissement faible donne des dépassements.
  *
  *  3. MODULATION : couleur appliquée instantanément (les miroirs, eux, sont en retard) avec le
- *     décalage couleur du boîtier, seuil des diodes (analogique) ou tout-ou-rien (TTL), équilibrage
+ *     décalage couleur du boîtier, couleurs d'écran converties en puissances (la couleur affichée est celle
+ *     choisie), analogique ou tout-ou-rien (TTL), équilibrage
  *     des blancs (une couleur choisie reste cette couleur, comme sur un laser calibré).
  *
  *  4. INTÉGRATION (persistance) : la vraie trajectoire est accumulée sur une fenêtre de temps fixe,
@@ -41,12 +42,18 @@ const CAMERA_WINDOW = 1 / 60;
 /** Primitives maximales par laser (au-delà, simplification plus forte) */
 export const MAX_PRIMS = 700;
 
-// Couleur affichée par unité de puissance équilibrée (max = 1) : 638 / 520 / 450 nm
-const PRIM = [
-    [1.0, 0.03, 0.0],   // rouge 638 nm (légèrement orangé)
-    [0.05, 1.0, 0.15],  // vert 520 nm (légèrement bleuté)
-    [0.12, 0.02, 1.0],  // bleu 450 nm (royal / violacé)
-];
+// ── Réglage automatique (meilleur rendu, galvos simulés inchangés) ──
+/** Images complètes par seconde visées : image stable (au-delà de la persistance de l'œil) */
+const AUTO_HZ = 50;
+/** Images/s minimales quand la forme est trop longue pour les scanners (on ajoute moins de points) */
+const AUTO_MIN_HZ = 30;
+/** Vitesse de dessin minimale (pts/s) */
+const AUTO_MIN_PPS = 4000;
+/** Écart maximal entre deux points allumés d'une forme ILDA (unités −1…1) */
+const AUTO_STEP = 0.035;
+/** Changement de direction (rad) à partir duquel un point est un angle (temps d'arrêt des miroirs) */
+const AUTO_CORNER = 0.8;
+
 // Rendement visuel relatif de chaque source (le bleu paraît moins lumineux à puissance égale)
 const EFFICACY = [0.75, 1.0, 0.5];
 
@@ -78,6 +85,12 @@ function hash(a, b) {
     return s - Math.floor(s);
 }
 /** Teinte (0…1) → RGB saturé */
+/** Valeur d'écran (sRGB 0…1, sélecteur de couleur, fichiers ILDA) → puissance linéaire : la couleur affichée
+ *  est celle qu'on a choisie (sinon 50 % de puissance paraît bien plus clair que « 80 » dans le sélecteur) */
+function srgbToLinear(v) {
+    return v <= 0.04045 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4);
+}
+
 function hue(h, out) {
     const x = (h - Math.floor(h)) * 6;
     const i = Math.floor(x), f = x - i, q = 1 - f;
@@ -161,6 +174,10 @@ export class Laser2Scanner {
             this._docRef = 'pattern';
         }
         this._frameKey = frameKey;
+        const rated = scannerPps(p.scanner);
+        this.auto = p.autoTune !== false;
+        // Formes ILDA (fichier ou live) trop peu détaillées : points ajoutés comme le ferait un logiciel laser
+        if (this.auto && ilda) this.frames = optimizeFrames(this.frames, rated);
         const N = this.frames.length;
         this._animated = N > 1 && p.playMode !== 'Image fixe';
         this._pingPong = p.playMode === 'Aller-retour';
@@ -168,7 +185,15 @@ export class Laser2Scanner {
         this.fps = Math.max(1, p.ildaFps);
         this.frame = this.frames[this._animated ? 0 : this._fixedIdx];
         this.pps = Math.max(1000, p.scanRate * 1000);
-        const rated = scannerPps(p.scanner);
+        if (this.auto) {
+            // Vitesse la plus basse qui redessine l'image AUTO_HZ fois par seconde (les miroirs suivent mieux,
+            // coins nets), jamais au-delà de la vitesse nominale des scanners
+            let nMax = 1, nSum = 0;
+            for (const f of this.frames) { nMax = Math.max(nMax, f.n); nSum += f.n; }
+            this.pps = Math.min(rated, Math.max(AUTO_MIN_PPS, Math.round(nMax * AUTO_HZ)));
+            // Animation : chaque image a le temps d'être dessinée en entier au moins une fois
+            this.fps = Math.max(1, Math.min(this.fps, this.pps / Math.max(1, nSum / N)));
+        }
         // Servo : pulsation propre ∝ vitesse nominale ; accélération / vitesse maximales calées sur
         // le dessin de la mire ILDA à 8° (un saut de plus de ~8° est limité en accélération)
         const s = rated / 30000;
@@ -215,13 +240,19 @@ export class Laser2Scanner {
         if (!Number.isFinite(bal)) bal = 0;
         // Fichier ILDA : ses propres couleurs (× dimmer) ou sa luminosité teintée par la couleur du laser
         this.mono = ilda && p.ildaColor === 'Couleur du laser';
+        // Couleurs d'écran converties en puissances linéaires : la couleur affichée est celle choisie
+        for (let c = 0; c < 3; c++) _rgb[c] = srgbToLinear(_rgb[c]);
         this.lvl = ilda && !this.mono ? [dim, dim, dim] : [_rgb[0] * dim, _rgb[1] * dim, _rgb[2] * dim];
         this.chan = [pw[0] > 0 ? bal : 0, pw[1] > 0 ? bal : 0, pw[2] > 0 ? bal : 0];
         this.dimmer = dim;
         this.ttl = p.modulation !== 'Analogique';
         this.galvo = p.galvoFx !== false;                          // false : miroirs parfaits (aucune inertie)
-        this.thr = p.diodeFx === false ? 0 : p.threshold / 100;    // false : diodes parfaites (aucun seuil)
-        this.shift = this.galvo ? Math.round(p.colorShift) : 0;    // le décalage de couleur compense le retard des galvos
+        // Le décalage de couleur compense le retard des galvos, qui est un TEMPS : réglé en points à 30 kpps,
+        // ramené à la vitesse de dessin (6 points à 30 kpps = 1 point à 5 kpps ; sinon, sur une petite image
+        // dessinée lentement, les couleurs tombent sur les mauvais points : sauts allumés, traits éteints)
+        this.shift = this.galvo ? Math.round(p.colorShift * this.pps / 30000) : 0;
+        // Automatique : retard réel des miroirs sur un trait (servo du 2e ordre : 2ζ / ωn), en points
+        if (this.auto && this.galvo) this.shift = Math.round((2 * this.zeta / this.wn) * this.pps);
         this.shutter = p.shutter;
         this.strobeRate = p.strobeRate;
         this.divergence = p.divergence * 1e-3;
@@ -305,6 +336,10 @@ export class Laser2Scanner {
         this.stats.points = n;
         this.stats.frameHz = pps / n;
         this.stats.window = win / pps;
+        this.stats.pps = pps;
+        this.stats.fps = this.fps;
+        this.stats.shift = this.shift;
+        this.stats.auto = this.auto;
         this.stats.frames = this.frames.length;
         this.stats.beams = this.beamCount;
         this.stats.sheets = this.sheetCount;
@@ -424,11 +459,12 @@ export class Laser2Scanner {
         const cmode = this.colorMode;
         const lr = this.lvl[0], lg = this.lvl[1], lb = this.lvl[2];
         const cr = this.chan[0], cg = this.chan[1], cb = this.chan[2];
-        const ttl = this.ttl, thr = this.thr, kThr = 1 / (1 - Math.min(thr, 0.95));
+        const ttl = this.ttl;
         // Après un passage éteint, le faisceau ne se rallume que lorsque les miroirs ont rejoint leur consigne
         // (sinon un grand saut, ex. retour de l'éventail, dessine une nappe parasite pendant que le miroir finit sa course)
         const settleTol = 0.004;
         let armed = this._armed || false;
+        let armX = NaN, armY = NaN;          // consigne du point de rallumage (NaN : pas encore atteint)
         const strobe = this.shutter === 'Strobe', open = this.shutter !== 'Fermé';
         const rate = this.strobeRate;
         const rot = this.rotSpeed !== 0;
@@ -531,6 +567,7 @@ export class Laser2Scanner {
                     if (cmode === 1) hue(SEGMENT_HUES[(Math.floor(u * 6 + cph) % 6 + 6) % 6], _hue);
                     else if (cmode === 2) hue(u + cph, _hue);
                     else if (cmode === 4) hue(hash(j, Math.floor(cph * 4)), _hue);
+                    _hue[0] = srgbToLinear(_hue[0]); _hue[1] = srgbToLinear(_hue[1]); _hue[2] = srgbToLinear(_hue[2]);
                     if (cmode === 3) {
                         // Chenillard : bande lumineuse qui parcourt le tracé (couleur du laser)
                         let d = Math.abs(u - (cph - Math.floor(cph)));
@@ -544,21 +581,25 @@ export class Laser2Scanner {
                     const m = fr[j] > fg[j] ? (fr[j] > fb[j] ? fr[j] : fb[j]) : (fg[j] > fb[j] ? fg[j] : fb[j]);
                     vr = m * lr; vg = m * lg; vb = m * lb;
                 } else {
-                    vr = fr[j] * lr; vg = fg[j] * lg; vb = fb[j] * lb;
+                    vr = srgbToLinear(fr[j]) * lr; vg = srgbToLinear(fg[j]) * lg; vb = srgbToLinear(fb[j]) * lb;
                 }
                 if (ttl) {
-                    r = vr >= 0.5 ? cr : 0; g = vg >= 0.5 ? cg : 0; b = vb >= 0.5 ? cb : 0;
+                    // Tout ou rien : diode allumée au-delà de la moitié de la valeur d'écran (0,5 → 0,214 en linéaire)
+                    r = vr >= 0.214 ? cr : 0; g = vg >= 0.214 ? cg : 0; b = vb >= 0.214 ? cb : 0;
                 } else {
-                    // Seuil de la diode : sous le seuil elle est éteinte, au-dessus la puissance monte depuis zéro
-                    // (courbe continue : plus de saut de couleur quand une voie franchit le seuil)
-                    r = vr < thr ? 0 : (vr - thr) * kThr * cr; g = vg < thr ? 0 : (vg - thr) * kThr * cg; b = vb < thr ? 0 : (vb - thr) * kThr * cb;
+                    r = vr * cr; g = vg * cg; b = vb * cb;
                 }
             }
             if (r > 0 || g > 0 || b > 0) {
                 if (armed) {
-                    if (Math.abs(px - ux) + Math.abs(py - uy) > settleTol) { r = 0; g = 0; b = 0; } else armed = false;
+                    // Attente seulement tant que la consigne reste sur le point de rallumage : dès qu'elle passe
+                    // au point suivant, le tracé commence (image à points espacés : les miroirs, toujours en
+                    // retard sur une consigne qui bouge, ne l'atteindraient jamais → image entièrement éteinte)
+                    if (armX !== armX) { armX = ux; armY = uy; }
+                    const same = Math.abs(ux - armX) + Math.abs(uy - armY) < 1e-6;
+                    if (same && Math.abs(px - ux) + Math.abs(py - uy) > settleTol) { r = 0; g = 0; b = 0; } else { armed = false; armX = NaN; }
                 }
-            } else armed = true;
+            } else { armed = true; armX = NaN; }
             const o = k & RING_MASK;
             AX[o] = px; AY[o] = py;
             UX[o] = ux; UY[o] = uy;
@@ -745,6 +786,77 @@ export class Laser2Scanner {
 
 const _cmd = [0, 0];
 
+// ─── Réglage automatique : formes ILDA complétées pour les miroirs ──────────
+const _optimized = new WeakMap();   // image d'origine → { key, frame }
+
+/**
+ * Images prêtes à projeter : points ajoutés le long des traits longs, temps d'arrêt aux angles, points éteints
+ * à l'arrivée des sauts. Une forme déjà bien détaillée reste identique. Si la forme devient trop longue pour
+ * les scanners, les traits sont moins subdivisés (au moins AUTO_MIN_HZ images/s).
+ */
+function optimizeFrames(frames, rated) {
+    const budget = rated / AUTO_MIN_HZ;
+    return frames.map((f) => {
+        const hit = _optimized.get(f);
+        if (hit && hit.rated === rated) return hit.frame;
+        let step = AUTO_STEP;
+        let out = optimizeFrame(f, step);
+        for (let i = 0; i < 4 && out.n > budget && out.n > f.n; i++) {
+            step *= out.n / budget;
+            out = optimizeFrame(f, step);
+        }
+        if (out.n > budget && out.n > f.n) out = f;
+        _optimized.set(f, { rated, frame: out });
+        return out;
+    });
+}
+
+function optimizeFrame(f, step) {
+    const n = f.n;
+    if (n < 2) return f;
+    const out = new LaserFrame(n * 2 + 32);
+    const lit = (i) => f.r[i] + f.g[i] + f.b[i] > 1e-4;
+    // Point de départ du saut en cours (dernier point allumé avant une suite de points éteints)
+    let fromX = f.x[n - 1], fromY = f.y[n - 1];
+    for (let i = 0; i < n; i++) {
+        const p = (i - 1 + n) % n, q = (i + 1) % n;
+        const x = f.x[i], y = f.y[i], r = f.r[i], g = f.g[i], b = f.b[i];
+        const dx = x - f.x[p], dy = y - f.y[p];
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (lit(i)) {
+            if (lit(p)) {
+                // Trait allumé : points intermédiaires (couleur du point d'arrivée, norme ILDA)
+                const k = Math.ceil(d / step);
+                for (let s = 1; s < k; s++) out.push(f.x[p] + dx * s / k, f.y[p] + dy * s / k, r, g, b);
+            } else {
+                // Arrivée d'un saut : les miroirs finissent leur course faisceau éteint
+                const jump = Math.hypot(x - fromX, y - fromY);
+                let have = 0;
+                for (let j = out.n - 1; j >= 0 && have < 64; j--) {
+                    if (out.r[j] + out.g[j] + out.b[j] > 1e-4 || out.x[j] !== x || out.y[j] !== y) break;
+                    have++;
+                }
+                const need = Math.ceil(4 + jump * 8);
+                for (let s = have; s < need; s++) out.push(x, y, 0, 0, 0);
+            }
+            out.push(x, y, r, g, b);
+            // Angle vif entre deux traits allumés : temps d'arrêt (sinon le coin s'arrondit)
+            if (lit(p) && lit(q) && d > 1e-4) {
+                const ex = f.x[q] - x, ey = f.y[q] - y;
+                const e = Math.sqrt(ex * ex + ey * ey);
+                if (e > 1e-4) {
+                    const cos = (dx * ex + dy * ey) / (d * e);
+                    if (cos < Math.cos(AUTO_CORNER)) { out.push(x, y, r, g, b); out.push(x, y, r, g, b); }
+                }
+            }
+            fromX = x; fromY = y;
+        } else {
+            out.push(x, y, 0, 0, 0);
+        }
+    }
+    return out.n === n ? f : out;
+}
+
 /** Écart angulaire entre deux ordres du réseau de diffraction (rad) */
 const GRATING_ANGLE = 4 * DEG;
 const GRATING_OFFSETS = {
@@ -783,12 +895,3 @@ function grow(a) {
     return b;
 }
 
-/** Couleur affichée (linéaire) d'une primitive à partir des puissances équilibrées par source */
-export function displayColor(r, g, b, out, exact = false) {
-    // Couleur exacte : la teinte choisie est affichée telle quelle (les primaires réelles des diodes sont ignorées)
-    if (exact) { out[0] = r; out[1] = g; out[2] = b; return out; }
-    out[0] = r * PRIM[0][0] + g * PRIM[1][0] + b * PRIM[2][0];
-    out[1] = r * PRIM[0][1] + g * PRIM[1][1] + b * PRIM[2][1];
-    out[2] = r * PRIM[0][2] + g * PRIM[1][2] + b * PRIM[2][2];
-    return out;
-}

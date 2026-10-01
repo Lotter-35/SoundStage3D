@@ -82,12 +82,15 @@ const AUDIO_STORAGE_DIR = path.join(STORAGE_DIR, 'audio');
 const PLAYLISTS_DIR = path.join(STORAGE_DIR, 'playlists');
 const SHOWS_DIR = path.join(STORAGE_DIR, 'shows'); // shows de la régie lumière (groupes, patterns…)
 const WORLDS_DIR = path.join(STORAGE_DIR, 'worlds'); // mondes des salles permanentes (?room=NOM)
+// Mondes des salles temporaires (codes générés) : gardés pour les retrouver après un redémarrage du serveur
+const TEMP_WORLDS_DIR = path.join(WORLDS_DIR, '_temp');
 
 try {
     fs.mkdirSync(AUDIO_STORAGE_DIR, { recursive: true });
     fs.mkdirSync(PLAYLISTS_DIR, { recursive: true });
     fs.mkdirSync(SHOWS_DIR, { recursive: true });
     fs.mkdirSync(WORLDS_DIR, { recursive: true });
+    fs.mkdirSync(TEMP_WORLDS_DIR, { recursive: true });
 } catch (e) {
     console.error('[Storage] Error initializing storage directories:', e);
 }
@@ -291,14 +294,18 @@ function liveTrackIds() {
             if (Array.isArray(list)) for (const t of list) if (t && t.id) ids.add(t.id);
         }
     }
-    // Files d'attente mémorisées des salles permanentes (salles vides) : leurs morceaux ne sont jamais supprimés
-    try {
-        for (const f of fs.readdirSync(WORLDS_DIR)) {
-            if (!f.endsWith('.json')) continue;
-            const w = JSON.parse(fs.readFileSync(path.join(WORLDS_DIR, f), 'utf-8'));
-            for (const id of worldQueueIds(w.queue)) ids.add(id);
-        }
-    } catch (_) { /* pas de dossier de mondes */ }
+    // Files d'attente mémorisées des salles (vides ou en attente de reconnexion) : leurs morceaux ne sont jamais supprimés
+    for (const dir of [WORLDS_DIR, TEMP_WORLDS_DIR]) {
+        try {
+            for (const f of fs.readdirSync(dir)) {
+                if (!f.endsWith('.json')) continue;
+                // Salle temporaire ouverte : sa file en mémoire (ci-dessus) fait foi, pas son fichier (en retard)
+                if (dir === TEMP_WORLDS_DIR && rooms.has(f.slice(0, -5))) continue;
+                const w = JSON.parse(fs.readFileSync(path.join(dir, f), 'utf-8'));
+                for (const id of worldQueueIds(w.queue)) ids.add(id);
+            }
+        } catch (_) { /* pas de dossier de mondes */ }
+    }
     return ids;
 }
 
@@ -352,7 +359,7 @@ function generateRoomId() {
     let id;
     do {
         id = Array.from({ length: 6 }, () => chars[Math.floor(Math.random() * chars.length)]).join('');
-    } while (rooms.has(id));
+    } while (rooms.has(id) || fs.existsSync(tempWorldPath(id))); // code d'une salle en attente de reconnexion : pris
     return id;
 }
 
@@ -373,9 +380,42 @@ function worldPath(name) {
     return path.join(WORLDS_DIR, `${name}.json`);
 }
 
-function loadWorld(name) {
+// ─── Reconnexion après un redémarrage du serveur ─────────────────────────────
+// Une salle temporaire est aussi écrite sur le disque (worlds/_temp/CODE.json, même format) : les joueurs
+// restés dans le jeu se reconnectent seuls (RESUME_ROOM) et la retrouvent avec son monde et sa musique.
+// Salle vidée : fichier gardé TEMP_GRACE_MS (coupure réseau de tout le monde), puis supprimé.
+const TEMP_GRACE_MS = 10 * 60 * 1000;
+const TEMP_MAX_AGE_MS = 24 * 3600 * 1000;
+const tempDeleteTimers = new Map();
+
+function tempWorldPath(roomId) {
+    return path.join(TEMP_WORLDS_DIR, `${roomId}.json`);
+}
+
+function hasTempWorld(roomId) {
+    return GENERATED_ROOM_RE.test(roomId) && fs.existsSync(tempWorldPath(roomId));
+}
+
+function scheduleTempWorldDelete(roomId) {
+    clearTimeout(tempDeleteTimers.get(roomId));
+    tempDeleteTimers.set(roomId, setTimeout(() => {
+        tempDeleteTimers.delete(roomId);
+        if (rooms.has(roomId)) return;
+        try { fs.unlinkSync(tempWorldPath(roomId)); } catch (_) { /* déjà supprimé */ }
+    }, TEMP_GRACE_MS));
+}
+
+// Au démarrage : mondes temporaires trop anciens supprimés (les autres attendent le retour de leurs joueurs)
+try {
+    for (const f of fs.readdirSync(TEMP_WORLDS_DIR)) {
+        const file = path.join(TEMP_WORLDS_DIR, f);
+        if (Date.now() - fs.statSync(file).mtimeMs > TEMP_MAX_AGE_MS) fs.unlinkSync(file);
+    }
+} catch (_) { /* dossier absent */ }
+
+function loadWorld(name, file = worldPath(name)) {
     try {
-        const data = JSON.parse(fs.readFileSync(worldPath(name), 'utf-8'));
+        const data = JSON.parse(fs.readFileSync(file, 'utf-8'));
         return data && typeof data === 'object' ? data : null;
     } catch (_) {
         return null; // pas encore de sauvegarde (ou fichier illisible) : monde par défaut
@@ -408,18 +448,28 @@ function restoreQueue(room, q) {
             room.playback = { currentTime: 0, isPlaying: true, timestamp: Date.now() };
             room.isPlayingTriggered = true;
         }
+        // Reprise après un redémarrage (joueurs restés dans le jeu) : à la position sauvegardée
+        if (q.resumePosition !== undefined) room.playback.currentTime = Math.max(0, Number(q.resumePosition) || 0);
     }
 }
 
-/** Écriture atomique du monde d'une salle permanente */
+/** Position de lecture actuelle d'une salle (s) */
+function playbackPosition(room) {
+    const pb = room.playback;
+    if (!pb) return 0;
+    const elapsed = pb.isPlaying ? Math.max(0, (Date.now() - (pb.timestamp || Date.now())) / 1000) : 0;
+    return (pb.currentTime || 0) + elapsed;
+}
+
+/** Écriture atomique du monde d'une salle (permanente, ou temporaire pour la reconnexion) */
 function saveWorldNow(room) {
-    if (!room.persistent) return;
+    if (!room.saveFile) return;
     if (room.worldSaveTimer) { clearTimeout(room.worldSaveTimer); room.worldSaveTimer = null; }
     try {
-        const file = worldPath(room.persistent);
+        const file = room.saveFile;
         const tmp = `${file}.tmp`;
         fs.writeFileSync(tmp, JSON.stringify({
-            name: room.persistent,
+            name: room.persistent || room.id,
             savedAt: Date.now(),
             lightingVersion: room.lightingVersion || 1,
             lightingState: room.lightingState,
@@ -434,11 +484,13 @@ function saveWorldNow(room) {
                 repeatMode: room.repeatMode || 'off',
                 trackName: room.trackName || '',
                 wasPlaying: Boolean(room.currentTrack && room.playback && room.playback.isPlaying),
+                // Salle temporaire : reprise à la même position (hors salle permanente, qui repart du début)
+                ...(room.persistent ? {} : { resumePosition: playbackPosition(room) }),
             },
         }), 'utf-8');
         fs.renameSync(tmp, file);
     } catch (e) {
-        console.error(`[Monde] Sauvegarde de ${room.persistent} impossible :`, e.message);
+        console.error(`[Monde] Sauvegarde de ${room.persistent || room.id} impossible :`, e.message);
     }
 }
 
@@ -453,13 +505,17 @@ function mergeDspState(saved) {
 
 /** Sauvegarde groupée (au plus une écriture par seconde pendant les modifications) */
 function scheduleWorldSave(room) {
-    if (!room.persistent || room.worldSaveTimer) return;
+    if (!room.saveFile || room.worldSaveTimer) return;
     room.worldSaveTimer = setTimeout(() => saveWorldNow(room), WORLD_SAVE_DELAY_MS);
 }
 
 function flushAllWorlds() {
-    for (const room of rooms.values()) if (room.worldSaveTimer) saveWorldNow(room);
+    for (const room of rooms.values()) if (room.worldSaveTimer || !room.persistent) saveWorldNow(room);
 }
+// Salles temporaires : position de lecture réécrite régulièrement (serveur coupé brutalement)
+setInterval(() => {
+    for (const room of rooms.values()) if (!room.persistent && room.playback && room.playback.isPlaying) scheduleWorldSave(room);
+}, 5000).unref();
 for (const sig of ['SIGINT', 'SIGTERM']) {
     process.on(sig, () => { flushAllWorlds(); process.exit(0); });
 }
@@ -727,9 +783,16 @@ function applyLightingChange(state, msg) {
 /**
  * Crée une salle dont ce client est le premier joueur (maître).
  * @param {string|null} persistentName nom de la salle permanente (monde sauvegardé), null = salle temporaire
+ * @param {object} [opts]
+ * @param {boolean} [opts.resumed] reconnexion après un redémarrage (salle temporaire reprise de son fichier)
+ * @param {{trackId: string, position: number, isPlaying: boolean}} [opts.playback] lecture du joueur qui revient
+ * @param {number} [opts.sweepTime] horloge de balayage des lasers du joueur qui revient (s) : pas de saut
  */
-function createRoom(ws, clientId, roomId, persistentName) {
-    const world = persistentName ? loadWorld(persistentName) : null;
+function createRoom(ws, clientId, roomId, persistentName, opts = {}) {
+    const world = persistentName ? loadWorld(persistentName)
+        : hasTempWorld(roomId) ? loadWorld(null, tempWorldPath(roomId)) : null;
+    clearTimeout(tempDeleteTimers.get(roomId));
+    tempDeleteTimers.delete(roomId);
     const room = {
         masterId: clientId,
         clients: new Map([[clientId, ws]]),
@@ -751,6 +814,8 @@ function createRoom(ws, clientId, roomId, persistentName) {
         queueVersion: 1,
         lightingVersion: (world && world.lightingVersion) || 1,
         persistent: persistentName,
+        id: roomId,
+        saveFile: persistentName ? worldPath(persistentName) : tempWorldPath(roomId),
         worldSaveTimer: null,
         loadedPlaylistId: null,
         loadedPlaylistName: null,
@@ -764,11 +829,18 @@ function createRoom(ws, clientId, roomId, persistentName) {
         readyTimeout: null,
     };
     if (world) restoreQueue(room, world.queue);
+    // Joueur resté dans le jeu : la musique reprend là où il l'entend (en lecture ou en pause)
+    const pb = opts.playback;
+    if (pb && room.currentTrack && pb.trackId === room.currentTrack.id && Number.isFinite(pb.position)) {
+        room.playback = { currentTime: Math.max(0, pb.position), isPlaying: Boolean(pb.isPlaying), timestamp: Date.now() };
+        room.isPlayingTriggered = Boolean(pb.isPlaying);
+    }
+    if (Number.isFinite(opts.sweepTime) && opts.sweepTime >= 0) room.createdAt = Date.now() - opts.sweepTime * 1000;
     rooms.set(roomId, room);
     ws.roomId = roomId;
 
-    console.log(`[Room] Created: ${roomId} by ${clientId}${persistentName ? (world ? ' (salle permanente, monde sauvegardé)' : ' (salle permanente, nouveau monde)') : ''}`);
-    if (persistentName && !world) saveWorldNow(room);
+    console.log(`[Room] Created: ${roomId} by ${clientId}${persistentName ? (world ? ' (salle permanente, monde sauvegardé)' : ' (salle permanente, nouveau monde)') : world ? ' (reprise après redémarrage)' : ''}`);
+    if (!world) saveWorldNow(room);
     send(ws, {
         type: 'ROOM_CREATED',
         roomId,
@@ -796,11 +868,65 @@ function createRoom(ws, clientId, roomId, persistentName) {
         playlists: getPlaylistsList(),
         players: getPlayersSnapshot(room),
         serverTime: Date.now(),
-        sweepTime: 0,
+        sweepTime: Math.max(0, (Date.now() - room.createdAt) / 1000),
         persistent: Boolean(persistentName),
+        resumed: Boolean(opts.resumed),
     });
     sendIldaLiveState(ws);
     return room;
+}
+
+/** Ajoute un joueur à une salle existante et lui envoie l'état complet */
+function joinRoom(ws, clientId, roomId, room, resumed) {
+    room.clients.set(clientId, ws);
+    ws.roomId = roomId;
+
+    console.log(`[Room] ${clientId} joined ${roomId}`);
+
+    // Send full state to new peer
+    send(ws, {
+        type: 'ROOM_JOINED',
+        roomId,
+        clientId,
+        isFirstInRoom: false,
+        color: ws.color,
+        publicIp: publicIp || null,
+        webPort: 8067,
+        audioPort: PORT,
+        dspState: room.dspState,
+        lightingState: room.lightingState || defaultLightingState(),
+        lightingVersion: room.lightingVersion || 1,
+        playback: room.playback,
+        sine: room.sine,
+        trackName: room.trackName,
+        audioUrl: room.audioBuffer ? `/audio/${roomId}` : null,
+        currentTrack: room.currentTrack || null,
+        manualQueue: room.manualQueue || [],
+        contextQueue: room.contextQueue || [],
+        isShuffle: Boolean(room.isShuffle),
+        repeatMode: room.repeatMode || 'off',
+        queueVersion: room.queueVersion || 1,
+        loadedPlaylistId: room.loadedPlaylistId || null,
+        loadedPlaylistName: room.loadedPlaylistName || null,
+        playlists: getPlaylistsList(),
+        players: getPlayersSnapshot(room),
+        serverTime: Date.now(),
+        sweepTime: Math.max(0, (Date.now() - (room.createdAt || Date.now())) / 1000),
+        persistent: Boolean(room.persistent),
+        resumed,
+    });
+
+    sendDmxState(ws, room);
+    sendIldaLiveState(ws);
+
+    // Notify existing clients
+    broadcastRoom(room, { type: 'PEER_JOINED', peerId: clientId }, clientId);
+
+    // Broadcast updated player list to everyone
+    broadcastRoomAll(room, {
+        type: 'PLAYERS_UPDATE',
+        players: getPlayersSnapshot(room),
+    });
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -1520,60 +1646,33 @@ wss.on('connection', (ws) => {
                 const roomId = String(msg.roomId || '').toUpperCase();
                 const room = rooms.get(roomId);
                 if (!room) {
-                    // Salle permanente : (re)créée depuis son monde sauvegardé (ou le monde par défaut)
+                    // Salle permanente : (re)créée depuis son monde sauvegardé (ou le monde par défaut) ;
+                    // salle temporaire d'avant un redémarrage du serveur : reprise de son fichier
                     if (isPermanentRoomName(roomId)) createRoom(ws, clientId, roomId, roomId);
+                    else if (hasTempWorld(roomId)) createRoom(ws, clientId, roomId, null);
                     else send(ws, { type: 'ROOM_NOT_FOUND', roomId });
                     return;
                 }
+                joinRoom(ws, clientId, roomId, room, false);
+                break;
+            }
 
-                room.clients.set(clientId, ws);
-                ws.roomId = roomId;
-
-                console.log(`[Room] ${clientId} joined ${roomId}`);
-
-                // Send full state to new peer
-                send(ws, {
-                    type: 'ROOM_JOINED',
-                    roomId,
-                    clientId,
-                    isFirstInRoom: false,
-                    color: ws.color,
-                    publicIp: publicIp || null,
-                    webPort: 8067,
-                    audioPort: PORT,
-                    dspState: room.dspState,
-                    lightingState: room.lightingState || defaultLightingState(),
-                    lightingVersion: room.lightingVersion || 1,
-                    playback: room.playback,
-                    sine: room.sine,
-                    trackName: room.trackName,
-                    audioUrl: room.audioBuffer ? `/audio/${roomId}` : null,
-                    currentTrack: room.currentTrack || null,
-                    manualQueue: room.manualQueue || [],
-                    contextQueue: room.contextQueue || [],
-                    isShuffle: Boolean(room.isShuffle),
-                    repeatMode: room.repeatMode || 'off',
-                    queueVersion: room.queueVersion || 1,
-                    loadedPlaylistId: room.loadedPlaylistId || null,
-                    loadedPlaylistName: room.loadedPlaylistName || null,
-                    playlists: getPlaylistsList(),
-                    players: getPlayersSnapshot(room),
-                    serverTime: Date.now(),
-                    sweepTime: Math.max(0, (Date.now() - (room.createdAt || Date.now())) / 1000),
-                    persistent: Boolean(room.persistent),
-                });
-
-                sendDmxState(ws, room);
-                sendIldaLiveState(ws);
-
-                // Notify existing clients
-                broadcastRoom(room, { type: 'PEER_JOINED', peerId: clientId }, clientId);
-
-                // Broadcast updated player list to everyone
-                broadcastRoomAll(room, {
-                    type: 'PLAYERS_UPDATE',
-                    players: getPlayersSnapshot(room),
-                });
+            // ─── RESUME_ROOM (reconnexion automatique d'un joueur resté dans le jeu) ──
+            case 'RESUME_ROOM': {
+                const roomId = String(msg.roomId || '').toUpperCase();
+                const room = rooms.get(roomId);
+                const playback = msg.playback && typeof msg.playback === 'object' ? {
+                    trackId: typeof msg.playback.trackId === 'string' ? msg.playback.trackId : null,
+                    position: Number(msg.playback.position),
+                    isPlaying: Boolean(msg.playback.isPlaying),
+                } : null;
+                const sweepTime = Number(msg.sweepTime);
+                if (room) joinRoom(ws, clientId, roomId, room, true);
+                else if (isPermanentRoomName(roomId)) createRoom(ws, clientId, roomId, roomId, { resumed: true, playback, sweepTime });
+                // Salle temporaire : reprise de son fichier, ou nouveau monde sous le même code (les joueurs restent ensemble)
+                else if (GENERATED_ROOM_RE.test(roomId)) createRoom(ws, clientId, roomId, null, { resumed: true, playback, sweepTime });
+                else send(ws, { type: 'ROOM_NOT_FOUND', roomId });
+                if (rooms.has(roomId)) console.log(`[Room] ${clientId} reconnecté à ${roomId}`);
                 break;
             }
 
@@ -2372,8 +2471,9 @@ wss.on('connection', (ws) => {
             // Destroy empty room only when everyone has left
             if (room.readyTimeout) clearTimeout(room.readyTimeout);
             sendRegies(room, { type: 'ROOM_CLOSED' });
-            saveWorldNow(room); // salle permanente : monde écrit sur le disque avant de libérer la mémoire
+            saveWorldNow(room); // monde écrit sur le disque avant de libérer la mémoire
             rooms.delete(ws.roomId);
+            if (!room.persistent) scheduleTempWorldDelete(ws.roomId);
             console.log(`[Room] Destroyed: ${ws.roomId} (empty)`);
             // Fichiers envoyés pendant la session et jamais rangés dans une playlist : supprimés (les récents sont épargnés 2 min)
             if (room.uploadedIds && room.uploadedIds.size > 0) {

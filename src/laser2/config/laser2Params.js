@@ -83,6 +83,9 @@ export const LASER2_PARAMS_SCHEMA = {
     pattern:     opt(PATTERNS, 'Faisceaux (éventail)', 'Motif', 'content'),
     // Forme ILDA : chemin dans la bibliothèque du serveur (« Banque/forme.ild »), choisie par banque dans le panneau
     ildaFile:    { value: '', label: 'Forme ILDA', folder: 'content', dmx: true, custom: true },
+    // Réglage automatique : vitesse de dessin, décalage couleur et vitesse d'animation choisis pour le
+    // meilleur rendu, formes ILDA trop peu détaillées complétées (physique des galvos conservée)
+    autoTune:    bool(true, 'Réglage automatique (meilleur rendu)', 'content', false),
     liveChannel: num(1, 1, 16, 1, 'Canal ILDA live', 'content'),
     playMode:    opt(PLAY_MODES, 'Boucle', 'Lecture', 'content'),
     ildaFps:     num(30, 1, 60, 1, 'Vitesse d\'animation (images/s)', 'content'),
@@ -142,11 +145,8 @@ export const LASER2_PARAMS_SCHEMA = {
     aperture:    num(6, 1, 12, 0.1, 'Diamètre de sortie (mm)', 'hardware', false),
     divergence:  num(0.8, 0.2, 4, 0.05, 'Divergence (mrad)', 'hardware', false),
     modulation:  opt(MODULATIONS, 'Analogique', 'Modulation', 'hardware', false),
-    threshold:   num(6, 0, 40, 0.5, 'Seuil des diodes (%)', 'hardware', false),
-    colorShift:  num(6, 0, 20, 1, 'Décalage couleur (points)', 'hardware', false),
-    diodeFx:     bool(true, 'Effet des diodes (seuil)', 'hardware', false),
+    colorShift:  num(6, 0, 20, 1, 'Décalage couleur (points à 30 kpps)', 'hardware', false),
     galvoFx:     bool(true, 'Effet des galvos (inertie, vitesse limitée)', 'hardware', false),
-    exactColor:  bool(false, 'Couleur exacte (corrige le mélange des diodes)', 'hardware', false),
 
     // ── 🌫️ Volutes (hors DMX) : fumée qui bouge dans les nappes, identique chez tous les joueurs ──
     smokeOn:       bool(true, 'Volutes', 'smoke', false),

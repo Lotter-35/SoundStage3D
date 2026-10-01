@@ -28,7 +28,7 @@ export function packResult(sys, spare) {
             s: 0, sn: c.sheetN,
             i: 0, in: c.impactN,
             lens: [c.lens[0], c.lens[1], c.lens[2]],
-            stats: s ? { points: s.points, frameHz: s.frameHz, window: s.window, beams: s.beams, sheets: s.sheets, frames: s.frames } : null,
+            stats: s ? { points: s.points, frameHz: s.frameHz, window: s.window, beams: s.beams, sheets: s.sheets, frames: s.frames, pps: s.pps, fps: s.fps, shift: s.shift, auto: s.auto } : null,
         };
         f.set(c.beamData.subarray(0, c.beamN * BEAM_STRIDE), o);
         o += c.beamN * BEAM_STRIDE;

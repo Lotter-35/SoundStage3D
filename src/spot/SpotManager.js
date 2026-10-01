@@ -24,7 +24,9 @@ import { RES_QUALITY } from '../ui/ClientOptions.js';
 import { nextBusyState, BUSY_RES_FACTOR } from '../render/resolutionScale.js';
 
 /** Résolution des faisceaux quand la caméra est dans l'un d'eux (× la qualité choisie) */
-const INSIDE_RES_FACTOR = 0.65;
+const INSIDE_RES_FACTOR = 0.5;
+/** Image trop lente (temps GPU > budget des FPS visés) : la résolution des faisceaux seuls baisse par paliers */
+const LOAD_MIN = 0.5, LOAD_STEP_DOWN = 0.1, LOAD_STEP_UP = 0.05, LOAD_PERIOD_MS = 500;
 
 function makeId() {
     return 'spot-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
@@ -76,6 +78,8 @@ export class SpotManager {
         this._insideScale = 1;
         this._busy = false;
         this._insideHold = 0;
+        this._load = 1;          // facteur de résolution selon le coût réel (setFrameLoad)
+        this._loadTime = 0;
     }
 
     /** Vrai si la caméra est dans le cône d'une lyre allumée ou dans les faisceaux d'une barre LED */
@@ -232,8 +236,24 @@ export class SpotManager {
     }
 
     /** Résolution des faisceaux : qualité choisie × caméra dans un faisceau × beaucoup de faisceaux (mode auto) */
+    /**
+     * Temps GPU de l'image (résolution dynamique) comparé au budget des FPS visés : faisceaux en résolution plus
+     * basse tant que l'image est trop lente et que des faisceaux sont affichés, retour progressif sinon
+     */
+    setFrameLoad(gpuMs, budgetMs, now) {
+        if (!(gpuMs > 0) || !(budgetMs > 0) || now - this._loadTime < LOAD_PERIOD_MS) return;
+        this._loadTime = now;
+        let f = this._load;
+        if (gpuMs > budgetMs * 1.05 && this.volumePass.enabled) f = Math.max(LOAD_MIN, f - LOAD_STEP_DOWN);
+        else if (gpuMs < budgetMs * 0.8 || !this.volumePass.enabled) f = Math.min(1, f + LOAD_STEP_UP);
+        if (f !== this._load) {
+            this._load = f;
+            this._applyVolumeResolution();
+        }
+    }
+
     _applyVolumeResolution() {
-        this.volumePass.setResolutionScale(this._beamSetting(), this._insideScale * (this._busy ? BUSY_RES_FACTOR : 1));
+        this.volumePass.setResolutionScale(this._beamSetting(), this._insideScale * (this._busy ? BUSY_RES_FACTOR : 1) * this._load);
     }
 
     _applyGlobals() {

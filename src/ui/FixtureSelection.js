@@ -4,8 +4,10 @@
  *
  *   - glisser sur l'écran dans le vide : sélection rectangulaire (Ctrl / Maj : ajoute à la sélection) ;
  *   - Ctrl + clic sur une lumière : l'ajoute à la sélection, ou l'en retire si elle y était ;
- *   - sélection de plusieurs lumières : un seul gizmo au centre du groupe les déplace toutes ; Suppr les
- *     supprime toutes ; les réglages changés dans l'inspecteur ouvert (celui de la lumière « de référence »)
+ *   - sélection de plusieurs lumières : un seul gizmo au centre du groupe les déplace (G) ou les fait pivoter
+ *     autour du centre (R, chaque appareil tourne aussi sur lui-même) ; Suppr les
+ *     supprime toutes ; Dupliquer (bandeau, Ctrl + D ou bouton d'un inspecteur) les copie toutes à 1,5 m
+ *     sur la droite, disposition conservée, et la sélection passe sur les copies ; les réglages changés dans l'inspecteur ouvert (celui de la lumière « de référence »)
  *     s'appliquent à toutes les lumières du même type (position, orientation du support et adresse DMX exceptées) ;
  *   - un bandeau résume la sélection : type à modifier, supprimer, désélectionner (Échap).
  *
@@ -25,6 +27,10 @@ const UPDATE_CATEGORY = { laser: 'laser_param', strobe: 'strobe_update', spot: '
 
 const _v = new THREE.Vector3();
 const _d = new THREE.Vector3();
+const _dq = new THREE.Quaternion();
+const _e = new THREE.Euler();
+/** Décalage commun des copies d'une sélection (même vecteur pour toutes : la disposition est conservée) */
+const DUPLICATE_OFFSET = new THREE.Vector3(1.5, 0, 0);
 
 export class FixtureSelection {
     /**
@@ -49,6 +55,7 @@ export class FixtureSelection {
         this._mirroring = false;
         this._press = null;   // { x, y, ctrl, rect: bool }
         this._groupActive = false;
+        this._duplicating = false;
         this._frame = 0;
 
         // Pivot du gizmo de groupe (centre de la sélection)
@@ -57,6 +64,7 @@ export class FixtureSelection {
         this._pivot.userData.isAmbianceInternal = true;
         scene.add(this._pivot);
         this._lastPivot = new THREE.Vector3();
+        this._lastPivotQ = new THREE.Quaternion();
 
         // Repères des éléments sélectionnés (cube filaire, toujours visible)
         this._markerGeo = new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1));
@@ -290,8 +298,10 @@ export class FixtureSelection {
         for (const it of this.items.values()) { c.add(this._worldPos(it, _v)); n++; }
         if (n) c.multiplyScalar(1 / n);
         this._pivot.position.copy(c);
+        this._pivot.quaternion.identity();
         this._pivot.updateMatrixWorld(true);
         this._lastPivot.copy(c);
+        this._lastPivotQ.identity();
     }
 
     /** Déplace un appareil d'un vecteur (monde) */
@@ -312,6 +322,46 @@ export class FixtureSelection {
         } else {
             obj.isBeingDragged = true;
             obj.group.position.add(d);
+            obj.group.updateMatrixWorld(true);
+            obj.syncFromGizmo();
+        }
+        this._emitPlacement(item, false);
+    }
+
+    /** Fait pivoter un appareil de dq autour du point c (position autour du centre + orientation propre) */
+    _rotateItem(item, dq, c) {
+        const { kind, obj } = item;
+        // Position : tourne autour du centre du groupe
+        this._worldPos(item, _v);
+        _d.copy(_v).sub(c).applyQuaternion(dq).add(c).sub(_v);
+        if (kind === 'light') {
+            const l = obj.light;
+            l.position.sub(c).applyQuaternion(dq).add(c);
+            l.updateMatrixWorld();
+            if (l.target) { l.target.position.sub(c).applyQuaternion(dq).add(c); l.target.updateMatrixWorld(); }
+            if (obj.markerMesh) obj.markerMesh.position.copy(l.position);
+            if (obj.helper && obj.helper.update) obj.helper.update();
+            this._emitPlacement(item, false);
+            return;
+        }
+        if (_d.lengthSq() > 1e-12) this._moveItem(item, _d);
+        // Orientation propre
+        if (kind === 'laser') {
+            const h = obj.getHousingGroup();
+            h.quaternion.premultiply(dq);
+            h.updateMatrixWorld(true);
+            _e.setFromQuaternion(h.quaternion, 'YXZ');
+            obj.setParam('angle', Math.round(THREE.MathUtils.radToDeg(_e.y)));
+            obj.setParam('tilt', Math.round(THREE.MathUtils.radToDeg(-_e.x)));
+            obj.setParam('roll', Math.round(THREE.MathUtils.radToDeg(_e.z)));
+        } else if (kind === 'strobe') {
+            obj.group.quaternion.premultiply(dq);
+            obj.group.updateMatrixWorld(true);
+            obj.syncRotationFromGizmo(); // envoie sa mise à jour
+            return;
+        } else {
+            obj.isBeingDragged = true;
+            obj.group.quaternion.premultiply(dq);
             obj.group.updateMatrixWorld(true);
             obj.syncFromGizmo();
         }
@@ -401,6 +451,59 @@ export class FixtureSelection {
         this._refreshBar();
     }
 
+    // ── Duplication ─────────────────────────────────────────────────────
+
+    /** Copie d'un appareil (mêmes fonctions que les boutons « Dupliquer » des inspecteurs) */
+    _duplicateOne({ kind, obj }) {
+        const ap = this.ap;
+        if (kind === 'laser') {
+            const l = ap.duplicateSelectedLaser(obj);
+            return l ? { kind, obj: l } : null;
+        }
+        if (kind === 'strobe') {
+            const res = ap.strobeManager.duplicateStrobe(obj.id);
+            return res ? { kind, obj: res.strobe } : null;
+        }
+        if (kind === 'light') {
+            ap.selectLight(obj);
+            ap.duplicateSelectedLight();
+            const e = ap.selectedEntry;
+            return e && e !== obj ? { kind, obj: e } : null;
+        }
+        const res = ap.duplicateSelectedSpot(obj);
+        const copy = res && (res.laser || res.bar || res.spot);
+        return copy ? { kind, obj: copy } : null;
+    }
+
+    /** Duplique toute la sélection (décalage commun) et sélectionne les copies */
+    duplicateAll() {
+        const list = [...this.items.values()];
+        if (!list.length) return;
+        this._duplicating = true;
+        const copies = [];
+        try {
+            this.items.clear();
+            this._leaveGroup();
+            this.deselectAllSingles();
+            for (const it of list) {
+                const target = this._worldPos(it, new THREE.Vector3()).add(DUPLICATE_OFFSET);
+                const copy = this._duplicateOne(it);
+                if (!copy) continue;
+                // Chaque type a son propre décalage de copie : ramené au décalage commun
+                _d.copy(target).sub(this._worldPos(copy, _v));
+                if (_d.lengthSq() > 1e-8) this._moveItem(copy, _d);
+                if (copy.kind === 'spot' || copy.kind === 'ledbar' || copy.kind === 'laser2') copy.obj.isBeingDragged = false;
+                this._emitPlacement(copy, true);
+                copies.push(copy);
+            }
+        } finally {
+            this._duplicating = false;
+        }
+        this.deselectAllSingles();
+        this.setItems(copies);
+        this.ap._lastFixturePick = performance.now(); // la souris reste libre
+    }
+
     // ── Évènements ──────────────────────────────────────────────────────
 
     /** Mode où la sélection à la souris est possible : curseur libre (Tab) ou panneau Ambiance ouvert */
@@ -423,6 +526,17 @@ export class FixtureSelection {
         if (ap._laserInspectorPanel && typeof ap._laserInspectorPanel.onSync === 'function') {
             ap._laserInspectorPanel.onSync((payload) => this._mirror(payload));
         }
+
+        // Bouton « Dupliquer » d'un inspecteur pendant une sélection multiple : toute la sélection est copiée
+        const groupDuplicate = (orig) => (...args) => {
+            if (this._duplicating || this.items.size < 2) return orig(...args);
+            this.duplicateAll();
+            return null;
+        };
+        ap.duplicateSelectedSpot = groupDuplicate(ap.duplicateSelectedSpot.bind(ap));
+        ap.duplicateSelectedLaser = groupDuplicate(ap.duplicateSelectedLaser.bind(ap));
+        ap.duplicateSelectedLight = groupDuplicate(ap.duplicateSelectedLight.bind(ap));
+        if (ap.strobeManager) ap.strobeManager.duplicateStrobe = groupDuplicate(ap.strobeManager.duplicateStrobe.bind(ap.strobeManager));
 
         // Pointeur : capture, avant la sélection du panneau Ambiance et du gizmo
         this.dom.addEventListener('pointerdown', (e) => {
@@ -480,6 +594,16 @@ export class FixtureSelection {
         const tc = ap.transformControls;
         tc.addEventListener('objectChange', () => {
             if (!this._groupActive || tc.object !== this._pivot) return;
+            if (tc.getMode() === 'rotate') {
+                // Rotation du groupe : écart depuis la dernière image, appliqué autour du centre
+                _dq.copy(this._pivot.quaternion).multiply(this._lastPivotQ.invert());
+                this._lastPivotQ.copy(this._pivot.quaternion);
+                if (Math.abs(_dq.w) > 1 - 1e-12) return;
+                const c = this._pivot.position;
+                for (const it of this.items.values()) this._rotateItem(it, _dq, c);
+                this._refreshMarkers();
+                return;
+            }
             _d.copy(this._pivot.position).sub(this._lastPivot);
             if (_d.lengthSq() === 0) return;
             this._lastPivot.copy(this._pivot.position);
@@ -496,13 +620,28 @@ export class FixtureSelection {
 
         // Clavier : Suppr (toute la sélection), Échap (désélectionner)
         window.addEventListener('keydown', (e) => {
-            if (this.items.size < 2) return;
             const t = e.target;
             if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+            // Ctrl + D avec un seul appareil sélectionné : même duplication que son bouton « Dupliquer »
+            if (this.items.size < 2 && e.code === 'KeyD' && (e.ctrlKey || e.metaKey) && !e.repeat) {
+                const cur = this._currentSingle();
+                if (!cur) return;
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                const copy = this._duplicateOne(cur);
+                if (copy) this._selectSingle(copy);
+                ap._lastFixturePick = performance.now(); // la souris reste libre
+                return;
+            }
+            if (this.items.size < 2) return;
             if (e.code === 'Delete' || e.key === 'Delete') {
                 e.preventDefault();
                 e.stopImmediatePropagation();
                 this.deleteAll();
+            } else if (e.code === 'KeyD' && (e.ctrlKey || e.metaKey)) {
+                e.preventDefault();
+                e.stopImmediatePropagation();
+                this.duplicateAll();
             } else if (e.code === 'Escape') {
                 e.stopImmediatePropagation();
                 this.deselectAll();
@@ -563,12 +702,13 @@ export class FixtureSelection {
             b.addEventListener('click', (e) => { e.stopPropagation(); fn(); });
             return b;
         };
+        const dup = btn('Dupliquer', 'Dupliquer la sélection à droite et sélectionner les copies (Ctrl + D)', () => this.duplicateAll());
         const del = btn('Supprimer', 'Supprimer la sélection (Suppr)', () => this.deleteAll());
         const close = btn('×', 'Désélectionner (Échap)', () => this.deselectAll());
         for (const el of [bar, kindSel]) {
             ['pointerdown', 'mousedown', 'click'].forEach(ev => el.addEventListener(ev, e => e.stopPropagation()));
         }
-        bar.append(text, kindSel, del, close);
+        bar.append(text, kindSel, dup, del, close);
         document.body.appendChild(bar);
         this._bar = bar;
         this._barText = text;

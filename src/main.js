@@ -54,6 +54,7 @@ import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
 import { DynamicResolution } from './render/DynamicResolution.js';
+import { installGizmoSnap } from './ui/gizmoSnap.js';
 import { FixtureSelection } from './ui/FixtureSelection.js';
 import { setDynamicResolutionFactor } from './render/resolutionScale.js';
 import { DirShadowCache } from './render/dirShadowCache.js';
@@ -1030,6 +1031,7 @@ const mpHost = window.location.hostname || 'localhost';
 const mpPort = (window.location.port === '8067') ? '8068' : (window.location.port === '8080' ? '8068' : (window.location.port || '8068'));
 const mpProto = window.location.protocol === 'https:' ? 'wss' : 'ws';
 const mp = new MultiplayerClient(`${mpProto}://${mpHost}:${mpPort}`);
+window.__SS3D.mp = mp;
 mp.onDmx((packet) => dmxReceiver.push(packet));
 // Liste des projecteurs pour la régie lumière (envoyée au serveur quand elle change)
 const patchReporter = new PatchReporter({
@@ -1111,6 +1113,29 @@ function applyPendingPlaybackSync() {
     if (np) np.textContent = trackName || _currentAudioFileName;
 }
 
+/** Bandeau discret pendant une reconnexion au serveur */
+let _connectionBanner = null;
+let _connectionBannerTimer = null;
+function showConnectionBanner(state) {
+    if (!_connectionBanner) {
+        _connectionBanner = document.createElement('div');
+        _connectionBanner.style.cssText = 'position:fixed;top:12px;left:50%;transform:translateX(-50%);z-index:9000;'
+            + 'background:#141414;border:1px solid #333;border-radius:3px;color:#ddd;font:13px/1.4 system-ui,sans-serif;'
+            + 'padding:6px 14px;pointer-events:none;display:none;';
+        document.body.appendChild(_connectionBanner);
+    }
+    clearTimeout(_connectionBannerTimer);
+    if (state === 'lost') {
+        _connectionBanner.textContent = 'Serveur déconnecté — reconnexion…';
+    } else if (state === 'restored') {
+        _connectionBanner.textContent = 'Reconnecté';
+        _connectionBannerTimer = setTimeout(() => { _connectionBanner.style.display = 'none'; }, 2000);
+    } else {
+        _connectionBanner.textContent = 'Salle introuvable après la reconnexion — rechargez la page';
+    }
+    _connectionBanner.style.display = 'block';
+}
+
 // Try to connect to the multiplayer server. Degrades gracefully if server is offline.
 let _mpReady = false;
 try {
@@ -1158,6 +1183,38 @@ try {
 
     // Show initial player count
     controls.setPlayerCount(mp.players.length);
+
+    // ─── Reconnexion automatique (serveur redémarré, coupure réseau) ─────────────
+    // Le joueur reste dans le jeu : la connexion revient seule dans la même salle. Le premier revenu
+    // recrée la salle ; la musique reprend là où il l'entend, en lecture ou en pause.
+    mp.onResumeInfo(() => ({
+        playback: _currentPlayingTrack && _currentPlayingTrack.id && audioEngine.buffer ? {
+            trackId: _currentPlayingTrack.id,
+            position: audioEngine.getCurrentTime(),
+            isPlaying: Boolean(audioEngine.isPlaying),
+        } : null,
+        sweepTime: _sharedSweepTime,
+    }));
+    mp.onResumed(() => {
+        if (playerAvatars) playerAvatars.setLocalId(mp.clientId);
+        lightingSync.currentLightingVersion = mp.lightingVersion;
+        if (mp.dspState) controls.applyFullDspState(mp.dspState);
+        controls.setPlayerCount(mp.players.length);
+        if (mp.sweepTime !== undefined) {
+            _sharedSweepTime = mp.sweepTime + (mp.serverTime ? Math.max(0, (mp.serverNow() - mp.serverTime) / 1000) : 0);
+        }
+        // Salle déjà reprise par un autre joueur : on se cale tout de suite sur sa musique
+        const pb = mp.playback;
+        if (mp.role !== 'master' && pb && audioReady && audioEngine.buffer && !_isSwitchingTrack && !controls.state.sine.active) {
+            const elapsed = pb.isPlaying ? Math.max(0, (mp.serverNow() - (pb.timestamp || mp.serverNow())) / 1000) : 0;
+            const target = (pb.currentTime || 0) + elapsed;
+            if (Math.abs(audioEngine.getCurrentTime() - target) > 0.3) audioEngine.seek(target);
+            if (pb.isPlaying && !audioEngine.isPlaying) audioEngine.play(inputStage ? inputStage.input : crossover?.input);
+            if (!pb.isPlaying && audioEngine.isPlaying) audioEngine.pause();
+            controls.setPlayState(audioEngine.isPlaying);
+        }
+    });
+    mp.onConnectionState((state) => showConnectionBanner(state));
 
     // Listen for DSP updates from server (applies to all peers)
     mp.onDspUpdate((bus, param, value) => {
@@ -2237,6 +2294,8 @@ window.__SS3D.dynamicResolution = dynamicResolution;
 clientOptions.bind('dynamicResolution', (v) => dynamicResolution.setEnabled(v));
 clientOptions.bind('dynamicResolutionTarget', (v) => dynamicResolution.setTargetPercent(v));
 clientOptions.bind('renderScale', () => applyPixelRatio());
+// Gizmo : Maj enfoncée → déplacement calé sur la grille du monde, rotation par paliers
+installGizmoSnap(ambiancePanel.transformControls, () => ({ grid: clientOptions.get('snapGrid'), angle: clientOptions.get('snapAngle') }));
 clientOptions.bind('sharpness', (v) => laserManager && laserManager.setSharpness(v));
 clientOptions.bind('antialiasing', (mode) => laserManager && laserManager.setAntialiasing(mode));
 clientOptions.bind('hazeResolution', (v) => hazeVolume.setParam('resolution', v));
@@ -3979,6 +4038,8 @@ function renderFrame() {
     dynamicResolution.end();
     const renderTime = performance.now() - t0;
     dynamicResolution.update(now);
+    // Faisceaux des lyres : résolution baissée seule tant que l'image dépasse le budget des FPS visés
+    if (dynamicResolution.enabled && spotManager) spotManager.setFrameLoad(dynamicResolution.gpuMs, 1000 / dynamicResolution.targetHz, now);
 
     // SONDE 1 : Détection des frames lentes (Three.js / Lasers / Ombres / Objets)
     probeFrameSpike(realFrameMs, renderTime, scene, renderer, laserManager);

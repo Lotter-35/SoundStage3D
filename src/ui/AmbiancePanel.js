@@ -5491,8 +5491,12 @@ export class AmbiancePanel {
                 }
             }
 
-            if (!this.isOpen || this.isDraggingGizmo) return;
-            if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+            // G / R : déplacer / pivoter — panneau ouvert, ou appareil sélectionné panneau fermé (mode curseur)
+            // (sélection de plusieurs appareils : gizmo commun au centre du groupe, déplacement ou rotation)
+            if ((!this.isOpen && !fixtureSelected && !this._groupGizmoActive) || this.isDraggingGizmo) return;
+            if (e.ctrlKey || e.metaKey || e.altKey) return;
+            const t = e.target;
+            if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
 
             if (e.key === 'g' || e.key === 'G') {
                 this.setGizmoMode('translate');

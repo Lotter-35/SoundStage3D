@@ -43,6 +43,13 @@ export class MultiplayerClient {
         this.lightingVersion = 1;
         this.connected = false;
 
+        // Reconnexion automatique (serveur redémarré, coupure réseau) : même salle, sans recharger la page
+        this._reconnectTimer = null;
+        this._reconnectAttempt = 0;
+        this._onConnectionState = null;   // (état : 'lost' | 'restored' | 'failed') => void
+        this._resumeInfo = null;          // () => { playback, sweepTime } envoyé au serveur en revenant
+        this._onResumed = null;           // (message ROOM_CREATED / ROOM_JOINED) => void
+
         // Callbacks
         this._onDspUpdate = null;
         this._onLightingUpdate = null;
@@ -100,80 +107,127 @@ export class MultiplayerClient {
         return new Promise((resolve, reject) => {
             const params = new URLSearchParams(window.location.search);
             const roomParam = params.get('room');
-
-            this._ws = new WebSocket(this._wsUrl);
-            this._ws.binaryType = 'arraybuffer';
-
-            this._ws.onopen = () => {
-                this.connected = true;
-                this.clock.start();
+            this._openSocket(() => {
                 if (roomParam) {
                     this._send({ type: 'JOIN_ROOM', roomId: roomParam.toUpperCase() });
                 } else {
                     this._send({ type: 'CREATE_ROOM' });
                 }
-            };
-
-            this._ws.onmessage = async (event) => {
-                let data = event.data;
-                if (data instanceof Blob) {
-                    data = await data.arrayBuffer();
-                }
-
-                // Paquet binaire : trame DMX de la régie ou flux vocal en direct
-                if (data instanceof ArrayBuffer) {
-                    const bytes = new Uint8Array(data);
-                    if (bytes.length > 0 && bytes[0] === DMX_PACKET) {
-                        const packet = decodeDmxPacket(bytes);
-                        if (packet) {
-                            for (const cb of this._dmxListeners) {
-                                try { cb(packet); } catch (e) { console.error('[MP] DMX', e); }
-                            }
-                        }
-                        return;
-                    }
-                    // Image ILDA live (nouveaux lasers)
-                    if (bytes.length > 0 && bytes[0] === ILDA_LIVE_PACKET) {
-                        ildaLive.receive(bytes);
-                        return;
-                    }
-                    if (bytes.length >= 6 && bytes[0] === 0x01) {
-                        const idLen = bytes[1];
-                        const pad = (idLen % 2 === 1) ? 1 : 0;
-                        const pcmOffset = 6 + idLen + pad;
-                        if (bytes.length >= pcmOffset) {
-                            const senderId = new TextDecoder().decode(bytes.subarray(2, 2 + idLen));
-                            const view = new DataView(data);
-                            const sampleRate = view.getUint32(2 + idLen, true);
-                            const pcmSamples = new Int16Array(data, pcmOffset, (data.byteLength - pcmOffset) >> 1);
-                            if (this._onVoiceData) {
-                                this._onVoiceData(senderId, sampleRate, pcmSamples);
-                            }
-                        }
-                    }
-                    return;
-                }
-
-                let msg;
-                try {
-                    msg = JSON.parse(data);
-                } catch {
-                    return;
-                }
-                this._handleMessage(msg, resolve, reject);
-            };
-
-            this._ws.onclose = () => {
-                this.connected = false;
-                this.clock.stop();
-                console.warn('[MP] WebSocket closed');
-            };
-
-            this._ws.onerror = (err) => {
-                console.error('[MP] WebSocket error:', err);
-                reject(err);
-            };
+            }, resolve, reject);
         });
+    }
+
+    /** État de la connexion : 'lost' (reconnexion en cours), 'restored', 'failed' (salle introuvable) */
+    onConnectionState(cb) {
+        this._onConnectionState = cb;
+    }
+
+    /** Informations envoyées au serveur en revenant : { playback: { trackId, position, isPlaying }, sweepTime } */
+    onResumeInfo(cb) {
+        this._resumeInfo = cb;
+    }
+
+    /** Salle retrouvée après une reconnexion (nouvel identifiant de joueur, rôle, réglages son…) */
+    onResumed(cb) {
+        this._onResumed = cb;
+    }
+
+    /**
+     * Ouvre la connexion. onOpen envoie le premier message (création, entrée ou reprise de salle) ;
+     * resolve / reject : promesse de la première connexion (null pendant une reconnexion).
+     */
+    _openSocket(onOpen, resolve, reject) {
+        const ws = new WebSocket(this._wsUrl);
+        this._ws = ws;
+        ws.binaryType = 'arraybuffer';
+
+        ws.onopen = () => {
+            this.connected = true;
+            this.clock.start();
+            onOpen();
+        };
+
+        ws.onmessage = async (event) => {
+            let data = event.data;
+            if (data instanceof Blob) {
+                data = await data.arrayBuffer();
+            }
+
+            // Paquet binaire : trame DMX de la régie ou flux vocal en direct
+            if (data instanceof ArrayBuffer) {
+                const bytes = new Uint8Array(data);
+                if (bytes.length > 0 && bytes[0] === DMX_PACKET) {
+                    const packet = decodeDmxPacket(bytes);
+                    if (packet) {
+                        for (const cb of this._dmxListeners) {
+                            try { cb(packet); } catch (e) { console.error('[MP] DMX', e); }
+                        }
+                    }
+                    return;
+                }
+                // Image ILDA live (nouveaux lasers)
+                if (bytes.length > 0 && bytes[0] === ILDA_LIVE_PACKET) {
+                    ildaLive.receive(bytes);
+                    return;
+                }
+                if (bytes.length >= 6 && bytes[0] === 0x01) {
+                    const idLen = bytes[1];
+                    const pad = (idLen % 2 === 1) ? 1 : 0;
+                    const pcmOffset = 6 + idLen + pad;
+                    if (bytes.length >= pcmOffset) {
+                        const senderId = new TextDecoder().decode(bytes.subarray(2, 2 + idLen));
+                        const view = new DataView(data);
+                        const sampleRate = view.getUint32(2 + idLen, true);
+                        const pcmSamples = new Int16Array(data, pcmOffset, (data.byteLength - pcmOffset) >> 1);
+                        if (this._onVoiceData) {
+                            this._onVoiceData(senderId, sampleRate, pcmSamples);
+                        }
+                    }
+                }
+                return;
+            }
+
+            let msg;
+            try {
+                msg = JSON.parse(data);
+            } catch {
+                return;
+            }
+            this._handleMessage(msg, resolve, reject);
+        };
+
+        ws.onclose = () => {
+            if (this._ws !== ws) return;
+            const wasInRoom = this.connected && this.roomId;
+            this.connected = false;
+            this.clock.stop();
+            console.warn('[MP] WebSocket closed');
+            // Joueur dans une salle : reconnexion automatique (même salle, sans recharger la page)
+            if (this.roomId) {
+                if (wasInRoom && this._onConnectionState) this._onConnectionState('lost');
+                this._scheduleReconnect();
+            }
+        };
+
+        ws.onerror = (err) => {
+            if (!this.roomId) console.error('[MP] WebSocket error:', err);
+            if (reject) reject(err);
+        };
+    }
+
+    /** Nouvelle tentative : 1 s, puis de plus en plus espacées (5 s au plus), tant que le joueur reste dans le jeu */
+    _scheduleReconnect() {
+        if (this._reconnectTimer) return;
+        const delay = [1000, 1500, 2500, 4000][this._reconnectAttempt] || 5000;
+        this._reconnectAttempt++;
+        this._reconnectTimer = setTimeout(() => {
+            this._reconnectTimer = null;
+            this._openSocket(() => {
+                let info = {};
+                try { info = (this._resumeInfo && this._resumeInfo()) || {}; } catch (e) { console.warn('[MP] Reprise :', e); }
+                this._send({ type: 'RESUME_ROOM', roomId: this.roomId, playback: info.playback || null, sweepTime: info.sweepTime });
+            }, null, null);
+        }, delay);
     }
 
     /** Send a DSP change (master only — server will reject if guest) */
@@ -494,6 +548,16 @@ export class MultiplayerClient {
         }
     }
 
+    /** Salle retrouvée après une reconnexion */
+    _resumedRoom(msg) {
+        this._reconnectAttempt = 0;
+        console.log(`[MP] Reconnecté à ${this.roomId} (${this.role})`);
+        if (this._onResumed) {
+            try { this._onResumed(msg); } catch (e) { console.error('[MP] Reprise', e); }
+        }
+        if (this._onConnectionState) this._onConnectionState('restored');
+    }
+
     _handleMessage(msg, resolve, reject) {
         switch (msg.type) {
 
@@ -541,6 +605,7 @@ export class MultiplayerClient {
                     });
                 }
                 if (resolve) resolve(this);
+                if (msg.resumed) this._resumedRoom(msg);
                 break;
 
             case 'ROOM_JOINED':
@@ -587,10 +652,18 @@ export class MultiplayerClient {
                     });
                 }
                 if (resolve) resolve(this);
+                if (msg.resumed) this._resumedRoom(msg);
                 break;
 
             case 'ROOM_NOT_FOUND':
                 console.warn(`[MP] Room not found: ${msg.roomId}`);
+                // Reconnexion impossible (salle inconnue du serveur) : on arrête d'essayer
+                if (!resolve && this.roomId) {
+                    if (this._onConnectionState) this._onConnectionState('failed');
+                    this.roomId = null;
+                    if (this._ws) this._ws.close();
+                    break;
+                }
                 if (this._onRoomNotFound) this._onRoomNotFound(msg.roomId);
                 if (reject) reject(new Error(`Room not found: ${msg.roomId}`));
                 break;

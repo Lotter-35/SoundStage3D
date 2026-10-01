@@ -5,7 +5,7 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "test": "node tests/sync.test.js"
+    "test": "node tests/sync.test.js && node tests/idn.test.js"
   },
   "dependencies": {
     "ws": "^8.21.3"

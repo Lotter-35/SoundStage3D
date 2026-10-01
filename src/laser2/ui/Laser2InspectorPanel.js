@@ -80,7 +80,8 @@ export class Laser2InspectorPanel {
         for (const c of Object.values(this.controllers)) {
             try { c.updateDisplay(); } catch (_) {}
         }
-        if (this._ildaState && this._laser.params.ildaFile !== this._ildaState.file) this._rebuildIldaPicker();
+        // Forme du laser changée ailleurs (réseau, DMX) : liste reconstruite (pas pendant qu'on parcourt une banque)
+        if (this._ildaState && this._laser.params.ildaFile !== this._ildaState.laserFile) this._rebuildIldaPicker();
         this._refreshVisibility();
     }
 
@@ -331,8 +332,12 @@ export class Laser2InspectorPanel {
         const hz = st.frameHz;
         const flicker = hz < 20 ? ' <span style="color:#ff8a65">⚠ scintille</span>' : '';
         const anim = st.frames > 1 ? ` · animation ${st.frames} images` : '';
+        // Réglage automatique : valeurs choisies
+        const auto = st.auto && st.pps
+            ? `<br>Auto : ${(st.pps / 1000).toFixed(1)} kpps · décalage ${st.shift} pts${st.frames > 1 ? ` · ${st.fps.toFixed(0)} img/s d'animation` : ''}`
+            : '';
         this._info.innerHTML = `${st.points} points · <b>${hz.toFixed(0)} images/s</b>${flicker}${anim}<br>`
-            + `${st.beams} faisceaux · ${st.sheets} nappes · calcul ${(this.laser2Manager.coreMs || 0).toFixed(2)} ms (${this.laser2Manager.computeMode === 'worker' ? 'worker' : 'direct'})`;
+            + `${st.beams} faisceaux · ${st.sheets} nappes · calcul ${(this.laser2Manager.coreMs || 0).toFixed(2)} ms (${this.laser2Manager.computeMode === 'worker' ? 'worker' : 'direct'})${auto}`;
     }
 
     // ── Choix de la forme ILDA (banque → forme) ─────────────────────────
@@ -346,11 +351,12 @@ export class Laser2InspectorPanel {
         this._ildaFileCtrl = null;
         this._rebuildIldaPicker();
         if (this._unsubIlda) this._unsubIlda();
-        this._unsubIlda = ildaLibrary.onChange(() => this._rebuildIldaPicker());
+        this._unsubIlda = ildaLibrary.onChange(() => this._rebuildIldaPicker(this._ildaState && this._ildaState.bank));
         ildaLibrary.ensureLoaded();
     }
 
-    _rebuildIldaPicker() {
+    /** @param {string|null} [bank] banque choisie dans la liste (sinon : celle de la forme du laser) */
+    _rebuildIldaPicker(bank = null) {
         const laser = this._laser;
         const folder = this._ildaFolder;
         if (!laser || !folder || !this.gui) return;
@@ -358,17 +364,21 @@ export class Laser2InspectorPanel {
         const cur = laser.params.ildaFile;
         const entry = ildaLibrary.entry(cur);
         const st = this._ildaState;
-        st.bank = entry ? entry.bank : (banks.includes(st.bank) ? st.bank : (banks[0] || ''));
+        st.laserFile = cur;
+        if (bank && banks.includes(bank)) st.bank = bank;
+        else st.bank = entry ? entry.bank : (banks.includes(st.bank) ? st.bank : (banks[0] || ''));
         const files = ildaLibrary.filesOf(st.bank);
         const fileOptions = {};
         for (const f of files) fileOptions[f.name] = f.path;
-        st.file = entry ? cur : '';
-        if (!entry) fileOptions['— choisir —'] = '';
+        // Forme du laser affichée seulement si elle est dans la banque ouverte
+        const inBank = entry && entry.bank === st.bank;
+        st.file = inBank ? cur : '';
+        if (!inBank) fileOptions['— choisir —'] = '';
 
         if (this._ildaBankCtrl) this._ildaBankCtrl.destroy();
         if (this._ildaFileCtrl) this._ildaFileCtrl.destroy();
         this._ildaBankCtrl = folder.add(st, 'bank', banks.length ? banks : ['(vide)']).name('Banque ILDA')
-            .onChange(() => { st.file = ''; this._rebuildIldaPicker(); });
+            .onChange((b) => { st.file = ''; this._rebuildIldaPicker(b); });
         this._ildaFileCtrl = folder.add(st, 'file', fileOptions).name('Forme ILDA')
             .onChange((path) => { if (path) this._setParam('ildaFile', path); });
         // Placés juste après « Source »
@@ -421,7 +431,10 @@ export class Laser2InspectorPanel {
         for (const c of [this._ildaBankCtrl, this._ildaFileCtrl]) if (c) { if (ilda) c.show(); else c.hide(); }
         if (this._ildaInfo) this._ildaInfo.style.display = ilda ? '' : 'none';
         this._show('strobeRate', p.shutter === 'Strobe');
-        this._show('threshold', p.modulation === 'Analogique');
+        // Réglage automatique : vitesse de dessin et décalage couleur choisis par le laser
+        const auto = p.autoTune !== false;
+        this._show('scanRate', !auto);
+        this._show('colorShift', !auto);
     }
 
     _tick() {

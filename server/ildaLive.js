@@ -229,48 +229,94 @@ function decodeSamples(buf, o, end, layout, out) {
     }
 }
 
+/** Journal d'un canal IDN : configuration reçue, puis bilan toutes les 10 s tant que des images arrivent */
+function logIdn(c, cnl, text) {
+    console.log(`[IDN] canal ${cnl} → live ${c.live} : ${text}`);
+}
+
+function describeLayout(layout) {
+    return layout ? layout.fields.map(f => f.kind + (f.bytes === 2 ? '16' : '')).join(' ') + ` (${layout.size} octets/point)` : 'aucune';
+}
+
 function handleChannelMessage(msg, o) {
     if (o + 8 > msg.length) return;
     const total = msg.readUInt16BE(o);
     const content = msg.readUInt16BE(o + 2);
     const end = Math.min(msg.length, o + total);
     if (!(content & 0x8000)) return;                         // pas un message de canal
-    const cclf = content & 0x4000;
     const cnl = (content >> 8) & 0x3f;
     const chunkType = content & 0xff;
+    // Bit 14 : configuration présente (message ordinaire) ou DERNIER fragment (fragment suivant, 0xC0)
+    const sequel = chunkType === CHUNK_FRAME_SEQUEL;
+    const cclf = !sequel && Boolean(content & 0x4000);
+    const lastFragment = sequel && Boolean(content & 0x4000);
     let p = o + 8;                                           // après taille, contenu, horodatage
     let c = idnChannels.get(cnl);
-    if (!c) { c = { layout: null, parts: null, wave: [], waveTime: 0 }; idnChannels.set(cnl, c); }
+    if (!c) {
+        c = { layout: null, frag: null, wave: [], waveTime: 0, live: Math.min(MAX_CHANNELS, cnl + 1), key: '', frames: 0, points: 0, logTime: 0 };
+        idnChannels.set(cnl, c);
+    }
     if (cclf) {
         if (p + 4 > end) return;
         const scwc = msg[p];
+        const flags = msg[p + 1];
+        const serviceId = msg[p + 2];
         const serviceMode = msg[p + 3];
         p += 4;
         const tags = [];
         for (let i = 0; i < scwc * 2 && p + 2 <= end; i++, p += 2) tags.push(msg.readUInt16BE(p));
+        // Service choisi dans le logiciel (« Laser live N ») : canal live N ; sinon canal IDN + 1
+        if ((flags & 0x01) && serviceId >= 1 && serviceId <= MAX_CHANNELS) c.live = serviceId;
         if (serviceMode) c.layout = parseLayout(tags);
+        const key = `${serviceMode}|${c.live}|${tags.join(',')}`;
+        if (key !== c.key) {
+            c.key = key;
+            logIdn(c, cnl, `mode ${serviceMode === 1 ? 'continu' : serviceMode === 2 ? 'images' : serviceMode}, `
+                + `étiquettes ${tags.map(t => t.toString(16).padStart(4, '0')).join(' ')} → ${describeLayout(c.layout)}`);
+        }
     }
     if (!c.layout) return;
+    const ch = c.live;
+    const emit = (pts) => {
+        if (!pts.length) return;
+        setLiveFrame(ch, pts);
+        c.frames++;
+        c.points += pts.length;
+        const now = Date.now();
+        if (now - c.logTime > 10000) {
+            logIdn(c, cnl, `${c.frames} image(s) reçue(s), ${Math.round(c.points / c.frames)} points en moyenne`);
+            c.logTime = now;
+            c.frames = 0;
+            c.points = 0;
+        }
+    };
+    if (sequel) {
+        // Fragment suivant : données seules (pas d'en-tête de bloc), un point peut être coupé entre deux fragments
+        if (!c.frag) return;
+        c.frag.push(msg.subarray(p, end));
+        if (lastFragment) {
+            const data = Buffer.concat(c.frag);
+            c.frag = null;
+            const pts = [];
+            decodeSamples(data, 0, data.length, c.layout, pts);
+            emit(pts);
+        }
+        return;
+    }
     if (p + 4 > end) return;
     p += 4;                                                  // en-tête du bloc : drapeaux + durée
-    const ch = Math.min(MAX_CHANNELS, cnl + 1);
     if (chunkType === CHUNK_FRAME) {
         const pts = [];
         decodeSamples(msg, p, end, c.layout, pts);
-        if (pts.length) setLiveFrame(ch, pts);
+        emit(pts);
     } else if (chunkType === CHUNK_FRAME_FIRST) {
-        c.parts = [];
-        decodeSamples(msg, p, end, c.layout, c.parts);
-    } else if (chunkType === CHUNK_FRAME_SEQUEL && c.parts) {
-        decodeSamples(msg, p, end, c.layout, c.parts);
-        // Dernier fragment : bit 0 des drapeaux du bloc (« once » / fin d'image)
-        if (msg[p - 4] & 0x01 || c.parts.length >= MAX_POINTS) { setLiveFrame(ch, c.parts); c.parts = null; }
+        c.frag = [Buffer.from(msg.subarray(p, end))];
     } else if (chunkType === CHUNK_WAVE) {
         // Flux continu : points regroupés en images d'environ 1/30 s
         decodeSamples(msg, p, end, c.layout, c.wave);
         const now = Date.now();
         if (now - c.waveTime >= MIN_INTERVAL_MS || c.wave.length >= MAX_POINTS) {
-            setLiveFrame(ch, c.wave);
+            emit(c.wave);
             c.wave = [];
             c.waveTime = now;
         }
@@ -328,4 +374,4 @@ function initIldaLive(send) {
     if (process.env.SS3D_IDN !== '0') initIdn();
 }
 
-module.exports = { initIldaLive, setLiveFrame, liveState, handleIldaLiveRequest, ILDA_LIVE_PACKET };
+module.exports = { initIldaLive, setLiveFrame, liveState, handleIldaLiveRequest, ILDA_LIVE_PACKET, handleIdnMessage: handleChannelMessage };

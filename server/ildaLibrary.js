@@ -12,12 +12,14 @@
  *   automatiquement dans la configuration de chaque laser, chez tous les joueurs (message ILDA_INDEX).
  * - GET /api/ilda                → index { version, banks: [{ name, files: [{ name, path, size, mtime }] }] }
  * - GET /api/ilda/file?p=Banque/forme.ild → contenu du fichier (cache navigateur avec revalidation)
- * - Au premier démarrage, une banque « Exemples » est générée (formes de démonstration).
+ * - Au premier démarrage, une banque « Exemples » est générée (formes de démonstration), et
+ *   50 formes créatives en 6 banques (ildaShapes.js, une seule fois par dossier).
  * ─────────────────────────────────────────────────────────────
  */
 
 const fs = require('fs');
 const path = require('path');
+const { ensureShapeBanks } = require('./ildaShapes');
 
 const SCAN_INTERVAL_MS = 2000;
 const ROOT_BANK = 'Général';
@@ -93,6 +95,11 @@ function initIldaLibrary(storageDir, changed) {
     if (fresh) {
         try { writeExamples(path.join(ILDA_DIR, 'Exemples')); } catch (e) { console.warn('[ILDA] Exemples non créés :', e.message); }
     }
+    // 50 formes créatives (banques Faisceaux, Nappes, Tunnels…), écrites une seule fois
+    try {
+        const n = ensureShapeBanks(ILDA_DIR, encodeIlda);
+        if (n > 0) console.log(`[ILDA] ${n} formes ajoutées à la bibliothèque`);
+    } catch (e) { console.warn('[ILDA] Formes non créées :', e.message); }
     rebuild();
     console.log(`[ILDA] Bibliothèque : ${ILDA_DIR} (${index.banks.reduce((n, b) => n + b.files.length, 0)} formes, ${index.banks.length} banques)`);
     const timer = setInterval(() => {

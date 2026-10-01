@@ -116,6 +116,12 @@ export class PlayerAvatars {
 
     }
 
+    /** Nouvel identifiant du joueur local (reconnexion au serveur) */
+    setLocalId(id) {
+        this._localId = id;
+        if (this._avatars.has(id)) this._destroy(id);
+    }
+
     /**
      * Call every render frame.
      * @param {{ id: string, position:{x,y,z}, rotY:number, anim?:string, onGround?:boolean }[]} players — from mp.players

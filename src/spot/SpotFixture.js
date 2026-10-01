@@ -310,15 +310,13 @@ export class SpotFixture {
 
     /**
      * Ajoute le faisceau et les éblouissements de la lyre au batch : UN cône (enveloppe des facettes du
-     * prisme, dont le shader additionne les images) et un éblouissement par facette
+     * prisme, dont le shader additionne les images) et un seul éblouissement
      */
     pushInstances(batch) {
         if (this.flux <= 1e-4) return;
         batch.pushVolume(this.lensPos, this.row, this.axis, SPOT_BEAM_RANGE, this.right, 1, this.prism.count > 0);
-        for (let i = 0; i < this.facetCount; i++) {
-            const f = this.facets[i];
-            batch.pushGlare(this.lensPos, this.row, f.axis, f.weight);
-        }
+        // Un seul éblouissement (toutes les facettes sortent de la même lentille ; son cône est l'enveloppe du prisme)
+        batch.pushGlare(this.lensPos, this.row, this.axis, 1);
     }
 
     getPickableObjects() {

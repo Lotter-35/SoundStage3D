@@ -15,37 +15,50 @@
 
 import * as THREE from 'three';
 
-// ── Volutes : texture de bruit 3D (32³, 32 Ko) répétable, générée une fois ─────
-const SMOKE_SIZE = 32;
+// ── Volutes : bruit de Perlin 3D répétable (64³, 256 Ko), généré une fois ─────────
+// 16 cellules par côté (4 texels par cellule) : bruit doux et détaillé ; le shader le combine à plusieurs
+// échelles (tailles non multiples, tournées) pour que la fumée ne se répète jamais à l'œil.
+const SMOKE_SIZE = 64;
+const SMOKE_CELLS = 16;
 
 function createSmokeTexture() {
-    const N = SMOKE_SIZE, N3 = N * N * N;
-    // Valeurs pseudo-aléatoires déterministes (mêmes volutes chez tous les joueurs)
-    let a = new Float32Array(N3), b = new Float32Array(N3);
+    const N = SMOKE_SIZE, P = SMOKE_CELLS, step = N / P;
+    // Gradients pseudo-aléatoires déterministes (mêmes volutes chez tous les joueurs), grille rebouclée
     let seed = 20240917;
-    for (let i = 0; i < N3; i++) {
-        seed = (seed * 1664525 + 1013904223) >>> 0;
-        a[i] = seed / 4294967296;
+    const rnd = () => { seed = (seed * 1664525 + 1013904223) >>> 0; return seed / 4294967296; };
+    const grad = new Float32Array(P * P * P * 3);
+    for (let i = 0; i < P * P * P; i++) {
+        const z = rnd() * 2 - 1, a = rnd() * Math.PI * 2, r = Math.sqrt(1 - z * z);
+        grad[i * 3] = r * Math.cos(a); grad[i * 3 + 1] = r * Math.sin(a); grad[i * 3 + 2] = z;
     }
-    // Lissage (flou 3D séparable, bords rebouclés) : bruit doux au lieu de pixels aléatoires
-    const idx = (x, y, z) => ((z + N) % N) * N * N + ((y + N) % N) * N + ((x + N) % N);
-    for (let pass = 0; pass < 2; pass++) {
-        for (const axis of [0, 1, 2]) {
-            for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
-                let sum = 0;
-                for (let d = -2; d <= 2; d++) {
-                    sum += a[axis === 0 ? idx(x + d, y, z) : axis === 1 ? idx(x, y + d, z) : idx(x, y, z + d)];
-                }
-                b[idx(x, y, z)] = sum / 5;
-            }
-            const t = a; a = b; b = t;
-        }
-    }
-    // Contraste ramené sur 0…1
+    const g = (x, y, z, dx, dy, dz) => {
+        const i = (((z % P) * P + (y % P)) * P + (x % P)) * 3;
+        return grad[i] * dx + grad[i + 1] * dy + grad[i + 2] * dz;
+    };
+    const fade = (t) => t * t * t * (t * (t * 6 - 15) + 10);
+    const lerp = (a, b, t) => a + (b - a) * t;
+    const vals = new Float32Array(N * N * N);
     let lo = Infinity, hi = -Infinity;
-    for (let i = 0; i < N3; i++) { lo = Math.min(lo, a[i]); hi = Math.max(hi, a[i]); }
-    const data = new Uint8Array(N3);
-    for (let i = 0; i < N3; i++) data[i] = Math.round(((a[i] - lo) / (hi - lo)) * 255);
+    for (let z = 0; z < N; z++) for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+        const fx = x / step, fy = y / step, fz = z / step;
+        const x0 = Math.floor(fx), y0 = Math.floor(fy), z0 = Math.floor(fz);
+        const dx = fx - x0, dy = fy - y0, dz = fz - z0;
+        const u = fade(dx), v = fade(dy), w = fade(dz);
+        const n = lerp(
+            lerp(lerp(g(x0, y0, z0, dx, dy, dz), g(x0 + 1, y0, z0, dx - 1, dy, dz), u),
+                 lerp(g(x0, y0 + 1, z0, dx, dy - 1, dz), g(x0 + 1, y0 + 1, z0, dx - 1, dy - 1, dz), u), v),
+            lerp(lerp(g(x0, y0, z0 + 1, dx, dy, dz - 1), g(x0 + 1, y0, z0 + 1, dx - 1, dy, dz - 1), u),
+                 lerp(g(x0, y0 + 1, z0 + 1, dx, dy - 1, dz - 1), g(x0 + 1, y0 + 1, z0 + 1, dx - 1, dy - 1, dz - 1), u), v),
+            w);
+        const i = (z * N + y) * N + x;
+        vals[i] = n;
+        if (n < lo) lo = n;
+        if (n > hi) hi = n;
+    }
+    // 0,5 = 0 ; amplitude ramenée sur 0…1
+    const amp = Math.max(-lo, hi);
+    const data = new Uint8Array(N * N * N);
+    for (let i = 0; i < data.length; i++) data[i] = Math.round((vals[i] / amp * 0.5 + 0.5) * 255);
     const tex = new THREE.Data3DTexture(data, N, N, N);
     tex.format = THREE.RedFormat;
     tex.type = THREE.UnsignedByteType;
@@ -82,21 +95,49 @@ const COMMON = /* glsl */`
     uniform float uTime;
     uniform float uGain;
     uniform float uGamma;
+    // Bruit signé (≈ −1…1) ; 1 unité de texture = 16 cellules
+    float sn(vec3 q) { return texture(uSmokeTex, q).r * 2.0 - 1.0; }
+    // Rotations entre les échelles : les répétitions de la texture ne s'alignent jamais
+    const mat3 ROT_A = mat3(0.00, 0.80, 0.60, -0.80, 0.36, -0.48, -0.60, -0.48, 0.64);
+    const mat3 ROT_B = mat3(0.64, -0.48, 0.60, 0.60, 0.80, 0.00, -0.48, 0.36, 0.80);
     /**
-     * Volutes au point p (monde) : deux lectures du bruit, la seconde déformée par la première
-     * (les volutes s'enroulent), qui dérivent avec le temps. s = intensité, taille (m), vitesse, contraste.
-     * Au-delà de 200 m (dist), les volutes s'effacent et la texture n'est plus lue.
+     * Volutes au point p (monde), façon fumée de scène :
+     *   - très grande échelle (dizaines de mètres) : nappes plus ou moins chargées, casse toute répétition ;
+     *   - distorsion qui enroule la fumée (volutes), échelles de tailles non multiples et tournées ;
+     *   - veines fines claires (filaments) et creux sombres ; chaque échelle dérive à sa vitesse.
+     * Le détail fin s'efface avec la distance (pas de fourmillement) et tout s'efface au-delà de ~250 m.
+     * s = intensité, taille (m), vitesse, contraste.
      */
     float smoke(vec3 p, vec4 s, float dist) {
-        float fade = s.x * (1.0 - smoothstep(120.0, 200.0, dist));
+        // Intensité perçue : 55 % donne déjà une fumée bien marquée
+        float fade = pow(s.x, 0.6) * (1.0 - smoothstep(160.0, 260.0, dist));
         if (fade <= 0.001) return 1.0;
-        vec3 q = p / s.y;
-        vec3 drift = vec3(0.11, 0.045, 0.08) * uTime * s.z;
-        float n1 = texture(uSmokeTex, q * 0.25 + drift).r;
-        float n2 = texture(uSmokeTex, q * 0.63 - drift * 1.7 + vec3(n1 * 0.35)).r;
-        float n = n1 * 0.6 + n2 * 0.4;
-        n = clamp((n - 0.5) * (1.0 + 4.0 * s.w) + 0.5, 0.0, 1.0);
-        return mix(1.0, 0.15 + 1.7 * n, fade);
+        float t = uTime * s.z;
+        vec3 q = p / (s.y * 16.0);
+        // Très grande échelle : zones plus denses / plus claires
+        float big = sn(ROT_B * q * 0.173 + vec3(0.0, t * 0.0035, t * 0.002));
+        // Distorsion (enroulement des volutes)
+        vec3 wq = q * 0.47;
+        vec3 w = vec3(sn(wq + vec3(0.13, 0.71, 0.37) + t * vec3(0.010, 0.017, 0.006)),
+                      sn(ROT_A * wq + vec3(0.59, 0.23, 0.91) - t * vec3(0.012, 0.006, 0.014)),
+                      sn(ROT_B * wq + vec3(0.31, 0.83, 0.17) + t * vec3(0.005, 0.013, -0.009)));
+        vec3 qw = q + w * 0.11;
+        // Échelles de la fumée ; le détail fin s'efface au loin
+        float lod = smoothstep(45.0, 150.0, dist);
+        float f = sn(qw + t * vec3(0.006, 0.011, 0.004));
+        f += 0.55 * sn(ROT_A * qw * 2.13 - t * vec3(0.011, 0.004, 0.015));
+        float veins = 0.0;
+        if (lod < 0.999) {
+            f += 0.30 * (1.0 - lod) * sn(ROT_B * qw * 4.37 + t * vec3(0.018, -0.009, 0.013));
+            // Filaments : crêtes fines du bruit
+            float rdg = 1.0 - abs(sn(ROT_A * qw * 3.31 + vec3(0.47) - t * vec3(0.008, 0.015, 0.006)));
+            veins = pow(rdg, 7.0) * (1.0 - lod);
+        }
+        float dens = f + 0.55 * big;
+        float k = 1.15 + 2.6 * s.w;
+        float d = smoothstep(-0.62, 0.62, dens * k * 0.55);
+        d = clamp(d + 0.45 * veins * smoothstep(-0.4, 0.3, dens), 0.0, 1.0);
+        return mix(1.0, 0.03 + 1.95 * d * d * (3.0 - 2.0 * d), fade);
     }
     vec3 shade(vec3 chroma, float L) {
         return chroma * (uGain * pow(max(L, 0.0), uGamma));

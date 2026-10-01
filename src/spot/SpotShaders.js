@@ -366,7 +366,12 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
             vec3 gateAt(Gate G, vec2 g, float blur) {
                 float r2 = dot(g, g);
                 if (r2 >= pOutR2) return vec3(0.0);
-                if (pPlain && r2 < pPlainR2) return G.T0.rgb * (1.0 - 0.2 * r2);
+                if (pPlain) {
+                    // Faisceau ouvert (ni gobo, ni couteau, ni demi-couleur) : iris au bord flou, formule exacte
+                    if (r2 < pPlainR2) return G.T0.rgb * (1.0 - 0.2 * r2);
+                    float e = 0.012 + blur, ir = min(G.T2.y, 1.0);
+                    return G.T0.rgb * ((1.0 - smoothstep(ir - e, ir + e, sqrt(r2))) * (1.0 - 0.2 * min(r2, 1.0)));
+                }
                 return gateImage(G, g, blur);
             }
 
@@ -516,7 +521,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     }
                     float fade = 1.0 - smoothstep(fadeStart, L, sp);
                     float cosT = dot(lp + W * zOff, -rd) / max(1e-4, length(lp + W * zOff));
-                    sum += E * (fluxK * fade * hazeFromNoise(hazeNoise(P, false)) * phase(cosT) * w);
+                    sum += E * (fluxK * fade * hazeFromNoise(hazeNoise(P, t > 25.0)) * phase(cosT) * w);
                     if (all(greaterThanEqual(sum, vec3(64.0 / 0.035)))) break;
                 }
                 vec3 col = sum * 0.035;
@@ -668,8 +673,10 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 // répartis selon la lumière (serrés près de la lyre), moins nombreux pour une qualité équivalente.
                 // Faisceau vu de côté : répartition régulière, inchangée.
                 bool imp = abs(dv) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
-                float nS = (weight < 0.99 || pCount > 0) ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
-                                         : clamp(ceil(span * 2.6), 6.0, imp ? 8.0 : 18.0);
+                // Faisceau ouvert : rien à montrer le long du rayon à part la fumée → moins de pas
+                float nS = pPlain ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 8.0)
+                         : (weight < 0.99 || pCount > 0) ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
+                                                         : clamp(ceil(span * 2.6), 6.0, imp ? 8.0 : 18.0);
                 float dt = span / nS;
                 float invIn = 1.0 / zIn;
                 float invOut = 1.0 / zOut;
@@ -773,7 +780,8 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     float fade = 1.0 - smoothstep(fadeStart, L, zl);
                     float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                     // Dans le faisceau : bruit relu un échantillon sur deux (volutes de ~13 m : même valeur)
-                    if (!inside || !haveNoise || (i & 1) == 0) { lastNoise = hazeNoise(P, inside); haveNoise = true; }
+                    // Loin de la caméra (> 25 m) : une seule échelle de fumée (le détail fin ne se voit plus)
+                    if (!inside || !haveNoise || (i & 1) == 0) { lastNoise = hazeNoise(P, inside || t > 25.0); haveNoise = true; }
                     sum += gate * (E * fade * hazeFromNoise(lastNoise) * phase(cosT) * w);
                     if (all(greaterThanEqual(sum, satThr))) break;
                 }
@@ -947,11 +955,12 @@ export function createGlareMaterial(paramsTexture) {
                 vec4 T0 = texelFetch(uSpotParams, ivec2(0, row), 0);
                 vec4 T2 = texelFetch(uSpotParams, ivec2(2, row), 0);
                 vec4 T7 = texelFetch(uSpotParams, ivec2(7, row), 0);
+                float tanEnv = texelFetch(uSpotParams, ivec2(9, row), 0).y; // cône enveloppe (facettes du prisme)
                 vec3 toCam = cameraPosition - iLens.xyz;
                 float dist = length(toCam);
                 float a = dot(toCam / dist, iAxis.xyz);
                 // Dans le cône : éblouissement total ; hors du cône : simple reflet de la lentille
-                float cosCone = 1.0 / sqrt(1.0 + T7.z * T7.z);
+                float cosCone = 1.0 / sqrt(1.0 + tanEnv * tanEnv);
                 float inBeam = smoothstep(cosCone - 0.05, min(1.0, cosCone + 0.01), a);
                 float side = smoothstep(-0.2, 0.6, a);
                 vAlign = inBeam;

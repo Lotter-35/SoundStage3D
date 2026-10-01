@@ -84,6 +84,8 @@ export const CLIENT_OPTIONS_SCHEMA = {
 
     // ── Contrôles ──
     mouseSensitivity: num(60, 0, 200, 1, 'Sensibilité souris (%)', 'input'),
+    snapGrid:         num(1, 0.05, 10, 0.05, 'Grille gizmo (m)', 'input', 'Maj enfoncée en déplaçant une lumière au gizmo : position calée sur la grille du monde'),
+    snapAngle:        num(45, 1, 90, 1, 'Palier rotation (°)', 'input', 'Maj enfoncée en faisant pivoter une lumière au gizmo : angle calé sur ces paliers'),
 };
 
 export function defaultClientOptions() {
