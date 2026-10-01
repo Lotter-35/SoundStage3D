@@ -294,7 +294,7 @@ export class SpotManager {
         this.effects.apply(this._spots, this.clock());
         for (const s of this._spots.values()) s.update(dt);
         for (const src of this._sources) src.update(dt);
-        this.batch.assemble(this._spots.values(), this._sources);
+        this.batch.assemble(this._spots.values(), this._sources, this.camera);
         getSpotHousingInstancer(this.scene).flush();
         // Image de fenêtre des lyres à gobo : une fois par image, lue ensuite par les faisceaux
         this.batch.renderGateAtlas(this.renderer);

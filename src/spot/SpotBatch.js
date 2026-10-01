@@ -25,6 +25,18 @@ import {
 
 const GATE_TILES = GATE_ATLAS_SIDE * GATE_ATLAS_SIDE;
 
+// ── Regroupement des faisceaux voisins ──
+// Lyres presque au même endroit, même direction et mêmes réglages : un seul faisceau (puissance totale,
+// sortie élargie) au lieu d'un par lyre, quand la caméra est assez loin pour ne pas voir la différence.
+const CLUSTER_MIN_CAM = 10;          // m : jamais de regroupement plus près
+const CLUSTER_RATIO = 0.03;          // écart maximal entre lyres / distance à la caméra
+const CLUSTER_AXIS_DOT = 0.9995;     // directions à moins de ~1,8°
+// Valeurs de la ligne de paramètres qui doivent être égales (voir SpotShaders.js) :
+// couleurs, demi-couleur, zoom, iris, frost, gobos choisis, roue d'animation, couteaux, prisme
+const CLUSTER_SOFT = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 16, 20, 22, 24, 26, 28, 36, 38, 39];
+// … et sans frost fort (motifs nets) : mise au point, angles des gobos, de l'animation, des couteaux et du prisme
+const CLUSTER_HARD = [...CLUSTER_SOFT, 11, 14, 17, 21, 23, 25, 27, 40, 41, 42, 43, 44, 45];
+
 export const VOLUME_STRIDE = 12; // lentille.xyz, ligne | axe.xyz, longueur | droite.xyz, poids
 export const GLARE_STRIDE = 8;   // lentille.xyz, ligne | axe.xyz, poids
 
@@ -148,6 +160,10 @@ export class SpotBatch {
         this._gateCamera = new THREE.Camera();
         this._freeTiles = Array.from({ length: GATE_TILES }, (_, i) => GATE_TILES - 1 - i);
         this._gateJobs = 0;
+        this._clusterRows = [];        // lignes de paramètres des faisceaux regroupés (réutilisées)
+        this._clustered = new Set();   // lyres dont le faisceau est dans un groupe cette image
+        this._cv = new THREE.Vector3();
+        this.clusterCount = 0;
 
         // ── Éblouissements de lentille (scène principale, bloom lampes) ──
         const plane = new THREE.PlaneGeometry(1, 1);
@@ -253,16 +269,90 @@ export class SpotBatch {
         return this._plain.stream.count + this._prism.stream.count + this._bars.stream.count;
     }
 
+    /** Deux lyres dont les faisceaux peuvent être calculés ensemble */
+    _clusterCompatible(a, b) {
+        if (a.axis.dot(b.axis) < CLUSTER_AXIS_DOT || a.prism.count !== b.prism.count) return false;
+        const ra = this.paramsRow(a.row), rb = this.paramsRow(b.row);
+        const keys = ra[10] >= 0.7 && rb[10] >= 0.7 ? CLUSTER_SOFT : CLUSTER_HARD;
+        for (const k of keys) {
+            if (Math.abs(ra[k] - rb[k]) > 0.01 * Math.max(1, Math.abs(ra[k]))) return false;
+        }
+        return true;
+    }
+
+    _clusterRow(i) {
+        while (this._clusterRows.length <= i) this._clusterRows.push(this.allocRow());
+        return this._clusterRows[i];
+    }
+
+    /**
+     * Regroupe les faisceaux voisins compatibles (voir CLUSTER_*) : un faisceau par groupe, depuis le centre
+     * des lentilles, puissance totale, sortie élargie à tout le groupe. Retourne les lyres regroupées.
+     */
+    _clusterBeams(fixtures, camera) {
+        const out = this._clustered;
+        out.clear();
+        this.clusterCount = 0;
+        if (!camera) return out;
+        const list = fixtures.filter(f => f.flux > 1e-4 && !f.isBeingDragged && f.lensPos);
+        if (list.length < 2) return out;
+        const used = new Uint8Array(list.length);
+        const cam = camera.position;
+        const c = this._cv;
+        let rows = 0;
+        for (let i = 0; i < list.length; i++) {
+            if (used[i]) continue;
+            const a = list[i];
+            const dCam = cam.distanceTo(a.lensPos);
+            if (dCam < CLUSTER_MIN_CAM) continue;
+            const rMax = dCam * CLUSTER_RATIO;
+            const members = [a];
+            for (let j = i + 1; j < list.length; j++) {
+                if (used[j]) continue;
+                const b = list[j];
+                if (a.lensPos.distanceTo(b.lensPos) > rMax || !this._clusterCompatible(a, b)) continue;
+                members.push(b);
+                used[j] = 1;
+            }
+            if (members.length < 2) continue;
+            used[i] = 1;
+            c.set(0, 0, 0);
+            let flux = 0;
+            for (const m of members) { c.add(m.lensPos); flux += m.flux; }
+            c.multiplyScalar(1 / members.length);
+            const src = this.paramsRow(a.row);
+            let radius = 0;
+            for (const m of members) radius = Math.max(radius, c.distanceTo(m.lensPos));
+            radius += src[19];
+            // Ligne du groupe : celle de la première lyre, puissance totale, lentille à la taille du groupe
+            const row = this._clusterRow(rows++);
+            const r = this.paramsRow(row);
+            r.set(src);
+            r[3] = flux;
+            r[19] = radius;
+            r[31] = radius / Math.max(1e-4, src[8]);
+            this.pushVolume(c, row, a.axis, a.beamRange || 140, a.right, 1, a.prism.count > 0);
+            for (const m of members) out.add(m);
+            this.clusterCount++;
+        }
+        // Lignes de groupes inutilisées cette image : éteintes
+        for (let k = rows; k < this._clusterRows.length; k++) this.paramsRow(this._clusterRows[k])[3] = 0;
+        return out;
+    }
+
     /** Assemble les faisceaux et éblouissements de toutes les lyres */
-    assemble(fixtures, sources = null) {
+    assemble(fixtures, sources = null, camera = null) {
         if (!Array.isArray(fixtures)) fixtures = [...fixtures];   // parcourue deux fois (faisceaux, atlas)
         for (const l of this._layers) l.stream.begin();
         this.glares.begin();
+        // Faisceaux voisins regroupés (vus de loin)
+        const before0 = this.volumeCount;
+        const grouped = this._clusterBeams(fixtures, camera);
         // Projecteurs dont le faisceau est affiché (un faisceau à prisme compte pour un)
-        let n = 0;
+        let n = this.volumeCount - before0;
         for (const f of fixtures) {
             const before = this.volumeCount;
-            f.pushInstances(this);
+            f.pushInstances(this, grouped.has(f));
             if (this.volumeCount > before) n++;
         }
         if (sources) {

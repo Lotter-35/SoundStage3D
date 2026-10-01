@@ -56,6 +56,7 @@ export class SpotFixture {
         this.motion = new SpotMotion(this.params);
         this.row = batch.allocRow();
         this.gateTile = batch.allocTile();   // tuile de l'atlas de fenêtre (−1 : aucune)
+        this.beamRange = SPOT_BEAM_RANGE;
         this.needsGate = false;
 
         // Groupe manipulé par le gizmo (position + orientation) ; le montage est un enfant
@@ -322,9 +323,10 @@ export class SpotFixture {
      * Ajoute le faisceau et les éblouissements de la lyre au batch : UN cône (enveloppe des facettes du
      * prisme, dont le shader additionne les images) et un seul éblouissement
      */
-    pushInstances(batch) {
+    pushInstances(batch, skipVolume = false) {
         if (this.flux <= 1e-4) return;
-        batch.pushVolume(this.lensPos, this.row, this.axis, SPOT_BEAM_RANGE, this.right, 1, this.prism.count > 0);
+        // skipVolume : faisceau regroupé avec ses voisins (SpotBatch._clusterBeams)
+        if (!skipVolume) batch.pushVolume(this.lensPos, this.row, this.axis, SPOT_BEAM_RANGE, this.right, 1, this.prism.count > 0);
         // Un seul éblouissement (toutes les facettes sortent de la même lentille ; son cône est l'enveloppe du prisme)
         batch.pushGlare(this.lensPos, this.row, this.axis, 1);
     }
