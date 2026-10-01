@@ -31,10 +31,6 @@ const GATE_TILES = GATE_ATLAS_SIDE * GATE_ATLAS_SIDE;
 const CLUSTER_MIN_CAM = 10;          // m : jamais de regroupement plus près
 const CLUSTER_RATIO = 0.03;          // écart maximal entre lyres / distance à la caméra
 const CLUSTER_AXIS_DOT = 0.9995;     // directions à moins de ~1,8°
-// Jonction au bout des faisceaux : là où chaque faisceau est devenu FAR_OVERLAP fois plus large que l'écart
-// entre les lyres (tout se mélange), un seul faisceau commun prend le relais des faisceaux individuels
-const FAR_RADIUS = 3;                // m : faisceaux à moins de 3 m l’un de l’autre
-const FAR_OVERLAP = 2;
 // Valeurs de la ligne de paramètres qui doivent être égales (voir SpotShaders.js) :
 // couleurs, demi-couleur, zoom, iris, frost, gobos choisis, roue d'animation, couteaux, prisme
 const CLUSTER_SOFT = [0, 1, 2, 4, 5, 6, 7, 8, 9, 10, 12, 13, 15, 16, 20, 22, 24, 26, 28, 36, 38, 39];
@@ -165,7 +161,6 @@ export class SpotBatch {
         this._freeTiles = Array.from({ length: GATE_TILES }, (_, i) => GATE_TILES - 1 - i);
         this._gateJobs = 0;
         this._clusterRows = [];        // lignes de paramètres des faisceaux regroupés (réutilisées)
-        this.farMerge = true;          // jonction au bout des faisceaux
         this._clustered = new Set();   // lyres dont le faisceau est dans un groupe cette image
         this._cv = new THREE.Vector3();
         this.clusterCount = 0;
@@ -305,7 +300,6 @@ export class SpotBatch {
         const cam = camera.position;
         const c = this._cv;
         let rows = 0;
-        const units = [];   // faisceaux affichés (groupes et lyres seules) pour la jonction au bout
         for (let i = 0; i < list.length; i++) {
             if (used[i]) continue;
             const a = list[i];
@@ -340,52 +334,7 @@ export class SpotBatch {
             this.pushVolume(c, row, a.axis, a.beamRange || 140, a.right, 1, a.prism.count > 0);
             for (const m of members) out.add(m);
             this.clusterCount++;
-            units.push({ rep: a, pos: c.clone(), flux, row, lens: radius });
         }
-        for (let i = 0; i < list.length; i++) {
-            if (!used[i]) units.push({ rep: list[i], pos: list[i].lensPos, flux: list[i].flux, row: list[i].row, lens: this.paramsRow(list[i].row)[19] });
-        }
-        const done = new Uint8Array(units.length);
-        // ── Jonction au bout des faisceaux (toutes distances de caméra) ──
-        for (let i = 0; this.farMerge && i < units.length; i++) {
-            if (done[i]) continue;
-            const ua = units[i], a = ua.rep;
-            const members = [ua];
-            for (let j = i + 1; j < units.length; j++) {
-                if (done[j]) continue;
-                const ub = units[j];
-                if (ua.pos.distanceTo(ub.pos) > FAR_RADIUS || !this._clusterCompatible(a, ub.rep)) continue;
-                members.push(ub);
-            }
-            if (members.length < 2) continue;
-            c.set(0, 0, 0);
-            let flux = 0;
-            for (const m of members) { c.add(m.pos); flux += m.flux; }
-            c.multiplyScalar(1 / members.length);
-            let spread = 0, lens = 0;
-            for (const m of members) { spread = Math.max(spread, c.distanceTo(m.pos)); lens = Math.max(lens, m.lens); }
-            const src = this.paramsRow(a.row);
-            const tanCone = src[30], range = a.beamRange || 140;
-            // Distance où chaque faisceau (rayon lentille + s·tan) vaut FAR_OVERLAP × l'écart
-            const sMerge = Math.max(1, (FAR_OVERLAP * spread - lens) / Math.max(1e-4, tanCone));
-            if (sMerge > range * 0.6) continue;   // trop loin : rien à gagner
-            for (const m of members) done[units.indexOf(m)] = 1;
-            // Faisceaux arrêtés à la jonction (lignes réécrites à chaque image)
-            for (const m of members) this.paramsRow(m.row)[47] = sMerge;
-            // Faisceau commun : depuis la jonction, centre des lentilles, puissance totale ; lentille élargie
-            // de la moitié de l'écart (rayon proche de la somme des faisceaux qui se recouvrent)
-            const row = this._clusterRow(rows++);
-            const r = this.paramsRow(row);
-            r.set(src);
-            r[3] = flux;
-            r[19] = lens + spread * 0.5;   // lens : plus grande lentille (ou groupe) des faisceaux joints
-            r[31] = r[19] / Math.max(1e-4, src[8]);
-            r[46] = sMerge;
-            r[47] = 0;
-            this.pushVolume(c, row, a.axis, range, a.right, 1, a.prism.count > 0);
-            this.clusterCount++;
-        }
-
         // Lignes de groupes inutilisées cette image : éteintes
         for (let k = rows; k < this._clusterRows.length; k++) this.paramsRow(this._clusterRows[k])[3] = 0;
         return out;

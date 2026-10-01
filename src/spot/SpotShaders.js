@@ -670,7 +670,8 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 float focusDist = T2.w;
                 float frostBlur = T2.z * 0.42;
                 pFrostBlur = frostBlur;
-                pTile = spotParam(row, 12).x - 1.0;
+                vec4 T12 = spotParam(row, 12);
+                pTile = T12.x - 1.0;
                 float logFocus = log(focusDist);
                 float irr0 = flux / (PI * tanHalf * tanHalf);
                 float invTanHalf = 1.0 / tanHalf;
@@ -710,6 +711,19 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 // Distances le long de l'axe désormais comptées depuis l'apex des facettes (éclairement en 1/z²)
                 cv += apexDist - envDist;
 
+                // Longueur visible du faisceau (réglage de la lyre) : la diffusion s'arrête là (fondu sur le dernier
+                // quart) ; la tache de lumière au sol, elle, reste calculée sur toute la portée
+                float beamEnd = T12.y > 0.0 ? min(T12.y, L) : L;
+                float fadeStartB = beamEnd < L ? beamEnd * 0.75 : fadeStart;
+                if (beamEnd < L) {
+                    float zEnd = apexDist + beamEnd;
+                    if (abs(dv) > 1e-6) {
+                        float tl = (zEnd - cv) / dv;
+                        if (dv > 0.0) tout = min(tout, tl); else tin = max(tin, tl);
+                    } else if (cv > zEnd) tout = tin;
+                }
+                bool scatter = tout > tin;
+
                 // ── Intégration de la diffusion le long du rayon ──
                 // Distance le long de l'axe aux deux bouts du trajet dans le faisceau
                 float span = tout - tin;
@@ -725,7 +739,8 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                          : pPlain ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 8.0)
                          : (weight < 0.99 || pCount > 0) ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
                                                          : clamp(ceil(span * 2.6), 6.0, imp ? 8.0 : 18.0);
-                float dt = span / nS;
+                if (!scatter) nS = 0.0;   // faisceau raccourci : rien à intégrer sur ce pixel (tache au sol seule)
+                float dt = span / max(nS, 1.0);
                 float invIn = 1.0 / zIn;
                 float invOut = 1.0 / zOut;
                 float impW = abs(invIn - invOut) / (abs(dv) * nS);
@@ -742,7 +757,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 // Intégrale ANALYTIQUE de l'éclairement le long du rayon (∫ dt / z² exacte) ; fumée, phase,
                 // image de la fenêtre et ombre lues une seule fois au point pondéré par l'éclairement.
                 // 1 échantillon au lieu de 6 à 18 : le détail fin ne se voit pas dans un faisceau qui éblouit.
-                if (inside) {
+                if (inside && scatter) {
                     nS = 0.0; // saute la boucle d'intégration
                     float zs = 2.0 / (invIn + invOut);
                     bool axial = abs(dv) > 1e-4;
@@ -775,7 +790,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                         blocked = segBlocked(vLens.xyz, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8);
                     }
                     if (!blocked) {
-                        float fade = 1.0 - smoothstep(fadeStart, L, zl);
+                        float fade = 1.0 - smoothstep(fadeStartB, beamEnd, zl);
                         float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                         sum = gate * (irr0 * I * fade * hazeFromNoise(hazeNoise(P, true)) * phase(cosT));
                     }
@@ -825,7 +840,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                         if (lastBlocked) continue;
                     }
                     float E = irr0 / (zA * zA);
-                    float fade = 1.0 - smoothstep(fadeStart, L, zl);
+                    float fade = 1.0 - smoothstep(fadeStartB, beamEnd, zl);
                     float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                     // Dans le faisceau : bruit relu un échantillon sur deux (volutes de ~13 m : même valeur)
                     // Loin de la caméra (> 25 m) : une seule échelle de fumée (le détail fin ne se voit plus)

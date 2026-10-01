@@ -261,7 +261,8 @@ export class SpotFixture {
         const half = m.split < 1.9;
         const detail = m.goboFixedPos > 0.001 || m.goboRotPos > 0.001 || (m.animIn > 0.001 && m.animSlot > 0.5) || blades || half;
         this.needsGate = this.flux > 1e-4 && detail && !(m.frost >= 0.7 && !blades && !half);
-        r[48] = this.needsGate && this.gateTile >= 0 ? this.gateTile + 1 : 0; r[49] = 0; r[50] = 0; r[51] = 0;
+        r[48] = this.needsGate && this.gateTile >= 0 ? this.gateTile + 1 : 0;
+        r[49] = p.beamLength > 0 && p.beamLength < SPOT_BEAM_RANGE ? p.beamLength : 0; // longueur visible du faisceau (0 : toute la portée) r[50] = 0; r[51] = 0;
 
         // Lentille : s'illumine de la couleur du faisceau (bloom 3x plus puissant)
         const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 15.0;

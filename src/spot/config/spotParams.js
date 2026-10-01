@@ -147,6 +147,7 @@ export const SPOT_PARAMS_SCHEMA = {
     beamIntensity: num(1, 0, 4, 0.05, 'Intensité du faisceau', 'render', false),
     lightOutput:   num(1, 0, 4, 0.05, 'Lumière émise sur la scène', 'render', false),
     lensGlare:     num(1, 0, 3, 0.05, 'Éblouissement lentille', 'render', false),
+    beamLength:    num(140, 1, 140, 0.5, 'Longueur du faisceau (m)', 'render', false),
 };
 
 /** Paramètres par défaut d'une lyre */
