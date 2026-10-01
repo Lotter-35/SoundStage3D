@@ -55,6 +55,8 @@ export class SpotFixture {
         this.params = { ...defaultSpotParams(), ...params };
         this.motion = new SpotMotion(this.params);
         this.row = batch.allocRow();
+        this.gateTile = batch.allocTile();   // tuile de l'atlas de fenêtre (−1 : aucune)
+        this.needsGate = false;
 
         // Groupe manipulé par le gizmo (position + orientation) ; le montage est un enfant
         this.group = new THREE.Group();
@@ -251,6 +253,13 @@ export class SpotFixture {
         r[36] = pr.count; r[37] = this.tanLight; r[38] = pr.mainW; r[39] = pr.facetW;
         r[40] = pr.x0; r[41] = pr.y0; r[42] = pr.cos; r[43] = pr.sin;
         r[44] = pr.dx; r[45] = pr.dy; r[46] = 0; r[47] = 0;
+        // Atlas de fenêtre : seulement si l'image n'est pas un simple disque (gobo, animation, couteaux,
+        // demi-couleur) et que le frost ne l'efface pas déjà (≥ 70 % : transmission moyenne dans le shader)
+        const blades = m.blades[0] >= 0.001 || m.blades[1] >= 0.001 || m.blades[2] >= 0.001 || m.blades[3] >= 0.001;
+        const half = m.split < 1.9;
+        const detail = m.goboFixedPos > 0.001 || m.goboRotPos > 0.001 || (m.animIn > 0.001 && m.animSlot > 0.5) || blades || half;
+        this.needsGate = this.flux > 1e-4 && detail && !(m.frost >= 0.7 && !blades && !half);
+        r[48] = this.needsGate && this.gateTile >= 0 ? this.gateTile + 1 : 0; r[49] = 0; r[50] = 0; r[51] = 0;
 
         // Lentille : s'illumine de la couleur du faisceau (bloom 3x plus puissant)
         const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 15.0;
@@ -330,5 +339,7 @@ export class SpotFixture {
         const r = this.batch.paramsRow(this.row);
         r.fill(0);
         this.batch.freeRow(this.row);
+        this.batch.freeTile(this.gateTile);
+        this.gateTile = -1;
     }
 }

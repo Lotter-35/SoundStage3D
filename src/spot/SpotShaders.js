@@ -42,7 +42,16 @@ import { SMOKE_NOISE_UVW_SCALE } from '../laser/LaserSmokeNoise.js';
 import { occluderUniforms, MAX_OCCLUDERS } from './SpotOcclusion.js';
 
 /** Texels RGBA par lyre dans la texture de paramètres */
-export const SPOT_TEXELS = 12;
+export const SPOT_TEXELS = 13;
+
+/**
+ * Atlas de l'image de fenêtre : une tuile par lyre (gobos, roue d'animation, couteaux, couleurs, frost),
+ * dessinée une fois par image. Le faisceau la lit en un accès au lieu de recalculer les roues à chaque
+ * pas et pour chaque facette du prisme. Le flou de mise au point passe par les niveaux de mipmap.
+ */
+export const GATE_ATLAS_SIDE = 8;        // tuiles par côté (64 lyres)
+export const GATE_ATLAS_TILE = 128;      // pixels par tuile
+export const GATE_ATLAS_R = 1.6;         // la tuile couvre g ∈ [−R, R] (iris + flou maximal)
 /*
  * T0 : couleur A (rgb)            , flux (intensité × dimmer × obturateur)
  * T1 : couleur B (rgb)            , position de la frontière des demi-couleurs (2 = aucune)
@@ -67,6 +76,8 @@ export const SPOT_TEXELS = 12;
  * T9 : tan(zoom/2) gauche, droite, 1re LED du côté droit, tan(cône) / tan(zoom/2)
  * T10: 1re ligne des LED (lignes consécutives : couleur, flux) , nombre de LED , pas (m) , demi-couleur selon la hauteur
  * T11: – , – , début du volume (m : les faisceaux individuels couvrent la zone plus proche) , –
+ *
+ * T12 (toutes les lignes) : tuile de l'atlas de fenêtre + 1 (0 = aucune : image calculée dans le shader) , – , – , –
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -227,6 +238,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
     return new THREE.ShaderMaterial({
         uniforms: {
             uBoxMin:     { value: occ.mins },
+            uGateAtlas:  { value: null },
             uBoxMax:     { value: occ.maxs },
             uSpotParams: { value: paramsTexture },
             uGobos:      { value: goboTexture },
@@ -302,6 +314,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
             uniform float uTime;
             uniform vec3 uBoxMin[${MAX_OCCLUDERS}];
             uniform vec3 uBoxMax[${MAX_OCCLUDERS}];
+            uniform sampler2D uGateAtlas;
             flat varying vec4 vLens;
             flat varying vec4 vAxis;
             flat varying vec4 vRight;
@@ -357,6 +370,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
 
             // Prisme et raccourci du faisceau ouvert : lus une fois par pixel
             float pMainW, pFacetW, pPlainR2, pOutR2;
+            float pTile, pFrostBlur;   // tuile de l'atlas (−1 : aucune), flou du frost déjà dans la tuile
             int pCount;
             vec2 pV0, pRot, pD;
             bool pPlain;
@@ -371,6 +385,15 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     if (r2 < pPlainR2) return G.T0.rgb * (1.0 - 0.2 * r2);
                     float e = 0.012 + blur, ir = min(G.T2.y, 1.0);
                     return G.T0.rgb * ((1.0 - smoothstep(ir - e, ir + e, sqrt(r2))) * (1.0 - 0.2 * min(r2, 1.0)));
+                }
+                if (pTile >= 0.0) {
+                    // Image précalculée (atlas) : flou de mise au point en plus du frost → niveau de mipmap
+                    vec2 uv = g * (0.5 / ${GATE_ATLAS_R.toFixed(2)}) + 0.5;
+                    if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
+                    vec2 cell = vec2(mod(pTile, ${GATE_ATLAS_SIDE.toFixed(1)}), floor(pTile / ${GATE_ATLAS_SIDE.toFixed(1)}));
+                    float texelG = ${(2 * GATE_ATLAS_R / GATE_ATLAS_TILE).toFixed(6)};
+                    float lod = clamp(log2(max(1.0, (blur - pFrostBlur) / texelG)), 0.0, 3.0);
+                    return textureLod(uGateAtlas, (cell + uv) / ${GATE_ATLAS_SIDE.toFixed(1)}, lod).rgb;
                 }
                 return gateImage(G, g, blur);
             }
@@ -636,6 +659,8 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
 
                 float focusDist = T2.w;
                 float frostBlur = T2.z * 0.42;
+                pFrostBlur = frostBlur;
+                pTile = spotParam(row, 12).x - 1.0;
                 float logFocus = log(focusDist);
                 float irr0 = flux / (PI * tanHalf * tanHalf);
                 float invTanHalf = 1.0 / tanHalf;
@@ -1009,5 +1034,40 @@ export function createGlareMaterial(paramsTexture) {
         depthWrite: false,
         blending: THREE.AdditiveBlending,
         toneMapped: false,
+    });
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. Atlas de l'image de fenêtre (une tuile par lyre, une instance par tuile, 1 draw call)
+// ─────────────────────────────────────────────────────────────────────────────
+export function createGateAtlasMaterial(paramsTexture, goboTexture) {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uSpotParams: { value: paramsTexture },
+            uGobos:      { value: goboTexture },
+        },
+        vertexShader: /* glsl */`
+            attribute vec2 aInfo;           // tuile, ligne de paramètres
+            varying vec2 vUv;
+            flat varying int vRow;
+            void main() {
+                vUv = position.xy * 0.5 + 0.5;
+                vec2 cell = vec2(mod(aInfo.x, ${GATE_ATLAS_SIDE.toFixed(1)}), floor(aInfo.x / ${GATE_ATLAS_SIDE.toFixed(1)}));
+                vRow = int(aInfo.y + 0.5);
+                gl_Position = vec4((cell + vUv) / ${GATE_ATLAS_SIDE.toFixed(1)} * 2.0 - 1.0, 0.0, 1.0);
+            }
+        `,
+        fragmentShader: /* glsl */`
+            ${GATE_GLSL}
+            varying vec2 vUv;
+            flat varying int vRow;
+            void main() {
+                Gate G = loadGate(vRow);
+                vec2 g = (vUv * 2.0 - 1.0) * ${GATE_ATLAS_R.toFixed(2)};
+                gl_FragColor = vec4(gateImage(G, g, G.T2.z * 0.42), 1.0);
+            }
+        `,
+        depthTest: false,
+        depthWrite: false,
     });
 }

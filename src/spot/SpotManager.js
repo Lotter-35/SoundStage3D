@@ -291,6 +291,8 @@ export class SpotManager {
         for (const src of this._sources) src.update(dt);
         this.batch.assemble(this._spots.values(), this._sources);
         getSpotHousingInstancer(this.scene).flush();
+        // Image de fenêtre des lyres à gobo : une fois par image, lue ensuite par les faisceaux
+        this.batch.renderGateAtlas(this.renderer);
 
         // Fumée : même vent que les nappes laser
         const u = this.batch.volumeMaterial.uniforms;

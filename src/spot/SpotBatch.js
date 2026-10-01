@@ -19,8 +19,11 @@ import { resolveResolutionScale } from '../render/resolutionScale.js';
 import { enableLightsBloom } from '../laser/LaserManager.js';
 import { getGoboTexture } from './SpotGoboLibrary.js';
 import {
-    SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial
+    SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial,
+    createGateAtlasMaterial, GATE_ATLAS_SIDE, GATE_ATLAS_TILE
 } from './SpotShaders.js?v=4';
+
+const GATE_TILES = GATE_ATLAS_SIDE * GATE_ATLAS_SIDE;
 
 export const VOLUME_STRIDE = 12; // lentille.xyz, ligne | axe.xyz, longueur | droite.xyz, poids
 export const GLARE_STRIDE = 8;   // lentille.xyz, ligne | axe.xyz, poids
@@ -121,6 +124,31 @@ export class SpotBatch {
         this._bars = this._makeVolumeLayer(variant({ bar: true }), 8);
         this._layers = [this._plain, this._prism, this._bars];
 
+        // ── Atlas de l'image de fenêtre (gobos, animation, couteaux, couleurs) : une tuile par lyre ──
+        const size = GATE_ATLAS_SIDE * GATE_ATLAS_TILE;
+        this.gateAtlas = new THREE.WebGLRenderTarget(size, size, {
+            depthBuffer: false, stencilBuffer: false,
+            minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true,
+        });
+        this.volumeMaterial.uniforms.uGateAtlas.value = this.gateAtlas.texture;
+        this._gateMaterial = createGateAtlasMaterial(this.paramsTexture, this.goboTexture);
+        this._materials.push(this._gateMaterial);
+        const quad = new THREE.PlaneGeometry(2, 2);
+        const gateGeo = new THREE.InstancedBufferGeometry();
+        gateGeo.setIndex(quad.getIndex());
+        gateGeo.setAttribute('position', quad.getAttribute('position'));
+        this._gateInfo = new THREE.InstancedBufferAttribute(new Float32Array(GATE_TILES * 2), 2);
+        this._gateInfo.setUsage(THREE.DynamicDrawUsage);
+        gateGeo.setAttribute('aInfo', this._gateInfo);
+        gateGeo.instanceCount = 0;
+        this._gateMesh = new THREE.Mesh(gateGeo, this._gateMaterial);
+        this._gateMesh.frustumCulled = false;
+        this._gateScene = new THREE.Scene();
+        this._gateScene.add(this._gateMesh);
+        this._gateCamera = new THREE.Camera();
+        this._freeTiles = Array.from({ length: GATE_TILES }, (_, i) => GATE_TILES - 1 - i);
+        this._gateJobs = 0;
+
         // ── Éblouissements de lentille (scène principale, bloom lampes) ──
         const plane = new THREE.PlaneGeometry(1, 1);
         const glareGeo = new THREE.InstancedBufferGeometry();
@@ -176,6 +204,27 @@ export class SpotBatch {
         this._onParamsTexture = cb;
     }
 
+    /** Tuile de l'atlas de fenêtre (−1 : atlas plein, l'image est alors calculée dans le shader) */
+    allocTile() {
+        return this._freeTiles.length ? this._freeTiles.pop() : -1;
+    }
+
+    freeTile(tile) {
+        if (tile >= 0) this._freeTiles.push(tile);
+    }
+
+    /** Dessine les tuiles des lyres à gobo de cette image (1 draw call ; mipmaps pour le flou) */
+    renderGateAtlas(renderer) {
+        if (!renderer || this._gateJobs === 0) return;
+        const prev = renderer.getRenderTarget();
+        const auto = renderer.autoClear;
+        renderer.autoClear = false;
+        renderer.setRenderTarget(this.gateAtlas);
+        renderer.render(this._gateScene, this._gateCamera);
+        renderer.setRenderTarget(prev);
+        renderer.autoClear = auto;
+    }
+
     allocRow() {
         if (this._freeRows.length > 0) return this._freeRows.pop();
         if (this._rows >= this._maxRows) this._allocParamsTexture(this._maxRows * 2);
@@ -206,6 +255,7 @@ export class SpotBatch {
 
     /** Assemble les faisceaux et éblouissements de toutes les lyres */
     assemble(fixtures, sources = null) {
+        if (!Array.isArray(fixtures)) fixtures = [...fixtures];   // parcourue deux fois (faisceaux, atlas)
         for (const l of this._layers) l.stream.begin();
         this.glares.begin();
         // Projecteurs dont le faisceau est affiché (un faisceau à prisme compte pour un)
@@ -223,6 +273,22 @@ export class SpotBatch {
             }
         }
         this.volumeSources = n;
+        // Lyres dont l'image de fenêtre passe par l'atlas cette image
+        let jobs = 0;
+        const info = this._gateInfo.array;
+        for (const f of fixtures) {
+            if (!f.needsGate || f.gateTile < 0) continue;
+            info[jobs * 2] = f.gateTile;
+            info[jobs * 2 + 1] = f.row;
+            jobs++;
+        }
+        this._gateJobs = jobs;
+        this._gateMesh.geometry.instanceCount = jobs;
+        if (jobs > 0) {
+            this._gateInfo.clearUpdateRanges();
+            this._gateInfo.addUpdateRange(0, jobs * 2);
+            this._gateInfo.needsUpdate = true;
+        }
         for (const l of this._layers) {
             l.stream.end();
             l.mesh.visible = l.stream.count > 0;
