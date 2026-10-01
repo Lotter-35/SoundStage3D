@@ -336,11 +336,52 @@ class CanvasEventsMixin:
         return effective
 
     def _get_handles_data(self, l: Layer):
+        if l.shape_type == "point":
+            bx1, by1, bx2, by2 = self._get_layer_bbox(l)
+            mx = (bx1 + bx2) / 2.0
+            my = (by1 + by2) / 2.0
+            return bx1, by1, bx2, by2, mx, my, {}, (-999.0, -999.0)
+
+        if l.shape_type == "line":
+            parent_mat = self.get_parent_world_matrix(l)
+            local_mat = l.get_local_matrix()
+            world_mat = parent_mat.multiply(local_mat)
+            wx1, wy1 = world_mat.apply(-0.55, 0.0)
+            wx2, wy2 = world_mat.apply(0.55, 0.0)
+            cx1, cy1 = self.norm_to_canvas(wx1, wy1)
+            cx2, cy2 = self.norm_to_canvas(wx2, wy2)
+            mx = (cx1 + cx2) / 2.0
+            my = (cy1 + cy2) / 2.0
+
+            dx = cx2 - cx1
+            dy = cy2 - cy1
+            dist_px = math.hypot(dx, dy)
+            if dist_px > 1e-4:
+                perpx = -dy / dist_px
+                perpy = dx / dist_px
+            else:
+                perpx, perpy = 0.0, -1.0
+
+            rot_handle = (mx + perpx * 22.0, my + perpy * 22.0)
+            handles = {
+                "W": (cx1, cy1),
+                "E": (cx2, cy2),
+                "NW": (cx1, cy1),
+                "SW": (cx1, cy1),
+                "NE": (cx2, cy2),
+                "SE": (cx2, cy2),
+                "N": (mx, my),
+                "S": (mx, my),
+            }
+            bx1 = min(cx1, cx2) - 8.0
+            by1 = min(cy1, cy2) - 8.0
+            bx2 = max(cx1, cx2) + 8.0
+            by2 = max(cy1, cy2) + 8.0
+            return bx1, by1, bx2, by2, mx, my, handles, rot_handle
+
         bx1, by1, bx2, by2 = self._get_layer_bbox(l)
         mx = (bx1 + bx2) / 2.0
         my = (by1 + by2) / 2.0
-        if l.shape_type == "point":
-            return bx1, by1, bx2, by2, mx, my, {}, (-999.0, -999.0)
         handles = {
             "NW": (bx1, by1), "N": (mx, by1), "NE": (bx2, by1),
             "E": (bx2, my), "SE": (bx2, by2), "S": (mx, by2),
@@ -452,33 +493,45 @@ class CanvasEventsMixin:
             return
 
         # 2. Poignées de redimensionnement directes (<= 11 px)
+        is_single_line = (not is_multi and eff_layers and eff_layers[0].shape_type == "line")
         for name, (hx, hy) in handles.items():
             if math.hypot(cx - hx, cy - hy) <= 11.0:
-                if name in ("NW", "SE"): self.canvas.config(cursor="size_nw_se")
+                if is_single_line:
+                    # Pour une ligne : curseur aligné avec l'orientation de la ligne
+                    rot = eff_layers[0].rotation % 180.0
+                    if 22.5 <= rot < 67.5: cur_type = "size_ne_sw"
+                    elif 67.5 <= rot < 112.5: cur_type = "size_ns"
+                    elif 112.5 <= rot < 157.5: cur_type = "size_nw_se"
+                    else: cur_type = "size_we"
+                    self.canvas.config(cursor=cur_type)
+                    return
+                elif name in ("NW", "SE"): self.canvas.config(cursor="size_nw_se")
                 elif name in ("NE", "SW"): self.canvas.config(cursor="size_ne_sw")
                 elif name in ("N", "S"): self.canvas.config(cursor="size_ns")
                 elif name in ("W", "E"): self.canvas.config(cursor="size_we")
                 return
 
-        # 3. Zone de rotation aux 4 angles (juste à l'extérieur des 4 coins, 11 à 26 px)
-        for name in ("NW", "NE", "SE", "SW"):
-            if name in handles:
-                chx, chy = handles[name]
-                d = math.hypot(cx - chx, cy - chy)
-                if 11.0 < d <= 26.0:
-                    is_corner_rot = False
-                    if name == "NW" and (cx <= bx1 + 3 or cy <= by1 + 3): is_corner_rot = True
-                    elif name == "NE" and (cx >= bx2 - 3 or cy <= by1 + 3): is_corner_rot = True
-                    elif name == "SE" and (cx >= bx2 - 3 or cy >= by2 - 3): is_corner_rot = True
-                    elif name == "SW" and (cx <= bx1 + 3 or cy >= by2 - 3): is_corner_rot = True
+        # 3. Zone de rotation aux 4 angles (uniquement pour les boîtes rectangulaires, pas pour une ligne unique)
+        if not is_single_line:
+            for name in ("NW", "NE", "SE", "SW"):
+                if name in handles:
+                    chx, chy = handles[name]
+                    d = math.hypot(cx - chx, cy - chy)
+                    if 11.0 < d <= 26.0:
+                        is_corner_rot = False
+                        if name == "NW" and (cx <= bx1 + 3 or cy <= by1 + 3): is_corner_rot = True
+                        elif name == "NE" and (cx >= bx2 - 3 or cy <= by1 + 3): is_corner_rot = True
+                        elif name == "SE" and (cx >= bx2 - 3 or cy >= by2 - 3): is_corner_rot = True
+                        elif name == "SW" and (cx <= bx1 + 3 or cy >= by2 - 3): is_corner_rot = True
 
-                    if is_corner_rot:
-                        self.canvas.config(cursor="exchange")
-                        return
+                        if is_corner_rot:
+                            self.canvas.config(cursor="exchange")
+                            return
 
         # 4. Survol d'une forme (trait ou point laser) ou intérieur de la boîte de sélection
         hovered_layer = self._find_layer_at(cx, cy)
-        if hovered_layer is not None or (bx1 <= cx <= bx2 and by1 <= cy <= by2):
+        is_in_box = (bx1 <= cx <= bx2 and by1 <= cy <= by2) if not is_single_line else (math.hypot(cx - center_cx, cy - center_cy) <= 8.0)
+        if hovered_layer is not None or is_in_box:
             self.canvas.config(cursor="fleur")
             return
 
@@ -664,12 +717,13 @@ class CanvasEventsMixin:
 
                     return
 
-            # 3. Rotation directe depuis les 4 angles (11 px à 26 px à l'extérieur des 4 coins)
-            for name in ("NW", "NE", "SE", "SW"):
-                if name not in handles:
-                    continue
-                chx, chy = handles[name]
-                d = math.hypot(cx - chx, cy - chy)
+            # 3. Rotation directe depuis les 4 angles (11 px à 26 px à l'extérieur des 4 coins, boîtes seulement)
+            if is_multi or (eff_layers and eff_layers[0].shape_type != "line"):
+                for name in ("NW", "NE", "SE", "SW"):
+                    if name not in handles:
+                        continue
+                    chx, chy = handles[name]
+                    d = math.hypot(cx - chx, cy - chy)
                 if 11.0 < d <= 26.0:
                     is_corner_rot = False
                     if name == "NW" and (cx <= bx1 + 3 or cy <= by1 + 3): is_corner_rot = True
@@ -768,7 +822,12 @@ class CanvasEventsMixin:
             return
 
         # 2b. Clic à l'intérieur de la boîte de sélection existante -> Déplacement direct de la sélection
-        if handles_info and not (_is_ctrl or _is_shift) and (bx1 <= cx <= bx2 and by1 <= cy <= by2):
+        is_single_line = (not is_multi and eff_layers and eff_layers[0].shape_type == "line")
+        is_inside_target = (
+            (math.hypot(cx - center_cx, cy - center_cy) <= 10.0) if is_single_line
+            else (bx1 <= cx <= bx2 and by1 <= cy <= by2)
+        )
+        if handles_info and not (_is_ctrl or _is_shift) and is_inside_target:
             eff_layers = self.get_effective_selected_layers()
             if eff_layers:
                 l = self.get_current_layer() or eff_layers[0]
@@ -841,15 +900,31 @@ class CanvasEventsMixin:
                 grid_type = getattr(self, "grid_type_var", None)
 
                 if grid_type and grid_type.get() == "polar":
-                    if dist > 1e-4:
-                        angle = math.atan2(ldy, ldx)
-                        snapped_angle = round(angle / (math.pi / 6.0)) * (math.pi / 6.0)
-                        if self.show_grid_var.get() or is_ctrl:
-                            dist = round(dist / 0.05) * 0.05
-                        snapped_wx = sx + dist * math.cos(snapped_angle)
-                        snapped_wy = sy + dist * math.sin(snapped_angle)
-                    else:
-                        snapped_wx, snapped_wy = sx, sy
+                    # Si le point initial n'était pas aimanté au polar grid, on l'aimante
+                    if not getattr(self, "_draw_snapped_start", False):
+                        sx, sy = self.snap_polar(sx, sy)
+                        self._draw_points[0] = (sx, sy)
+                        self._draw_snapped_start = True
+
+                    # 1. Aimantation par défaut sur les nœuds polaires (rayons 30° et cercles 0.05)
+                    snapped_wx, snapped_wy = self.snap_polar(raw_wx, raw_wy)
+
+                    # 2. Contrainte radiale : si on trace le long du rayon partant de (sx, sy)
+                    if math.hypot(sx, sy) > 1e-4:
+                        theta_ray = math.atan2(sy, sx)
+                        theta_cur = math.atan2(raw_wy, raw_wx)
+                        diff_ang = abs((theta_cur - theta_ray + math.pi) % (2 * math.pi) - math.pi)
+                        if diff_ang < math.radians(15.0):
+                            r_cur = round(math.hypot(raw_wx, raw_wy) / 0.05) * 0.05
+                            snapped_wx = r_cur * math.cos(theta_ray)
+                            snapped_wy = r_cur * math.sin(theta_ray)
+                        else:
+                            # Contrainte circulaire : si on trace le long du cercle passant par (sx, sy)
+                            r_ring = math.hypot(sx, sy)
+                            if abs(math.hypot(raw_wx, raw_wy) - r_ring) < 0.035:
+                                ang_snap = round(theta_cur / (math.pi / 6.0)) * (math.pi / 6.0)
+                                snapped_wx = r_ring * math.cos(ang_snap)
+                                snapped_wy = r_ring * math.sin(ang_snap)
                 else:
                     if dist > 1e-4:
                         angle = math.atan2(ldy, ldx)
@@ -987,8 +1062,18 @@ class CanvasEventsMixin:
             snapped_center_x = False
             snapped_center_y = False
 
-            # SHIFT : Alignement magnétique au centre (horizontal et vertical)
-            if is_shift:
+            grid_type = getattr(self, "grid_type_var", None)
+            is_polar = (grid_type is not None and grid_type.get() == "polar")
+
+            # SHIFT : Alignement magnétique au quadrillage polaire ou aux axes centraux cartésiens
+            if is_shift and is_polar:
+                if math.hypot(raw_wx, raw_wy) < (0.05 / self.view_zoom):
+                    nwx, nwy = 0.0, 0.0
+                    snapped_center_x = True
+                    snapped_center_y = True
+                else:
+                    nwx, nwy = self.snap_polar(raw_wx, raw_wy)
+            elif is_shift:
                 snap_threshold = 0.07 / self.view_zoom
 
                 # Alignement vertical sur le centre (X = 0)
@@ -1017,17 +1102,21 @@ class CanvasEventsMixin:
 
             # Snapping à la grille si la case Grille est cochée (ou avec la touche CTRL)
             if self.show_grid_var.get() or is_ctrl:
-                grid_step = 0.05
-                if not snapped_center_x:
-                    if abs(nwx) < 0.035:
-                        nwx = 0.0
-                    else:
-                        nwx = round(nwx / grid_step) * grid_step
-                if not snapped_center_y:
-                    if abs(nwy) < 0.035:
-                        nwy = 0.0
-                    else:
-                        nwy = round(nwy / grid_step) * grid_step
+                if is_polar:
+                    if not (snapped_center_x and snapped_center_y):
+                        nwx, nwy = self.snap_polar(nwx, nwy)
+                else:
+                    grid_step = 0.05
+                    if not snapped_center_x:
+                        if abs(nwx) < 0.035:
+                            nwx = 0.0
+                        else:
+                            nwx = round(nwx / grid_step) * grid_step
+                    if not snapped_center_y:
+                        if abs(nwy) < 0.035:
+                            nwy = 0.0
+                        else:
+                            nwy = round(nwy / grid_step) * grid_step
 
             # Déplacement collectif : calculer eff_dwx, eff_dwy et vérifier les limites laser pour TOUS les calques
             eff_dwx = nwx - orig_wx
@@ -1164,11 +1253,15 @@ class CanvasEventsMixin:
                 # Coordonnées laser actuelles de la souris
                 mwx, mwy = self.canvas_to_norm(cx, cy)
 
-                # SHIFT : Magnétisme et alignement sur la grille de projection laser (par pas de 0.05)
+                # SHIFT : Magnétisme et alignement sur la grille polaire ou cartésienne
+                grid_type = getattr(self, "grid_type_var", None)
                 if is_shift:
-                    grid_step = 0.05
-                    mwx = round(mwx / grid_step) * grid_step
-                    mwy = round(mwy / grid_step) * grid_step
+                    if grid_type and grid_type.get() == "polar":
+                        mwx, mwy = self.snap_polar(mwx, mwy)
+                    else:
+                        grid_step = 0.05
+                        mwx = round(mwx / grid_step) * grid_step
+                        mwy = round(mwy / grid_step) * grid_step
 
                 # Décomposition pour connaître l'orientation et l'échelle globale dans le monde
                 _, _, world_sx, world_sy, world_rot = orig_world_mat.decompose()
@@ -1191,10 +1284,71 @@ class CanvasEventsMixin:
                 is_corner = len(h_name) == 2
 
                 if l.shape_type == "line":
-                    ratio_x = vl_x / orig_span_x if abs(orig_span_x) > 1e-4 else 1.0
-                    ratio_x = max(0.05, ratio_x)
-                    cand_scale_x = self._drag_orig_scale_x * ratio_x
-                    cand_scale_y = self._drag_orig_scale_y
+                    # Redimensionnement d'une ligne UNIQUEMENT DANS SA LONGUEUR
+                    inv_world = orig_world_mat.invert()
+                    mlx, _ = inv_world.apply(mwx, mwy)
+
+                    if is_alt:
+                        # Redimensionnement symétrique depuis le centre
+                        ratio_x = abs(mlx) / abs(hlx) if abs(hlx) > 1e-4 else 1.0
+                    else:
+                        # Redimensionnement avec extrémité opposée fixe
+                        span_orig = hlx - alx
+                        ratio_x = (mlx - alx) / span_orig if abs(span_orig) > 1e-4 else 1.0
+
+                    ratio_x = max(0.02, ratio_x)
+                    if is_ctrl:
+                        ratio_x = max(0.02, round(ratio_x * 10.0) / 10.0)
+
+                    cand_scale_x = max(0.02, self._drag_orig_scale_x * ratio_x)
+                    cand_scale_y = 1.0
+
+                    loc_rad = math.radians(self._drag_orig_rot)
+                    cos_l = math.cos(loc_rad)
+                    sin_l = math.sin(loc_rad)
+                    if is_alt:
+                        cand_x = self._drag_orig_x
+                        cand_y = self._drag_orig_y
+                    else:
+                        inv_parent = parent_mat.invert()
+                        apx, apy = inv_parent.apply(awx, awy)
+                        cand_x = apx - (alx * cand_scale_x * cos_l)
+                        cand_y = apy - (alx * cand_scale_x * sin_l)
+
+                    if l.fits_in_laser(cand_x, cand_y, cand_scale_x, 1.0, parent_mat=parent_mat):
+                        l.scale_x = cand_scale_x
+                        l.scale_y = 1.0
+                        l.x = cand_x
+                        l.y = cand_y
+                    else:
+                        low = 0.0
+                        high = 1.0
+                        best_sx = self._drag_orig_scale_x
+                        best_cx = self._drag_orig_x
+                        best_cy = self._drag_orig_y
+                        for _ in range(16):
+                            mid_t = (low + high) / 2.0
+                            test_sx = self._drag_orig_scale_x + (cand_scale_x - self._drag_orig_scale_x) * mid_t
+                            if is_alt:
+                                test_cx = self._drag_orig_x
+                                test_cy = self._drag_orig_y
+                            else:
+                                test_cx = apx - (alx * test_sx * cos_l)
+                                test_cy = apy - (alx * test_sx * sin_l)
+                            if l.fits_in_laser(test_cx, test_cy, test_sx, 1.0, parent_mat=parent_mat):
+                                best_sx = test_sx
+                                best_cx = test_cx
+                                best_cy = test_cy
+                                low = mid_t
+                            else:
+                                high = mid_t
+                        l.scale_x = best_sx
+                        l.scale_y = 1.0
+                        l.x = best_cx
+                        l.y = best_cy
+
+                    self._request_redraw()
+                    return
                 elif l.shape_type == "circle" or is_corner:
                     # Mode proportionnel : homothétie uniforme (maintient le cercle ou le ratio des coins)
                     if is_corner:

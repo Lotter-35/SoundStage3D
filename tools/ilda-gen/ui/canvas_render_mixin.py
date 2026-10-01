@@ -187,6 +187,23 @@ class CanvasRenderMixin:
                     if cur_l and cur_l.enabled:
                         if cur_l.shape_type == "point":
                             self.canvas.create_oval(center_cx - 9, center_cy - 9, center_cx + 9, center_cy + 9, outline="#00e5ff", width=1.5, dash=(3, 3))
+                        elif cur_l.shape_type == "line":
+                            # Ligne : surlignage cyan le long de la ligne
+                            hx1, hy1 = handles.get("W", (bx1, by1))
+                            hx2, hy2 = handles.get("E", (bx2, by2))
+                            self.canvas.create_line(hx1, hy1, hx2, hy2, fill="#00e5ff", width=1.5, dash=(4, 3))
+
+                            # Poignée de rotation (tige + rond)
+                            self.canvas.create_line(mx, my, rot_x, rot_y, fill="#00e5ff", dash=(2, 2))
+                            self.canvas.create_oval(rot_x - 4, rot_y - 4, rot_x + 4, rot_y + 4, fill="#00e5ff", outline="#ffffff")
+
+                            # Deux poignées d'extrémité (redimensionnement uniquement dans la longueur)
+                            hs = 5.0
+                            self.canvas.create_rectangle(hx1 - hs, hy1 - hs, hx1 + hs, hy1 + hs, fill="#ffffff", outline="#00a8cc", width=1.5)
+                            self.canvas.create_rectangle(hx2 - hs, hy2 - hs, hx2 + hs, hy2 + hs, fill="#ffffff", outline="#00a8cc", width=1.5)
+
+                            # Point central d'ancrage
+                            self.canvas.create_oval(center_cx - 3, center_cy - 3, center_cx + 3, center_cy + 3, fill="#00e5ff", outline="#000000")
                         else:
                             # Boîte englobante discrète en tirets cyan
                             self.canvas.create_rectangle(bx1, by1, bx2, by2, outline="#00e5ff", width=1, dash=(3, 3))
