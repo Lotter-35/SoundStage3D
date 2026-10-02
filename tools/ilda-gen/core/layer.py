@@ -9,7 +9,7 @@ except (ImportError, ValueError):
 class Layer:
     """Modèle de Calque / Forme / Groupe hiérarchique."""
 
-    def __init__(self, id_: int, name: str, shape_type: str, color=(0, 255, 128), children=None):
+    def __init__(self, id_: int, name: str, shape_type: str, color=(0, 255, 128), children=None, locked: bool = False):
         self.id = id_
         self.name = name
         self.shape_type = shape_type  # "line", "circle", "point", "pencil", "group"
@@ -20,6 +20,7 @@ class Layer:
         self.rotation = 0.0           # Degrés
         self.color = color
         self.enabled = True
+        self.locked = bool(locked)    # Si True sur un groupe : agit comme une forme unique liée (custom shape)
         self.is_closed = (shape_type == "circle")
         self.is_expanded = True
         self.children: list["Layer"] = list(children) if children else []
@@ -49,13 +50,14 @@ class Layer:
 
     def clone(self) -> "Layer":
         """Crée une copie indépendante complète du calque (y compris récursivement pour les enfants)."""
-        dup = Layer(self.id, self.name, self.shape_type, self.color)
+        dup = Layer(self.id, self.name, self.shape_type, self.color, locked=self.locked)
         dup.x = self.x
         dup.y = self.y
         dup.scale_x = self.scale_x
         dup.scale_y = self.scale_y
         dup.rotation = self.rotation
         dup.enabled = self.enabled
+        dup.locked = self.locked
         dup.is_closed = self.is_closed
         dup.is_expanded = self.is_expanded
         dup.local_points = list(self.local_points)
@@ -75,6 +77,7 @@ class Layer:
             "rotation": round(self.rotation, 4),
             "color": list(self.color),
             "enabled": bool(self.enabled),
+            "locked": bool(self.locked),
             "is_closed": bool(self.is_closed),
             "is_expanded": bool(self.is_expanded),
             "local_points": [[round(p[0], 6), round(p[1], 6)] for p in self.local_points],
@@ -92,7 +95,8 @@ class Layer:
             name=d.get("name", "Calque"),
             shape_type=d.get("shape_type", "point"),
             color=color,
-            children=children
+            children=children,
+            locked=bool(d.get("locked", False)),
         )
         lay.x = float(d.get("x", 0.0))
         lay.y = float(d.get("y", 0.0))
@@ -100,6 +104,7 @@ class Layer:
         lay.scale_y = float(d.get("scale_y", 1.0))
         lay.rotation = float(d.get("rotation", 0.0))
         lay.enabled = bool(d.get("enabled", True))
+        lay.locked = bool(d.get("locked", False))
         lay.is_closed = bool(d.get("is_closed", False))
         lay.is_expanded = bool(d.get("is_expanded", True))
         raw_pts = d.get("local_points")
@@ -146,9 +151,15 @@ class Layer:
         wpts = self.get_unclamped_world_points()
         return [(max(-1.0, min(1.0, x)), max(-1.0, min(1.0, y))) for x, y in wpts]
 
-    def get_render_strokes(self, parent_mat: Transform2D | None = None) -> list[tuple[list[tuple[float, float]], tuple[int, int, int], bool, str]]:
+    def get_render_strokes(
+        self,
+        parent_mat: Transform2D | None = None,
+        is_layer_active_fn=None,
+    ) -> list[tuple[list[tuple[float, float]], tuple[int, int, int], bool, str]]:
         """Retourne la liste récursive des tracés [(points_laser_world, color, is_closed, shape_type)] pour le calque ou sur-calque."""
         if not self.enabled:
+            return []
+        if is_layer_active_fn is not None and not is_layer_active_fn(self):
             return []
         my_mat = self.get_local_matrix()
         world_mat = parent_mat.multiply(my_mat) if parent_mat else my_mat
@@ -156,8 +167,8 @@ class Layer:
         if self.shape_type == "group":
             strokes = []
             for child in self.children:
-                if child.enabled:
-                    strokes.extend(child.get_render_strokes(world_mat))
+                if child.enabled and (is_layer_active_fn is None or is_layer_active_fn(child)):
+                    strokes.extend(child.get_render_strokes(world_mat, is_layer_active_fn=is_layer_active_fn))
             return strokes
 
         pts = self.local_points

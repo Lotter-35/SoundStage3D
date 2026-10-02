@@ -12,8 +12,8 @@ class UndoClipboardMixin:
     """Gestion de l'historique Annuler / Rétablir (Undo/Redo) et du Presse-papier (Copier, Couper, Coller)."""
 
     def get_state_snapshot(self) -> dict:
-        """Capture un instantané complet de l'état des calques et sélections."""
-        return {
+        """Capture un instantané complet de l'état des calques, sélections et timeline."""
+        snap = {
             "layers": [l.clone() for l in self.layers],
             "selected_layer_id": self.selected_layer.id if getattr(self, "selected_layer", None) else None,
             "selected_layer_ids": {l.id for l in getattr(self, "selected_layers", set())},
@@ -21,6 +21,9 @@ class UndoClipboardMixin:
             "selected_indices": set(self.selected_indices),
             "layer_counter": self.layer_counter,
         }
+        if hasattr(self, "timeline"):
+            snap["timeline"] = self.timeline.clone()
+        return snap
 
     def _apply_snapshot(self, snapshot: dict):
         """Restaure un instantané complet."""
@@ -28,6 +31,11 @@ class UndoClipboardMixin:
         self.layer_counter = snapshot["layer_counter"]
         self.selected_idx = snapshot["selected_idx"]
         self.selected_indices = set(snapshot.get("selected_indices", set()))
+
+        if "timeline" in snapshot and hasattr(self, "timeline"):
+            self.timeline = snapshot["timeline"].clone()
+            if hasattr(self, "timeline_widget"):
+                self.timeline_widget.on_model_changed()
 
         def find_layer_by_id(layers_list, target_id):
             for l in layers_list:
@@ -68,6 +76,10 @@ class UndoClipboardMixin:
             self.undo_stack.pop(0)
         self.redo_stack.clear()
         self.set_dirty(True)
+
+    def record_undo_step(self):
+        """Alias pour push_undo_state."""
+        self.push_undo_state()
 
     def undo(self, event=None):
         """Ctrl+Z : Annule la dernière action."""

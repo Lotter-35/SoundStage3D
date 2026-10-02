@@ -6,8 +6,10 @@ from tkinter import filedialog, messagebox
 
 try:
     from ..core.layer import Layer
+    from ..core.timeline import TimelineModel
 except (ImportError, ValueError):
     from core.layer import Layer
+    from core.timeline import TimelineModel
 
 
 class ProjectManagerMixin:
@@ -17,6 +19,73 @@ class ProjectManagerMixin:
         self.is_dirty = val
         self._update_window_title()
         self._update_proj_bar_ui()
+        if val and getattr(self, "autosave_enabled", True):
+            self.trigger_autosave()
+
+    def get_autosave_path(self) -> str:
+        """Détermine le chemin du fichier pour la sauvegarde automatique."""
+        if getattr(self, "current_project_file", None):
+            return self.current_project_file
+        # Pour un projet 'Sans titre', sauvegarder dans un fichier d'autosave dédié
+        save_dir = os.path.dirname(os.path.abspath(__file__))
+        app_dir = os.path.abspath(os.path.join(save_dir, ".."))
+        return os.path.join(app_dir, "autosave.ildagen")
+
+    def trigger_autosave(self):
+        """Déclenche la sauvegarde automatique sur chaque action (avec un court délai Tkinter pour fluidité)."""
+        if not getattr(self, "autosave_enabled", True):
+            return
+        if getattr(self, "_autosave_timer", None) is not None:
+            try:
+                self.root.after_cancel(self._autosave_timer)
+            except Exception:
+                pass
+            self._autosave_timer = None
+        # Délais très court (150ms) pour regrouper les micro-événements et sauvegarder instantanément
+        self._autosave_timer = self.root.after(150, self._do_autosave)
+
+    def _do_autosave(self):
+        """Effectue la sauvegarde automatique sur disque de manière transparente."""
+        self._autosave_timer = None
+        if not getattr(self, "autosave_enabled", True):
+            return
+        target_path = self.get_autosave_path()
+        try:
+            data = {
+                "version": "1.0",
+                "generator": "ILDA Generator Studio",
+                "saved_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+                "layer_counter": self.layer_counter,
+                "layers": [l.to_dict() for l in self.layers],
+                "settings": {
+                    "grid_type": self.grid_type_var.get(),
+                    "show_grid": bool(self.show_grid_var.get()),
+                    "sym_mode": self.sym_mode_var.get(),
+                    "sym_cx": float(self.sym_cx),
+                    "sym_cy": float(self.sym_cy),
+                    "current_color": list(self.current_color),
+                    "live_stream": bool(self.live_stream_var.get()),
+                    "host": self.entry_host.get() if hasattr(self, "entry_host") else "127.0.0.1",
+                    "port": self.entry_port.get() if hasattr(self, "entry_port") else "7255",
+                    "channel": self.entry_channel.get() if hasattr(self, "entry_channel") else "1",
+                    "kpps": self.entry_kpps.get() if hasattr(self, "entry_kpps") else "30"
+                }
+            }
+            if hasattr(self, "timeline"):
+                data["timeline"] = self.timeline.to_dict()
+            if hasattr(self, "user_custom_shapes"):
+                data["custom_shapes"] = self.user_custom_shapes
+
+            with open(target_path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+
+            self.last_autosave_time = time.time()
+            self._update_proj_bar_ui()
+            if hasattr(self, "lbl_status"):
+                saved_name = os.path.basename(target_path)
+                self.lbl_status.config(text=f"Sauvegarde automatique effectuée ({saved_name})", fg="#00e5ff")
+        except Exception:
+            pass
 
     def _update_window_title(self):
         proj_name = os.path.basename(self.current_project_file) if self.current_project_file else "Sans titre"
@@ -29,6 +98,30 @@ class ProjectManagerMixin:
             dirty_flag = " *" if self.is_dirty else ""
             fg_col = "#ffb74d" if self.is_dirty else "#00e5ff"
             self.lbl_project_name.config(text=f"Projet : {proj_name}{dirty_flag}", fg=fg_col)
+        if hasattr(self, "lbl_autosave"):
+            if getattr(self, "autosave_enabled", True):
+                if getattr(self, "last_autosave_time", 0.0) > 0:
+                    t_str = time.strftime("%H:%M:%S", time.localtime(self.last_autosave_time))
+                    self.lbl_autosave.config(text=f"⚡ Auto-save ({t_str})", fg="#81c784")
+                else:
+                    self.lbl_autosave.config(text="⚡ Auto-save ON", fg="#81c784")
+            else:
+                self.lbl_autosave.config(text="Auto-save OFF", fg="#888888")
+
+    def toggle_autosave(self):
+        """Active ou désactive la sauvegarde automatique."""
+        if hasattr(self, "autosave_var"):
+            self.autosave_enabled = bool(self.autosave_var.get())
+        else:
+            self.autosave_enabled = not getattr(self, "autosave_enabled", True)
+        if hasattr(self, "autosave_var") and self.autosave_var.get() != self.autosave_enabled:
+            self.autosave_var.set(self.autosave_enabled)
+        self._update_proj_bar_ui()
+        if self.autosave_enabled and self.is_dirty:
+            self.trigger_autosave()
+        status_str = "activée" if self.autosave_enabled else "désactivée"
+        if hasattr(self, "lbl_status"):
+            self.lbl_status.config(text=f"Sauvegarde automatique {status_str}", fg="#81c784" if self.autosave_enabled else "#aaaaaa")
 
     def _get_all_layers_flat(self) -> list[Layer]:
         res = []
@@ -62,6 +155,10 @@ class ProjectManagerMixin:
         self.selected_layer = None
         self.layer_counter = 0
         self.current_project_file = None
+        if hasattr(self, "timeline"):
+            self.timeline = TimelineModel()
+            if hasattr(self, "timeline_widget"):
+                self.timeline_widget.on_model_changed()
         self.import_line()
         self.undo_stack.clear()
         self.redo_stack.clear()
@@ -126,6 +223,10 @@ class ProjectManagerMixin:
                     "kpps": self.entry_kpps.get() if hasattr(self, "entry_kpps") else "30"
                 }
             }
+            if hasattr(self, "timeline"):
+                data["timeline"] = self.timeline.to_dict()
+            if hasattr(self, "user_custom_shapes"):
+                data["custom_shapes"] = self.user_custom_shapes
             with open(filepath, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2, ensure_ascii=False)
 
@@ -229,6 +330,18 @@ class ProjectManagerMixin:
             if "kpps" in settings and hasattr(self, "entry_kpps"):
                 self.entry_kpps.delete(0, tk.END)
                 self.entry_kpps.insert(0, str(settings["kpps"]))
+
+            if "timeline" in data and hasattr(self, "timeline"):
+                self.timeline = TimelineModel.from_dict(data["timeline"])
+                if hasattr(self, "timeline_widget"):
+                    self.timeline_widget.on_model_changed()
+            if "custom_shapes" in data and hasattr(self, "user_custom_shapes"):
+                existing_names = {s.get("name") for s in self.user_custom_shapes}
+                for s in data["custom_shapes"]:
+                    if s.get("name") not in existing_names:
+                        self.user_custom_shapes.append(s)
+                if hasattr(self, "_build_custom_shapes_buttons"):
+                    self._build_custom_shapes_buttons()
 
             self.selected_layers = {self.layers[0]} if self.layers else set()
             self.selected_layer = self.layers[0] if self.layers else None

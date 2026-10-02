@@ -17,6 +17,7 @@ src/assets/textures/scene/textures/*disp*
 
 # ILDA Generator saved projects & scratch tests
 tools/ilda-gen/save-ildagen/
+tools/ilda-gen/autosave.ildagen
 scratch/
 __pycache__/
 *.pyc

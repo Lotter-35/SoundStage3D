@@ -25,6 +25,15 @@ try:
     from .laser_stroke import prepare_stroke, is_corner
     from .transform import Transform2D
     from .layer import Layer
+    from .timeline import TimelineClip, TimelineTrack, TimelineModel
+    from .custom_shapes import (
+        create_square_shape,
+        create_triangle_shape,
+        create_star_shape,
+        load_user_custom_shapes,
+        save_user_custom_shapes,
+        instantiate_custom_template,
+    )
     from .symmetry import SYM_MODES_MAPPING, get_sym_mode_info, compute_symmetry
     from .grid import snap_polar
 except (ImportError, ValueError):
@@ -54,6 +63,15 @@ except (ImportError, ValueError):
     from core.laser_stroke import prepare_stroke, is_corner
     from core.transform import Transform2D
     from core.layer import Layer
+    from core.timeline import TimelineClip, TimelineTrack, TimelineModel
+    from core.custom_shapes import (
+        create_square_shape,
+        create_triangle_shape,
+        create_star_shape,
+        load_user_custom_shapes,
+        save_user_custom_shapes,
+        instantiate_custom_template,
+    )
     from core.symmetry import SYM_MODES_MAPPING, get_sym_mode_info, compute_symmetry
     from core.grid import snap_polar
 
@@ -85,6 +103,15 @@ __all__ = [
     "is_corner",
     "Transform2D",
     "Layer",
+    "TimelineClip",
+    "TimelineTrack",
+    "TimelineModel",
+    "create_square_shape",
+    "create_triangle_shape",
+    "create_star_shape",
+    "load_user_custom_shapes",
+    "save_user_custom_shapes",
+    "instantiate_custom_template",
     "SYM_MODES_MAPPING",
     "get_sym_mode_info",
     "compute_symmetry",

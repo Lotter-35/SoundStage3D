@@ -139,11 +139,14 @@ class CanvasRenderMixin:
         self._draw_axes()
 
         cur_l = self.get_current_layer()
+        active_fn = getattr(self, "is_layer_active_for_render", None)
 
         for idx, l in enumerate(self.layers):
             if not l.enabled:
                 continue
-            strokes = l.get_render_strokes()
+            if active_fn is not None and not active_fn(l):
+                continue
+            strokes = l.get_render_strokes(is_layer_active_fn=active_fn)
             for wpts, stroke_color, is_closed, shape_type in strokes:
                 if not wpts:
                     continue
@@ -163,6 +166,12 @@ class CanvasRenderMixin:
         # Rendu spécifique de sélection pour les calques actifs (Photoshop-like)
         if self.current_tool == "select":
             handles_info = self._get_selection_handles_data()
+            if handles_info:
+                bx1, by1, bx2, by2, mx, my, handles, (rot_x, rot_y), center_cx, center_cy, is_multi, eff_layers = handles_info
+                # Masquer la boîte si l'élément sélectionné est désactivé par la timeline
+                if active_fn is not None and not any(active_fn(el) for el in eff_layers):
+                    handles_info = None
+
             if handles_info:
                 bx1, by1, bx2, by2, mx, my, handles, (rot_x, rot_y), center_cx, center_cy, is_multi, eff_layers = handles_info
 

@@ -47,10 +47,13 @@ class NetworkIdnMixin:
     def build_point_list(self):
         """Génère tous les points laser pour les calques actifs."""
         out = []
+        active_fn = getattr(self, "is_layer_active_for_render", None)
         for l in self.layers:
             if not l.enabled:
                 continue
-            strokes = l.get_render_strokes()
+            if active_fn is not None and not active_fn(l):
+                continue
+            strokes = l.get_render_strokes(is_layer_active_fn=active_fn)
             for wpts, stroke_color, is_closed, shape_type in strokes:
                 if not wpts:
                     continue

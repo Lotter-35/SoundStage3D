@@ -3,12 +3,22 @@ import os
 import socket
 import time
 import tkinter as tk
+from tkinter import simpledialog
 
 try:
     from .core.constants import CANVAS_SIZE
     from .core.geometry import norm_to_canvas, canvas_to_norm
     from .core.transform import Transform2D
     from .core.layer import Layer
+    from .core.timeline import TimelineModel, TimelineTrack, TimelineClip
+    from .core.custom_shapes import (
+        create_square_shape,
+        create_triangle_shape,
+        create_star_shape,
+        load_user_custom_shapes,
+        save_user_custom_shapes,
+        instantiate_custom_template,
+    )
     from .core.grid import snap_polar as core_snap_polar
     from .core.symmetry import get_sym_mode_info, compute_symmetry
 
@@ -19,11 +29,21 @@ try:
     from .ui.canvas_render_mixin import CanvasRenderMixin
     from .ui.canvas_events_mixin import CanvasEventsMixin
     from .ui.network_mixin import NetworkIdnMixin
+    from .ui.timeline_widget import TimelineWidget
 except (ImportError, ValueError):
     from core.constants import CANVAS_SIZE
     from core.geometry import norm_to_canvas, canvas_to_norm
     from core.transform import Transform2D
     from core.layer import Layer
+    from core.timeline import TimelineModel, TimelineTrack, TimelineClip
+    from core.custom_shapes import (
+        create_square_shape,
+        create_triangle_shape,
+        create_star_shape,
+        load_user_custom_shapes,
+        save_user_custom_shapes,
+        instantiate_custom_template,
+    )
     from core.grid import snap_polar as core_snap_polar
     from core.symmetry import get_sym_mode_info, compute_symmetry
 
@@ -34,6 +54,7 @@ except (ImportError, ValueError):
     from ui.canvas_render_mixin import CanvasRenderMixin
     from ui.canvas_events_mixin import CanvasEventsMixin
     from ui.network_mixin import NetworkIdnMixin
+    from ui.timeline_widget import TimelineWidget
 
 
 class IDNGeneratorApp(
@@ -51,7 +72,12 @@ class IDNGeneratorApp(
         self.root = root
         self.root.title("Générateur IDN — SoundStage3D (UDP 7255)")
         self.root.configure(bg="#1e1e1e")
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
+        self.root.minsize(960, 780)
+        self.root.geometry("1020x840")
+
+        self.timeline = TimelineModel()
+        self.user_custom_shapes = load_user_custom_shapes()
 
         self.layers: list[Layer] = []
         self.selected_idx: int = -1
@@ -133,9 +159,13 @@ class IDNGeneratorApp(
         self.clipboard_layer: Layer | None = None
         self.clipboard_layers: list[Layer] = []
 
-        # Gestion de projet (Sauvegarde / Chargement de l'état du travail)
+        # Gestion de projet (Sauvegarde / Chargement de l'état du travail & Sauvegarde automatique)
         self.current_project_file: str | None = None
         self.is_dirty: bool = False
+        self.autosave_enabled: bool = True
+        self.autosave_var = tk.BooleanVar(value=True)
+        self._autosave_timer: str | None = None
+        self.last_autosave_time: float = 0.0
 
         self._build_ui()
         self._bind_shortcuts()
@@ -159,6 +189,12 @@ class IDNGeneratorApp(
         """Convertit coordonnées canvas pixels en coordonnées normalisées (-1.0 à +1.0) selon zoom et pan."""
         return canvas_to_norm(cx, cy, self.view_zoom, self.view_pan_x, self.view_pan_y)
 
+    def is_layer_active_for_render(self, layer) -> bool:
+        """Indique si le calque ou groupe doit être affiché/streamé selon la timeline active."""
+        if not hasattr(self, "timeline"):
+            return True
+        return self.timeline.is_layer_active(layer, self.layers)
+
     def _build_ui(self):
         # 0. Menu Supérieur (Fichier, Édition)
         menubar = tk.Menu(self.root)
@@ -168,6 +204,7 @@ class IDNGeneratorApp(
         file_menu.add_separator()
         file_menu.add_command(label="Enregistrer le projet", accelerator="Ctrl+S", command=self.save_project)
         file_menu.add_command(label="Enregistrer sous...", accelerator="Ctrl+Shift+S", command=self.save_project_as)
+        file_menu.add_checkbutton(label="Sauvegarde automatique", command=self.toggle_autosave, variable=self.autosave_var)
         file_menu.add_separator()
         file_menu.add_command(label="Quitter", command=self._on_close_window)
         menubar.add_cascade(label="Fichier", menu=file_menu)
@@ -230,15 +267,17 @@ class IDNGeneratorApp(
         )
         self.lbl_project_name.pack(side=tk.LEFT, padx=4)
 
-        self.lbl_status = tk.Label(net_bar, text="Prêt", fg="#66bb6a", bg="#181818")
-        self.lbl_status.pack(side=tk.RIGHT, padx=5)
+        self.lbl_autosave = tk.Label(
+            net_bar, text="⚡ Auto-save ON", fg="#81c784", bg="#181818", font=("Segoe UI", 8)
+        )
+        self.lbl_autosave.pack(side=tk.LEFT, padx=6)
 
         # 2. Zone principale : Gauche (Formes) | Centre (Preview) | Droite (Calques)
         main_frame = tk.Frame(self.root, bg="#1e1e1e")
         main_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=6)
 
         # ── Panneau Gauche : Outils & Formes de base ──
-        left_panel = tk.Frame(main_frame, bg="#252526", width=148, padx=8, pady=8)
+        left_panel = tk.Frame(main_frame, bg="#252526", width=180, padx=8, pady=8)
         left_panel.pack(side=tk.LEFT, fill=tk.Y, padx=(0, 8))
         left_panel.pack_propagate(False)
 
@@ -276,7 +315,16 @@ class IDNGeneratorApp(
         )
         btn_circle.pack(fill=tk.X, pady=2)
 
-        tk.Frame(left_panel, height=1, bg="#383838").pack(fill=tk.X, pady=6)
+        tk.Frame(left_panel, height=1, bg="#383838").pack(fill=tk.X, pady=5)
+
+        # ── Formes personnalisées (Formes liées éditables) ──
+        tk.Label(left_panel, text="Formes personnalisées", fg="#00e5ff", bg="#252526", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 2))
+
+        self.custom_shapes_frame = tk.Frame(left_panel, bg="#252526")
+        self.custom_shapes_frame.pack(fill=tk.X)
+        self._build_custom_shapes_buttons()
+
+        tk.Frame(left_panel, height=1, bg="#383838").pack(fill=tk.X, pady=5)
 
         # ── Mode Miroir / Symétrie ──
         tk.Label(left_panel, text="Mode Miroir", fg="#ffb74d", bg="#252526", font=("Segoe UI", 9, "bold")).pack(anchor=tk.W, pady=(0, 2))
@@ -302,20 +350,6 @@ class IDNGeneratorApp(
         self.lbl_sym_coords = tk.Label(left_panel, text="Axe : (0.00, 0.00)", fg="#aaaaaa", bg="#252526", font=("Segoe UI", 8))
         self.lbl_sym_coords.pack(anchor=tk.W, pady=1)
 
-        self.btn_sym_move = tk.Button(
-            left_panel, text="⇲ Déplacer axe", command=self.toggle_sym_move_mode,
-            bg="#333333", fg="#ffffff", activebackground="#444444", activeforeground="#ffffff",
-            relief=tk.FLAT, pady=3, font=("Segoe UI", 8)
-        )
-        self.btn_sym_move.pack(fill=tk.X, pady=1)
-
-        self.btn_sym_reset = tk.Button(
-            left_panel, text="⌖ Recentrer (0, 0)", command=self.reset_sym_center,
-            bg="#333333", fg="#ffffff", activebackground="#444444", activeforeground="#ffffff",
-            relief=tk.FLAT, pady=3, font=("Segoe UI", 8)
-        )
-        self.btn_sym_reset.pack(fill=tk.X, pady=1)
-
         self.btn_sym_apply = tk.Button(
             left_panel, text="⇋ Symétriser sélec", command=self.apply_symmetry_to_selection,
             bg="#333333", fg="#ffb74d", activebackground="#444444", activeforeground="#ffffff",
@@ -323,38 +357,8 @@ class IDNGeneratorApp(
         )
         self.btn_sym_apply.pack(fill=tk.X, pady=(4, 1))
 
-        # ── Panneau Centre : Visualisateur interactif ──
-        center_panel = tk.Frame(main_frame, bg="#000000")
-        center_panel.pack(side=tk.LEFT)
-
-        self.canvas = tk.Canvas(
-            center_panel, width=CANVAS_SIZE, height=CANVAS_SIZE,
-            bg="#000000", cursor="crosshair", highlightthickness=1, highlightbackground="#333333"
-        )
-        self.canvas.pack()
-
-        self.canvas.bind("<Button-1>", self._on_canvas_press)
-        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
-        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
-        self.canvas.bind("<Double-Button-1>", self._on_canvas_double_click)
-        self.canvas.bind("<Motion>", self._on_canvas_motion)
-        self.canvas.bind("<Leave>", self._on_canvas_leave)
-        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
-        self.canvas.bind("<Button-4>", lambda e: self._on_mouse_wheel_step(1, e.x, e.y))
-        self.canvas.bind("<Button-5>", lambda e: self._on_mouse_wheel_step(-1, e.x, e.y))
-
-        # Pan de la vue (Clic milieu ou Clic droit)
-        self.canvas.bind("<Button-2>", self._on_pan_press)
-        self.canvas.bind("<B2-Motion>", self._on_pan_drag)
-        self.canvas.bind("<ButtonRelease-2>", self._on_pan_release)
-
-        self.canvas.bind("<Button-3>", self._on_pan_press)
-        self.canvas.bind("<B3-Motion>", self._on_pan_drag)
-        self.canvas.bind("<ButtonRelease-3>", self._on_pan_release)
-        self.canvas.bind("<Double-Button-3>", lambda e: self.reset_zoom())
-
         # ── Panneau Droite : Calques ──
-        right_panel = tk.Frame(main_frame, bg="#252526", width=200, padx=8, pady=8)
+        right_panel = tk.Frame(main_frame, bg="#252526", width=180, padx=8, pady=8)
         right_panel.pack(side=tk.RIGHT, fill=tk.Y, padx=(8, 0))
         right_panel.pack_propagate(False)
 
@@ -418,15 +422,69 @@ class IDNGeneratorApp(
         )
         self.btn_ungroup.pack(fill=tk.X, pady=1)
 
-        # 3. Barre Inférieure (Points & Envoi IDN)
-        bot_bar = tk.Frame(self.root, bg="#2a2a2a", padx=10, pady=8)
+        self.btn_timeline_add = tk.Button(
+            btn_box, text="⏱+ Ajouter à la timeline", command=self.add_layer_to_timeline,
+            bg="#333333", fg="#00e5ff", activebackground="#444444", activeforeground="#ffffff",
+            relief=tk.FLAT, pady=4, font=("Segoe UI", 8, "bold")
+        )
+        self.btn_timeline_add.pack(fill=tk.X, pady=1)
+
+        self.btn_lock_group = tk.Button(
+            btn_box, text="🔒 Lier / Délier en forme", command=self.toggle_lock_group,
+            bg="#333333", fg="#ffb74d", activebackground="#444444", activeforeground="#ffffff",
+            relief=tk.FLAT, pady=4, font=("Segoe UI", 8, "bold")
+        )
+        self.btn_lock_group.pack(fill=tk.X, pady=(1, 1))
+
+        # ── Panneau Centre : Visualisateur interactif (parfaitement centré) ──
+        center_panel = tk.Frame(main_frame, bg="#1e1e1e")
+        center_panel.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+        self.canvas = tk.Canvas(
+            center_panel, width=CANVAS_SIZE, height=CANVAS_SIZE,
+            bg="#000000", cursor="crosshair", highlightthickness=1, highlightbackground="#333333"
+        )
+        self.canvas.pack(expand=True)
+
+        self.canvas.bind("<Button-1>", self._on_canvas_press)
+        self.canvas.bind("<B1-Motion>", self._on_canvas_drag)
+        self.canvas.bind("<ButtonRelease-1>", self._on_canvas_release)
+        self.canvas.bind("<Double-Button-1>", self._on_canvas_double_click)
+        self.canvas.bind("<Motion>", self._on_canvas_motion)
+        self.canvas.bind("<Leave>", self._on_canvas_leave)
+        self.canvas.bind("<MouseWheel>", self._on_mouse_wheel)
+        self.canvas.bind("<Button-4>", lambda e: self._on_mouse_wheel_step(1, e.x, e.y))
+        self.canvas.bind("<Button-5>", lambda e: self._on_mouse_wheel_step(-1, e.x, e.y))
+
+        # Pan de la vue (Clic milieu ou Clic droit)
+        self.canvas.bind("<Button-2>", self._on_pan_press)
+        self.canvas.bind("<B2-Motion>", self._on_pan_drag)
+        self.canvas.bind("<ButtonRelease-2>", self._on_pan_release)
+
+        self.canvas.bind("<Button-3>", self._on_pan_press)
+        self.canvas.bind("<B3-Motion>", self._on_pan_drag)
+        self.canvas.bind("<ButtonRelease-3>", self._on_pan_release)
+        self.canvas.bind("<Double-Button-3>", lambda e: self.reset_zoom())
+
+        # 3. Barre Inférieure (Points, Statut & Envoi IDN)
+        bot_bar = tk.Frame(self.root, bg="#2a2a2a", padx=10, pady=6)
         bot_bar.pack(side=tk.BOTTOM, fill=tk.X)
         self.lbl_points = tk.Label(bot_bar, text="Points : 0", fg="#888888", bg="#2a2a2a")
         self.lbl_points.pack(side=tk.LEFT, padx=5)
+
+        tk.Frame(bot_bar, bg="#444444", width=1, height=16).pack(side=tk.LEFT, padx=10)
+
+        self.lbl_status = tk.Label(bot_bar, text="Prêt", fg="#66bb6a", bg="#2a2a2a", font=("Segoe UI", 9))
+        self.lbl_status.pack(side=tk.LEFT, padx=5)
+
         tk.Button(
             bot_bar, text="Envoyer en IDN (UDP)", command=self.send_idn,
             bg="#00897b", fg="#ffffff", font=("Segoe UI", 9, "bold"), relief=tk.FLAT, padx=12,
         ).pack(side=tk.RIGHT, padx=5)
+
+        # 4. Timeline musicale DAW (sur toute la largeur)
+        self.timeline_widget = TimelineWidget(self.root, self)
+        self.timeline_widget.pack(side=tk.BOTTOM, fill=tk.X, padx=10, pady=(0, 4))
 
     def _bind_shortcuts(self):
         """Raccourcis clavier avec gestion des touches modificatrices."""
@@ -525,6 +583,24 @@ class IDNGeneratorApp(
             if isinstance(getattr(e, "widget", None), tk.Entry):
                 return
             self.set_tool(tool_name)
+
+        def _on_space(e):
+            if isinstance(getattr(e, "widget", None), (tk.Entry, tk.Spinbox)):
+                return
+            if hasattr(self, "timeline_widget"):
+                self.timeline_widget.toggle_play()
+                return "break"
+
+        def _on_rewind(e):
+            if isinstance(getattr(e, "widget", None), (tk.Entry, tk.Spinbox)):
+                return
+            if hasattr(self, "timeline_widget"):
+                self.timeline_widget.rewind()
+                return "break"
+
+        self.root.bind("<space>", _on_space)
+        self.canvas.bind("<space>", _on_space)
+        self.root.bind("<Home>", _on_rewind)
 
         self.root.bind("<Key-v>", lambda e: _safe_tool("select", e))
         self.root.bind("<Key-V>", lambda e: _safe_tool("select", e))
@@ -751,6 +827,143 @@ class IDNGeneratorApp(
         self.layers.append(layer)
         self.set_tool("select")
         self.select_layer(len(self.layers) - 1)
+
+    def _build_custom_shapes_buttons(self):
+        """Génère dynamiquement les boutons de formes personnalisées dans le panneau gauche."""
+        if not hasattr(self, "custom_shapes_frame"):
+            return
+        for w in self.custom_shapes_frame.winfo_children():
+            w.destroy()
+
+        btn_square = tk.Button(
+            self.custom_shapes_frame, text="Carré", command=self.import_square,
+            bg="#333333", fg="#ffffff", activebackground="#444444", activeforeground="#ffffff",
+            relief=tk.FLAT, pady=3, font=("Segoe UI", 8)
+        )
+        btn_square.pack(fill=tk.X, pady=1)
+
+        btn_tri = tk.Button(
+            self.custom_shapes_frame, text="Triangle", command=self.import_triangle,
+            bg="#333333", fg="#ffffff", activebackground="#444444", activeforeground="#ffffff",
+            relief=tk.FLAT, pady=3, font=("Segoe UI", 8)
+        )
+        btn_tri.pack(fill=tk.X, pady=1)
+
+        btn_star = tk.Button(
+            self.custom_shapes_frame, text="Étoile", command=self.import_star,
+            bg="#333333", fg="#ffffff", activebackground="#444444", activeforeground="#ffffff",
+            relief=tk.FLAT, pady=3, font=("Segoe UI", 8)
+        )
+        btn_star.pack(fill=tk.X, pady=1)
+
+        # Formes enregistrées par l'utilisateur
+        for tmpl in getattr(self, "user_custom_shapes", []):
+            name = tmpl.get("name", "Forme")
+            btn_t = tk.Button(
+                self.custom_shapes_frame, text=f"★ {name}",
+                command=lambda t=tmpl: self.import_custom_template(t),
+                bg="#2a2a2a", fg="#00e5ff", activebackground="#3a3a3a", activeforeground="#ffffff",
+                relief=tk.FLAT, pady=3, font=("Segoe UI", 8, "bold")
+            )
+            btn_t.pack(fill=tk.X, pady=1)
+
+        btn_save = tk.Button(
+            self.custom_shapes_frame, text="💾+ Sauvegarder sélec", command=self.save_selection_as_custom_shape,
+            bg="#2a2a2a", fg="#ffb74d", activebackground="#3a3a3a", activeforeground="#ffffff",
+            relief=tk.FLAT, pady=3, font=("Segoe UI", 8)
+        )
+        btn_save.pack(fill=tk.X, pady=(4, 1))
+
+    def import_square(self):
+        """Importe un Carré comme forme personnalisée liée dont tous les côtés restent éditables."""
+        self.push_undo_state()
+        grp, self.layer_counter = create_square_shape(self.layer_counter, color=self.current_color)
+        self.layers.append(grp)
+        self.set_tool("select")
+        self.select_layer_object(grp)
+        self.set_dirty(True)
+        self.lbl_status.config(text="Forme personnalisée importée : Carré (forme liée)", fg="#66bb6a")
+
+    def import_triangle(self):
+        """Importe un Triangle comme forme personnalisée liée dont tous les côtés restent éditables."""
+        self.push_undo_state()
+        grp, self.layer_counter = create_triangle_shape(self.layer_counter, color=self.current_color)
+        self.layers.append(grp)
+        self.set_tool("select")
+        self.select_layer_object(grp)
+        self.set_dirty(True)
+        self.lbl_status.config(text="Forme personnalisée importée : Triangle (forme liée)", fg="#66bb6a")
+
+    def import_star(self):
+        """Importe une Étoile comme forme personnalisée liée dont toutes les branches restent éditables."""
+        self.push_undo_state()
+        grp, self.layer_counter = create_star_shape(self.layer_counter, color=self.current_color)
+        self.layers.append(grp)
+        self.set_tool("select")
+        self.select_layer_object(grp)
+        self.set_dirty(True)
+        self.lbl_status.config(text="Forme personnalisée importée : Étoile (forme liée)", fg="#66bb6a")
+
+    def import_custom_template(self, template: dict):
+        """Instancie une forme personnalisée utilisateur sauvegardée."""
+        self.push_undo_state()
+        grp, self.layer_counter = instantiate_custom_template(template, self.layer_counter)
+        self.layers.append(grp)
+        self.set_tool("select")
+        self.select_layer_object(grp)
+        self.set_dirty(True)
+        name = template.get("name", "Forme")
+        self.lbl_status.config(text=f"Forme personnalisée importée : {name}", fg="#66bb6a")
+
+    def save_selection_as_custom_shape(self, target_layer: Layer | None = None):
+        """Enregistre le groupe ou les calques sélectionnés dans la palette des 'Formes personnalisées'."""
+        target = target_layer if target_layer is not None else self.get_current_layer()
+        if not target and self.selected_layers:
+            target = next(iter(self.selected_layers))
+
+        if not target:
+            self.lbl_status.config(text="Sélectionne d'abord un calque ou groupe à sauvegarder en forme", fg="#ffb74d")
+            return
+
+        # Si plusieurs calques sont sélectionnés et que la cible n'est pas un groupe unique les contenant
+        if len(self.selected_layers) > 1:
+            self.group_selected_layers()
+            target = self.get_current_layer()
+
+        if not target:
+            return
+
+        if target.shape_type != "group":
+            self.push_undo_state()
+            self.layer_counter += 1
+            grp = Layer(self.layer_counter, f"{target.name} (Lié)", "group", color=target.color, children=[target.clone()])
+            grp.locked = True
+            target = grp
+        else:
+            target.locked = True
+
+        name = simpledialog.askstring(
+            "Forme personnalisée",
+            "Nom de votre nouvelle forme personnalisée :",
+            initialvalue=target.name,
+            parent=self.root
+        )
+        if not name or not name.strip():
+            return
+        name = name.strip()
+
+        template = {
+            "name": name,
+            "layer_data": target.to_dict()
+        }
+        if not hasattr(self, "user_custom_shapes"):
+            self.user_custom_shapes = []
+        self.user_custom_shapes.append(template)
+        save_user_custom_shapes(self.user_custom_shapes)
+        self._build_custom_shapes_buttons()
+        self.set_dirty(True)
+        self._refresh_layers_ui()
+        self.lbl_status.config(text=f"Forme '{name}' ajoutée aux Formes personnalisées !", fg="#00e5ff")
 
     def select_layer_object(self, layer: Layer | None):
         if layer is not None:
@@ -1310,6 +1523,11 @@ class IDNGeneratorApp(
                     self.layers.remove(l)
             self.selected_layers.clear()
             self.selected_layer = None
+            if hasattr(self, "timeline"):
+                all_l = self._get_all_layers_flat()
+                self.timeline.prune_dead_layers({lay.id for lay in all_l})
+                if hasattr(self, "timeline_widget"):
+                    self.timeline_widget.on_model_changed()
             self._sync_legacy_indices()
             self._refresh_layers_ui()
             self.redraw_canvas()

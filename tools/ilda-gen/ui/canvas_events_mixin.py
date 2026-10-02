@@ -227,7 +227,27 @@ class CanvasEventsMixin:
         for l in reversed(self.layers):
             check_layer(l, None)
 
+        if best_layer is not None:
+            # Si le calque cliqué est déjà sélectionné individuellement, permettre son édition directe
+            if self.selected_layer is not None and self.selected_layer == best_layer:
+                return best_layer
+            locked_anc = self._find_locked_ancestor(best_layer)
+            if locked_anc is not None:
+                return locked_anc
+
         return best_layer
+
+    def _find_locked_ancestor(self, layer: Layer) -> Layer | None:
+        """Remonte l'arborescence pour trouver si le calque est contenu dans un groupe verrouillé/lié."""
+        parent = self.find_parent_group(layer)
+        locked_top = None
+        visited = set()
+        while parent is not None and parent not in visited:
+            visited.add(parent)
+            if getattr(parent, "locked", False):
+                locked_top = parent
+            parent = self.find_parent_group(parent)
+        return locked_top
 
     def _get_layer_bbox(self, l: Layer) -> tuple[float, float, float, float]:
         wpts = self.get_layer_world_points(l)
@@ -980,6 +1000,13 @@ class CanvasEventsMixin:
 
             for lay in self.layers:
                 collect_canvas_hits(lay)
+
+            # Si des enfants appartiennent à une forme liée verrouillée, sélectionner la forme liée elle-même
+            resolved_hits = set()
+            for l in hit_layers:
+                anc = self._find_locked_ancestor(l)
+                resolved_hits.add(anc if anc is not None else l)
+            hit_layers = resolved_hits
 
             expanded_changed = False
             for l in hit_layers:

@@ -76,7 +76,10 @@ class LayerListboxMixin:
 
             if layer.shape_type == "group":
                 exp_icon = "▼ " if layer.is_expanded else "▶ "
-                text = f"{vis_icon}  {indent}{exp_icon}📁 {layer.name} ({len(layer.children)})"
+                is_locked = getattr(layer, "locked", False)
+                grp_icon = "🔒 " if is_locked else "📁 "
+                tag = "[Forme liée]" if is_locked else f"({len(layer.children)})"
+                text = f"{vis_icon}  {indent}{exp_icon}{grp_icon}{layer.name} {tag}"
             elif layer.shape_type == "circle":
                 text = f"{vis_icon}  {indent}◯ {layer.name}"
             elif layer.shape_type == "line":
@@ -617,6 +620,51 @@ class LayerListboxMixin:
         self.select_layer_object(drag_layer)
         self.lbl_status.config(text=f"Déplacé : {drag_layer.name}", fg="#66bb6a")
 
+    def add_layer_to_timeline(self, layer=None):
+        """Ajoute le calque ou groupe spécifié à la timeline."""
+        target = layer if layer is not None else self.get_current_layer()
+        if not target:
+            if self.layers:
+                target = self.layers[0]
+            else:
+                return
+        if hasattr(self, "timeline"):
+            track = self.timeline.add_track_for_layer(
+                target.id,
+                start_time=0.0,
+                duration=min(self.timeline.bar_duration, self.timeline.total_duration),
+                color=target.color
+            )
+            if hasattr(self, "timeline_widget"):
+                self.timeline_widget.selected_track_id = track.track_id
+                self.timeline_widget.on_model_changed()
+            self.record_undo_step()
+            self.set_dirty(True)
+            self.lbl_status.config(text=f"Ajouté à la timeline : {target.name}", fg="#66bb6a")
+
+    def toggle_lock_group(self, target_layer: Layer | None = None):
+        """Verrouille ou déverrouille un groupe pour le lier en forme unique ou le délier."""
+        target = target_layer if target_layer is not None else self.get_current_layer()
+        if not target:
+            return
+        if target.shape_type != "group":
+            parent = self.find_parent_group(target)
+            if parent is not None:
+                target = parent
+            else:
+                self.lbl_status.config(text="Seuls les groupes peuvent être liés en forme", fg="#ffb74d")
+                return
+
+        self.push_undo_state()
+        target.locked = not getattr(target, "locked", False)
+        self.set_dirty(True)
+        self._refresh_layers_ui()
+        self.redraw_canvas()
+        if target.locked:
+            self.lbl_status.config(text=f"Forme liée verrouillée : '{target.name}' (agit comme 1 seule forme)", fg="#00e5ff")
+        else:
+            self.lbl_status.config(text=f"Groupe délié : '{target.name}'", fg="#66bb6a")
+
     def _on_listbox_right_click(self, event):
         """Clic droit dans la liste des calques : menu contextuel complet."""
         idx = self.layer_listbox.nearest(event.y)
@@ -635,6 +683,18 @@ class LayerListboxMixin:
 
             vis_label = f"👁 Afficher '{layer.name}'" if not layer.enabled else f"🚫 Masquer '{layer.name}'"
             menu.add_command(label=vis_label, command=lambda: self.toggle_layer_visibility(layer))
+            menu.add_command(label=f"⏱ + Ajouter '{layer.name}' à la timeline", command=lambda: self.add_layer_to_timeline(layer))
+
+            # Options de Verrouillage / Liaison en Forme Unique
+            if layer.shape_type == "group":
+                is_loc = getattr(layer, "locked", False)
+                lock_text = f"🔓 Délier la forme '{layer.name}'" if is_loc else f"🔒 Lier en forme unique '{layer.name}'"
+                menu.add_command(label=lock_text, command=lambda: self.toggle_lock_group(layer))
+                if hasattr(self, "save_selection_as_custom_shape"):
+                    menu.add_command(label=f"💾 Enregistrer '{layer.name}' comme Forme personnalisée", command=lambda: self.save_selection_as_custom_shape(layer))
+            elif parent_group and getattr(parent_group, "locked", False):
+                menu.add_command(label=f"🔓 Délier la forme parente '{parent_group.name}'", command=lambda: self.toggle_lock_group(parent_group))
+
             menu.add_separator()
             if layer.shape_type == "group":
                 menu.add_command(label="📁+ Nouveau sous-groupe vide", command=self.create_empty_group)

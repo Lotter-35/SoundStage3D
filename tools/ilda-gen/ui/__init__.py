@@ -5,6 +5,7 @@ from .listbox_mixin import LayerListboxMixin
 from .canvas_render_mixin import CanvasRenderMixin
 from .canvas_events_mixin import CanvasEventsMixin
 from .network_mixin import NetworkIdnMixin
+from .timeline_widget import TimelineWidget
 
 __all__ = [
     "setup_dpi_awareness",
@@ -14,4 +15,5 @@ __all__ = [
     "CanvasRenderMixin",
     "CanvasEventsMixin",
     "NetworkIdnMixin",
+    "TimelineWidget",
 ]
