@@ -82,7 +82,7 @@ class TransportBar(QWidget):
         lay.addWidget(self.grid)
         lay.addWidget(dim("Mesure 1 à"))
         self.offset = DoubleSpinBox()
-        self.offset.setRange(-600.0, 3600.0)
+        self.offset.setRange(0.0, 3600.0)
         self.offset.setDecimals(3)
         self.offset.setSuffix(" s")
         self.offset.setFixedWidth(86)

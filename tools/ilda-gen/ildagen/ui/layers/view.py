@@ -2,13 +2,13 @@
 
 import json
 
-from PySide6.QtCore import QItemSelection, QItemSelectionModel, QPoint, QRect, Qt
+from PySide6.QtCore import QItemSelection, QItemSelectionModel, QRect, Qt
 from PySide6.QtGui import QPainter, QPen
 from PySide6.QtWidgets import QAbstractItemView, QProxyStyle, QStyle, QTreeView
 
-from .. import icons, theme
+from .. import theme
 from ..properties.forms import ParamForm
-from .delegate import LayerDelegate, eye_rect, lock_rect
+from .delegate import IND, LayerDelegate, chevron_rect, eye_rect, lock_rect
 from .model import KIND_ROLE, LAYER_MIME, NODE_ROLE, LayerModel
 
 
@@ -39,16 +39,16 @@ class LayerTreeView(QTreeView):
         self.param_widgets = {}
         self.scope = set()          # calques touchés par le modifieur sélectionné ou survolé
         self.scope_sources = set()
-        self._hover_mod = None
         self._syncing = False
         self.model_ = LayerModel(editor, self)
         self.setModel(self.model_)
         self.delegate = LayerDelegate(self)
         self.setItemDelegate(self.delegate)
-        self._style = DropIndicatorStyle(self.style())
+        # Style propre (« Fusion ») : ne jamais envelopper le style de l'application, il serait détruit deux fois
+        self._style = DropIndicatorStyle("Fusion")
         self.setStyle(self._style)
         self.setHeaderHidden(True)
-        self.setIndentation(16)
+        self.setIndentation(IND)
         self.setUniformRowHeights(False)
         self.setMouseTracking(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
@@ -138,28 +138,10 @@ class LayerTreeView(QTreeView):
     # ── Souris ───────────────────────────────────────────────────────────
     # ── Portée des modifieurs ────────────────────────────────────────────
     def update_scope(self):
-        if self._hover_mod is not None and self.editor.find(self._hover_mod) is not None:
-            mods = [self.editor.find(self._hover_mod)]
-        else:
-            mods = [n for n in self.editor.selected_nodes() if n.kind == "modifier"]
+        mods = [n for n in self.editor.selected_nodes() if n.kind == "modifier"]
         self.scope = self.editor.modifier_scope(mods)
         self.scope_sources = {m.id for m in mods}
         self.viewport().update()
-
-    def mouseMoveEvent(self, e):
-        super().mouseMoveEvent(e)
-        ix = self.indexAt(e.position().toPoint())
-        node = ix.data(NODE_ROLE) if ix.isValid() else None
-        hover = node.id if node is not None and node.kind == "modifier" and ix.data(KIND_ROLE) == "node" else None
-        if hover != self._hover_mod:
-            self._hover_mod = hover
-            self.update_scope()
-
-    def leaveEvent(self, e):
-        super().leaveEvent(e)
-        if self._hover_mod is not None:
-            self._hover_mod = None
-            self.update_scope()
 
     def mousePressEvent(self, e):
         ix = self.indexAt(e.position().toPoint())
@@ -172,6 +154,9 @@ class LayerTreeView(QTreeView):
                 return
             if lock_rect(r).contains(pos):
                 self.editor.set_locked([node], not node.locked)
+                return
+            if self.model_.rowCount(ix) > 0 and chevron_rect(self, ix, node).contains(pos):
+                self.setExpanded(ix, not self.isExpanded(ix))
                 return
         if not ix.isValid() and e.button() == Qt.MouseButton.LeftButton:
             self.editor.clear_selection()
@@ -237,8 +222,4 @@ class LayerTreeView(QTreeView):
 
     # ── Branches : chevrons ──────────────────────────────────────────────
     def drawBranches(self, painter, rect, index):
-        if self.model_.rowCount(index) == 0:
-            return
-        name = "chevron-down" if self.isExpanded(index) else "chevron-right"
-        pm = icons.pixmap(name, theme.TEXT_DIM, 12)
-        painter.drawPixmap(QPoint(rect.right() - 13, rect.top() + (theme.ROW_H - 12) // 2), pm)
+        pass   # la flèche est dessinée dans la ligne, alignée sur le contenu

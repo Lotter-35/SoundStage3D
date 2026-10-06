@@ -253,7 +253,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
                 tl.loop_end = max(t, tl.loop_start)
             else:
                 dt = self.snap(d["a"] + g.t(x) - d["t0"], e.modifiers()) - d["a"]
-                tl.loop_start, tl.loop_end = max(0.0, d["a"] + dt), max(0.0, d["b"] + dt)
+                dt = max(dt, -d["a"])          # la boucle ne commence jamais avant 0
+                tl.loop_start, tl.loop_end = d["a"] + dt, d["b"] + dt
             self.update()
             return
         if kind.startswith("clip_"):

@@ -45,10 +45,12 @@ def clip_rows(clip, library, editor):
     out = []
     d = library.get(clip.def_id)
     shown = set()
+    mod_ids = set()
     if d is not None:
         for m in d.root.walk():
             if m.kind != "modifier" or m.modifier is None:
                 continue
+            mod_ids.add(m.id)
             out.append(("group", None, m, m.name))
             if m.id not in clip.closed_nodes:
                 for spec in modifier_specs(m):
@@ -59,7 +61,8 @@ def clip_rows(clip, library, editor):
                     out.append(("lane", a, m, spec.label))
                     shown.add((m.id, spec.key))
     for a in clip.automations:
-        if (a.node_id, a.key) not in shown:
+        # Réglages d'un modifieur replié : cachés avec lui
+        if (a.node_id, a.key) not in shown and a.node_id not in mod_ids:
             out.append(("lane", a, None, ""))
     return out
 

@@ -22,7 +22,9 @@ def node_icon(node):
     return SHAPE_ICONS.get(getattr(node, "shape", "path"), "pencil")
 
 
-GAP = 9   # écart entre deux lignes de portée
+IND = 20      # décalage des calques placés sous un modifieur (= retrait de l'arbre)
+CHEV = 14     # place de la flèche de dépliage
+ICON_C = CHEV + 7   # centre de l'icône par rapport au début du contenu
 
 
 def mods_before(node):
@@ -31,7 +33,7 @@ def mods_before(node):
     if p is None or p.kind == "modifier":
         return []
     sibs = p.children
-    return [m for m in sibs[:sibs.index(node)] if m.kind == "modifier"]
+    return [m for m in sibs[:sibs.index(node)] if m.kind == "modifier" and has_targets(m)]
 
 
 def has_targets(m):
@@ -42,58 +44,52 @@ def has_targets(m):
     return any(n.kind != "modifier" for n in sibs[sibs.index(m) + 1:])
 
 
-def own_columns(node):
-    """Nombre de lignes de portée au niveau de node (modifieurs au-dessus + la sienne si c'est un modifieur)."""
-    n = len(mods_before(node))
-    if node.kind == "modifier" and has_targets(node):
-        n += 1
-    return n
-
-
 def level_shift(node, root):
-    """Décalage cumulé des niveaux parents (leurs lignes de portée occupent de la place)."""
+    """Décalage cumulé dû aux modifieurs des niveaux parents."""
     s = 0
     for a in node.ancestors():
         if a is root or a.parent is None:
             break
-        s += own_columns(a) * GAP
+        s += len(mods_before(a)) * IND
     return s
 
 
 def content_offset(node, root=None):
-    """Décalage du contenu d'une ligne : à droite de toutes les lignes de portée."""
-    return level_shift(node, root) + own_columns(node) * GAP
+    """Début du contenu d'une ligne : décalé d'un cran par modifieur qui agit sur le calque."""
+    return level_shift(node, root) + len(mods_before(node)) * IND
 
 
 def draw_scope_lines(p, view, node, rect, start_depth=0):
-    """Lignes verticales qui relient chaque modifieur aux calques qu'il modifie (toujours visibles)."""
+    """Barre verticale sombre sous chaque modifieur, alignée sur son icône, le long des calques qu'il modifie."""
     indent = view.indentation()
     root = view.editor.current_root()
-    sources = view.scope_sources
+    selected = view.scope_sources
     L = node
     dd = start_depth
     mid = rect.top() + rect.height() // 2
+
+    def color(m):
+        return theme.qc("#ffffff", 0.30 if m.id in selected else 0.11)
+
     while L is not None and L is not root and L.parent is not None:
-        base = rect.left() - dd * indent + 7 + level_shift(L, root)
+        base = rect.left() - dd * indent + level_shift(L, root)
         before = mods_before(L)
         for i, m in enumerate(before):
-            if m.kind == "modifier" and has_targets(m):
-                strong = m.id in sources
-                c = theme.qc(theme.ACCENT, 1.0 if strong else 0.4)
-                p.fillRect(QRect(base + i * GAP, rect.top(), 2 if strong else 1, rect.height()), c)
+            p.fillRect(QRect(base + i * IND + ICON_C, rect.top(), 1, rect.height()), color(m))
         if L.kind == "modifier" and has_targets(L):
-            # Départ de la ligne du modifieur : coude sous son icône, continue jusqu'au bas de sa portée
-            x = base + len(before) * GAP
-            strong = L.id in sources
-            c = theme.qc(theme.ACCENT, 1.0 if strong else 0.4)
-            w = 2 if strong else 1
+            x = base + len(before) * IND + ICON_C
             if dd == 0:
-                p.fillRect(QRect(x, mid, w, rect.bottom() - mid + 1), c)
-                p.fillRect(QRect(x, mid, 5, w), c)
+                p.fillRect(QRect(x, mid + 9, 1, rect.bottom() - mid - 8), color(L))
             else:
-                p.fillRect(QRect(x, rect.top(), w, rect.height()), c)
+                p.fillRect(QRect(x, rect.top(), 1, rect.height()), color(L))
         L = L.parent
         dd += 1
+
+
+def chevron_rect(view, index, node):
+    r = view.visualRect(index)
+    x = r.left() + content_offset(node, view.editor.current_root())
+    return QRect(x, r.top(), CHEV, r.height())
 
 
 def eye_rect(rect):
@@ -127,28 +123,19 @@ class LayerDelegate(QStyledItemDelegate):
         node = index.data(NODE_ROLE)
         r = option.rect
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
-        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         p.save()
-        in_scope = node.id in self.view.scope
-        is_source = node.id in self.view.scope_sources
         if selected:
             p.fillRect(r, theme.accent_soft())
-        elif in_scope:
-            p.fillRect(r, theme.qc(theme.ACCENT, 0.08))
-        elif hovered:
-            p.fillRect(r, theme.qc(theme.BG_HOVER))
-        if in_scope or is_source:
-            # Barre continue à gauche : du modifieur jusqu'au dernier calque qu'il modifie
-            p.fillRect(QRect(0, r.top(), 3, r.height()), theme.qc(theme.ACCENT, 1.0 if is_source else 0.55))
         draw_scope_lines(p, self.view, node, r)
-        visible = node.effectively_visible()
-        dim = not visible
-        color = theme.TEXT_OFF if dim else (theme.TEXT if node.kind != "modifier" else theme.TEXT)
+        dim = not node.effectively_visible()
+        cx = r.left() + content_offset(node, self.view.editor.current_root())
+        # Flèche de dépliage (dans la ligne, alignée sur le contenu)
+        if self.view.model().rowCount(index) > 0:
+            name = "chevron-down" if self.view.isExpanded(index) else "chevron-right"
+            p.drawPixmap(cx + 1, r.top() + (r.height() - 12) // 2, icons.pixmap(name, theme.TEXT_DIM, 12))
         ic_color = theme.TEXT_OFF if dim else (theme.ACCENT if node.kind == "modifier" else theme.TEXT_DIM)
-        x = r.left() + 4 + content_offset(node, self.view.editor.current_root())
-        pm = icons.pixmap(node_icon(node), ic_color, 14)
-        p.drawPixmap(x, r.top() + (r.height() - 14) // 2, pm)
-        x += 20
+        p.drawPixmap(cx + CHEV, r.top() + (r.height() - 14) // 2, icons.pixmap(node_icon(node), ic_color, 14))
+        x = cx + CHEV + 20
         right_limit = lock_rect(r).left() - 4
         p.setFont(theme.ui_font(12))
         fm = p.fontMetrics()
@@ -158,7 +145,7 @@ class LayerDelegate(QStyledItemDelegate):
             if d is not None and d.name != node.name:
                 name = f"{node.name}  ({d.name})"
         name_w = min(fm.horizontalAdvance(name) + 4, max(0, right_limit - x))
-        p.setPen(theme.qc(color))
+        p.setPen(theme.qc(theme.TEXT_OFF if dim else theme.TEXT))
         p.drawText(QRect(x, r.top(), name_w, r.height()), Qt.AlignmentFlag.AlignVCenter,
                    fm.elidedText(name, Qt.TextElideMode.ElideRight, name_w))
         x += name_w + 8
@@ -169,12 +156,9 @@ class LayerDelegate(QStyledItemDelegate):
             fm2 = p.fontMetrics()
             p.drawText(QRect(x, r.top(), right_limit - x, r.height()), Qt.AlignmentFlag.AlignVCenter,
                        fm2.elidedText(summary, Qt.TextElideMode.ElideRight, right_limit - x))
-        # Verrou (affiché s'il est actif, ou au survol)
-        lr = lock_rect(r)
         if node.locked:
+            lr = lock_rect(r)
             p.drawPixmap(lr.left() + 4, lr.top() + (lr.height() - 14) // 2, icons.pixmap("lock", theme.TEXT, 14))
-        elif hovered:
-            p.drawPixmap(lr.left() + 4, lr.top() + (lr.height() - 14) // 2, icons.pixmap("lock-open", theme.TEXT_OFF, 14))
         er = eye_rect(r)
         eye = icons.pixmap("eye" if node.visible else "eye-off", theme.TEXT_DIM if node.visible else theme.TEXT_OFF, 14)
         p.drawPixmap(er.left() + 4, er.top() + (er.height() - 14) // 2, eye)
@@ -189,5 +173,5 @@ class LayerDelegate(QStyledItemDelegate):
 
     def updateEditorGeometry(self, editor, option, index):
         r = option.rect
-        off = content_offset(index.data(NODE_ROLE), self.view.editor.current_root())
-        editor.setGeometry(QRect(r.left() + 22 + off, r.top() + 2, max(40, lock_rect(r).left() - r.left() - 26), r.height() - 4))
+        off = content_offset(index.data(NODE_ROLE), self.view.editor.current_root()) + CHEV
+        editor.setGeometry(QRect(r.left() + 18 + off, r.top() + 2, max(40, lock_rect(r).left() - r.left() - 26), r.height() - 4))

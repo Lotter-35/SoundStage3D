@@ -403,6 +403,10 @@ def main():
     click(tl_canvas, QPoint(int(tl_canvas.geo.x(clip.start + 1.0)), int(lane_v.y + lane_v.h * 0.3)))
     check("clic dans un réglage de modifieur = automation créée", len(clip.automations) == n_auto + 1
           and clip.automations[-1].node_id == lane_v.node.id and len(clip.automations[-1].keys) == 1)
+    clip.closed_nodes.append(lane_v.node.id)
+    hidden = [r for r in tl_canvas.rows() if r.kind == "lane" and r.auto.node_id == lane_v.node.id]
+    check("modifieur replié : ses réglages (même animés) sont cachés", hidden == [])
+    clip.closed_nodes.remove(lane_v.node.id)
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     check("annulable", len(clip.automations) == n_auto)
@@ -471,6 +475,10 @@ def main():
     check("annuler la suppression de la forme", len(ed.doc.library.defs) == 1 and ed.doc.timeline.has_clips())
     ed.dirty = False
     print("\n" + ("TOUT EST OK" if not errors else f"{len(errors)} problème(s) : {', '.join(errors)}"))
+    # Fermeture comme dans l'application (vérifie aussi qu'elle ne plante pas)
+    from ildagen.app import shutdown
+    win.close()
+    shutdown(win, app)
     return 1 if errors else 0
 
 

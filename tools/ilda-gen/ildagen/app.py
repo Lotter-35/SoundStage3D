@@ -27,7 +27,34 @@ def main(argv=None):
         win.project.restore_session()
     if settings.get("general", "live_at_start"):
         win.connection.btn_live.setChecked(True)
-    return app.exec()
+    code = app.exec()
+    shutdown(win, app)
+    return code
+
+
+def shutdown(win, app):
+    """Fermeture propre : on détruit la fenêtre et ses objets Qt AVANT l'application (évite un plantage à la sortie)."""
+    import gc
+    win.playback.player.stop()
+    win.waveform.decoder.stop()
+    win.live.frame_timer.stop()
+    win.live.ping_timer.stop()
+    for obj in (win.live, win.playback, win.waveform, win.editor):
+        try:
+            obj.blockSignals(True)
+        except RuntimeError:
+            pass
+    # Presse-papiers : des calques copiés y sont détenus par Qt mais créés en Python ; on les retire avant
+    # que Python ne s'arrête (sinon Qt les détruit trop tard et l'application plante en quittant)
+    from .editor.layer_ops import CLIP_MIME
+    cb = app.clipboard()
+    md = cb.mimeData()
+    if md is not None and md.hasFormat(CLIP_MIME):
+        cb.clear()
+    win.deleteLater()
+    app.processEvents()
+    del win
+    gc.collect()
 
 
 if __name__ == "__main__":
