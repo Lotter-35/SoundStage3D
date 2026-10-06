@@ -168,10 +168,13 @@ class GroupNode(Node):
     def __init__(self, name="Groupe", node_id=None):
         super().__init__(name, node_id)
         self.expanded = True
+        self.main = False          # groupe principal de la scène (obligatoire, contient tout)
         self.transform = Transform()
 
     def to_dict(self):
         d = self.base_dict()
+        if self.main:
+            d["main"] = True
         d.update({"expanded": self.expanded, "transform": self.transform.to_dict(),
                   "children": [c.to_dict() for c in self.children]})
         return d
@@ -181,6 +184,7 @@ class GroupNode(Node):
         n = cls(d.get("name", "Groupe"))
         n.load_base(d)
         n.expanded = d.get("expanded", True)
+        n.main = bool(d.get("main", False))
         n.transform = Transform.from_dict(d.get("transform", {}))
         for cd in d.get("children", []):
             n.add(node_from_dict(cd))
@@ -272,6 +276,7 @@ def node_from_dict(d):
 def clone_node(node):
     """Copie profonde avec de nouveaux identifiants."""
     d = node.to_dict()
+    d.pop("main", None)
 
     def renew(x):
         x["id"] = new_id()

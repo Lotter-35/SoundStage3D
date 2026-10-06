@@ -137,6 +137,9 @@ Boutons sous les calques : **Modifieur** (menu de tous les modifieurs), **nouvea
 groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **supprimer**.
 
 
+- Dans la scène, tout est rangé dans le groupe **Forme principale**, toujours en tête de la liste : il ne
+  peut être ni supprimé, ni dégroupé, ni déplacé ; les nouveaux calques y vont automatiquement (les anciens
+  projets sont convertis à l'ouverture).
 - Chaque forme est un calque. Glisser-déposer pour réordonner ou ranger dans un groupe (ligne bleue = position).
 - Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas : verrouiller. Un groupe
   verrouillé ne se déplie plus mais se sélectionne et se déplace comme un seul bloc.

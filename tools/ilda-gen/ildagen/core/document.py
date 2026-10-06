@@ -31,14 +31,38 @@ class GridSettings:
         return g
 
 
+MAIN_NAME = "Forme principale"
+
+
+def ensure_main_group(scene):
+    """La scène contient toujours UN groupe principal, en tête, qui contient tous les calques."""
+    main = next((c for c in scene.children if c.kind == "group" and getattr(c, "main", False)), None)
+    if main is None:
+        main = GroupNode(MAIN_NAME)
+        main.main = True
+    for c in list(scene.children):
+        if c is not main:
+            scene.remove(c)
+            main.add(c)
+    if main.parent is not scene:
+        scene.add(main, 0)
+    main.expanded = True
+    return main
+
+
 class Document:
     def __init__(self):
         self.scene = GroupNode("Scène")
+        ensure_main_group(self.scene)
         self.library = Library()
         self.timeline = Timeline()
         self.grid = GridSettings()
         self.network = {}      # copie des réglages réseau au moment de l'enregistrement
         self.path = ""         # fichier du projet
+
+    @property
+    def main_group(self):
+        return ensure_main_group(self.scene)
 
     def to_dict(self):
         return {"version": FORMAT_VERSION, "scene": self.scene.to_dict(), "library": self.library.to_dict(),
@@ -46,6 +70,7 @@ class Document:
 
     def load_dict(self, d):
         self.scene = node_from_dict(d["scene"]) if "scene" in d else GroupNode("Scène")
+        ensure_main_group(self.scene)
         self.library = Library.from_dict(d.get("library"))
         self.timeline = Timeline.from_dict(d.get("timeline", {}))
         self.grid = GridSettings.from_dict(d.get("grid"))

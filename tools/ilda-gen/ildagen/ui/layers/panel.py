@@ -90,7 +90,7 @@ class LayersPanel(QWidget):
                 a.triggered.connect(lambda _=False, tt=t: self.editor.add_modifier(tt, onto=one))
 
     def _custom(self):
-        root = self.editor.current_root()
+        root = self.editor.work_root()
         if root is None or not root.children:
             self.editor.statusMessage.emit("Rien à transformer en forme personnalisée")
             return

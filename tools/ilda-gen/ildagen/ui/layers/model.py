@@ -121,7 +121,7 @@ class LayerModel(QAbstractItemModel):
             return Qt.ItemFlag.ItemIsEnabled
         f = Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable | Qt.ItemFlag.ItemIsEditable
         n = it.node
-        if not n.locked_ancestor():
+        if not n.locked_ancestor() and not getattr(n, "main", False):
             f |= Qt.ItemFlag.ItemIsDragEnabled
         if (n.kind == "group" and not n.locked) or n.kind == "modifier":
             f |= Qt.ItemFlag.ItemIsDropEnabled

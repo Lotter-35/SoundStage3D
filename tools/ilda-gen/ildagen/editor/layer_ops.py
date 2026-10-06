@@ -22,9 +22,13 @@ class LayerOpsMixin:
         if sel:
             n = sel[0]
             parent = n.parent
-            if parent is not None and not parent.locked and parent.kind == "group" and not n.locked_ancestor():
+            if parent is not None and not parent.locked and parent.kind == "group" and not n.locked_ancestor() \
+                    and not getattr(n, "main", False):
                 return parent, parent.children.index(n)
-        return root, 0
+            if getattr(n, "main", False) and not n.locked:
+                return n, 0
+        work = self.work_root()
+        return (work if work is not None else root), 0
 
     def add_node(self, node, label="Ajouter un calque", select=True, parent=None, index=None):
         def do():
@@ -37,7 +41,7 @@ class LayerOpsMixin:
 
     # ── Suppression ──────────────────────────────────────────────────────
     def delete_nodes(self, nodes, label="Supprimer"):
-        nodes = [n for n in nodes if n.parent is not None]
+        nodes = [n for n in nodes if n.parent is not None and not getattr(n, "main", False)]
         if not nodes:
             return
 
@@ -50,7 +54,10 @@ class LayerOpsMixin:
         self.set_selection([])
 
     def delete_selected(self):
-        self.delete_nodes(self.top_selected())
+        sel = self.top_selected()
+        if any(getattr(n, "main", False) for n in sel):
+            self.statusMessage.emit("Le groupe principal ne peut pas être supprimé (sélectionnez ses calques)")
+        self.delete_nodes(sel)
 
     def prune_automations(self):
         """Supprime les automations dont le calque n'existe plus."""
@@ -62,7 +69,9 @@ class LayerOpsMixin:
 
     # ── Déplacement (glisser-déposer) ────────────────────────────────────
     def can_drop(self, node, parent):
-        if parent is None or node is parent or parent.is_descendant_of(node):
+        if parent is None or node is parent or parent.is_descendant_of(node) or getattr(node, "main", False):
+            return False
+        if parent is self.doc.scene:
             return False
         if parent.kind == "group":
             return not parent.locked and not parent.locked_ancestor()
@@ -72,7 +81,7 @@ class LayerOpsMixin:
 
     def move_nodes(self, ids, parent_id, index):
         root = self.current_root()
-        parent = root.find(parent_id) if parent_id else root
+        parent = root.find(parent_id) if parent_id else self.work_root()
         nodes = [root.find(i) for i in ids]
         nodes = [n for n in nodes if n is not None]
         ids_set = {n.id for n in nodes}
@@ -100,7 +109,7 @@ class LayerOpsMixin:
 
     # ── Groupes ──────────────────────────────────────────────────────────
     def group_selected(self):
-        nodes = self.top_selected()
+        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)]
         if not nodes:
             return
         parent = nodes[0].parent
@@ -126,7 +135,7 @@ class LayerOpsMixin:
             g.transform.px, g.transform.py = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
 
     def ungroup_selected(self):
-        groups = [n for n in self.top_selected() if n.kind == "group"]
+        groups = [n for n in self.top_selected() if n.kind == "group" and not getattr(n, "main", False)]
         if not groups:
             return
         moved = []
@@ -217,7 +226,8 @@ class LayerOpsMixin:
 
     # ── Presse-papiers ───────────────────────────────────────────────────
     def copy_selection(self):
-        nodes = self.top_selected()
+        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)] or \
+            [c for n in self.top_selected() for c in n.children]
         if not nodes:
             return False
         self.clipboard = [n.to_dict() for n in nodes]
@@ -229,7 +239,8 @@ class LayerOpsMixin:
 
     def cut_selection(self):
         if self.copy_selection():
-            self.delete_nodes(self.top_selected(), "Couper")
+            nodes = [c for n in self.top_selected() for c in (n.children if getattr(n, "main", False) else [n])]
+            self.delete_nodes(nodes, "Couper")
 
     def _clipboard_items(self):
         md = QGuiApplication.clipboard().mimeData()
@@ -268,7 +279,7 @@ class LayerOpsMixin:
         self.set_selection([n.id for n in new_nodes])
 
     def duplicate_selection(self):
-        nodes = self.top_selected()
+        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)]
         if not nodes:
             return []
         copies = []
@@ -388,8 +399,8 @@ class LayerOpsMixin:
 
     # ── Formes personnalisées ────────────────────────────────────────────
     def create_custom_shape(self, name):
-        root = self.current_root()
-        nodes = self.top_selected() or [c for c in root.children]
+        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)] or \
+            [c for c in self.work_root().children]
         if not nodes:
             return None
         own_def = self.context[1] if self.context[0] in ("def",) else None

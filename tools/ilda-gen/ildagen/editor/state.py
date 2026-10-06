@@ -167,6 +167,12 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             return d.root if d else None
         return None
 
+    def work_root(self):
+        """Où vont les nouveaux calques : le groupe principal dans la scène, la racine ailleurs."""
+        if self.context[0] == "scene":
+            return self.doc.main_group
+        return self.current_root()
+
     def current_clip(self):
         if self.context[0] != "clip":
             return None
@@ -311,7 +317,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             self.set_selection(self.selection + [node_id])
 
     def select_all(self):
-        root = self.current_root()
+        root = self.work_root()
         if root:
             self.set_selection([c.id for c in root.children])
 

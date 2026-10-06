@@ -217,13 +217,17 @@ class LayerTreeView(QTreeView):
         root = self.editor.current_root()
         DIP = QAbstractItemView.DropIndicatorPosition
         if not ix.isValid() or pos == DIP.OnViewport:
-            parent, index = root, len(root.children)
+            work = self.editor.work_root()
+            parent, index = work, len(work.children)
         else:
             if ix.data(KIND_ROLE) == "params":
                 ix = ix.parent()
             node = ix.data(NODE_ROLE)
             if pos == DIP.OnItem and (node.kind in ("group", "modifier")):
                 parent, index = node, 0
+            elif getattr(node, "main", False):
+                # Au-dessus / au-dessous du groupe principal : on reste dedans
+                parent, index = node, (0 if pos == DIP.AboveItem else len(node.children))
             else:
                 parent = node.parent or root
                 index = parent.children.index(node) + (1 if pos == DIP.BelowItem else 0)

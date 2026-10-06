@@ -133,19 +133,19 @@ def test_timeline_automation():
 
 def test_save_load_and_history():
     doc = Document()
-    doc.scene.add(ShapeNode("star"))
+    doc.main_group.add(ShapeNode("star"))
     m = ModifierNode("gradient")
-    doc.scene.add(m)
+    doc.main_group.add(m)
     h = History()
     h.begin("x", doc.to_dict())
-    doc.scene.children[0].transform.tx = 0.3
+    doc.main_group.children[0].transform.tx = 0.3
     assert h.commit(doc.to_dict())
     before = h.undo(doc.to_dict())
-    assert before["scene"]["children"][0]["transform"]["tx"] == 0.0
+    assert before["scene"]["children"][0]["children"][0]["transform"]["tx"] == 0.0
     path = os.path.join(tempfile.mkdtemp(), "t.ildaproj")
     doc.save(path)
     doc2 = Document.load(path)
-    assert doc2.scene.children[1].mod_type == "gradient"
+    assert doc2.main_group.children[1].mod_type == "gradient"
     c = clone_node(doc2.scene)
     assert c.id != doc2.scene.id
 
@@ -172,6 +172,17 @@ def test_line_snaps_on_center():
     # Ligne horizontale de -0.3 à 0.21 : son bord gauche est presque sur -0.25… mais seul le centre compte
     dx, dy, guides = smart_snap((-0.3, 0.1, 0.21, 0.1), [], g, 0.06)
     assert abs((-0.3 + 0.21) / 2 + dx) < 1e-9, dx
+
+
+def test_main_group():
+    from ildagen.core.document import ensure_main_group
+    doc = Document()
+    root = GroupNode("Scène")
+    root.add(ShapeNode("rect"))
+    root.add(ShapeNode("star"))
+    main = ensure_main_group(root)
+    assert root.children == [main] and len(main.children) == 2 and main.main
+    assert len(doc.scene.children) == 1 and doc.main_group.main
 
 
 if __name__ == "__main__":
