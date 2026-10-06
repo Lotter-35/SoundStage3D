@@ -327,9 +327,21 @@ def main():
     send(field, QEvent.Type.MouseButtonRelease, QPoint(c.x() + 20, c.y()), L_, Qt.MouseButton.NoButton, M.NoModifier)
     check("après le réglage : sélection réaffichée", not ed.param_editing)
     drag(field, c, QPoint(c.x() + 60, c.y()))
+    angle_field = field
+    check("l'unité n'est pas dans le texte modifiable", "°" not in angle_field.text())
     check("clic + glisser à droite augmente la valeur", ed.find(sym.id).values["angle"] > a0,
           f"{a0} → {ed.find(sym.id).values['angle']}")
     shot(win, "02_modifieurs")
+
+    # Alt + clic = valeur par défaut ; bouton / Ctrl+Maj+R = tout réinitialiser
+    send(angle_field, QEvent.Type.MouseButtonPress, c, L_, L_, M.AltModifier)
+    send(angle_field, QEvent.Type.MouseButtonRelease, c, L_, Qt.MouseButton.NoButton, M.AltModifier)
+    check("Alt + clic : valeur par défaut", ed.find(sym.id).values["angle"] == 90.0, str(ed.find(sym.id).values["angle"]))
+    ed.set_param(ed.find(sym.id), "axes", 3)
+    ed.reset_params([ed.find(sym.id)])
+    check("réinitialiser tous les réglages", ed.find(sym.id).values["axes"] == 1)
+    ed.undo()
+    check("annulable", ed.find(sym.id).values["axes"] == 3)
 
     # ── Forme personnalisée ─────────────────────────────────────────────
     ed.select_all()

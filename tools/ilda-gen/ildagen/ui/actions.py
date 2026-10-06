@@ -63,6 +63,7 @@ def build_actions(win):
     act("delete", "Supprimer", win.delete_pressed, [QKeySequence("Delete"), QKeySequence("Backspace")])
     act("select_all", "Tout sélectionner", ed.select_all, SK.SelectAll)
     act("group", "Grouper", ed.group_selected, "Ctrl+G")
+    act("reset", "Réinitialiser les réglages", lambda: ed.reset_params(), "Ctrl+Shift+R")
     act("ungroup", "Dégrouper", ed.ungroup_selected, "Ctrl+Shift+G")
 
     # Affichage
@@ -117,7 +118,7 @@ def build_menus(win, A):
 
     m = mb.addMenu("Édition")
     for k in ("undo", "redo", None, "cut", "copy", "paste", "duplicate", "delete", None, "select_all", None,
-              "group", "ungroup"):
+              "group", "ungroup", None, "reset"):
         m.addSeparator() if k is None else m.addAction(A[k])
 
     m = mb.addMenu("Affichage")

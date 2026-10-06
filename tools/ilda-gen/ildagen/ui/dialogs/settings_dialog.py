@@ -3,9 +3,10 @@
 Les changements s'appliquent immédiatement (laser compris) et sont enregistrés à la fermeture.
 """
 
-from PySide6.QtWidgets import (QCheckBox, QDialog, QDoubleSpinBox, QFormLayout, QHBoxLayout, QLabel, QPushButton,
-                               QSpinBox, QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QPushButton,
+                               QTabWidget, QVBoxLayout, QWidget)
 
+from ..spin import DoubleSpinBox, SpinBox
 from ..properties.widgets import ColorSwatch
 
 # (section, clé, libellé, type, min, max, décimales, suffixe, aide)
@@ -98,13 +99,13 @@ class SettingsDialog(QDialog):
                 f.set_value(tuple(v))
                 f.valueEdited.connect(lambda c, s=section, k=key: self._set(s, k, list(c)))
             elif kind == "int":
-                f = QSpinBox()
+                f = SpinBox()
                 f.setRange(int(lo), int(hi))
                 f.setValue(int(v))
                 f.setSuffix(suffix)
                 f.valueChanged.connect(lambda x, s=section, k=key: self._set(s, k, int(x)))
             else:
-                f = QDoubleSpinBox()
+                f = DoubleSpinBox()
                 f.setRange(lo, hi)
                 f.setDecimals(dec)
                 f.setSingleStep(10 ** (-dec) if dec else 1.0)
@@ -130,7 +131,7 @@ class SettingsDialog(QDialog):
         for attr, label, lo, hi, tip in (("divisions", "Cases par demi-axe (orthogonale)", 1, 64, "8 = pas de 1/8"),
                                          ("rings", "Cercles (polaire)", 1, 64, ""),
                                          ("rays", "Rayons (polaire)", 2, 360, "16 = un rayon tous les 22,5°")):
-            f = QSpinBox()
+            f = SpinBox()
             f.setRange(lo, hi)
             f.setValue(int(getattr(g, attr)))
             f.setToolTip(tip)

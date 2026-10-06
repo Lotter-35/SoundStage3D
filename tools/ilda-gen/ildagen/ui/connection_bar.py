@@ -4,6 +4,7 @@ from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QWidget
 
+from .spin import SpinBox
 from . import icons, theme
 
 
@@ -32,7 +33,7 @@ def labeled(text):
 
 
 def spin(lo, hi, value, width, suffix=""):
-    s = QSpinBox()
+    s = SpinBox()
     s.setRange(lo, hi)
     s.setValue(int(value))
     s.setFixedWidth(width)

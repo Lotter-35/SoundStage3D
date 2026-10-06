@@ -62,6 +62,8 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Supprimer | `Suppr` ou `Retour arrière` |
 | Tout sélectionner | `Ctrl+A` |
 | Grouper / Dégrouper | `Ctrl+G` / `Ctrl+Maj+G` |
+| Réinitialiser les réglages de la sélection | `Ctrl+Maj+R` (ou bouton ↺ de Propriétés, ou clic droit) |
+| Réinitialiser un seul réglage | `Alt` + clic sur sa valeur (ou clic droit sur son nom / sa valeur) |
 | Sans grille / orthogonale / polaire | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` |
 | Aimant (les poignées s'accrochent à la grille) | `Ctrl+;` ou bouton aimant au-dessus de la mire |
 | Ajuster la vue | `Ctrl+0` |

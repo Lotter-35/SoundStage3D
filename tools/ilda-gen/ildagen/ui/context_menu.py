@@ -56,6 +56,10 @@ def build_layer_menu(parent, editor, actions):
             if name:
                 editor.rename(one, name)
         a.triggered.connect(rename)
+    if sel:
+        a = menu.addAction(icons.icon("rotate-ccw", 14), "Réinitialiser les réglages")
+        a.setToolTip("Réglages par défaut (modifieurs) ; position, rotation, échelle et inclinaison d'origine (formes)")
+        a.triggered.connect(lambda: editor.reset_params(sel))
     if any(n.kind != "modifier" for n in sel):
         a = menu.addAction("Retourner horizontalement")
         a.triggered.connect(lambda: editor.flip_selection(True))

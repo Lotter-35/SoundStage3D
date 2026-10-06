@@ -293,6 +293,27 @@ class LayerOpsMixin:
         self.set_selection([c.id for c in copies])
         return copies
 
+    # ── Réinitialiser ────────────────────────────────────────────────────
+    def reset_params(self, nodes=None):
+        """Valeurs par défaut : réglages des modifieurs, transformation et réglages propres des formes."""
+        from ..core import shapes
+        nodes = [n for n in (nodes if nodes is not None else self.top_selected()) if not n.locked]
+        if not nodes:
+            return
+
+        def do():
+            for n in nodes:
+                if n.kind == "modifier":
+                    n.values = n.modifier.defaults()
+                if n.has_transform:
+                    px, py = n.transform.px, n.transform.py
+                    n.transform = type(n.transform)()
+                    n.transform.px, n.transform.py = px, py
+                if n.kind == "shape" and n.shape != "path":
+                    n.sparams = shapes.default_params(n.shape)
+        self.mutate("Réinitialiser les réglages", do)
+        self.statusMessage.emit(f"Réglages réinitialisés ({len(nodes)} calque(s))")
+
     # ── Modifieurs ───────────────────────────────────────────────────────
     def modifier_targets(self, m):
         """Calques sur lesquels agit un modifieur : ceux en dessous de lui dans son groupe

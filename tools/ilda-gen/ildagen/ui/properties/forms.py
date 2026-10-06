@@ -95,6 +95,11 @@ class ParamForm(QWidget):
             else:
                 grid.addWidget(label, row, 0)
                 grid.addWidget(field, row, 1, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color") else Qt.AlignmentFlag(0))
+            label.setToolTip("Clic droit : réinitialiser / automatiser · Alt + clic sur la valeur : réinitialiser")
+            if hasattr(field, "resetRequested"):
+                field.resetRequested.connect(lambda s=spec: self._reset(s))
+            field.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            field.customContextMenuRequested.connect(lambda pos, s=spec, w=field: self._label_menu(s, w.mapToGlobal(pos)))
             field.editStarted.connect(lambda s=spec: self._started(s))
             field.valueEdited.connect(lambda v, s=spec: self._edited(s, v))
             field.editFinished.connect(self._finished)
@@ -151,15 +156,28 @@ class ParamForm(QWidget):
         a_auto.setEnabled(clip is not None and spec.animatable and clip.automation_for(node.id, spec.key) is None)
         if clip is None:
             a_auto.setToolTip("Sélectionnez un clip dans la timeline")
-        a_reset = menu.addAction("Réinitialiser")
+        a_reset = menu.addAction("Réinitialiser (Alt + clic)")
+        a_all = menu.addAction("Réinitialiser tous les réglages du calque")
         chosen = menu.exec(gpos)
         if chosen is a_auto:
             self.editor.automate_param(node, spec.key)
         elif chosen is a_reset:
-            self.editor.begin("Réinitialiser")
-            self.editor.set_param(node, spec.key, spec.default_value())
-            self.editor.commit()
-            self.editor.notify()
+            self._reset(spec)
+        elif chosen is a_all:
+            self.editor.reset_params([node])
+
+    def _reset(self, spec):
+        node = self.node()
+        if node is None:
+            return
+        self.editor.begin(f"Réinitialiser : {spec.label}")
+        self.editor.set_param(node, spec.key, self.default_for(node, spec))
+        self.editor.commit()
+        self.editor.notify()
+
+    @staticmethod
+    def default_for(node, spec):
+        return spec.default_value()
 
 
 __all__ = ["ParamForm", "specs_for", "N"]

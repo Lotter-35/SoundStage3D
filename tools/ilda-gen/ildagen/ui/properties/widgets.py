@@ -8,11 +8,13 @@ from .. import theme
 
 
 class ScrubField(QLineEdit):
-    """Valeur numérique : glisser horizontalement pour la changer (Maj = fin, Ctrl = rapide), clic pour la taper."""
+    """Valeur numérique : glisser horizontalement pour la changer (Maj = fin, Ctrl = rapide), clic pour la taper,
+    Alt + clic pour revenir à la valeur par défaut. L'unité est affichée à côté, jamais dans le texte modifiable."""
 
     editStarted = Signal()
     valueEdited = Signal(float)
     editFinished = Signal()
+    resetRequested = Signal()
 
     def __init__(self, decimals=2, minimum=None, maximum=None, soft=(None, None), unit="", factor=1.0,
                  integer=False, parent=None):
@@ -36,6 +38,11 @@ class ScrubField(QLineEdit):
         self.setCursor(Qt.CursorShape.SizeHorCursor)
         self.setMinimumWidth(56)
         self.setFont(theme.mono_font(11))
+        self.unit_text = unit.strip()
+        if self.unit_text:
+            w = self.fontMetrics().horizontalAdvance(self.unit_text)
+            self.setTextMargins(0, 0, w + 6, 0)
+        self._reset_click = False
         self.editingFinished.connect(self._typed)
 
     def _bound(self, v):
@@ -51,7 +58,7 @@ class ScrubField(QLineEdit):
 
     def _fmt(self, v):
         s = f"{v * self.factor:.{self.decimals}f}"
-        return s + (self.unit if self.unit and not self.hasFocus() else "")
+        return s
 
     def set_value(self, v):
         if v is None:
@@ -60,9 +67,20 @@ class ScrubField(QLineEdit):
         if not self.hasFocus() and not self._scrubbing:
             self.setText(self._fmt(self.value))
 
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self.unit_text:
+            p = QPainter(self)
+            p.setFont(self.font())
+            p.setPen(theme.qc(theme.TEXT_DIM))
+            p.drawText(self.rect().adjusted(0, 0, -6, 0), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter,
+                       self.unit_text)
+            p.end()
+
     def mousePressEvent(self, e):
         # Clic puis glisser à gauche / à droite = régler (même si le champ est en saisie) ;
-        # clic sans bouger = taper une valeur.
+        # clic sans bouger = taper une valeur ; Alt + clic = valeur par défaut.
+        self._reset_click = bool(e.modifiers() & Qt.KeyboardModifier.AltModifier)
         if e.button() == Qt.MouseButton.LeftButton:
             self._press = e.position().x()
             self._acc = self.value
@@ -98,6 +116,11 @@ class ScrubField(QLineEdit):
             self.editFinished.emit()
             return
         self._press = None
+        if self._reset_click:
+            self._reset_click = False
+            self.clearFocus()
+            self.resetRequested.emit()
+            return
         if self._typing:
             super().mouseReleaseEvent(e)
             return
@@ -110,7 +133,9 @@ class ScrubField(QLineEdit):
         self.setText(self._fmt(self.value))
 
     def _typed(self):
-        txt = self.text().replace(",", ".").replace(self.unit, "").strip() if self.unit else self.text().replace(",", ".").strip()
+        txt = self.text().replace(",", ".").strip()
+        if self.unit_text:
+            txt = txt.replace(self.unit_text, "").strip()
         try:
             v = self._clamp(float(txt) / self.factor)
         except ValueError:
@@ -135,6 +160,13 @@ class ColorSwatch(QToolButton):
     editStarted = Signal()
     valueEdited = Signal(object)
     editFinished = Signal()
+    resetRequested = Signal()
+
+    def mousePressEvent(self, e):
+        if e.modifiers() & Qt.KeyboardModifier.AltModifier:
+            self.resetRequested.emit()
+            return
+        super().mousePressEvent(e)
 
     def __init__(self, parent=None):
         super().__init__(parent)

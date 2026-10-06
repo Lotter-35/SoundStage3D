@@ -4,8 +4,9 @@ import os
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QLabel,
-                               QMessageBox, QProgressDialog, QSpinBox, QVBoxLayout)
+                               QMessageBox, QProgressDialog, QVBoxLayout)
 
+from ..spin import SpinBox
 from ...editor.export import export_ilda
 from ...laser.ilda_file import FORMATS
 
@@ -36,7 +37,7 @@ class ExportDialog(QDialog):
                 self.range.addItem("Zone de boucle", "loop")
         self.range.addItem("Image fixe (scène)", "still")
         form.addRow("Contenu", self.range)
-        self.fps = QSpinBox()
+        self.fps = SpinBox()
         self.fps.setRange(1, 120)
         self.fps.setValue(int(s.get("export", "fps")))
         self.fps.setSuffix(" images/s")

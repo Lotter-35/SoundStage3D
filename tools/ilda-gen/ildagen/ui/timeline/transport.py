@@ -3,6 +3,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QPushButton, QSpinBox, QToolButton, QWidget
 
+from ..spin import DoubleSpinBox, SpinBox
 from ...core.timeline import SUBDIVISIONS
 from .. import icons, theme
 
@@ -54,7 +55,7 @@ class TransportBar(QWidget):
         lay.addWidget(self.timecode)
 
         lay.addWidget(dim("BPM"))
-        self.bpm = QDoubleSpinBox()
+        self.bpm = DoubleSpinBox()
         self.bpm.setRange(20.0, 400.0)
         self.bpm.setDecimals(2)
         self.bpm.setFixedWidth(66)
@@ -68,7 +69,7 @@ class TransportBar(QWidget):
         self._taps = []
         lay.addWidget(self.btn_tap)
         lay.addWidget(dim("Temps / mesure"))
-        self.beats = QSpinBox()
+        self.beats = SpinBox()
         self.beats.setRange(1, 16)
         self.beats.setFixedWidth(40)
         self.beats.setButtonSymbols(QSpinBox.ButtonSymbols.NoButtons)
@@ -80,7 +81,7 @@ class TransportBar(QWidget):
         self.grid.activated.connect(lambda i: self._set("subdivision", i, "Grille"))
         lay.addWidget(self.grid)
         lay.addWidget(dim("Mesure 1 à"))
-        self.offset = QDoubleSpinBox()
+        self.offset = DoubleSpinBox()
         self.offset.setRange(-600.0, 3600.0)
         self.offset.setDecimals(3)
         self.offset.setSuffix(" s")

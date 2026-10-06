@@ -47,6 +47,14 @@ class PropertiesPanel(QWidget):
         lay.setSpacing(0)
         self.header = PanelHeader("Propriétés", collapsible=True)
         self.header.toggle.clicked.connect(lambda: self.set_collapsed(not self.collapsed))
+        self.reset_btn = QToolButton()
+        self.reset_btn.setIcon(icons.icon("rotate-ccw", 14))
+        self.reset_btn.setIconSize(icons.qsize(14))
+        self.reset_btn.setAutoRaise(True)
+        self.reset_btn.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.reset_btn.setToolTip("Réinitialiser tous les réglages de la sélection (Ctrl+Maj+R)")
+        self.reset_btn.clicked.connect(lambda: editor.reset_params())
+        self.header.extra.addWidget(self.reset_btn)
         lay.addWidget(self.header)
         self.scroll = QScrollArea()
         self.scroll.setWidgetResizable(True)
@@ -79,6 +87,7 @@ class PropertiesPanel(QWidget):
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
         nodes = self.editor.selected_nodes()
+        self.reset_btn.setVisible(bool(nodes))
         if len(nodes) == 1:
             n = nodes[0]
             kind = KIND_LABELS.get(n.kind) or SHAPE_LABELS.get(getattr(n, "shape", ""), "Forme")
