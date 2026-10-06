@@ -38,6 +38,7 @@ class CanvasView(QWidget):
         editor.gridChanged.connect(self.update)
         editor.contextChanged.connect(self.update)
         editor.toolChanged.connect(self.set_tool)
+        editor.restored.connect(self._restored)
         live.statsChanged.connect(self._on_stats)
         live.frameComputed.connect(self._on_frame)
 
@@ -50,6 +51,17 @@ class CanvasView(QWidget):
         else:
             self.tool = self.tools.get(name, self.tools["select"])
         self.setCursor(self.tool.cursor())
+        self.update()
+
+    def _restored(self):
+        sel = self.tools["select"]
+        sel.drag = None
+        sel.marquee = None
+        sel.guides = []
+        self.tools["pencil"].free = None
+        self.tools["pencil"].seg = None
+        self.tools["shape"].node = None
+        self.tools["shape"].start = None
         self.update()
 
     def _on_stats(self, n, fps):

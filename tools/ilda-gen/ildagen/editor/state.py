@@ -35,6 +35,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     projectChanged = Signal()
     statusMessage = Signal(str)
     clipSelected = Signal(str)
+    restored = Signal()            # état remplacé (annuler / rétablir) : abandonner les gestes en cours
+    audioChanged = Signal(str)
     brushChanged = Signal()
 
     def __init__(self, settings):
@@ -82,6 +84,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
 
     def restore(self, d):
         path = self.doc.path
+        old_audio = self.doc.timeline.audio_path
         doc = Document()
         doc.load_dict(d)
         doc.path = path
@@ -95,6 +98,9 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.selectionChanged.emit()
         self.contextChanged.emit()
         self.gridChanged.emit()
+        self.restored.emit()
+        if self.doc.timeline.audio_path != old_audio:
+            self.audioChanged.emit(self.doc.timeline.audio_path)
 
     # ── Annuler / rétablir ───────────────────────────────────────────────
     def begin(self, label):

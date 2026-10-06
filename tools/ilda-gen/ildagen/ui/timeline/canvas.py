@@ -39,6 +39,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         editor.docChanged.connect(self.update)
         editor.projectChanged.connect(self._changed)
         editor.playheadChanged.connect(self._playhead)
+        editor.restored.connect(self._restored)
 
     @property
     def tl(self):
@@ -47,6 +48,11 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
     def _changed(self):
         self.scrollChanged.emit()
         self.update()
+
+    def _restored(self):
+        self.drag = None
+        self.sel_key = None
+        self._changed()
 
     def set_peaks(self, peaks):
         self.peaks = peaks

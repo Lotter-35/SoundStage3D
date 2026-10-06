@@ -3,7 +3,7 @@
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QGridLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
-                               QMessageBox, QToolButton, QVBoxLayout, QWidget)
+                               QToolButton, QVBoxLayout, QWidget)
 
 from ..core.evaluator import EvalContext, eval_children
 from ..core.path import strokes_bbox
@@ -77,7 +77,6 @@ class DefList(QListWidget):
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._menu)
         self.itemDoubleClicked.connect(lambda it: editor.enter_def(it.data(Qt.ItemDataRole.UserRole)))
-        self.itemClicked.connect(self._clicked)
 
     def mimeData(self, items):
         md = QMimeData()
@@ -88,9 +87,13 @@ class DefList(QListWidget):
     def mimeTypes(self):
         return [DEF_MIME]
 
-    def _clicked(self, it):
-        if self.editor.display_mode() != "timeline" or self.editor.context[0] == "clip":
-            self.editor.place_instance(it.data(Qt.ItemDataRole.UserRole))
+    def delete_current(self):
+        it = self.currentItem()
+        if it is not None:
+            d = self.editor.doc.library.get(it.data(Qt.ItemDataRole.UserRole))
+            self.editor.delete_def(it.data(Qt.ItemDataRole.UserRole))
+            if d is not None:
+                self.editor.statusMessage.emit(f"Forme « {d.name} » supprimée (Ctrl+Z pour annuler)")
 
     def _menu(self, pos):
         it = self.itemAt(pos)
@@ -103,7 +106,7 @@ class DefList(QListWidget):
         a_edit = m.addAction("Éditer")
         a_ren = m.addAction("Renommer…")
         m.addSeparator()
-        a_del = m.addAction("Supprimer…")
+        a_del = m.addAction("Supprimer (Suppr)")
         chosen = m.exec(self.mapToGlobal(pos))
         if chosen is a_place:
             self.editor.place_instance(def_id)
@@ -114,10 +117,8 @@ class DefList(QListWidget):
             if name:
                 self.editor.rename_def(def_id, name)
         elif chosen is a_del:
-            r = QMessageBox.question(self, "Supprimer la forme",
-                                     f"Supprimer « {d.name} » et toutes ses occurrences (scène et timeline) ?")
-            if r == QMessageBox.StandardButton.Yes:
-                self.editor.delete_def(def_id)
+            self.setCurrentItem(it)
+            self.delete_current()
 
 
 class ToolPanel(QWidget):
@@ -141,7 +142,7 @@ class ToolPanel(QWidget):
         lay.addWidget(ColorPanel(editor))
         lay.addWidget(section("Formes perso"))
         self.defs = DefList(editor)
-        self.defs.setToolTip("Clic : placer · Double-clic : éditer · Glisser vers la mire ou la timeline")
+        self.defs.setToolTip("Glisser vers la mire ou la timeline · Double-clic : éditer · Suppr : supprimer")
         lay.addWidget(self.defs, 1)
         self.empty = QLabel("Sélectionnez des calques puis clic droit → Créer une forme personnalisée.")
         self.empty.setWordWrap(True)

@@ -290,6 +290,17 @@ def main():
     check("rendu avec modifieurs", len(strokes) > 4, str(len(strokes)))
     app.processEvents()
     check("réglages affichés dans la ligne du modifieur", m.id in tree.param_widgets)
+    # Réglage au clic-glisser (même après un premier clic qui a mis le champ en saisie)
+    form = tree.param_widgets[sym.id]
+    field = form.fields["angle"]
+    L_ = Qt.MouseButton.LeftButton
+    c = QPoint(field.width() // 2, field.height() // 2)
+    send(field, QEvent.Type.MouseButtonPress, c, L_, L_, M.NoModifier)
+    send(field, QEvent.Type.MouseButtonRelease, c, L_, Qt.MouseButton.NoButton, M.NoModifier)
+    a0 = ed.find(sym.id).values["angle"]
+    drag(field, c, QPoint(c.x() + 60, c.y()))
+    check("clic + glisser à droite augmente la valeur", ed.find(sym.id).values["angle"] > a0,
+          f"{a0} → {ed.find(sym.id).values['angle']}")
     shot(win, "02_modifieurs")
 
     # ── Forme personnalisée ─────────────────────────────────────────────
@@ -387,6 +398,14 @@ def main():
     from ildagen.editor.export import export_ilda
     n = export_ilda(ed, os.path.join(tempfile.mkdtemp(), "t.ild"), 5, 25, 0.0, 4.0)
     check("export ILDA de l'animation", n == 100, f"{n} images")
+    # Suppr sur une forme personnalisée de la liste de gauche (annulable)
+    win.tools.defs.setCurrentRow(0)
+    win.tools.defs.setFocus()
+    app.processEvents()
+    win.tools.defs.delete_current()
+    check("Suppr supprime la forme personnalisée", len(ed.doc.library.defs) == 0 and not ed.doc.timeline.has_clips())
+    ed.undo()
+    check("annuler la suppression de la forme", len(ed.doc.library.defs) == 1 and ed.doc.timeline.has_clips())
     ed.dirty = False
     print("\n" + ("TOUT EST OK" if not errors else f"{len(errors)} problème(s) : {', '.join(errors)}"))
     return 1 if errors else 0

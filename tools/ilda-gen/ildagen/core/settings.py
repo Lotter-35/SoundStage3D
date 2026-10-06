@@ -21,7 +21,7 @@ DEFAULTS = {
                "rotation": 0.0, "flip_x": False, "flip_y": False, "power": 100.0},
     "export": {"format": 5, "fps": 30},
     # Couleur de tracé (barre de gauche) : appliquée aux nouvelles formes et par le seau
-    "brush": {"mode": 1, "color": [1.0, 1.0, 1.0], "bg": [1.0, 0.0, 0.0], "stops": [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
+    "brush": {"v": 2, "mode": 1, "color": [1.0, 1.0, 1.0], "bg": [1.0, 0.0, 0.0], "stops": [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
               "type": 0, "angle": 0.0},
     "ui": {"recent": []},
 }
@@ -53,6 +53,8 @@ class Settings:
             return
         for section, values in stored.items():
             if section in self.data and isinstance(values, dict):
+                if section == "brush" and values.get("v") != DEFAULTS["brush"]["v"]:
+                    continue   # couleurs d'une ancienne version : on repart des valeurs par défaut (blanc)
                 self.data[section].update(values)
 
     def save(self):

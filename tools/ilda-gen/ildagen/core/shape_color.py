@@ -22,7 +22,7 @@ ATTRS = {"mode": "color_mode", "color": "color", "stops": "stops", "type": "grad
 
 SPECS = [
     E("col.mode", "Couleur", COLOR_MODES),
-    C("col.color", "Couleur unie", (1.0, 0.0, 0.0)),
+    C("col.color", "Couleur unie", (1.0, 1.0, 1.0)),
     G("col.stops", "Dégradé", DEFAULT_STOPS),
     E("col.type", "Type de dégradé", GRAD_TYPES),
     F("col.angle", "Angle du dégradé", 0.0, -3600.0, 3600.0, "°", 1, soft_min=-180, soft_max=180),

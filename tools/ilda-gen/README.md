@@ -128,14 +128,14 @@ d'une forme reste prioritaire sur sa couleur propre.
 
 ## Calques et modifieurs
 
-Boutons sous les calques : **nouveau calque** (vide ; le prochain trait au crayon le remplit), **nouveau
+Boutons sous les calques : **Modifieur** (menu de tous les modifieurs), **nouveau calque** (vide ; le prochain trait au crayon le remplit), **nouveau
 groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **supprimer**.
 
 
 - Chaque forme est un calque. Glisser-déposer pour réordonner ou ranger dans un groupe (ligne bleue = position).
 - Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas : verrouiller. Un groupe
   verrouillé ne se déplie plus mais se sélectionne et se déplace comme un seul bloc.
-- **Modifieurs** (clic droit → Ajouter un modifieur) : ils agissent sur tout ce qui est **en dessous d'eux dans
+- **Modifieurs** (bouton « Modifieur » sous les calques, ou clic droit → Ajouter un modifieur) : ils agissent sur tout ce qui est **en dessous d'eux dans
   le même groupe**. Leurs réglages s'affichent sous la ligne du calque et dans Propriétés.
 - **Modifieur sur modifieur** : clic droit sur un modifieur → Ajouter un sous-modifieur (Translation, Rotation,
   Échelle), ou glisser une Translation sur un modifieur. Exemples : Translation sur Dots = décalage des points le
@@ -151,8 +151,8 @@ Luminosité, Fondu le long du tracé, Stroboscope, Pulsation.
 ## Formes personnalisées
 
 Sélectionner des calques (ou rien = tout) → clic droit → **Créer une forme personnalisée**. Les calques sont
-remplacés par une occurrence de la forme, qui apparaît à gauche. Clic : la placer ; glisser : vers la mire ou
-la timeline ; double-clic : l'éditer.
+remplacés par une occurrence de la forme, qui apparaît à gauche. Glisser : vers la mire ou la timeline ;
+double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (annulable).
 
 ## Timeline
 

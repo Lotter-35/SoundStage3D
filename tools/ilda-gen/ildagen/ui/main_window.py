@@ -131,6 +131,8 @@ class MainWindow(QMainWindow):
         w = QApplication.focusWidget()
         if w is self.timeline.canvas:
             self.timeline.canvas.delete_selection()
+        elif w is self.tools.defs:
+            self.tools.defs.delete_current()
         else:
             self.editor.delete_selected()
 

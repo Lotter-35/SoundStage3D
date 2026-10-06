@@ -30,6 +30,7 @@ class ScrubField(QLineEdit):
         self.value = 0.0
         self._press = None
         self._scrubbing = False
+        self._typing = False
         self._acc = 0.0
         self.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setCursor(Qt.CursorShape.SizeHorCursor)
@@ -60,41 +61,46 @@ class ScrubField(QLineEdit):
             self.setText(self._fmt(self.value))
 
     def mousePressEvent(self, e):
-        if self.hasFocus():
-            super().mousePressEvent(e)
-            return
+        # Clic puis glisser à gauche / à droite = régler (même si le champ est en saisie) ;
+        # clic sans bouger = taper une valeur.
         if e.button() == Qt.MouseButton.LeftButton:
             self._press = e.position().x()
             self._acc = self.value
             self._scrubbing = False
+            self._typing = self.hasFocus()
+            if self._typing:
+                super().mousePressEvent(e)
 
     def mouseMoveEvent(self, e):
-        if self.hasFocus() or self._press is None:
-            super().mouseMoveEvent(e)
+        if self._press is None or not (e.buttons() & Qt.MouseButton.LeftButton):
             return
         dx = e.position().x() - self._press
         if not self._scrubbing and abs(dx) < 3:
             return
         if not self._scrubbing:
             self._scrubbing = True
+            if self.hasFocus():
+                self.clearFocus()
             self.editStarted.emit()
         self._press = e.position().x()
-        k = 0.1 if e.modifiers() & Qt.KeyboardModifier.ShiftModifier else (10.0 if e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier) else 1.0)
+        mods = e.modifiers()
+        k = 0.1 if mods & Qt.KeyboardModifier.ShiftModifier else (
+            10.0 if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier) else 1.0)
         self._acc = self._bound(self._acc + dx * self.px_step * k)
         self.value = self._clamp(self._acc)
         self.setText(self._fmt(self.value))
         self.valueEdited.emit(self.value)
 
     def mouseReleaseEvent(self, e):
-        if self.hasFocus():
-            super().mouseReleaseEvent(e)
-            return
         if self._scrubbing:
             self._scrubbing = False
             self._press = None
             self.editFinished.emit()
             return
         self._press = None
+        if self._typing:
+            super().mouseReleaseEvent(e)
+            return
         self.setFocus()
         self.setText(f"{self.value * self.factor:.{self.decimals}f}")
         self.selectAll()

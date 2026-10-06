@@ -59,6 +59,7 @@ class TimelineEditing:
             else:
                 v = L.y_to_v(y, row, L.value_range(spec, auto), spec, auto)
             if v is None:
+                self.editor.history.cancel()
                 return
             k = auto.set_key(t_local, v)
             self.editor.notify(timeline=True)

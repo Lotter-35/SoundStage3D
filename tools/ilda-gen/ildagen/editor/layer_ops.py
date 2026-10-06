@@ -302,8 +302,7 @@ class LayerOpsMixin:
     def brush(self):
         b = self.settings.section("brush")
         if int(b.get("mode", 1)) not in (1, 2):
-            b["mode"] = 1              # ancien mode « par défaut »
-        b.setdefault("bg", [1.0, 0.0, 0.0])
+            b["mode"] = 1
         return b
 
     def swap_colors(self):

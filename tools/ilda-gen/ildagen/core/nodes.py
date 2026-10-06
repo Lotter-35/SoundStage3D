@@ -107,7 +107,7 @@ class ShapeNode(Node):
         self.transform = Transform()
         # Couleur propre (0 = par défaut, 1 = unie, 2 = dégradé)
         self.color_mode = 0
-        self.color = (1.0, 0.0, 0.0)
+        self.color = (1.0, 1.0, 1.0)
         self.stops = [list(s) for s in shape_color.DEFAULT_STOPS]
         self.grad_type = 0
         self.grad_angle = 0.0

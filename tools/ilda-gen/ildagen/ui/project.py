@@ -24,6 +24,7 @@ class ProjectController(QObject):
         self.timer.timeout.connect(self.autosave)
         self.restart_autosave()
         waveform.loaded.connect(self._wave_loaded)
+        editor.audioChanged.connect(self._load_audio)
         waveform.failed.connect(lambda msg: editor.statusMessage.emit(f"Forme d'onde : {msg}"))
 
     # ── Fichiers ─────────────────────────────────────────────────────────
