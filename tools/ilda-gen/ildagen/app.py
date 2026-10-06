@@ -23,6 +23,10 @@ def main(argv=None):
     win.show()
     if len(argv) > 1 and argv[1].endswith(".ildaproj"):
         win.project.open(argv[1])
+    else:
+        win.project.restore_session()
+    if settings.get("general", "live_at_start"):
+        win.connection.btn_live.setChecked(True)
     return app.exec()
 
 

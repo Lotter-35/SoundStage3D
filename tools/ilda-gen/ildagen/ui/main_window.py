@@ -141,7 +141,6 @@ class MainWindow(QMainWindow):
 
     def open_settings(self):
         SettingsDialog(self.editor, self.live, self).exec()
-        self.project.restart_autosave()
         self.live.apply_fps()
 
     def about(self):
@@ -168,7 +167,11 @@ class MainWindow(QMainWindow):
         ui["r_split"] = bytes(self.right_split.saveState().toBase64()).decode()
 
     def closeEvent(self, e):
-        if not self.project.maybe_save():
+        if self.project.auto_on():
+            # Sauvegarde automatique : rien à demander, le projet sera rouvert au prochain lancement
+            self.project.timer.stop()
+            self.project.autosave()
+        elif not self.project.maybe_save():
             e.ignore()
             return
         self.playback.pause()

@@ -32,6 +32,10 @@ python tools/ilda-gen/ilda-gen.py            # ou : python tools/ilda-gen/ilda-g
 Pour le direct, lancer aussi le serveur SoundStage3D (`node server/server.js`) : il écoute l'IDN sur UDP 7255.
 Dans le jeu, régler un laser sur « ILDA live » et le même canal (1 à 16) que dans la barre de connexion.
 
+Au démarrage, le générateur **rouvre le dernier projet** et passe **en envoi live**. Chaque modification est
+**enregistrée automatiquement** dans le fichier du projet (un projet sans nom est gardé dans la sauvegarde
+automatique et rouvert la fois suivante). Ces trois comportements se désactivent dans Paramètres → Général.
+
 ## Disposition
 
 | Zone | Contenu |
@@ -174,7 +178,7 @@ En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
 
 ## Paramètres
 
-Général (couleur par défaut, lissage, sauvegarde automatique) · Grille · Sortie laser (vitesse, points,
+Général (couleur par défaut, lissage, enregistrement automatique, réouverture, live au démarrage) · Grille · Sortie laser (vitesse, points,
 blanking, coins) · Zone de sécurité · Trapèze · Taille / position (et puissance max).
 
 ## Tests

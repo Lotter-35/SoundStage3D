@@ -7,7 +7,8 @@ import sys
 
 DEFAULTS = {
     "network": {"host": "127.0.0.1", "port": 7255, "channel": 1, "fps": 30},
-    "general": {"default_color": [1.0, 1.0, 1.0], "smoothing": 40, "autosave_min": 3,
+    "general": {"default_color": [1.0, 1.0, 1.0], "smoothing": 40, "autosave": True,
+                "live_at_start": True, "reopen_last": True,
                 "show_blanking": False, "show_safety": True},
     # H4 — Optimisation des points
     "laser": {"kpps": 30000, "max_step": 0.03, "blank_base": 4, "blank_per_unit": 8,
@@ -23,7 +24,7 @@ DEFAULTS = {
     # Couleur de tracé (barre de gauche) : appliquée aux nouvelles formes et par le seau
     "brush": {"v": 2, "mode": 1, "color": [1.0, 1.0, 1.0], "bg": [1.0, 0.0, 0.0], "stops": [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
               "type": 0, "angle": 0.0},
-    "ui": {"recent": []},
+    "ui": {"recent": [], "last_project": ""},
 }
 
 

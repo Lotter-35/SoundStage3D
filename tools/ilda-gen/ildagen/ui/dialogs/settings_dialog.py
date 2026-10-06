@@ -13,7 +13,10 @@ TABS = [
     ("Général", "general", [
         ("default_color", "Couleur par défaut", "color", None, None, 0, "", "Couleur des formes sans modifieur de couleur"),
         ("smoothing", "Lissage du crayon", "int", 0, 100, 0, " %", "Lisse et simplifie les traits à main levée"),
-        ("autosave_min", "Sauvegarde automatique", "int", 0, 60, 0, " min", "0 = désactivée"),
+        ("autosave", "Enregistrer à chaque modification", "bool", None, None, 0, "",
+         "Projet sans nom : gardé dans la sauvegarde automatique"),
+        ("reopen_last", "Rouvrir le dernier projet au démarrage", "bool", None, None, 0, "", ""),
+        ("live_at_start", "Envoi live au démarrage", "bool", None, None, 0, "", ""),
         ("show_blanking", "Afficher les trajets éteints", "bool", None, None, 0, "", "Déplacements laser éteint (pointillés)"),
         ("show_safety", "Afficher la zone de sécurité", "bool", None, None, 0, "", ""),
     ]),
