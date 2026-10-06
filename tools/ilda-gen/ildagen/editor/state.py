@@ -55,6 +55,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.selected_clip = None
         self.last_touched = None   # dernier calque créé / sélectionné / colorié (repris par l'outil Sélection)
         self.drawn = []            # calques créés depuis qu'on a pris un outil de dessin (crayon, formes)
+        self.param_editing = False  # réglage en cours dans un panneau : la mire masque la sélection
         self._rev = 0
         self._cache = None
         self._animated = False

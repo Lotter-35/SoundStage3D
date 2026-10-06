@@ -93,7 +93,8 @@ class CanvasView(QWidget):
                 P.draw_laser_points(p, self.vt, lp[0], lp[1], settings.get("general", "show_blanking"))
         if settings.get("general", "show_safety"):
             P.draw_safety(p, self.vt, safety_rect(settings))
-        if self.editor.editing_visible():
+        if self.editor.editing_visible() and not self.editor.param_editing:
+            # Pendant un réglage dans un panneau, rien ne masque la forme
             self._draw_modifier_scope(p)
             if self.tool is not self.tools["select"]:
                 self.tools["select"].draw(p)

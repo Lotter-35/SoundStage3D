@@ -321,6 +321,11 @@ def main():
     send(field, QEvent.Type.MouseButtonPress, c, L_, L_, M.NoModifier)
     send(field, QEvent.Type.MouseButtonRelease, c, L_, Qt.MouseButton.NoButton, M.NoModifier)
     a0 = ed.find(sym.id).values["angle"]
+    send(field, QEvent.Type.MouseButtonPress, c, L_, L_, M.NoModifier)
+    send(field, QEvent.Type.MouseMove, QPoint(c.x() + 20, c.y()), Qt.MouseButton.NoButton, L_, M.NoModifier)
+    check("pendant un réglage : sélection masquée dans la mire", ed.param_editing)
+    send(field, QEvent.Type.MouseButtonRelease, QPoint(c.x() + 20, c.y()), L_, Qt.MouseButton.NoButton, M.NoModifier)
+    check("après le réglage : sélection réaffichée", not ed.param_editing)
     drag(field, c, QPoint(c.x() + 60, c.y()))
     check("clic + glisser à droite augmente la valeur", ed.find(sym.id).values["angle"] > a0,
           f"{a0} → {ed.find(sym.id).values['angle']}")

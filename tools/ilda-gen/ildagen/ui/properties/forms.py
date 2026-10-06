@@ -122,6 +122,7 @@ class ParamForm(QWidget):
 
     def _started(self, spec):
         self._editing = True
+        self.editor.param_editing = True
         self.editor.begin(f"Réglage : {spec.label}")
 
     def _edited(self, spec, v):
@@ -136,6 +137,7 @@ class ParamForm(QWidget):
 
     def _finished(self):
         self._editing = False
+        self.editor.param_editing = False
         self.editor.commit()
         self.editor.notify()
 
