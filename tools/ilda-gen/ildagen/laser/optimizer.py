@@ -31,7 +31,8 @@ def _line(pts, col, closed, cfg):
     ed = int(cfg["end_dwell"])
     cd = int(cfg["corner_dwell"])
     if n == 1:
-        return np.repeat(P, ed + 1, axis=0), np.repeat(C, ed + 1, axis=0)
+        n_pt = max(ed + 1, 10)   # point isolé : bien visible
+        return np.repeat(P, n_pt, axis=0), np.repeat(C, n_pt, axis=0)
     step = max(0.002, float(cfg["max_step"]))
     seg = np.diff(P, axis=0)
     L = np.hypot(seg[:, 0], seg[:, 1])

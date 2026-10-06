@@ -21,7 +21,7 @@ DEFAULTS = {
                "rotation": 0.0, "flip_x": False, "flip_y": False, "power": 100.0},
     "export": {"format": 5, "fps": 30},
     # Couleur de tracé (barre de gauche) : appliquée aux nouvelles formes et par le seau
-    "brush": {"mode": 0, "color": [1.0, 0.0, 0.0], "stops": [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
+    "brush": {"mode": 1, "color": [1.0, 1.0, 1.0], "bg": [1.0, 0.0, 0.0], "stops": [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
               "type": 0, "angle": 0.0},
     "ui": {"recent": []},
 }

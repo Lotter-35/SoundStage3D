@@ -11,7 +11,8 @@ class ToolEvent:
         self.screen = screen
         self.button = button
         self.shift = bool(mods & Qt.KeyboardModifier.ShiftModifier)
-        self.ctrl = bool(mods & Qt.KeyboardModifier.ControlModifier)
+        # Sur Mac, Qt appelle « Control » la touche Cmd et « Meta » la touche Ctrl : les deux sont acceptées
+        self.ctrl = bool(mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier))
         self.alt = bool(mods & Qt.KeyboardModifier.AltModifier)
 
 

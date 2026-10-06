@@ -278,7 +278,22 @@ class LayerOpsMixin:
 
     # ── Couleur de tracé et seau ─────────────────────────────────────────
     def brush(self):
-        return self.settings.section("brush")
+        b = self.settings.section("brush")
+        if int(b.get("mode", 1)) not in (1, 2):
+            b["mode"] = 1              # ancien mode « par défaut »
+        b.setdefault("bg", [1.0, 0.0, 0.0])
+        return b
+
+    def swap_colors(self):
+        b = self.brush()
+        b["color"], b["bg"] = b["bg"], b["color"]
+        b["mode"] = 1
+        self.brush_changed()
+
+    def reset_colors(self):
+        b = self.brush()
+        b["color"], b["bg"], b["mode"] = [1.0, 1.0, 1.0], [1.0, 0.0, 0.0], 1
+        self.brush_changed()
 
     def brush_changed(self):
         self.settings.save()
@@ -315,10 +330,6 @@ class LayerOpsMixin:
         self.mutate(label, do, structure=False)
         self.structureChanged.emit()
         return len(shapes)
-
-    def paint_selection(self):
-        n = self.paint_nodes(self.top_selected(), "Colorier la sélection")
-        self.statusMessage.emit(f"{n} forme(s) coloriée(s)" if n else "Aucune forme sélectionnée à colorier")
 
     # ── Formes personnalisées ────────────────────────────────────────────
     def create_custom_shape(self, name):

@@ -178,12 +178,32 @@ def main():
     radii = [math.hypot(*p) for p in pts]
     check("polaire : arc le long du cercle", len(pts) > 10 and max(radii) - min(radii) < 0.02,
           f"{len(pts)} points, rayon {min(radii):.3f}-{max(radii):.3f}")
+    n0 = len(ed.doc.scene.children)
     drag(view, sp(-0.25, 0.0), sp(-0.25, 0.0), M.ShiftModifier, steps=0)
-    check("Maj + clic suivant : même calque", guided.paths[0].pts.shape[0] > len(pts) and ed.doc.scene.children[0] is guided)
-    win.canvas.view.keyPressEvent.__self__  # noqa
-    view.setFocus()
-    from PySide6.QtTest import QTest
-    QTest.keyClick(view, Qt.Key.Key_Return)
+    point = ed.doc.scene.children[0]
+    check("Maj + clic = un point visible (nouveau calque)", len(ed.doc.scene.children) == n0 + 1
+          and len(point.paths[0].pts) == 1 and any(len(s_.pts) == 1 for s_ in ed.display_strokes()))
+    ed.set_grid_mode(1)
+    drag(view, sp(-0.5, 0.75), sp(0.25, 0.75), M.ShiftModifier)
+    line = ed.doc.scene.children[0]
+    check("Maj + glisser = une ligne (2 points)", len(line.paths[0].pts) == 2 and line.name == "Ligne")
+    # Ligne sélectionnée : poignées aux extrémités, pas d'épaisseur
+    ed.set_tool("select")
+    ed.set_selection([line.id])
+    app.processEvents()
+    from ildagen.ui.canvas.tools import line_handles as LH
+    ends = LH.world_endpoints(ed, line, ed.eval_context())
+    pos = LH.positions(view.vt, ends)
+    p1 = QPoint(int(round(pos["p1"].x())), int(round(pos["p1"].y())))
+    drag(view, p1, sp(0.5, 0.5), M.ShiftModifier)
+    ends = LH.world_endpoints(ed, ed.find(line.id), ed.eval_context())
+    check("ligne : extrémité déplacée (aimantée)", abs(ends[1][0] - 0.5) < 1e-6 and abs(ends[1][1] - 0.5) < 1e-6,
+          str(ends[1]))
+    check("ligne : début inchangé", abs(ends[0][0] + 0.5) < 1e-6 and abs(ends[0][1] - 0.75) < 1e-6)
+    check("ligne : pas de poignées d'épaisseur", view.tool.line_node() is not None)
+    ed.undo()
+    ed.undo()
+    ed.set_tool("pencil")
     ed.set_grid_mode(1)
     # Clic simple dans le vide avec le crayon = désélectionner
     ed.set_tool("pencil")
@@ -193,8 +213,9 @@ def main():
     check("crayon : clic dans le vide désélectionne", ed.selection == [] and len(ed.doc.scene.children) == n_layers)
     # Couleur de tracé + seau
     b = ed.brush()
-    b.update(mode=1, color=[0.0, 1.0, 0.0])
-    ed.brush_changed()
+    b.update(mode=1, color=[1.0, 1.0, 1.0], bg=[0.0, 1.0, 0.0])
+    ed.swap_colors()
+    check("X : inverser les couleurs", b["color"] == [0.0, 1.0, 0.0] and b["bg"] == [1.0, 1.0, 1.0])
     ed.set_tool("shape:rect")
     drag(view, sp(0.6, -0.6), sp(0.9, -0.9))
     green = ed.doc.scene.children[0]
@@ -208,8 +229,7 @@ def main():
     check("seau : dégradé appliqué", green.color_mode == 2 and out and out[0].col[:, 0].max() > 0.9 and out[0].col[:, 2].max() > 0.9)
     ed.undo()
     check("seau annulable", ed.find(green.id).color_mode == 1)
-    b.update(mode=0)
-    ed.brush_changed()
+    ed.reset_colors()
     ed.set_tool("select")
 
     # ── Calques : groupes, verrou, œil, presse-papiers ──────────────────

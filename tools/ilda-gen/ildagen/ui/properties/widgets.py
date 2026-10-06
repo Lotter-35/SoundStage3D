@@ -79,7 +79,7 @@ class ScrubField(QLineEdit):
             self._scrubbing = True
             self.editStarted.emit()
         self._press = e.position().x()
-        k = 0.1 if e.modifiers() & Qt.KeyboardModifier.ShiftModifier else (10.0 if e.modifiers() & Qt.KeyboardModifier.ControlModifier else 1.0)
+        k = 0.1 if e.modifiers() & Qt.KeyboardModifier.ShiftModifier else (10.0 if e.modifiers() & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier) else 1.0)
         self._acc = self._bound(self._acc + dx * self.px_step * k)
         self.value = self._clamp(self._acc)
         self.setText(self._fmt(self.value))

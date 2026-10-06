@@ -1,9 +1,10 @@
 """Outil Crayon.
 
 - clic gauche maintenu : dessin à main levée (un nouveau calque par trait, lissage réglable) ;
-- Maj : un point aimanté à la grille s'affiche ; Maj + clic pose un point, Maj + glisser trace une ligne
-  (grille orthogonale) ou un arc / un rayon (grille polaire). Tout s'enchaîne dans le même calque ;
-  Entrée, Échap ou un clic sans Maj terminent la forme ; cliquer sur le premier point la ferme.
+- Maj : le point aimanté à la grille s'affiche ;
+  Maj + clic : pose un POINT (un calque) ;
+  Maj + glisser : trace UNE ligne (grille orthogonale) ou un arc / un rayon (grille polaire), un calque.
+- clic simple dans le vide : désélectionne.
 """
 
 import math
@@ -27,8 +28,7 @@ class PencilTool(Tool):
     def __init__(self, view):
         super().__init__(view)
         self.free = None        # calque en cours de dessin à main levée
-        self.build_id = None    # calque en construction (Maj)
-        self.seg = None         # tracé guidé en cours (Maj + glisser)
+        self.seg = None         # point / ligne guidée en cours (Maj)
         self.hover_pt = None
         self.inv = np.eye(3)
 
@@ -40,76 +40,34 @@ class PencilTool(Tool):
             return tuple(world)
         return G.snap_point(world, self.editor.doc.grid)
 
-    def _new_node(self, first_world, label):
+    def _new_node(self, first_world, label, name="Tracé"):
         ed = self.editor
         ed.begin(label)
         parent, idx = ed.insertion_point()
-        node = ShapeNode("path", paths=[Path([[0.0, 0.0]])], name="Tracé")
+        node = ShapeNode("path", paths=[Path([[0.0, 0.0]])], name=name)
         ed.apply_brush(node)
         parent.add(node, idx)
-        ctx = ed.eval_context()
         try:
-            self.inv = np.linalg.inv(ed.parent_matrix(node, ctx))
+            self.inv = np.linalg.inv(ed.parent_matrix(node, ed.eval_context()))
         except np.linalg.LinAlgError:
             self.inv = np.eye(3)
-        node.paths[0].pts = self.local(first_world)[None]
+        node.paths[0].pts = np.array([mu.apply_point(self.inv, *first_world)])
         ed.notify(structure=True)
         return node
-
-    def local(self, world):
-        return np.array(mu.apply_point(self.inv, world[0], world[1]))
-
-    def build_node(self):
-        if self.build_id is None:
-            return None
-        n = self.editor.find(self.build_id)
-        if n is None or n.kind != "shape":
-            self.build_id = None
-        return n
 
     # ── Souris ───────────────────────────────────────────────────────────
     def press(self, ev):
         if ev.button != Qt.MouseButton.LeftButton or not self.editor.editing_visible():
             return
         if ev.shift:
-            self._press_guided(ev)
+            p = self.snap(ev.world)
+            node = self._new_node(p, "Point / ligne", "Point")
+            self.seg = {"node": node, "start": p, "sweep": 0.0,
+                        "angle": math.degrees(math.atan2(p[1], p[0])), "preview": None}
             return
-        self.finish()
         self.free = self._new_node(ev.world, "Dessin à main levée")
         self._free_pts = [np.array(ev.world, dtype=float)]
         self._last_screen = ev.screen
-
-    def _press_guided(self, ev):
-        ed = self.editor
-        p = self.snap(ev.world)
-        node = self.build_node()
-        if node is None:
-            node = self._new_node(p, "Tracé guidé")
-            self.build_id = node.id
-            ed.set_selection([node.id])
-        else:
-            ed.begin("Tracé guidé")
-            path = node.paths[-1]
-            first = mu.apply_point(np.linalg.inv(self.inv), *path.pts[0])
-            last = mu.apply_point(np.linalg.inv(self.inv), *path.pts[-1])
-            if math.dist(first, p) < 1e-6 and len(path.pts) > 2:
-                path.closed = True
-                ed.commit()
-                self.finish()
-                ed.notify()
-                return
-            if math.dist(last, p) > 1e-6:
-                seg, _ = G.guided_segment(last, p, ed.doc.grid)
-                self._append(node, seg[1:])
-        self.seg = {"start": p, "sweep": 0.0, "angle": math.degrees(math.atan2(p[1], p[0])), "preview": None}
-
-    def _append(self, node, world_pts):
-        if len(world_pts) == 0:
-            return
-        loc = mu.apply(self.inv, np.asarray(world_pts, dtype=float))
-        path = node.paths[-1]
-        path.pts = np.vstack((path.pts, loc))
-        self.editor.notify()
 
     def move(self, ev):
         if self.free is not None:
@@ -124,7 +82,14 @@ class PencilTool(Tool):
             self.seg["sweep"] += (a - self.seg["angle"] + 180.0) % 360.0 - 180.0
             self.seg["angle"] = a
             pts, _ = G.guided_segment(self.seg["start"], ev.world, self.editor.doc.grid, self.seg["sweep"])
+            pts = np.asarray(pts, dtype=float)
+            if math.dist(pts[0], pts[-1]) < 1e-9:
+                pts = pts[:1]
             self.seg["preview"] = pts
+            node = self.seg["node"]
+            node.paths[0].pts = mu.apply(self.inv, pts)
+            node.name = "Point" if len(pts) == 1 else ("Arc" if len(pts) > 2 else "Ligne")
+            self.editor.notify()
         self.hover(ev)
 
     def release(self, ev):
@@ -149,20 +114,16 @@ class PencilTool(Tool):
             ed.set_selection([node.id])
             return
         if self.seg is not None:
-            node = self.build_node()
-            prev = self.seg["preview"]
+            node = self.seg["node"]
             self.seg = None
-            if node is not None and prev is not None and len(prev) > 1 and math.dist(prev[0], prev[-1]) > 1e-6:
-                self._append(node, prev[1:])
-            if node is not None:
-                node.center_pivot()
+            node.center_pivot()
             ed.commit()
-            ed.notify()
+            ed.notify(structure=True)
+            ed.set_selection([node.id])
             self.view.update()
 
     def hover(self, ev):
-        shift = ev.shift
-        self.hover_pt = self.snap(ev.world) if shift else None
+        self.hover_pt = self.snap(ev.world) if ev.shift else None
         self.view.update()
 
     def modifiers_changed(self, mods):
@@ -173,43 +134,14 @@ class PencilTool(Tool):
             self.hover_pt = None
         self.view.update()
 
-    # ── Fin de construction ──────────────────────────────────────────────
-    def finish(self):
-        node = self.build_node()
-        if node is not None:
-            node.paths = [p for p in node.paths if len(p.pts) > 1]
-            if not node.paths and node.parent is not None:
-                self.editor.begin("Tracé guidé")
-                node.parent.remove(node)
-                self.editor.commit()
-                self.editor.notify(structure=True)
-            else:
-                node.center_pivot()
-        self.build_id = None
-        self.seg = None
-        self.view.update()
-
-    def key_press(self, key, mods):
-        if key in (Qt.Key.Key_Return, Qt.Key.Key_Enter, Qt.Key.Key_Escape):
-            self.finish()
-            return True
-        return False
-
     def deactivate(self):
-        self.finish()
         self.hover_pt = None
 
     # ── Dessin ───────────────────────────────────────────────────────────
     def draw(self, p):
-        node = self.build_node()
-        if node is not None and len(node.paths[-1].pts):
-            first = self.vt.to_screen(*mu.apply_point(np.linalg.inv(self.inv), *node.paths[-1].pts[0]))
-            p.setPen(QPen(theme.qc(theme.ACCENT), 1))
-            p.drawEllipse(first, 4, 4)
-        if self.seg is not None and self.seg["preview"] is not None:
+        if self.seg is not None and self.seg["preview"] is not None and len(self.seg["preview"]) > 1:
             sp = self.vt.to_screen_arr(self.seg["preview"])
-            pen = QPen(theme.qc(theme.ACCENT), 1.2, Qt.PenStyle.DashLine)
-            p.setPen(pen)
+            p.setPen(QPen(theme.qc(theme.ACCENT, 0.5), 1, Qt.PenStyle.DashLine))
             for i in range(len(sp) - 1):
                 p.drawLine(QPointF(*sp[i]), QPointF(*sp[i + 1]))
         if self.hover_pt is not None:

@@ -10,6 +10,7 @@ from ....core.evaluator import hit_test, node_quad
 from ... import theme
 from ..painter import draw_guides
 from . import gestures as GS
+from . import line_handles as LH
 from .base import Tool
 from .selection_frame import build_frame, draw_frame, handle_cursor, hit_handle, inside_frame, pickable
 
@@ -35,6 +36,15 @@ class SelectTool(Tool):
         if not self.editor.editing_visible():
             return None
         return build_frame(self.editor, ctx or self.editor.eval_context())
+
+    def line_node(self):
+        """La forme sélectionnée si c'est une ligne seule (poignées 1D)."""
+        if not self.editor.editing_visible():
+            return None
+        sel = [n for n in self.editor.top_selected() if n.kind != "modifier"]
+        if len(sel) == 1 and LH.is_line(sel[0]) and not sel[0].locked and not sel[0].locked_ancestor():
+            return sel[0]
+        return None
 
     def transform_locked(self, frame):
         return any(n.locked and n.kind != "group" for n in frame.nodes)
@@ -75,7 +85,15 @@ class SelectTool(Tool):
         ed = self.editor
         ctx = ed.eval_context()
         frame = self.frame(ctx)
-        if frame is not None and not self.transform_locked(frame):
+        line = self.line_node()
+        if line is not None:
+            ends = LH.world_endpoints(ed, line, ctx)
+            hid = LH.hit(self.vt, ends, ev.screen)
+            if hid is not None:
+                self._start("line", ev, ctx, frame, hid, "Rotation" if hid == "rot" else "Modifier la ligne")
+                self.drag["ends"] = ends
+                return
+        elif frame is not None and not self.transform_locked(frame):
             hid = hit_handle(self.vt, frame, ev.screen)
             if hid is not None:
                 label = {"rot": "Rotation", "tilt": "Inclinaison 3D", "pivot": "Déplacer le pivot"}.get(hid, "Redimensionner")
@@ -123,6 +141,8 @@ class SelectTool(Tool):
         d = self.drag
         if d["kind"] == "move":
             self._drag_move(ev, d)
+        elif d["kind"] == "line":
+            self._drag_line(ev, d)
         else:
             self._drag_handle(ev, d)
         self.view.update()
@@ -138,6 +158,18 @@ class SelectTool(Tool):
         w = mu.translation(delta[0], delta[1])
         for n in d["frame"].nodes:
             self.editor.apply_world_matrix(n, d["base"][n.id], w, d["ctx"])
+
+    def _drag_line(self, ev, d):
+        node = d["frame"].nodes[0]
+        ends = d["ends"]
+        if d["hid"] == "rot":
+            mid = tuple((ends[0] + ends[1]) / 2)
+            w, _ = GS.rotate_matrix(mid, d["press_w"], np.array(ev.world, dtype=float), ev.shift)
+            self.editor.apply_world_matrix(node, d["base"][node.id], w, d["ctx"])
+            return
+        other = ends[1] if d["hid"] == "p0" else ends[0]
+        world = LH.constrain(self.editor, other, ev.world, ev.shift)
+        LH.set_endpoint(self.editor, node, d["hid"], world, d["ctx"])
 
     def _drag_handle(self, ev, d):
         ed = self.editor
@@ -207,6 +239,8 @@ class SelectTool(Tool):
             self.view.update()
             return
         if self.drag is not None:
+            if self.drag["kind"] == "line" and self.drag["hid"] != "rot":
+                LH.recenter(self.drag["frame"].nodes[0])
             self.drag = None
             self.guides = []
             self.editor.commit()
@@ -236,7 +270,14 @@ class SelectTool(Tool):
     def hover(self, ev):
         cur = Qt.CursorShape.ArrowCursor
         frame = self.frame()
-        if frame is not None and not self.transform_locked(frame):
+        line = self.line_node()
+        if line is not None:
+            hid = LH.hit(self.vt, LH.world_endpoints(self.editor, line, self.editor.eval_context()), ev.screen)
+            if hid is not None:
+                cur = Qt.CursorShape.CrossCursor
+            elif frame is not None and inside_frame(self.vt, frame, ev.screen):
+                cur = Qt.CursorShape.SizeAllCursor
+        elif frame is not None and not self.transform_locked(frame):
             hid = hit_handle(self.vt, frame, ev.screen)
             if hid is not None:
                 cur = handle_cursor(hid, frame)
@@ -271,7 +312,10 @@ class SelectTool(Tool):
     # ── Dessin ───────────────────────────────────────────────────────────
     def draw(self, p):
         frame = self.frame()
-        if frame is not None:
+        line = self.line_node()
+        if line is not None:
+            LH.draw(p, self.vt, LH.world_endpoints(self.editor, line, self.editor.eval_context()))
+        elif frame is not None:
             locked = self.transform_locked(frame)
             draw_frame(p, self.vt, frame, handles=not locked)
         if self.guides:

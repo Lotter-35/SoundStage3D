@@ -132,7 +132,8 @@ class CanvasView(QWidget):
         pos = e.position()
         mods = e.modifiers()
         pd = e.pixelDelta()
-        zoom_key = bool(mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.AltModifier))
+        zoom_key = bool(mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier |
+                                Qt.KeyboardModifier.AltModifier))
         if not pd.isNull() and not zoom_key:
             # Pavé tactile : déplacement de la vue
             self.vt.pan_pixels(pd.x(), pd.y())

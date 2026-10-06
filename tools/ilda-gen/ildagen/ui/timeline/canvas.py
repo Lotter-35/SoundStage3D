@@ -298,7 +298,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         mods = e.modifiers()
         pd = e.pixelDelta()
         ad = e.angleDelta()
-        if mods & Qt.KeyboardModifier.ControlModifier:
+        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
             self.zoom_at(1.0015 ** (ad.y() or ad.x()), e.position().x())
         elif mods & Qt.KeyboardModifier.ShiftModifier or abs(pd.x()) > abs(pd.y()) or abs(ad.x()) > abs(ad.y()):
             dx = pd.x() if not pd.isNull() else (ad.y() or ad.x()) / 2

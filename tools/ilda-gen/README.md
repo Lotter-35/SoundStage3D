@@ -46,11 +46,12 @@ Tous les séparateurs se déplacent ; la disposition est mémorisée.
 
 ## Raccourcis
 
-`Ctrl` = `Cmd` et `Alt` = `Option` sur Mac.
+Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `Suppr` = `⌫`.
 
 | Action | Raccourci |
 |---|---|
 | Sélection / Crayon / Seau | `V` / `B` / `G` |
+| Inverser les deux couleurs / couleurs par défaut | `X` / `D` |
 | Trait, Carré, Cercle, Triangle, Étoile, Polygone, Mire ILDA | `L` `R` `E` `T` `S` `P` `M` |
 | Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Maj+Z` ou `Ctrl+Y` |
 | Couper / Copier / Coller / Dupliquer | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Ctrl+D` |
@@ -77,10 +78,9 @@ Tous les séparateurs se déplacent ; la disposition est mémorisée.
 |---|---|
 | Glisser | Dessin à main levée (un calque par trait, lissage réglable dans Paramètres) |
 | `Maj` | Affiche le point aimanté sur la grille |
-| `Maj` + clic | Pose un point ; les clics suivants s'enchaînent dans le même calque |
-| `Maj` + glisser | Ligne (grille orthogonale) ; arc le long d'un cercle ou trait le long d'un rayon (grille polaire) |
-| Clic sur le premier point | Ferme la forme |
-| `Entrée` / `Échap` | Termine la forme |
+| `Maj` + clic | Pose un point (un calque) |
+| `Maj` + glisser | Une ligne (grille orthogonale) ; un arc le long d'un cercle ou un trait le long d'un rayon (grille polaire) |
+| Clic simple dans le vide | Désélectionne |
 
 ### Formes
 
@@ -105,11 +105,16 @@ Tous les séparateurs se déplacent ; la disposition est mémorisée.
 | Croix au centre | Déplacer le pivot ; `Maj` : aimanté (coins, milieux, centre, grille) |
 | Double-clic sur une forme personnalisée | L'éditer (toutes ses occurrences suivent) |
 
+Une **ligne** seule n'a pas d'épaisseur : pas de cadre, seulement ses deux extrémités (glisser ; `Maj` =
+aimant de grille, ou pas de 15° sans grille) et une poignée de rotation.
+
 ### Couleur de tracé et seau
 
-La section **Couleur** de la barre de gauche choisit la couleur des prochaines formes : **Défaut** (couleur des
-Paramètres), **Unie** (pastilles = couleurs pures du laser) ou **Dégradé** (le long du tracé, linéaire, radial ou
-angulaire, adapté à la taille de la forme). La couleur d'une forme se modifie ensuite dans Propriétés.
+Section **Couleur** de la barre de gauche (comme Photoshop) : le **grand carré** est la couleur active (clic
+pour la changer), le **petit carré** derrière est la seconde couleur (clic ou `X` pour inverser, `D` pour
+blanc / rouge). L'**aperçu du dégradé** à côté : clic pour tracer en dégradé ; son éditeur s'affiche dessous
+(le long du tracé, linéaire, radial ou angulaire). Les nouvelles formes et le seau prennent la couleur ou le
+dégradé actif. La couleur d'une forme se modifie ensuite dans Propriétés.
 
 | Geste (outil Seau, `G`) | Effet |
 |---|---|
@@ -117,7 +122,7 @@ angulaire, adapté à la taille de la forme). La couleur d'une forme se modifie 
 | Clic sur une forme sélectionnée | Colorie toute la sélection (groupes compris) |
 | `Alt` + clic | Colorie tout le groupe qui contient la forme |
 
-« Appliquer à la sélection » fait la même chose sans changer d'outil. Un modifieur de couleur placé au-dessus
+Un modifieur de couleur placé au-dessus
 d'une forme reste prioritaire sur sa couleur propre.
 
 ## Calques et modifieurs

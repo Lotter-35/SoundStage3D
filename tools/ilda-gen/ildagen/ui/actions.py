@@ -1,5 +1,7 @@
 """Actions de la fenêtre (menus + raccourcis clavier)."""
 
+import sys
+
 from PySide6.QtGui import QAction, QActionGroup, QKeySequence
 from PySide6.QtWidgets import QApplication, QLineEdit, QAbstractSpinBox
 
@@ -22,10 +24,19 @@ def build_actions(win):
     def act(key, text, slot, shortcut=None, checkable=False):
         a = QAction(text, win)
         if shortcut is not None:
-            if isinstance(shortcut, (list, tuple)):
-                a.setShortcuts([QKeySequence(s) if isinstance(s, str) else s for s in shortcut])
-            else:
-                a.setShortcut(QKeySequence(shortcut) if isinstance(shortcut, str) else shortcut)
+            items = shortcut if isinstance(shortcut, (list, tuple)) else [shortcut]
+            seqs = []
+            for s in items:
+                seqs += QKeySequence.keyBindings(s) if isinstance(s, SK) else [QKeySequence(s)]
+            if sys.platform == "darwin":
+                # « Ctrl » = Cmd sur Mac ; on accepte aussi la touche Ctrl physique (Meta pour Qt)
+                extra = []
+                for q in seqs:
+                    txt = q.toString(QKeySequence.SequenceFormat.PortableText)
+                    if "Ctrl+" in txt:
+                        extra.append(QKeySequence(txt.replace("Ctrl+", "Meta+")))
+                seqs += extra
+            a.setShortcuts(seqs)
         a.setCheckable(checkable)
         a.triggered.connect(slot)
         win.addAction(a)
@@ -76,6 +87,8 @@ def build_actions(win):
     act("tool_select", "Sélection", tool("select"), "V")
     act("tool_pencil", "Crayon", tool("pencil"), "B")
     act("tool_bucket", "Seau", tool("bucket"), "G")
+    act("swap_colors", "Inverser les couleurs", lambda: None if _typing() else ed.swap_colors(), "X")
+    act("reset_colors", "Couleurs par défaut", lambda: None if _typing() else ed.reset_colors(), "D")
     for k, label, _ in BASIC_SHAPES:
         act("tool_" + k, label, tool("shape:" + k), SHAPE_KEYS[k])
 
