@@ -167,7 +167,8 @@ double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (an
 1. **Musique…** pour importer un morceau (forme d'onde affichée), régler le **BPM** (ou **Tap**), le nombre de
    temps par mesure, la **grille** (temps, 1/2, 1/4, 1/8, triolets) et le départ de la **mesure 1** (« Ici » =
    tête de lecture).
-2. Glisser une forme personnalisée sur une piste : un clip est créé. Glisser le clip pour le déplacer, ses bords
+2. Glisser une forme personnalisée sur une piste : un clip est créé (des vignettes montrent la forme tout le
+   long du clip, automations comprises). Glisser le clip pour le déplacer, ses bords
    pour changer sa durée. L'**aimant** accroche tout à la grille (`Alt` pendant un glisser = libre).
 3. Clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel
    réglage (Propriétés, ligne du modifieur, ou déplacer / tourner la forme dans la mire) : l'automation s'y lie.
@@ -175,7 +176,8 @@ double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (an
 4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit = type de courbe
    (linéaire, accélération, ralentissement, en S, palier, Bézier personnalisé avec poignées) ou supprimer.
 5. Réglage **Actif** d'un modifieur (Propriétés) : automatisé, il n'active le modifieur que sur une partie du clip.
-6. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle.
+6. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
+7. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle.
 
 En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
 

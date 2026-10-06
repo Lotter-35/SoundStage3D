@@ -110,17 +110,63 @@ def draw_waveform(p, geo, peaks, peaks_per_s):
     p.drawLine(QPointF(HEADER_W, y0 + WAVE_H - 0.5), QPointF(geo.width, y0 + WAVE_H - 0.5))
 
 
-def draw_clip(p, geo, row, clip, ed, selected, muted):
+THUMB_LABEL_H = 16
+
+
+def render_thumb(ed, clip, t_local, size):
+    """Petite mire : la forme du clip à l'instant t_local."""
+    from PySide6.QtGui import QPainter, QPixmap
+    from ...core.evaluator import EvalContext, evaluate
+    from ..canvas.painter import draw_strokes
+    from ..canvas.viewport import FILL, Viewport
+    pm = QPixmap(size * 2, size * 2)
+    pm.setDevicePixelRatio(2.0)
+    pm.fill(theme.qc(theme.BG_MIRE))
+    d = ed.doc.library.get(clip.def_id)
+    if d is None:
+        return pm
+    ctx = EvalContext(ed.doc.library, clip.start + t_local, ed.doc.timeline.bpm, ed.default_color(),
+                      clip.overrides_at(t_local))
+    vt = Viewport()
+    vt.resize(size, size)
+    vt.zoom = 0.5 / FILL
+    qp = QPainter(pm)
+    qp.setRenderHint(QPainter.RenderHint.Antialiasing)
+    draw_strokes(qp, vt, evaluate(d.root, ctx), width=1.0)
+    qp.end()
+    return pm
+
+
+def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
     x, y, w, h = geo.clip_rect(row, clip)
     r = QRectF(x, y, w, h)
     d = ed.doc.library.get(clip.def_id)
     fill = theme.qc(theme.ACCENT, 0.22) if selected else theme.qc(theme.BG_FIELD)
     p.setBrush(fill)
+    p.setPen(Qt.PenStyle.NoPen)
+    p.drawRoundedRect(r, 3, 3)
+    # Vignettes de la forme tout le long du clip (une par carré, à l'instant de son centre)
+    size = int(h - THUMB_LABEL_H - 2)
+    if thumb is not None and size >= 12:
+        p.save()
+        p.setClipRect(r.adjusted(1, 1, -1, -1))
+        ty = y + THUMB_LABEL_H
+        left = max(x, HEADER_W - size)
+        k0 = int(max(0.0, (left - x) // size))
+        k = k0
+        while x + k * size < min(x + w, geo.width):
+            tx = x + k * size
+            t_local = min(clip.duration, max(0.0, (k * size + size / 2) / geo.pps))
+            p.setOpacity(0.35 if muted else 1.0)
+            p.drawPixmap(QPointF(tx + 1, ty), thumb(clip, t_local, size))
+            k += 1
+        p.restore()
+    p.setBrush(Qt.BrushStyle.NoBrush)
     p.setPen(QPen(theme.qc(theme.ACCENT) if selected else theme.qc(theme.BORDER), 1.5 if selected else 1))
     p.drawRoundedRect(r, 3, 3)
     if w > CHEVRON_W + 4:
         pm = icons.pixmap("chevron-down" if clip.expanded else "chevron-right", theme.TEXT_DIM, 12)
-        p.drawPixmap(QPointF(x + 3, y + (h - 12) / 2), pm)
+        p.drawPixmap(QPointF(x + 3, y + (THUMB_LABEL_H - 12) / 2), pm)
     if w > CHEVRON_W + 20:
         p.setPen(theme.qc(theme.TEXT_OFF if muted else theme.TEXT))
         p.setFont(theme.ui_font(11))
@@ -128,7 +174,7 @@ def draw_clip(p, geo, row, clip, ed, selected, muted):
         if clip.automations:
             label += f"   · {len(clip.automations)} automation" + ("s" if len(clip.automations) > 1 else "")
         fm = p.fontMetrics()
-        p.drawText(QRectF(x + CHEVRON_W + 2, y, w - CHEVRON_W - 6, h), Qt.AlignmentFlag.AlignVCenter,
+        p.drawText(QRectF(x + CHEVRON_W + 2, y, w - CHEVRON_W - 6, THUMB_LABEL_H), Qt.AlignmentFlag.AlignVCenter,
                    fm.elidedText(label, Qt.TextElideMode.ElideRight, int(w - CHEVRON_W - 6)))
     p.setBrush(Qt.BrushStyle.NoBrush)
 

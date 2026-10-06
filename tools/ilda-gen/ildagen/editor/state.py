@@ -57,6 +57,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.drawn = []            # calques créés depuis qu'on a pris un outil de dessin (crayon, formes)
         self.param_editing = False  # réglage en cours dans un panneau : la mire masque la sélection
         self._rev = 0
+        self.content_rev = 0
         self._cache = None
         self._animated = False
         self._t0 = time.perf_counter()
@@ -140,9 +141,11 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             self.statusMessage.emit("Rétabli")
 
     # ── Notifications ────────────────────────────────────────────────────
-    def _touch(self):
+    def _touch(self, content=True):
         self._rev += 1
         self._cache = None
+        if content:
+            self.content_rev += 1   # le contenu a changé (pas seulement la tête de lecture)
 
     def notify(self, structure=False, library=False, timeline=False):
         self._touch()

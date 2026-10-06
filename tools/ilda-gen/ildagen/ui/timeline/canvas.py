@@ -30,6 +30,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         self._wave_cache = None
         self.drag = None
         self.sel_key = None
+        self._thumbs = {}
+        self._thumbs_rev = -1
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAcceptDrops(True)
@@ -103,7 +105,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
                 D.draw_lane(p, g, r, self.editor, self.sel_key)
             else:
                 for c in r.track.clips:
-                    D.draw_clip(p, g, r, c, self.editor, c.id == sel_clip, r.track.muted)
+                    D.draw_clip(p, g, r, c, self.editor, c.id == sel_clip, r.track.muted, self.thumb)
         p.setClipping(False)
         if self.peaks is not None:
             p.drawPixmap(0, 0, self._waveform_pixmap())
@@ -114,6 +116,18 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         D.draw_corner(p, g, self.tl)
         D.draw_playhead(p, g, self.editor.playhead)
         p.end()
+
+    def thumb(self, clip, t_local, size):
+        """Vignette de la forme du clip à l'instant t (mire entière, automations comprises)."""
+        if self._thumbs_rev != self.editor.content_rev or len(self._thumbs) > 3000:
+            self._thumbs = {}
+            self._thumbs_rev = self.editor.content_rev
+        key = (clip.id, round(t_local, 3), size)
+        pm = self._thumbs.get(key)
+        if pm is None:
+            pm = D.render_thumb(self.editor, clip, t_local, size)
+            self._thumbs[key] = pm
+        return pm
 
     def _waveform_pixmap(self):
         g = self.geo
@@ -306,14 +320,19 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         ad = e.angleDelta()
         if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
             self.zoom_at(1.0015 ** (ad.y() or ad.x()), e.position().x())
-        elif mods & Qt.KeyboardModifier.ShiftModifier or abs(pd.x()) > abs(pd.y()) or abs(ad.x()) > abs(ad.y()):
-            dx = pd.x() if not pd.isNull() else (ad.y() or ad.x()) / 2
+        elif mods & Qt.KeyboardModifier.ShiftModifier:
+            # Maj + molette : défilement vertical des pistes
+            dy = pd.y() if not pd.isNull() else (ad.y() or ad.x()) / 2
+            self.scroll_by(-dy)
+        else:
+            # Molette : la timeline défile de gauche à droite
+            if not pd.isNull():
+                dx = pd.x() if abs(pd.x()) > abs(pd.y()) else pd.y()
+            else:
+                dx = (ad.x() if abs(ad.x()) > abs(ad.y()) else ad.y()) / 2
             self.geo.t0 = max(0.0, self.geo.t0 - dx / self.geo.pps)
             self.scrollChanged.emit()
             self.update()
-        else:
-            dy = pd.y() if not pd.isNull() else ad.y() / 2
-            self.scroll_by(-dy)
         e.accept()
 
     def scroll_by(self, dy):

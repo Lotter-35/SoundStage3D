@@ -9,7 +9,7 @@ class TimelineOpsMixin:
         t = max(0.0, float(t))
         if abs(t - self.playhead) > 1e-9:
             self.playhead = t
-            self._touch()
+            self._touch(content=False)
             self.playheadChanged.emit(t)
             self.docChanged.emit()
 
