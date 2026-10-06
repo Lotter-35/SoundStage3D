@@ -48,7 +48,7 @@ class LayerTreeView(QTreeView):
         self._style = DropIndicatorStyle(self.style())
         self.setStyle(self._style)
         self.setHeaderHidden(True)
-        self.setIndentation(14)
+        self.setIndentation(16)
         self.setUniformRowHeights(False)
         self.setMouseTracking(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
