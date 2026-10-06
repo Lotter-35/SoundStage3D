@@ -331,6 +331,7 @@ class LayerOpsMixin:
     # ── Couleur de tracé et seau ─────────────────────────────────────────
     def brush(self):
         b = self.settings.section("brush")
+        b["mode"] = 1
         if int(b.get("mode", 1)) not in (1, 2):
             b["mode"] = 1
         return b
@@ -369,11 +370,8 @@ class LayerOpsMixin:
         if node.kind != "shape":
             return
         b = self.brush()
-        node.color_mode = int(b["mode"])
+        node.color_mode = 1          # couleur unie (les dégradés passent par le modifieur Dégradé)
         node.color = tuple(b["color"])
-        node.stops = [list(s) for s in b["stops"]]
-        node.grad_type = int(b["type"])
-        node.grad_angle = float(b["angle"])
 
     def shapes_in(self, nodes):
         """Formes contenues dans des calques (les groupes sont parcourus, les modifieurs ignorés)."""

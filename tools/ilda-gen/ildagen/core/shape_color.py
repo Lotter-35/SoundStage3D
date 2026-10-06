@@ -9,10 +9,10 @@ import math
 import numpy as np
 
 from . import colorutil as cu
-from .params import C, E, F, G
+from .params import C, E
 from .path import resample_stroke
 
-COLOR_MODES = ["Par défaut", "Unie", "Dégradé"]
+COLOR_MODES = ["Par défaut", "Unie"]   # le dégradé se fait avec le modifieur Dégradé
 GRAD_TYPES = ["Le long du tracé", "Linéaire", "Radial", "Angulaire"]
 DEFAULT_STOPS = [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]]
 STEP = 0.02
@@ -23,9 +23,6 @@ ATTRS = {"mode": "color_mode", "color": "color", "stops": "stops", "type": "grad
 SPECS = [
     E("col.mode", "Couleur", COLOR_MODES),
     C("col.color", "Couleur unie", (1.0, 1.0, 1.0)),
-    G("col.stops", "Dégradé", DEFAULT_STOPS),
-    E("col.type", "Type de dégradé", GRAD_TYPES),
-    F("col.angle", "Angle du dégradé", 0.0, -3600.0, 3600.0, "°", 1, soft_min=-180, soft_max=180),
 ]
 
 

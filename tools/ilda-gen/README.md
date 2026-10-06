@@ -117,14 +117,12 @@ aimant de grille, ou pas de 15° sans grille) et une poignée de rotation.
 
 Section **Couleur** de la barre de gauche (comme Photoshop) : le **grand carré** est la couleur active (clic
 pour la changer), le **petit carré** derrière est la seconde couleur (clic ou `X` pour inverser, `D` pour
-blanc / rouge). L'**aperçu du dégradé** à côté : clic pour tracer en dégradé ; son éditeur s'affiche dessous
-(le long du tracé, linéaire, radial ou angulaire). Les nouvelles formes et le seau prennent la couleur ou le
-dégradé actif. **Si des formes sont sélectionnées, tout changement de couleur ou de dégradé s'applique à elles
-en direct** (annulable). La couleur d'une forme se modifie aussi dans Propriétés.
+blanc / rouge). Les nouvelles formes et le seau prennent la couleur active ; si des formes sont sélectionnées,
+changer la couleur les recolore en direct (annulable). **Les dégradés se font avec le modifieur Dégradé.**
 
 | Geste (outil Seau, `G`) | Effet |
 |---|---|
-| Clic sur une forme | Lui applique la couleur de tracé |
+| Clic sur une forme | Lui applique la couleur active |
 | Clic sur une forme sélectionnée | Colorie toute la sélection (groupes compris) |
 | `Alt` + clic | Colorie tout le groupe qui contient la forme |
 
