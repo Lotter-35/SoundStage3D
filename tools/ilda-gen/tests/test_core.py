@@ -165,6 +165,15 @@ def test_output_idn_ilda():
     assert data[:4] == b"ILDA" and data[7] == 5
 
 
+def test_line_snaps_on_center():
+    from ildagen.core.document import GridSettings
+    from ildagen.core.grid import smart_snap
+    g = GridSettings()
+    # Ligne horizontale de -0.3 à 0.21 : son bord gauche est presque sur -0.25… mais seul le centre compte
+    dx, dy, guides = smart_snap((-0.3, 0.1, 0.21, 0.1), [], g, 0.06)
+    assert abs((-0.3 + 0.21) / 2 + dx) < 1e-9, dx
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

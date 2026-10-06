@@ -104,8 +104,14 @@ def smart_snap(box, others, grid, threshold):
     for b in others:
         tx += [b[0], (b[0] + b[2]) / 2, b[2]]
         ty += [b[1], (b[1] + b[3]) / 2, b[3]]
+    w, h = box[2] - box[0], box[3] - box[1]
     mx = [box[0], (box[0] + box[2]) / 2, box[2]]
     my = [box[1], (box[1] + box[3]) / 2, box[3]]
+    # Ligne (forme très fine) : dans le sens de sa longueur, seul son centre s'aligne
+    if h < 0.05 * w:
+        mx = [mx[1]]
+    if w < 0.05 * h:
+        my = [my[1]]
 
     def best(ms, ts):
         found = None
@@ -113,7 +119,7 @@ def smart_snap(box, others, grid, threshold):
             for t in ts:
                 d = t - m
                 if abs(d) <= threshold and (found is None or abs(d) < abs(found[0]) - 1e-12 or
-                                            (abs(abs(d) - abs(found[0])) < 1e-12 and i == 1)):
+                                            (abs(abs(d) - abs(found[0])) < 1e-12 and m == ms[len(ms) // 2])):
                     found = (d, t)
         return found
 
