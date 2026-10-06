@@ -8,7 +8,8 @@ devra l'être. Chaque exigence a un identifiant (ex. `CAL-07`) pour pouvoir la s
 Légende :
 - **[Demandé]** : explicitement dans la note.
 - **[Déduit]** : pas écrit mais nécessaire pour que le demandé fonctionne.
-- **[Proposé]** : amélioration suggérée, à valider (voir § 14, questions).
+- **[Proposé]** : amélioration suggérée, pas encore validée.
+- **[Décidé]** : tranché lors des questions/réponses.
 
 ---
 
@@ -18,7 +19,12 @@ Légende :
 |---|---|---|
 | GEN-01 | Générateur ILDA **différent de ce qui existe sur le marché**, écrit soi-même. | Demandé |
 | GEN-02 | Écrit en **Python**. | Demandé |
-| GEN-03 | Envoie l'ILDA **directement à un serveur DAC** par le réseau. | Demandé |
+| GEN-03 | Envoie l'ILDA **directement au serveur SoundStage3D** (Node, `server/ildaLive.js`) en **IDN sur UDP**. | Demandé |
+| GEN-06 | Interface Qt **PySide6**, réécrite de zéro. Le code IDN et la conversion en points laser peuvent être réécrits. | Décidé |
+| GEN-07 | Fonctionne sous **macOS et Windows** (Python), `.exe` / `.app` à terme. | Décidé |
+| GEN-08 | Interface **en français**. | Décidé |
+| GEN-09 | Code dans `tools/ilda-gen/`, l'ancien outil est conservé dans `tools/ilda-gen-legacy/`. | Décidé |
+| GEN-10 | Code découpé en **nombreux petits fichiers** (objectif : moins de ~400 lignes par fichier). | Décidé |
 | GEN-04 | Workflow en 3 étages : **dessin** (calques/formes) → **modifieurs** (statiques) → **timeline** (modifieurs animés dans le temps, calée sur la musique). | Demandé |
 | GEN-05 | Tout doit être **fluide** (dessin, déplacement des calques, timeline). | Demandé |
 
@@ -45,7 +51,8 @@ Légende :
 | MEN-01 | Bouton **Fichier** classique en haut à gauche. | Demandé |
 | MEN-02 | **Nouveau projet**. | Demandé |
 | MEN-03 | **Sauvegarder le projet** = sauvegarde de **l'état complet du logiciel** (calques, groupes, modifieurs, formes personnalisées, timeline, musique liée, BPM, réglages réseau…). | Demandé |
-| MEN-04 | **Exporter en ILDA** (fichier `.ild`). | Demandé |
+| MEN-04 | **Exporter en ILDA** (fichier `.ild`) : **l'animation de la timeline s'il y en a une, sinon l'image fixe**. | Décidé |
+| MEN-08 | À l'export : choix du **nombre d'images par seconde** et du format ILDA (par défaut **format 5**, 2D couleurs réelles ; 4 = 3D couleurs réelles, 0/1 = anciens formats à palette). | Décidé |
 | MEN-05 | **Ouvrir un projet** existant. | Déduit |
 | MEN-06 | **Enregistrer sous…**, fichiers récents. | Proposé |
 | MEN-07 | **Importer une musique** (peut aussi être dans la timeline). | Demandé (emplacement à définir) |
@@ -62,12 +69,13 @@ Légende :
 
 | ID | Exigence | Statut |
 |---|---|---|
-| NET-01 | Champ **IP** du DAC. | Demandé |
-| NET-02 | Champ **Port**. | Demandé |
-| NET-03 | Choix du **réseau utilisé** (carte réseau / interface). | Demandé (sens exact à confirmer) |
-| NET-04 | **Indicateur de connexion** au DAC (connecté / non connecté). | Demandé |
+| NET-01 | Champ **IP** du DAC, par défaut **127.0.0.1**. | Décidé |
+| NET-02 | Champ **Port**, par défaut **7255** (IDN). | Décidé |
+| NET-03 | « Réseau utilisé » = l'**adresse IP** de destination (fusionné avec NET-01). | Décidé |
+| NET-04 | **Indicateur de connexion** au DAC, vérifié par **ping IDN régulier**. | Décidé |
 | NET-05 | Bouton **Envoi live ON/OFF** : envoie en direct au laser ce qu'on est en train de faire. | Demandé |
-| NET-06 | Bouton **Blackout / arrêt d'urgence** (coupe immédiatement la sortie laser). | Proposé |
+| NET-06 | **Bouton** Blackout / arrêt d'urgence (coupe immédiatement la sortie laser). | Décidé |
+| NET-07 | **Images par seconde** du flux IDN réglables. | Décidé |
 
 ---
 
@@ -94,8 +102,9 @@ Légende :
 | MIR-03 | Affichage optionnel d'une **grille polaire** : cercles concentriques + rayons, avec la **croix au centre**. | Demandé |
 | MIR-04 | Les deux modes de grille sont **exclusifs** (on choisit l'un ou l'autre, ou aucun). | Demandé |
 | MIR-05 | Densité des grilles réglable (pas, nombre de cercles, nombre de rayons). | Proposé |
-| MIR-06 | Zoom / déplacement de la vue de la mire. | Proposé |
+| MIR-06 | Zoom / déplacement de la vue de la mire, **jusqu'à voir les points laser un par un**. | Décidé |
 | MIR-07 | Rendu fidèle de ce que fait le laser (couleurs, points, trajets éteints optionnels). | Proposé |
+| MIR-08 | **Petit compteur** de points / risque de scintillement dans un coin de la mire. | Décidé |
 
 ---
 
@@ -110,8 +119,8 @@ Légende :
 | CRA-05 | **Shift + clic** : pose un point précisément sur la grille. | Demandé |
 | CRA-06 | **Shift + glisser** en grille orthogonale : trace une **ligne droite** entre deux points snappés. | Demandé |
 | CRA-07 | **Shift + glisser** en grille polaire : le long d'un cercle → **arc de cercle** (arc, demi-cercle, cercle complet) ; le long d'un rayon de la croix → **trait radial**. | Demandé |
-| CRA-08 | Enchaîner plusieurs segments/arcs pour construire une forme complexe facilement. | Demandé (« on peut dessiner tout ça facilement ») |
-| CRA-09 | Lissage / simplification du trait à main levée (moins de points, laser plus stable). | Proposé |
+| CRA-08 | Les points / segments / arcs posés avec Shift s'enchaînent **dans le même calque** (on termine la forme avec Entrée, Échap ou en changeant d'outil). | Décidé |
+| CRA-09 | Lissage / simplification du trait à main levée, **intensité réglable**. | Décidé |
 
 ---
 
@@ -124,7 +133,7 @@ Légende :
 | SEL-01 | Clic sur une forme dans la mire = sélection (et sélection du calque correspondant). | Demandé |
 | SEL-02 | Forme sélectionnée entourée d'un **cadre en pointillés** (boîte englobante), quelle que soit la forme (triangle, étoile…). | Demandé |
 | SEL-03 | Sélection multiple dans la mire (Ctrl/Shift + clic). | Demandé (« on sélectionne différentes formes ») |
-| SEL-04 | Sélection par **rectangle** (glisser dans le vide). | Proposé |
+| SEL-04 | Sélection par **rectangle** (glisser dans le vide). | Décidé |
 | SEL-05 | Copier / couper / coller / supprimer **depuis la mire** comme depuis les calques. | Demandé |
 | SEL-06 | Glisser la forme = **déplacement**. | Demandé |
 
@@ -146,11 +155,11 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TRF-10 | Glisser la **poignée au-dessus** du cadre | **Rotation** | Demandé |
 | TRF-11 | **Shift** + rotation | Rotation par pas de 15° | Demandé |
 | TRF-12 | Déplacer le **point de pivot** | Change le centre de rotation/échelle | Proposé |
-| TRF-13 | **Shift** + déplacement | Contraint à l'axe H/V **et/ou** snap sur la grille : la forme se **centre** sur les lignes, la croix, les cercles | Demandé |
+| TRF-13 | **Shift** + déplacement | Magnétisme : le **centre**, les **bords** de la forme et les **autres formes** (guides intelligents) s'accrochent à la grille, à la croix, aux cercles et entre eux | Décidé |
 | TRF-14 | **Alt** + déplacement | Duplique la forme | Proposé |
 | TRF-15 | Flèches clavier / Shift + flèches | Déplacement fin (1 / 10 unités) | Proposé |
 | TRF-16 | Clic droit → Symétrie horizontale / verticale (flip) | Retourne la forme | Proposé |
-| TRF-17 | **Déplacement en 3 dimensions** : rotation autour de X et Y (inclinaison en perspective) et position Z | Demandé (sens à confirmer) |
+| TRF-17 | **Déplacement en 3 dimensions** = **incliner la forme autour de X et Y avec effet de perspective** | Décidé |
 | TRF-18 | Lignes simples : poignées dédiées (2 extrémités + rotation) | Déduit (existe déjà dans l'outil actuel) |
 
 ### 8.3 Création des formes de base
@@ -194,7 +203,8 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | GRP-05 | Chaque groupe se **déplie / replie**. | Demandé |
 | GRP-06 | **Verrouiller (lock)** un groupe : il ne peut plus être déplié, son contenu est figé. | Demandé |
 | GRP-07 | **Déverrouiller** pour éditer à nouveau les sous-groupes et calques internes. | Demandé |
-| GRP-08 | Un groupe verrouillé se sélectionne et se transforme comme **un seul bloc** dans la mire. | Déduit |
+| GRP-08 | Un groupe verrouillé reste **sélectionnable et déplaçable comme un seul bloc** dans la mire. | Décidé |
+| GRP-09 | On peut aussi **verrouiller un calque seul** (non éditable). | Décidé |
 
 ### 9.3 Visibilité
 
@@ -226,13 +236,14 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | ID | Exigence | Statut |
 |---|---|---|
 | MOD-01 | Un modifieur est un **élément de la pile des calques**, placé comme un calque. | Demandé |
-| MOD-02 | Il **agit sur tous les éléments situés en dessous de lui**. | Demandé (portée exacte à confirmer) |
+| MOD-02 | Il **agit sur les éléments situés en dessous de lui dans le même groupe** (et sur tout leur contenu). Au niveau racine : sur toute la pile en dessous. | Décidé |
 | MOD-03 | Permet de choisir **quelles zones** sont touchées (ex. colorer une partie, pas une autre) grâce à sa position dans la pile / les groupes. | Demandé |
 | MOD-04 | La **couleur n'est pas choisie au dessin** : elle vient des modifieurs de couleur. | Demandé |
-| MOD-05 | **Modifieurs sur modifieurs** : un modifieur peut modifier le résultat ou les réglages d'un autre (ex. translation X appliquée à un Dots → décale les points). | Demandé |
+| MOD-05 | **Modifieurs sur modifieurs** : un modifieur peut agir sur les réglages d'un autre. Ex. translation X sur un Dots = **décalage de phase** des points le long du trait (le trait ne commence plus toujours par un trou). Ex. translation sur une Symétrie = déplace le centre du miroir. | Décidé |
 | MOD-06 | **Statiques pour l'instant** : ils figent la forme d'une certaine manière, sans animation. | Demandé |
 | MOD-07 | Ajout d'un modifieur via **clic droit** dans les calques. | Déduit (règle « tout au clic droit ») |
-| MOD-08 | Réglage des paramètres d'un modifieur (valeurs numériques, couleurs). | Déduit (emplacement à définir) |
+| MOD-08 | Réglage des paramètres dans un panneau **Propriétés** situé **sous les calques**, **repliable**, et aussi **directement dans la ligne du calque** (réglages rapides). | Décidé |
+| MOD-11 | Couleur par défaut sans modifieur : **blanc**, configurable dans les Paramètres. | Décidé |
 | MOD-09 | Activer / désactiver un modifieur (œil ou bouton bypass). | Proposé |
 | MOD-10 | Liste de modifieurs **extensible** facilement (architecture plug-in). | Demandé (« on verra pour en rajouter ») |
 
@@ -244,20 +255,21 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | MDL-02 | **Translation X / Y** | Déplace les formes (haut/bas, gauche/droite). | Demandé |
 | MDL-03 | **Translation Z** | Profondeur (cité « X, Y, Z »). | Demandé (sens à confirmer) |
 | MDL-04 | **Rotation** | Tourne les formes. | Demandé |
-| MDL-05 | **Dégradé de couleur** | Couleur variable le long de la forme. | Demandé |
+| MDL-05 | **Dégradé de couleur** | **Entièrement configurable** : le long du tracé, linéaire (angle libre), radial, angulaire ; nombre de couleurs libre ; répétition, miroir. | Décidé |
 | MDL-06 | **Dots (pointillés)** | Transforme la ligne en suite de petits points. | Demandé |
-| MDL-07 | **Symétrie** | x2, x4, x8… « toutes les symétries possibles ». | Demandé |
+| MDL-07 | **Symétrie** | **Miroir** (axes) **et radiale / kaléidoscope** (copies tournées) ; x2, x4, x8, N. | Décidé |
 | MDL-08 | **Centre de symétrie déplaçable** | Le miroir n'est pas forcément au centre : déplaçable en X (et Y/Z) via un modifieur de translation appliqué sur la symétrie. | Demandé |
 | MDL-09 | **Translation de couleur** | Décalage / défilement du dégradé, avec direction réglable. | Demandé |
-| MDL-10 | Autres idées : échelle, ondulation (sinus), scintillement, découpe partielle (tracé de 0 à 100 %), luminosité. | Proposé |
+| MDL-10 | Catalogue complet : voir `docs/ilda-gen-modifieurs.md`. Le choix final reste à faire. | En attente |
 
-### 11.3 Création automatique de modifieurs (style FL Studio)
+### 11.3 Liaison automatique des automations (comme FL Studio)
 
 | ID | Exigence | Statut |
 |---|---|---|
-| AUT-01 | Mode où **manipuler une forme crée automatiquement le modifieur correspondant** : déplacer en X → ajoute un modifieur Translation X avec la valeur. | Demandé |
-| AUT-02 | Le modifieur ainsi créé reste **réglable après coup** (comme un paramètre « dernier touché » dans FL Studio). | Demandé |
-| AUT-03 | But : les modifieurs créés deviennent **animables dans la timeline**. | Demandé |
+| AUT-01 | On crée une **automation vide** (clic droit sur un clip de la timeline → Nouvelle automation). Elle est **en attente** et ne sait pas encore ce qu'elle pilote. | Décidé |
+| AUT-02 | On **modifie ensuite un réglage à la main** (dans les Propriétés, dans la ligne du calque, ou en manipulant la forme dans la mire) : l'automation **se lie automatiquement** à ce paramètre. | Décidé |
+| AUT-03 | Si le paramètre touché n'existe pas encore comme modifieur (ex. on déplace la forme en X), le **modifieur correspondant est créé** (Translation X) et l'automation s'y lie. | Décidé |
+| AUT-04 | La liaison reste modifiable (clic droit → Changer le paramètre lié / Délier). | Proposé |
 
 ---
 
@@ -272,9 +284,10 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TML-03 | Un clip peut être **déplié en hauteur** pour faire apparaître ses **modifieurs** (une ligne d'automation par modifieur / paramètre). | Demandé |
 | TML-04 | Un modifieur peut n'être actif que **sur une partie de la durée** du clip (ex. clip de 5 s, Dots seulement pendant 2 s). | Demandé |
 | TML-05 | Les paramètres (ex. position X/Y) **évoluent dans le temps**. | Demandé |
-| TML-06 | Chaque modifieur a une **courbe d'intensité** dessinable (pas seulement 0/1), comme les transitions des logiciels de montage : lent au début puis rapide, etc. | Demandé |
+| TML-06 | Chaque modifieur a une **courbe d'intensité** dessinable (pas seulement 0/1) : **points clés avec poignées de Bézier** ET **courbes prédéfinies** (linéaire, accélération, ralentissement, en S, palier…). | Décidé |
 | TML-07 | **Tout** paramètre de modifieur est animable (ex. direction de la translation de couleur). | Demandé |
-| TML-08 | Plusieurs clips en même temps (plusieurs pistes). | Déduit |
+| TML-08 | **Plusieurs pistes** jouées en même temps (points additionnés, compteur de scintillement visible). | Décidé |
+| TML-09 | Les formes personnalisées placées dans la timeline sont **liées** : modifier la forme met à jour toutes ses occurrences. | Décidé |
 
 ### 12.2 Navigation et lecture
 
@@ -304,7 +317,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 
 | ID | Exigence | Statut |
 |---|---|---|
-| AUD-01 | **Importer une musique**. | Demandé |
+| AUD-01 | **Importer une musique** (MP3, WAV ; FLAC/OGG si possible). | Décidé |
 | AUD-02 | Afficher la **forme d'onde (waveform)** dans la timeline. | Demandé |
 | AUD-03 | **Jouer la musique** synchronisée avec la tête de lecture. | Demandé |
 
@@ -316,15 +329,15 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 |---|---|---|
 | SAV-01 | Deux formats : **projet** (état complet du logiciel) et **fichier ILDA** exporté. | Demandé |
 | SAV-02 | Sauvegarde auto / récupération après plantage. | Proposé (existe déjà dans l'outil actuel) |
-| SAV-03 | **Annuler / Rétablir** (Ctrl + Z / Ctrl + Y) sur toutes les actions. | Proposé (indispensable) |
+| SAV-03 | **Annuler / Rétablir** (Ctrl + Z / Ctrl + Y, Cmd sur Mac) sur toutes les actions. | Décidé |
 | SAV-04 | Conversion forme → points laser : interpolation, points de coin, points éteints (blanking) pour les sauts. | Déduit |
 | SAV-05 | Protocole d'envoi au DAC (IDN UDP ou autre selon le DAC). | Déduit |
 
 ---
 
-## 14. Points à clarifier
+## 14. Direction artistique
 
-Voir la réponse associée dans la conversation ; les réponses seront reportées ici.
+Voir `docs/ilda-gen-direction-artistique.md` (thème sombre, épuré, professionnel, icônes).
 
 ---
 
