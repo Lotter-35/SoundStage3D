@@ -156,6 +156,7 @@ class ToolPanel(QWidget):
         editor.libraryChanged.connect(self.refresh_defs)
         editor.projectChanged.connect(self.refresh_defs)
         editor.docChanged.connect(self._doc_changed)
+        editor.contextChanged.connect(self.highlight_context)
         self._tool_changed(editor.tool)
         self.refresh_defs()
 
@@ -186,6 +187,24 @@ class ToolPanel(QWidget):
         if self.editor.context[0] in ("def", "clip"):
             self._thumb_timer.start(400)
 
+    def highlight_context(self):
+        """Clip sélectionné dans la timeline (ou forme en édition) : sa forme est surlignée dans la liste."""
+        kind, ref = self.editor.context
+        def_id = None
+        if kind == "clip":
+            clip = self.editor.current_clip()
+            def_id = clip.def_id if clip else None
+        elif kind == "def":
+            def_id = ref
+        if def_id is None:
+            return
+        for i in range(self.defs.count()):
+            it = self.defs.item(i)
+            if it.data(Qt.ItemDataRole.UserRole) == def_id:
+                self.defs.setCurrentItem(it)
+                self.defs.scrollToItem(it)
+                return
+
     def refresh_defs(self):
         cur = self.defs.currentItem().data(Qt.ItemDataRole.UserRole) if self.defs.currentItem() else None
         self.defs.clear()
@@ -198,3 +217,4 @@ class ToolPanel(QWidget):
                 self.defs.setCurrentItem(it)
         has = bool(self.editor.doc.library.defs)
         self.empty.setVisible(not has)
+        self.highlight_context()
