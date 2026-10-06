@@ -52,10 +52,17 @@ class LayerDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
         p.save()
+        in_scope = node.id in self.view.scope
+        is_source = node.id in self.view.scope_sources
         if selected:
             p.fillRect(r, theme.accent_soft())
+        elif in_scope:
+            p.fillRect(r, theme.qc(theme.ACCENT, 0.08))
         elif hovered:
             p.fillRect(r, theme.qc(theme.BG_HOVER))
+        if in_scope or is_source:
+            # Barre continue à gauche : du modifieur jusqu'au dernier calque qu'il modifie
+            p.fillRect(QRect(0, r.top(), 3, r.height()), theme.qc(theme.ACCENT, 1.0 if is_source else 0.55))
         visible = node.effectively_visible()
         dim = not visible
         color = theme.TEXT_OFF if dim else (theme.TEXT if node.kind != "modifier" else theme.TEXT)

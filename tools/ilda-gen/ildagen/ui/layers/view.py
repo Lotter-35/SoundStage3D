@@ -37,6 +37,9 @@ class LayerTreeView(QTreeView):
         self.editor = editor
         self.context_menu_builder = None
         self.param_widgets = {}
+        self.scope = set()          # calques touchés par le modifieur sélectionné ou survolé
+        self.scope_sources = set()
+        self._hover_mod = None
         self._syncing = False
         self.model_ = LayerModel(editor, self)
         self.setModel(self.model_)
@@ -63,6 +66,8 @@ class LayerTreeView(QTreeView):
         editor.structureChanged.connect(self.rebuild)
         editor.contextChanged.connect(self.rebuild)
         editor.selectionChanged.connect(self.sync_from_editor)
+        editor.selectionChanged.connect(self.update_scope)
+        editor.structureChanged.connect(self.update_scope)
         editor.docChanged.connect(self.viewport().update)
         self.rebuild()
 
@@ -131,6 +136,31 @@ class LayerTreeView(QTreeView):
         self._syncing = False
 
     # ── Souris ───────────────────────────────────────────────────────────
+    # ── Portée des modifieurs ────────────────────────────────────────────
+    def update_scope(self):
+        if self._hover_mod is not None and self.editor.find(self._hover_mod) is not None:
+            mods = [self.editor.find(self._hover_mod)]
+        else:
+            mods = [n for n in self.editor.selected_nodes() if n.kind == "modifier"]
+        self.scope = self.editor.modifier_scope(mods)
+        self.scope_sources = {m.id for m in mods}
+        self.viewport().update()
+
+    def mouseMoveEvent(self, e):
+        super().mouseMoveEvent(e)
+        ix = self.indexAt(e.position().toPoint())
+        node = ix.data(NODE_ROLE) if ix.isValid() else None
+        hover = node.id if node is not None and node.kind == "modifier" and ix.data(KIND_ROLE) == "node" else None
+        if hover != self._hover_mod:
+            self._hover_mod = hover
+            self.update_scope()
+
+    def leaveEvent(self, e):
+        super().leaveEvent(e)
+        if self._hover_mod is not None:
+            self._hover_mod = None
+            self.update_scope()
+
     def mousePressEvent(self, e):
         ix = self.indexAt(e.position().toPoint())
         if ix.isValid() and ix.data(KIND_ROLE) == "node" and e.button() == Qt.MouseButton.LeftButton:

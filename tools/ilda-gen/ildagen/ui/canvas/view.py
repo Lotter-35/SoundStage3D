@@ -94,11 +94,28 @@ class CanvasView(QWidget):
         if settings.get("general", "show_safety"):
             P.draw_safety(p, self.vt, safety_rect(settings))
         if self.editor.editing_visible():
+            self._draw_modifier_scope(p)
             if self.tool is not self.tools["select"]:
                 self.tools["select"].draw(p)
             self.tool.draw(p)
         P.draw_counter(p, self.rect(), self.stats[0], self.stats[1], self.vt.zoom)
         p.end()
+
+    def _draw_modifier_scope(self, p):
+        """Modifieur sélectionné : contour pointillé des formes qu'il modifie."""
+        ed = self.editor
+        mods = [n for n in ed.selected_nodes() if n.kind == "modifier"]
+        if not mods:
+            return
+        from ...core.evaluator import node_quad
+        ctx = ed.eval_context()
+        for m in mods:
+            for t in ed.modifier_targets(m):
+                if t.kind == "modifier":
+                    continue
+                q = node_quad(t, ctx)
+                if q is not None:
+                    P.draw_quad(p, self.vt, q, theme.qc(theme.ACCENT, 0.6))
 
     # ── Souris ───────────────────────────────────────────────────────────
     def _event(self, e, button=None):

@@ -283,6 +283,25 @@ class LayerOpsMixin:
         return copies
 
     # ── Modifieurs ───────────────────────────────────────────────────────
+    def modifier_targets(self, m):
+        """Calques sur lesquels agit un modifieur : ceux en dessous de lui dans son groupe
+        (ou, pour un sous-modifieur, le modifieur qui le porte)."""
+        p = m.parent
+        if p is None:
+            return []
+        if p.kind == "modifier":
+            return [p]
+        i = p.children.index(m)
+        return [n for n in p.children[i + 1:] if n.kind != "modifier"]
+
+    def modifier_scope(self, mods):
+        """Identifiants de tous les calques touchés (contenu des groupes compris)."""
+        ids = set()
+        for m in mods:
+            for t in self.modifier_targets(m):
+                ids.update(n.id for n in t.walk() if n.kind != "modifier" or t.kind == "modifier")
+        return ids
+
     def add_modifier(self, type_id, onto=None):
         if type_id not in registry:
             return None

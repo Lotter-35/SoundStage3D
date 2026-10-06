@@ -94,6 +94,18 @@ class PropertiesPanel(QWidget):
                 d.setObjectName("dim")
                 d.setContentsMargins(10, 2, 10, 0)
                 lay.addWidget(d)
+            if n.kind == "modifier":
+                targets = self.editor.modifier_targets(n)
+                if targets:
+                    names = ", ".join(t.name for t in targets[:4]) + (f" (+{len(targets) - 4})" if len(targets) > 4 else "")
+                    text = f"Agit sur : <b>{names}</b>"
+                else:
+                    text = "<span style='color:#d29922'>N'agit sur rien : placez-le au-dessus des calques à modifier</span>"
+                a = QLabel(text)
+                a.setTextFormat(Qt.TextFormat.RichText)
+                a.setWordWrap(True)
+                a.setContentsMargins(10, 4, 10, 0)
+                lay.addWidget(a)
             lay.addWidget(ParamForm(self.editor, n.id))
         elif len(nodes) > 1:
             lay.addWidget(self._hint(f"{len(nodes)} calques sélectionnés"))
