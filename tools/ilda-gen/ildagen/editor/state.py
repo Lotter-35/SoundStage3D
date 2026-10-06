@@ -53,6 +53,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.clipboard = []
         self.dirty = False
         self.selected_clip = None
+        self.last_touched = None   # dernier calque créé / sélectionné / colorié (repris par l'outil Sélection)
         self._rev = 0
         self._cache = None
         self._animated = False
@@ -296,6 +297,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
 
     def set_selection(self, ids):
         ids = list(dict.fromkeys(ids))
+        if ids:
+            self.last_touched = ids[-1]
         if ids != self.selection:
             self.selection = ids
             self.selectionChanged.emit()
@@ -319,6 +322,9 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         if tool != self.tool:
             self.tool = tool
             self.toolChanged.emit(tool)
+        if tool == "select" and not self.selection and self.last_touched and self.find(self.last_touched):
+            # Outil Sélection : reprend automatiquement le dernier calque créé ou touché
+            self.set_selection([self.last_touched])
 
     def set_grid_mode(self, mode):
         self.doc.grid.mode = mode

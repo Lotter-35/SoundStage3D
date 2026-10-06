@@ -350,6 +350,7 @@ class LayerOpsMixin:
                 self.apply_brush(s)
         self.mutate(label, do, structure=False)
         self.structureChanged.emit()
+        self.last_touched = shapes[-1].id
         return len(shapes)
 
     # ── Formes personnalisées ────────────────────────────────────────────

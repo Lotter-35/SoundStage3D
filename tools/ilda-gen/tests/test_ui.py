@@ -232,6 +232,10 @@ def main():
     n_layers = len(ed.doc.scene.children)
     click(view, sp(0.9, 0.9))
     check("crayon : clic dans le vide désélectionne", ed.selection == [] and len(ed.doc.scene.children) == n_layers)
+    ed.set_tool("select")
+    check("V reprend le dernier calque touché", len(ed.selection) == 1 and ed.selection[0] == ed.last_touched)
+    ed.clear_selection()
+    ed.set_tool("pencil")
     # Couleur de tracé + seau
     b = ed.brush()
     b.update(mode=1, color=[1.0, 1.0, 1.0], bg=[0.0, 1.0, 0.0])
