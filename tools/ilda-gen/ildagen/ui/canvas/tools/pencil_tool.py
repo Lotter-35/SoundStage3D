@@ -118,6 +118,7 @@ class PencilTool(Tool):
             node.center_pivot()
             ed.commit()
             ed.notify(structure=True)
+            ed.note_drawn(node)
             ed.set_selection([node.id])
             return
         if self.seg is not None:
@@ -126,6 +127,7 @@ class PencilTool(Tool):
             node.center_pivot()
             ed.commit()
             ed.notify(structure=True)
+            ed.note_drawn(node)
             ed.set_selection([node.id])
             self.view.update()
 

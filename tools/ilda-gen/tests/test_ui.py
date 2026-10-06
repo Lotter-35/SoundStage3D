@@ -217,6 +217,19 @@ def main():
     ed.undo()
     ed.set_tool("pencil")
     ed.set_grid_mode(1)
+    # Plusieurs traits au crayon puis V : tout le dessin est sélectionné
+    ed.set_tool("pencil")
+    n_before = len(ed.doc.scene.children)
+    drag(view, sp(-0.9, -0.2), sp(-0.7, -0.3))
+    drag(view, sp(-0.9, -0.4), sp(-0.7, -0.5))
+    drag(view, sp(-0.9, -0.6), sp(-0.7, -0.7))
+    new_ids = [n.id for n in ed.doc.scene.children[:len(ed.doc.scene.children) - n_before]]
+    ed.set_tool("select")
+    check("V après plusieurs traits : tous sélectionnés", sorted(ed.selection) == sorted(new_ids) and len(new_ids) == 3,
+          f"{len(ed.selection)} / {len(new_ids)}")
+    for _ in range(3):
+        ed.undo()
+    ed.clear_selection()
     # Bouton « Nouveau calque » : le prochain trait le remplit
     layer = ed.new_empty_layer()
     n_layers = len(ed.doc.scene.children)

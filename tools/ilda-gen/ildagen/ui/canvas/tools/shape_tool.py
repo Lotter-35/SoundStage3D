@@ -111,6 +111,7 @@ class ShapeTool(Tool):
         self.node.center_pivot()
         ed.commit()
         ed.notify(structure=True)
+        ed.note_drawn(self.node)
         ed.set_selection([self.node.id])
         self.node = None
         self.start = None

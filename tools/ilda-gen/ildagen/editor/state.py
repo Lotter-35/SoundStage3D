@@ -54,6 +54,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.dirty = False
         self.selected_clip = None
         self.last_touched = None   # dernier calque créé / sélectionné / colorié (repris par l'outil Sélection)
+        self.drawn = []            # calques créés depuis qu'on a pris un outil de dessin (crayon, formes)
         self._rev = 0
         self._cache = None
         self._animated = False
@@ -319,12 +320,26 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
 
     # ── Outils / grille ──────────────────────────────────────────────────
     def set_tool(self, tool):
+        previous = self.tool
         if tool != self.tool:
             self.tool = tool
             self.toolChanged.emit(tool)
-        if tool == "select" and not self.selection and self.last_touched and self.find(self.last_touched):
-            # Outil Sélection : reprend automatiquement le dernier calque créé ou touché
-            self.set_selection([self.last_touched])
+        drawing = tool == "pencil" or tool.startswith("shape:")
+        if drawing and not (previous == "pencil" or previous.startswith("shape:")):
+            self.drawn = []
+        if tool == "select":
+            # Outil Sélection : reprend tout ce qui vient d'être dessiné, sinon le dernier calque touché
+            drawn = [i for i in self.drawn if self.find(i) is not None]
+            self.drawn = []
+            if drawn:
+                self.set_selection(drawn)
+            elif not self.selection and self.last_touched and self.find(self.last_touched):
+                self.set_selection([self.last_touched])
+
+    def note_drawn(self, node):
+        """Un outil de dessin vient de créer ce calque."""
+        if node.id not in self.drawn:
+            self.drawn.append(node.id)
 
     def set_grid_mode(self, mode):
         self.doc.grid.mode = mode
