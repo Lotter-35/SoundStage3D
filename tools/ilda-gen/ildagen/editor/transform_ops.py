@@ -12,6 +12,10 @@ from ..core.path import Path
 from ..core.transform import TRANSFORM_KEYS
 
 
+# Ordre de grandeur de chaque réglage (pour comparer leurs variations)
+KEY_SCALE = {"rot": 180.0, "tilt_x": 90.0, "tilt_y": 90.0}
+
+
 class TransformOpsMixin:
     def parent_matrix(self, node, ctx):
         """Matrice affine parent → racine (sans les inclinaisons 3D)."""
@@ -31,11 +35,15 @@ class TransformOpsMixin:
         """Écrit une transformation : seules les valeurs qui changent passent par set_param (automations)."""
         cur = self.effective_transform(node)
         changed = False
+        diffs = []
         for k in TRANSFORM_KEYS:
-            v = getattr(tf, k)
-            if abs(v - getattr(cur, k)) > 1e-9:
-                self._set_param_quiet(node, "tf." + k, v)
-                changed = True
+            d = abs(getattr(tf, k) - getattr(cur, k))
+            if d > 1e-9:
+                diffs.append((d / KEY_SCALE.get(k, 1.0), k))
+        # Le réglage qui change le plus passe en premier : c'est lui qu'une automation en attente prendra
+        for _, k in sorted(diffs, reverse=True):
+            self._set_param_quiet(node, "tf." + k, getattr(tf, k))
+            changed = True
         if (tf.px, tf.py) != (node.transform.px, node.transform.py):
             node.transform.px, node.transform.py = tf.px, tf.py
             changed = True
