@@ -115,7 +115,8 @@ Section **Couleur** de la barre de gauche (comme Photoshop) : le **grand carré*
 pour la changer), le **petit carré** derrière est la seconde couleur (clic ou `X` pour inverser, `D` pour
 blanc / rouge). L'**aperçu du dégradé** à côté : clic pour tracer en dégradé ; son éditeur s'affiche dessous
 (le long du tracé, linéaire, radial ou angulaire). Les nouvelles formes et le seau prennent la couleur ou le
-dégradé actif. La couleur d'une forme se modifie ensuite dans Propriétés.
+dégradé actif. **Si des formes sont sélectionnées, tout changement de couleur ou de dégradé s'applique à elles
+en direct** (annulable). La couleur d'une forme se modifie aussi dans Propriétés.
 
 | Geste (outil Seau, `G`) | Effet |
 |---|---|

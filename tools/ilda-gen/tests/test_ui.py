@@ -254,6 +254,13 @@ def main():
     check("seau : dégradé appliqué", green.color_mode == 2 and out and out[0].col[:, 0].max() > 0.9 and out[0].col[:, 2].max() > 0.9)
     ed.undo()
     check("seau annulable", ed.find(green.id).color_mode == 1)
+    ed.set_selection([green.id])
+    b.update(mode=1, color=[1.0, 0.0, 1.0])
+    ed.brush_changed()
+    check("couleur à gauche = appliquée à la sélection", tuple(ed.find(green.id).color) == (1.0, 0.0, 1.0))
+    ed.undo()
+    check("annulable", tuple(ed.find(green.id).color) == (0.0, 1.0, 0.0))
+    ed.clear_selection()
     ed.reset_colors()
     ed.set_tool("select")
 

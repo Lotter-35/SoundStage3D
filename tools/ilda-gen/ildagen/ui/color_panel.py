@@ -143,6 +143,7 @@ class ColorPanel(QWidget):
     def _stops(self, v):
         self.editor.brush()["stops"] = v
         self.gswatch.update()
+        self.editor.brush_live()
 
     def _set(self, key, value, save=True):
         self.editor.brush()[key] = value
@@ -150,6 +151,7 @@ class ColorPanel(QWidget):
             self.editor.brush_changed()
         else:
             self.refresh()
+            self.editor.brush_live()
 
     def refresh(self):
         b = self.editor.brush()

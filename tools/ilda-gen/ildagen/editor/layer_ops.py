@@ -317,8 +317,22 @@ class LayerOpsMixin:
         self.brush_changed()
 
     def brush_changed(self):
+        """Couleur de tracé modifiée (fin du geste) : appliquée aussi aux formes sélectionnées."""
         self.settings.save()
+        self.brush_live()
+        if self.history.pending():
+            self.commit()
         self.brushChanged.emit()
+
+    def brush_live(self):
+        """Pendant un réglage (glisser du dégradé, de l'angle) : les formes sélectionnées suivent en direct."""
+        shapes = self.shapes_in(self.top_selected()) if self.editing_visible() else []
+        if not shapes:
+            return
+        self.begin("Couleur de la sélection")
+        for s in shapes:
+            self.apply_brush(s)
+        self.notify()
 
     def apply_brush(self, node):
         """Donne la couleur de tracé courante à une forme (sans historique : appelé dans un geste)."""
