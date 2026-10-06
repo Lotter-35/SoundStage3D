@@ -113,30 +113,6 @@ def draw_waveform(p, geo, peaks, peaks_per_s):
 THUMB_LABEL_H = 16
 
 
-def render_thumb(ed, clip, t_local, size):
-    """Petite mire : la forme du clip à l'instant t_local."""
-    from PySide6.QtGui import QPainter, QPixmap
-    from ...core.evaluator import EvalContext, evaluate
-    from ..canvas.painter import draw_strokes
-    from ..canvas.viewport import FILL, Viewport
-    pm = QPixmap(size * 2, size * 2)
-    pm.setDevicePixelRatio(2.0)
-    pm.fill(theme.qc(theme.BG_MIRE))
-    d = ed.doc.library.get(clip.def_id)
-    if d is None:
-        return pm
-    ctx = EvalContext(ed.doc.library, clip.start + t_local, ed.doc.timeline.bpm, ed.default_color(),
-                      clip.overrides_at(t_local))
-    vt = Viewport()
-    vt.resize(size, size)
-    vt.zoom = 0.5 / FILL
-    qp = QPainter(pm)
-    qp.setRenderHint(QPainter.RenderHint.Antialiasing)
-    draw_strokes(qp, vt, evaluate(d.root, ctx), width=1.0)
-    qp.end()
-    return pm
-
-
 def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
     x, y, w, h = geo.clip_rect(row, clip)
     r = QRectF(x, y, w, h)
@@ -157,8 +133,10 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
         while x + k * size < min(x + w, geo.width):
             tx = x + k * size
             t_local = min(clip.duration, max(0.0, (k * size + size / 2) / geo.pps))
-            p.setOpacity(0.35 if muted else 1.0)
-            p.drawPixmap(QPointF(tx + 1, ty), thumb(clip, t_local, size))
+            pm = thumb(clip, t_local, size)
+            if pm is not None:
+                p.setOpacity(0.35 if muted else 1.0)
+                p.drawPixmap(QPointF(tx + 1, ty), pm)
             k += 1
         p.restore()
     p.setBrush(Qt.BrushStyle.NoBrush)

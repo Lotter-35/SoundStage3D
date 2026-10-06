@@ -1,6 +1,6 @@
 """Zone de la timeline : affichage et interactions (tête de lecture, boucle, clips, automations)."""
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QPainter, QPixmap
 from PySide6.QtWidgets import QColorDialog, QInputDialog, QWidget
 
@@ -13,6 +13,7 @@ from . import lanes as L
 from .geometry import CHEVRON_W, CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry
 from .edit import TimelineEditing
 from .menus import TimelineMenus
+from .thumbs import ThumbCache
 
 MIN_PPS = 4.0
 MAX_PPS = 2000.0
@@ -30,8 +31,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         self._wave_cache = None
         self.drag = None
         self.sel_key = None
-        self._thumbs = {}
-        self._thumbs_rev = -1
+        self.thumbs = ThumbCache(editor)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAcceptDrops(True)
@@ -93,6 +93,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), theme.qc(theme.BG_APP))
         rows = g.rows(self.editor)
+        self.thumbs.begin_paint()
         p.setClipRect(QRectF(HEADER_W, g.top, g.width - HEADER_W, g.height - g.top))
         for i, r in enumerate(rows):
             if r.kind == "track":
@@ -118,18 +119,12 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         D.draw_corner(p, g, self.tl)
         D.draw_playhead(p, g, self.editor.playhead)
         p.end()
+        if self.thumbs.pending:
+            # Vignettes pas encore calculées : on continue juste après (l'interface reste fluide)
+            QTimer.singleShot(0, self.update)
 
     def thumb(self, clip, t_local, size):
-        """Vignette de la forme du clip à l'instant t (mire entière, automations comprises)."""
-        if self._thumbs_rev != self.editor.content_rev or len(self._thumbs) > 3000:
-            self._thumbs = {}
-            self._thumbs_rev = self.editor.content_rev
-        key = (clip.id, round(t_local, 3), size)
-        pm = self._thumbs.get(key)
-        if pm is None:
-            pm = D.render_thumb(self.editor, clip, t_local, size)
-            self._thumbs[key] = pm
-        return pm
+        return self.thumbs.get(clip, t_local, size)
 
     def _waveform_pixmap(self):
         g = self.geo

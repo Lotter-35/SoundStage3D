@@ -86,17 +86,13 @@ def resample_stroke(s, step):
         return s.copy()
     pts = closed_pts(s.pts, s.closed)
     col = closed_pts(s.col, s.closed)
-    out_p = [pts[:1]]
-    out_c = [col[:1]]
-    for i in range(1, len(pts)):
-        a, b = pts[i - 1], pts[i]
-        d = float(np.hypot(*(b - a)))
-        n = max(1, int(np.ceil(d / step)))
-        t = (np.arange(1, n + 1) / n)[:, None]
-        out_p.append(a + (b - a) * t)
-        out_c.append(col[i - 1] + (col[i] - col[i - 1]) * t)
-    p = np.vstack(out_p)
-    c = np.vstack(out_c)
+    seg = np.diff(pts, axis=0)
+    counts = np.maximum(1, np.ceil(np.hypot(seg[:, 0], seg[:, 1]) / step)).astype(int)
+    idx = np.repeat(np.arange(len(seg)), counts)
+    starts = np.cumsum(counts) - counts
+    t = ((np.arange(counts.sum()) - np.repeat(starts, counts) + 1) / counts[idx])[:, None]
+    p = np.vstack((pts[:1], pts[idx] + seg[idx] * t))
+    c = np.vstack((col[:1], col[idx] + (col[idx + 1] - col[idx]) * t))
     if s.closed:
         p, c = p[:-1], c[:-1]
     return Stroke(p, c, s.closed, s.kind, s.dwell)
