@@ -1,0 +1,119 @@
+"""Actions de la fenêtre (menus + raccourcis clavier)."""
+
+from PySide6.QtGui import QAction, QActionGroup, QKeySequence
+from PySide6.QtWidgets import QApplication, QLineEdit, QAbstractSpinBox
+
+from ..core.shapes import BASIC_SHAPES
+from .tool_panel import SHAPE_KEYS
+
+SK = QKeySequence.StandardKey
+
+
+def _typing():
+    """Vrai si l'utilisateur tape dans un champ texte (les raccourcis à une touche ne doivent pas agir)."""
+    w = QApplication.focusWidget()
+    return isinstance(w, (QLineEdit, QAbstractSpinBox))
+
+
+def build_actions(win):
+    ed = win.editor
+    A = {}
+
+    def act(key, text, slot, shortcut=None, checkable=False):
+        a = QAction(text, win)
+        if shortcut is not None:
+            if isinstance(shortcut, (list, tuple)):
+                a.setShortcuts([QKeySequence(s) if isinstance(s, str) else s for s in shortcut])
+            else:
+                a.setShortcut(QKeySequence(shortcut) if isinstance(shortcut, str) else shortcut)
+        a.setCheckable(checkable)
+        a.triggered.connect(slot)
+        win.addAction(a)
+        A[key] = a
+        return a
+
+    # Fichier
+    act("new", "Nouveau projet", win.project.new, SK.New)
+    act("open", "Ouvrir…", lambda: win.project.open(), SK.Open)
+    act("save", "Enregistrer", win.project.save, SK.Save)
+    act("save_as", "Enregistrer sous…", win.project.save_as, "Ctrl+Shift+S")
+    act("music", "Importer une musique…", win.project.import_music, "Ctrl+Shift+I")
+    act("export", "Exporter en ILDA…", win.export_ilda, "Ctrl+E")
+    act("recover", "Récupérer la sauvegarde automatique", win.project.recover)
+    act("quit", "Quitter", win.close, SK.Quit)
+
+    # Édition
+    act("undo", "Annuler", ed.undo, SK.Undo)
+    act("redo", "Rétablir", ed.redo, [QKeySequence(SK.Redo), QKeySequence("Ctrl+Y")])
+    act("cut", "Couper", ed.cut_selection, SK.Cut)
+    act("copy", "Copier", ed.copy_selection, SK.Copy)
+    act("paste", "Coller", ed.paste, SK.Paste)
+    act("duplicate", "Dupliquer", ed.duplicate_selection, "Ctrl+D")
+    act("delete", "Supprimer", win.delete_pressed, [QKeySequence("Delete"), QKeySequence("Backspace")])
+    act("select_all", "Tout sélectionner", ed.select_all, SK.SelectAll)
+    act("group", "Grouper", ed.group_selected, "Ctrl+G")
+    act("ungroup", "Dégrouper", ed.ungroup_selected, "Ctrl+Shift+G")
+
+    # Affichage
+    grid_group = QActionGroup(win)
+    for i, label in enumerate(("Sans grille", "Grille orthogonale", "Grille polaire")):
+        a = act(f"grid{i}", label, lambda _=False, m=i: ed.set_grid_mode(m), f"Ctrl+{i + 1}", checkable=True)
+        grid_group.addAction(a)
+    act("fit", "Ajuster la vue", lambda: win.canvas.view.fit_view(), "Ctrl+0")
+    act("zoom_in", "Zoomer", lambda: win.canvas.view.zoom_by(1.4), SK.ZoomIn)
+    act("zoom_out", "Dézoomer", lambda: win.canvas.view.zoom_by(1 / 1.4), SK.ZoomOut)
+    act("view_scene", "Afficher la scène", lambda: ed.set_view_source("scene"))
+    act("view_tl", "Afficher la timeline", lambda: ed.set_view_source("timeline"))
+
+    # Lecture
+    act("play", "Lecture / pause", lambda: None if _typing() else win.playback.toggle(), "Space")
+    act("stop", "Stop", win.playback.stop)
+    act("add_track", "Ajouter une piste", ed.add_track)
+
+    # Outils (touches simples, ignorées pendant la saisie)
+    def tool(t):
+        return lambda: None if _typing() else ed.set_tool(t)
+    act("tool_select", "Sélection", tool("select"), "V")
+    act("tool_pencil", "Crayon", tool("pencil"), "B")
+    for k, label, _ in BASIC_SHAPES:
+        act("tool_" + k, label, tool("shape:" + k), SHAPE_KEYS[k])
+
+    act("settings", "Paramètres…", win.open_settings, SK.Preferences if not QKeySequence(SK.Preferences).isEmpty() else "Ctrl+,")
+    act("about", "À propos", win.about)
+    return A
+
+
+def build_menus(win, A):
+    mb = win.menuBar()
+    m = mb.addMenu("Fichier")
+    for k in ("new", "open"):
+        m.addAction(A[k])
+    win.recent_menu = m.addMenu("Récents")
+    m.addSeparator()
+    for k in ("save", "save_as"):
+        m.addAction(A[k])
+    m.addSeparator()
+    m.addAction(A["music"])
+    m.addAction(A["export"])
+    m.addSeparator()
+    m.addAction(A["recover"])
+    m.addSeparator()
+    m.addAction(A["quit"])
+
+    m = mb.addMenu("Édition")
+    for k in ("undo", "redo", None, "cut", "copy", "paste", "duplicate", "delete", None, "select_all", None,
+              "group", "ungroup"):
+        m.addSeparator() if k is None else m.addAction(A[k])
+
+    m = mb.addMenu("Affichage")
+    for k in ("grid0", "grid1", "grid2", None, "view_scene", "view_tl", None, "fit", "zoom_in", "zoom_out"):
+        m.addSeparator() if k is None else m.addAction(A[k])
+
+    m = mb.addMenu("Lecture")
+    for k in ("play", "stop", None, "add_track"):
+        m.addSeparator() if k is None else m.addAction(A[k])
+
+    m = mb.addMenu("Paramètres")
+    m.addAction(A["settings"])
+    m.addSeparator()
+    m.addAction(A["about"])

@@ -260,7 +260,8 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | MDL-07 | **Symétrie** | **Miroir** (axes) **et radiale / kaléidoscope** (copies tournées) ; x2, x4, x8, N. | Décidé |
 | MDL-08 | **Centre de symétrie déplaçable** | Le miroir n'est pas forcément au centre : déplaçable en X (et Y/Z) via un modifieur de translation appliqué sur la symétrie. | Demandé |
 | MDL-09 | **Translation de couleur** | Décalage / défilement du dégradé, avec direction réglable. | Demandé |
-| MDL-10 | Catalogue complet : voir `docs/ilda-gen-modifieurs.md`. Le choix final reste à faire. | En attente |
+| MDL-10 | Modifieurs retenus en plus (voir `docs/ilda-gen-modifieurs.md`) : Profondeur Z, Échelle, Miroir, Pivot, Répétition linéaire, Onde, Simplification, Tirets, Dessin progressif, Masque de zone, **Beams**, Arc-en-ciel, **Teinte / saturation / luminosité**, **Segments alternés**, **Couleur aléatoire**, **Remplacement de couleur**, Luminosité, **Fondu le long du tracé**, **Stroboscope**, **Pulsation**. | Décidé |
+| MDL-11 | Réglages de sortie dans Paramètres : **H1 Zone de sécurité, H2 Correction trapèze, H3 Taille / position, H4 Optimisation des points**. | Décidé |
 
 ### 11.3 Liaison automatique des automations (comme FL Studio)
 
@@ -268,7 +269,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 |---|---|---|
 | AUT-01 | On crée une **automation vide** (clic droit sur un clip de la timeline → Nouvelle automation). Elle est **en attente** et ne sait pas encore ce qu'elle pilote. | Décidé |
 | AUT-02 | On **modifie ensuite un réglage à la main** (dans les Propriétés, dans la ligne du calque, ou en manipulant la forme dans la mire) : l'automation **se lie automatiquement** à ce paramètre. | Décidé |
-| AUT-03 | Si le paramètre touché n'existe pas encore comme modifieur (ex. on déplace la forme en X), le **modifieur correspondant est créé** (Translation X) et l'automation s'y lie. | Décidé |
+| AUT-03 | Si on déplace / tourne / met à l'échelle la forme dans la mire, l'automation se lie directement à la **position / rotation / échelle de la forme** (réglages de transformation de chaque calque, automatables comme ceux d'un modifieur) : pas de modifieur caché ajouté dans la pile. | Décidé (implémentation) |
 | AUT-04 | La liaison reste modifiable (clic droit → Changer le paramètre lié / Délier). | Proposé |
 
 ---
@@ -282,7 +283,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TML-01 | On place des **formes personnalisées** dans la timeline. | Demandé |
 | TML-02 | Réglage de la **durée d'affichage** du clip (présent / absent). | Demandé |
 | TML-03 | Un clip peut être **déplié en hauteur** pour faire apparaître ses **modifieurs** (une ligne d'automation par modifieur / paramètre). | Demandé |
-| TML-04 | Un modifieur peut n'être actif que **sur une partie de la durée** du clip (ex. clip de 5 s, Dots seulement pendant 2 s). | Demandé |
+| TML-04 | Un modifieur peut n'être actif que **sur une partie de la durée** du clip (ex. clip de 5 s, Dots seulement pendant 2 s) : réglage **Actif** automatable. | Demandé |
 | TML-05 | Les paramètres (ex. position X/Y) **évoluent dans le temps**. | Demandé |
 | TML-06 | Chaque modifieur a une **courbe d'intensité** dessinable (pas seulement 0/1) : **points clés avec poignées de Bézier** ET **courbes prédéfinies** (linéaire, accélération, ralentissement, en S, palier…). | Décidé |
 | TML-07 | **Tout** paramètre de modifieur est animable (ex. direction de la translation de couleur). | Demandé |
@@ -341,7 +342,13 @@ Voir `docs/ilda-gen-direction-artistique.md` (thème sombre, épuré, profession
 
 ---
 
-## 15. Hors périmètre pour l'instant
+## 15. État d'avancement
+
+Tout ce qui est marqué Demandé ou Décidé est implémenté dans `tools/ilda-gen/` (mode d'emploi :
+`tools/ilda-gen/README.md`). Propositions non retenues pour l'instant : bibliothèque de formes partagée entre
+projets (FPS-06), MDL catégorie G (dynamiques).
+
+## 16. Hors périmètre pour l'instant
 
 - Modifieurs dynamiques en dehors de la timeline.
 - Détection automatique du BPM.

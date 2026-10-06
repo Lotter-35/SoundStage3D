@@ -1,0 +1,130 @@
+"""Gestes d'édition de la timeline : boucle, pistes, clips, clés et poignées de courbe."""
+
+from ...core import nodes as N
+from . import draw as D
+from . import lanes as L
+from .geometry import HEADER_W
+
+
+class TimelineEditing:
+    def _press_loop(self, t, x):
+        tl = self.tl
+        g = self.geo
+        self.editor.begin("Boucle")
+        if tl.loop_end > tl.loop_start:
+            if abs(g.x(tl.loop_start) - x) <= 5:
+                self.drag = {"kind": "loop_start"}
+                return
+            if abs(g.x(tl.loop_end) - x) <= 5:
+                self.drag = {"kind": "loop_end"}
+                return
+            if tl.loop_start < t < tl.loop_end:
+                self.drag = {"kind": "loop_move", "t0": t, "a": tl.loop_start, "b": tl.loop_end}
+                return
+        t = max(0.0, self.snap(t))
+        tl.loop_start = tl.loop_end = t
+        tl.loop_on = True
+        self.drag = {"kind": "loop_end"}
+
+    def _press_header(self, row, x, y):
+        if row.kind != "track":
+            return
+        tr = row.track
+        for i, attr in enumerate(("muted", "solo")):
+            bx = HEADER_W - 50 + i * 22
+            if bx <= x <= bx + 18:
+                self.editor.timeline_mutate("Piste", lambda a=attr: setattr(tr, a, not getattr(tr, a)))
+                return
+
+    def _press_lane(self, row, x, y, e):
+        clip, auto = row.clip, row.auto
+        if self.editor.context != ("clip", clip.id):
+            self.editor.enter_clip(clip.id)
+        if auto.armed or not (self.geo.x(clip.start) - 6 <= x <= self.geo.x(clip.end) + 6):
+            return
+        hidx = self.handle_hit(row, x, y)
+        if hidx is not None:
+            self.editor.begin("Courbe")
+            self.drag = {"kind": "handle", "row": row, "which": hidx}
+            return
+        k = self.key_hit(row, x, y)
+        node, spec = L.target(self.editor, clip, auto)
+        self.editor.begin("Clé d'automation")
+        if k is None:
+            t_local = min(max(self.snap(self.geo.t(x), e.modifiers()) - clip.start, 0.0), clip.duration)
+            if L.is_color(spec):
+                v = auto.value_at(t_local)
+                if v is None and node is not None:
+                    v = N.get_param(node, auto.key)
+            else:
+                v = L.y_to_v(y, row, L.value_range(spec, auto), spec, auto)
+            if v is None:
+                return
+            k = auto.set_key(t_local, v)
+            self.editor.notify(timeline=True)
+        self.sel_key = k
+        self.drag = {"kind": "key", "row": row, "key": k, "spec": spec}
+        self.update()
+
+    def _drag_clip(self, d, x, y, mods):
+        clip = d["clip"]
+        g = self.geo
+        dt = (x - d["x0"]) / g.pps
+        min_d = max(0.02, self.tl.grid_step if self.tl.snap else 0.02)
+        if d["kind"] == "clip_body":
+            clip.start = max(0.0, self.snap(d["start"] + dt, mods))
+            row = g.row_at(self.rows(), y)
+            if row is not None and row.kind == "track" and row.track is not d["track"]:
+                d["track"].clips.remove(clip)
+                row.track.clips.append(clip)
+                d["track"] = row.track
+        elif d["kind"] == "clip_left":
+            s = min(self.snap(d["start"] + dt, mods), d["end"] - min_d)
+            clip.start = max(0.0, s)
+            clip.duration = d["end"] - clip.start
+        else:
+            e_ = max(self.snap(d["end"] + dt, mods), d["start"] + min_d)
+            clip.duration = e_ - clip.start
+        self.editor.notify(timeline=True)
+
+    def _drag_key(self, d, x, y, mods):
+        row, k, spec = d["row"], d["key"], d["spec"]
+        clip, auto = row.clip, row.auto
+        k.t = min(max(self.snap(self.geo.t(x), mods) - clip.start, 0.0), clip.duration)
+        if not L.is_color(spec):
+            k.v = L.y_to_v(y, row, L.value_range(spec, auto), spec, auto)
+        auto.sort()
+        self.editor.notify(timeline=True)
+
+    def _drag_handle(self, d, x, y):
+        row = d["row"]
+        k = self.sel_key
+        node, spec = L.target(self.editor, row.clip, row.auto)
+        h = D.bezier_handles(self.geo, row, row.clip, row.auto, k, L.value_range(spec, row.auto))
+        if h is None:
+            return
+        (ax, ay), (bx, by) = h[0], h[1]
+        hx = min(1.0, max(0.0, (x - ax) / ((bx - ax) or 1.0)))
+        hy = (y - ay) / (by - ay) if abs(by - ay) > 2 else (ay - y) / 40.0
+        hy = max(-2.0, min(3.0, hy))
+        if d["which"] == 0:
+            k.h[0], k.h[1] = hx, hy
+        else:
+            k.h[2], k.h[3] = hx, hy
+        self.editor.notify(timeline=True)
+
+    def delete_selection(self):
+        if self.sel_key is not None:
+            for _, c in self.tl.all_clips():
+                for a in c.automations:
+                    if self.sel_key in a.keys:
+                        k = self.sel_key
+                        self.sel_key = None
+                        self.editor.timeline_mutate("Supprimer la clé", lambda a=a, k=k: a.keys.remove(k))
+                        return True
+        clip = self.editor.current_clip()
+        if clip is not None:
+            self.editor.delete_clip(clip.id)
+            return True
+        return False
+
