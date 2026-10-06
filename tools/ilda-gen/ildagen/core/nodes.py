@@ -6,7 +6,7 @@ ce qui est en dessous de lui dans le même groupe.
 
 import uuid
 
-from . import shapes
+from . import shape_color, shapes
 from .path import Path
 from .transform import Transform
 from . import mathutil as mu
@@ -105,6 +105,12 @@ class ShapeNode(Node):
         self.sparams = shapes.default_params(shape)
         self.paths = paths or []
         self.transform = Transform()
+        # Couleur propre (0 = par défaut, 1 = unie, 2 = dégradé)
+        self.color_mode = 0
+        self.color = (1.0, 0.0, 0.0)
+        self.stops = [list(s) for s in shape_color.DEFAULT_STOPS]
+        self.grad_type = 0
+        self.grad_angle = 0.0
         self.center_pivot()
 
     def local_paths(self):
@@ -132,6 +138,9 @@ class ShapeNode(Node):
         d = self.base_dict()
         d.update({"shape": self.shape, "rect": list(self.rect), "sparams": dict(self.sparams),
                   "paths": [p.to_dict() for p in self.paths], "transform": self.transform.to_dict()})
+        if self.color_mode:
+            d["color"] = {"mode": self.color_mode, "color": list(self.color), "stops": [list(s) for s in self.stops],
+                          "type": self.grad_type, "angle": self.grad_angle}
         return d
 
     @classmethod
@@ -141,6 +150,13 @@ class ShapeNode(Node):
         n.load_base(d)
         n.sparams.update(d.get("sparams", {}))
         n.transform = Transform.from_dict(d.get("transform", {}))
+        c = d.get("color")
+        if c:
+            n.color_mode = int(c.get("mode", 0))
+            n.color = tuple(c.get("color", n.color))
+            n.stops = [list(s) for s in c.get("stops", n.stops)]
+            n.grad_type = int(c.get("type", 0))
+            n.grad_angle = float(c.get("angle", 0.0))
         return n
 
 
@@ -272,6 +288,8 @@ def get_param(node, key):
         return getattr(node.transform, key[3:])
     if key.startswith("sp.") and isinstance(node, ShapeNode):
         return node.sparams.get(key[3:])
+    if key.startswith("col.") and isinstance(node, ShapeNode) and key[4:] in shape_color.ATTRS:
+        return getattr(node, shape_color.ATTRS[key[4:]])
     if key == "__active__":
         return node.visible
     if isinstance(node, ModifierNode):
@@ -284,6 +302,12 @@ def set_param(node, key, value):
         setattr(node.transform, key[3:], float(value))
     elif key.startswith("sp.") and isinstance(node, ShapeNode):
         node.sparams[key[3:]] = value
+    elif key.startswith("col.") and isinstance(node, ShapeNode) and key[4:] in shape_color.ATTRS:
+        if key == "col.color":
+            value = tuple(value)
+        elif key == "col.stops":
+            value = [list(s) for s in value]
+        setattr(node, shape_color.ATTRS[key[4:]], value)
     elif key == "__active__":
         node.visible = bool(value)
     elif isinstance(node, ModifierNode):

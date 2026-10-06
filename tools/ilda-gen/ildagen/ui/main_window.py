@@ -59,7 +59,7 @@ class MainWindow(QMainWindow):
         self.h_split.setStretchFactor(1, 1)
         self.h_split.setStretchFactor(2, 0)
         self.h_split.setCollapsible(1, False)
-        self.h_split.setSizes([150, 900, 320])
+        self.h_split.setSizes([180, 880, 320])
 
         top = QWidget()
         tl = QVBoxLayout(top)

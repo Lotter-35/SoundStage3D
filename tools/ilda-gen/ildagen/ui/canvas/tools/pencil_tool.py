@@ -45,6 +45,7 @@ class PencilTool(Tool):
         ed.begin(label)
         parent, idx = ed.insertion_point()
         node = ShapeNode("path", paths=[Path([[0.0, 0.0]])], name="Tracé")
+        ed.apply_brush(node)
         parent.add(node, idx)
         ctx = ed.eval_context()
         try:
@@ -136,6 +137,7 @@ class PencilTool(Tool):
                 node.parent.remove(node)
                 ed.history.cancel()
                 ed.notify(structure=True)
+                ed.clear_selection()
                 return
             s = float(ed.settings.get("general", "smoothing"))
             pts = smooth(pts, 1 + int(s / 12))

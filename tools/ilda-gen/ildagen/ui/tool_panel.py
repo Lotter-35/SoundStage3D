@@ -12,11 +12,31 @@ from . import icons, theme
 from .canvas.painter import draw_strokes
 from .canvas.view import DEF_MIME
 from .canvas.viewport import Viewport
+from .color_panel import ColorPanel
 from .context_menu import ask_text
 
-TOOLS = [("select", "Sélection", "mouse-pointer-2", "V"), ("pencil", "Crayon", "pencil", "B")]
+TOOLS = [("select", "Sélection", "mouse-pointer-2", "V"), ("pencil", "Crayon", "pencil", "B"),
+         ("bucket", "Seau : colorier une forme ou une zone", "paint-bucket", "G")]
 SHAPE_KEYS = {"line": "L", "rect": "R", "ellipse": "E", "triangle": "T", "star": "S", "polygon": "P", "ilda_test": "M"}
 THUMB = 40
+
+
+class ToolButton(QToolButton):
+    """Bouton d'outil avec la lettre du raccourci en petit dans le coin."""
+
+    def __init__(self, key, parent=None):
+        super().__init__(parent)
+        self.key = key
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if not self.key:
+            return
+        p = QPainter(self)
+        p.setFont(theme.ui_font(8, True))
+        p.setPen(theme.qc(theme.TEXT_DIM if self.isChecked() else theme.TEXT_OFF))
+        p.drawText(self.rect().adjusted(0, 0, -3, -1), Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignBottom, self.key)
+        p.end()
 
 
 def section(text):
@@ -104,7 +124,7 @@ class ToolPanel(QWidget):
     def __init__(self, editor, parent=None):
         super().__init__(parent)
         self.editor = editor
-        self.setMinimumWidth(96)
+        self.setMinimumWidth(150)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(8, 4, 8, 8)
         lay.setSpacing(2)
@@ -113,9 +133,12 @@ class ToolPanel(QWidget):
         self.buttons = {}
 
         lay.addWidget(section("Outils"))
-        lay.addLayout(self._grid([(t, f"{label} ({key})", ic) for t, label, ic, key in TOOLS]))
+        lay.addLayout(self._grid([(t, f"{label} ({key})", ic, key) for t, label, ic, key in TOOLS]))
         lay.addWidget(section("Formes"))
-        lay.addLayout(self._grid([(f"shape:{k}", f"{label} ({SHAPE_KEYS[k]})", ic) for k, label, ic in BASIC_SHAPES]))
+        lay.addLayout(self._grid([(f"shape:{k}", f"{label} ({SHAPE_KEYS[k]})", ic, SHAPE_KEYS[k])
+                                  for k, label, ic in BASIC_SHAPES]))
+        lay.addWidget(section("Couleur"))
+        lay.addWidget(ColorPanel(editor))
         lay.addWidget(section("Formes perso"))
         self.defs = DefList(editor)
         self.defs.setToolTip("Clic : placer · Double-clic : éditer · Glisser vers la mire ou la timeline")
@@ -138,8 +161,8 @@ class ToolPanel(QWidget):
     def _grid(self, items):
         g = QGridLayout()
         g.setSpacing(2)
-        for i, (tool, tip, ic) in enumerate(items):
-            b = QToolButton()
+        for i, (tool, tip, ic, key) in enumerate(items):
+            b = ToolButton(key)
             b.setIcon(icons.icon(ic, 18, active_color=theme.TEXT))
             b.setIconSize(QSize(18, 18))
             b.setFixedSize(34, 30)

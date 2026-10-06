@@ -22,6 +22,9 @@ def target(editor, clip, auto):
         return node, ACTIVE_SPEC
     if node.kind == "modifier":
         return node, node.modifier.spec(key)
+    if key.startswith("col."):
+        from ...core import shape_color
+        return node, shape_color.spec(key)
     return node, None
 
 

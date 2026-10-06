@@ -75,6 +75,7 @@ class ShapeTool(Tool):
         ed.begin("Forme")
         parent, idx = ed.insertion_point()
         self.node = ShapeNode(self.kind)
+        ed.apply_brush(self.node)
         parent.add(self.node, idx)
         try:
             self.inv = np.linalg.inv(ed.parent_matrix(self.node, ed.eval_context()))

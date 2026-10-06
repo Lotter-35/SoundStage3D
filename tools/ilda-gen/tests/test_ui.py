@@ -185,6 +185,31 @@ def main():
     from PySide6.QtTest import QTest
     QTest.keyClick(view, Qt.Key.Key_Return)
     ed.set_grid_mode(1)
+    # Clic simple dans le vide avec le crayon = désélectionner
+    ed.set_tool("pencil")
+    ed.set_selection([guided.id])
+    n_layers = len(ed.doc.scene.children)
+    click(view, sp(0.9, 0.9))
+    check("crayon : clic dans le vide désélectionne", ed.selection == [] and len(ed.doc.scene.children) == n_layers)
+    # Couleur de tracé + seau
+    b = ed.brush()
+    b.update(mode=1, color=[0.0, 1.0, 0.0])
+    ed.brush_changed()
+    ed.set_tool("shape:rect")
+    drag(view, sp(0.6, -0.6), sp(0.9, -0.9))
+    green = ed.doc.scene.children[0]
+    check("nouvelle forme à la couleur de tracé", green.color_mode == 1 and tuple(green.color) == (0.0, 1.0, 0.0))
+    b.update(mode=2, type=1, stops=[[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]])
+    ed.brush_changed()
+    ed.set_tool("bucket")
+    click(view, sp(0.6, -0.75))
+    green = ed.find(green.id)
+    out = [s_ for s_ in ed.display_strokes() if abs(s_.pts[:, 0].mean() - 0.75) < 0.05 and abs(s_.pts[:, 1].mean() + 0.75) < 0.05]
+    check("seau : dégradé appliqué", green.color_mode == 2 and out and out[0].col[:, 0].max() > 0.9 and out[0].col[:, 2].max() > 0.9)
+    ed.undo()
+    check("seau annulable", ed.find(green.id).color_mode == 1)
+    b.update(mode=0)
+    ed.brush_changed()
     ed.set_tool("select")
 
     # ── Calques : groupes, verrou, œil, presse-papiers ──────────────────

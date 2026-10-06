@@ -11,6 +11,7 @@ from .modifiers.base import blend
 from .path import Stroke, strokes_bbox
 from .transform import TRANSFORM_KEYS
 from . import mathutil as mu
+from . import shape_color
 
 MAX_DEPTH = 12
 
@@ -89,6 +90,11 @@ def shape_strokes(node, ctx):
         if len(p.pts) == 0:
             continue
         out.append(Stroke(tf.apply(p.pts), None, p.closed, color=ctx.default_color))
+    ov = ctx.node_overrides(node.id)
+    col = {k: ov.get("col." + k, getattr(node, a)) for k, a in shape_color.ATTRS.items()}
+    if int(round(col["mode"])):
+        out = shape_color.colorize(out, int(round(col["mode"])), col["color"], col["stops"],
+                                   int(round(col["type"])), float(col["angle"]))
     return out
 
 

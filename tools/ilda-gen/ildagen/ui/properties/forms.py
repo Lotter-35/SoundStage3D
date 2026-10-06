@@ -7,6 +7,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QLabel, QMenu, QWidget
 
 from ...core import nodes as N
+from ...core import shape_color
 from ...core.params import B, F, I
 from ...core.shapes import SHAPE_PARAMS
 from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, ScrubField
@@ -43,6 +44,7 @@ def specs_for(node, compact):
     if node.kind == "shape":
         for k, (label, default, lo, hi) in SHAPE_PARAMS.get(node.shape, {}).items():
             out.append((I("sp." + k, label, default, lo, hi), 1.0))
+        out += [(s, 1.0) for s in shape_color.SPECS]
     return out
 
 

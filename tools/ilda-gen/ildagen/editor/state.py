@@ -35,6 +35,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     projectChanged = Signal()
     statusMessage = Signal(str)
     clipSelected = Signal(str)
+    brushChanged = Signal()
 
     def __init__(self, settings):
         super().__init__()
@@ -323,6 +324,10 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             return TRANSFORM_LABELS.get(key[3:], key)
         if key == "__active__":
             return "Actif"
+        if key.startswith("col."):
+            from ..core import shape_color
+            s = shape_color.spec(key)
+            return s.label if s else key
         if key.startswith("sp."):
             from ..core.shapes import SHAPE_PARAMS
             spec = SHAPE_PARAMS.get(getattr(node, "shape", ""), {}).get(key[3:])
@@ -338,7 +343,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         if node.kind == "modifier":
             spec = node.modifier.spec(key)
             return spec is not None and spec.kind in ("bool", "enum", "int")
-        return key.startswith("sp.")
+        return key.startswith("sp.") or key in ("col.mode", "col.type")
 
     def effective_param(self, node, key):
         clip = self.current_clip()

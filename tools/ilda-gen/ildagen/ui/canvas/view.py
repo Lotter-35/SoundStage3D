@@ -7,7 +7,7 @@ from PySide6.QtWidgets import QWidget
 from ...laser.output import safety_rect
 from .. import theme
 from . import painter as P
-from .tools import PencilTool, SelectTool, ShapeTool
+from .tools import BucketTool, PencilTool, SelectTool, ShapeTool
 from .tools.base import ToolEvent
 from .viewport import Viewport
 
@@ -27,7 +27,8 @@ class CanvasView(QWidget):
         self.setAcceptDrops(True)
         self.setAttribute(Qt.WidgetAttribute.WA_OpaquePaintEvent)
         self.setMinimumSize(200, 200)
-        self.tools = {"select": SelectTool(self), "pencil": PencilTool(self), "shape": ShapeTool(self)}
+        self.tools = {"select": SelectTool(self), "pencil": PencilTool(self), "shape": ShapeTool(self),
+                      "bucket": BucketTool(self)}
         self.tool = self.tools["select"]
         self._panning = None
         self.last_world = None

@@ -37,7 +37,7 @@ Dans le jeu, régler un laser sur « ILDA live » et le même canal (1 à 16) qu
 | Zone | Contenu |
 |---|---|
 | Haut | Menus · IP / port / canal / images par seconde · état de la connexion · **Envoi live** · **BLACKOUT** |
-| Gauche | Outils (sélection, crayon), formes de base, formes personnalisées |
+| Gauche | Outils (sélection, crayon, seau), formes de base, couleur de tracé, formes personnalisées |
 | Centre | La mire (zone de projection), grille orthogonale ou polaire, compteur de points |
 | Droite | Calques, puis Propriétés (repliable) |
 | Bas | Timeline : transport, BPM, grille musicale, musique, pistes, automations |
@@ -50,7 +50,7 @@ Tous les séparateurs se déplacent ; la disposition est mémorisée.
 
 | Action | Raccourci |
 |---|---|
-| Sélection / Crayon | `V` / `B` |
+| Sélection / Crayon / Seau | `V` / `B` / `G` |
 | Trait, Carré, Cercle, Triangle, Étoile, Polygone, Mire ILDA | `L` `R` `E` `T` `S` `P` `M` |
 | Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Maj+Z` ou `Ctrl+Y` |
 | Couper / Copier / Coller / Dupliquer | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Ctrl+D` |
@@ -104,6 +104,21 @@ Tous les séparateurs se déplacent ; la disposition est mémorisée.
 | Poignée en losange | Inclinaison 3D (gauche / droite = axe Y, haut / bas = axe X) |
 | Croix au centre | Déplacer le pivot ; `Maj` : aimanté (coins, milieux, centre, grille) |
 | Double-clic sur une forme personnalisée | L'éditer (toutes ses occurrences suivent) |
+
+### Couleur de tracé et seau
+
+La section **Couleur** de la barre de gauche choisit la couleur des prochaines formes : **Défaut** (couleur des
+Paramètres), **Unie** (pastilles = couleurs pures du laser) ou **Dégradé** (le long du tracé, linéaire, radial ou
+angulaire, adapté à la taille de la forme). La couleur d'une forme se modifie ensuite dans Propriétés.
+
+| Geste (outil Seau, `G`) | Effet |
+|---|---|
+| Clic sur une forme | Lui applique la couleur de tracé |
+| Clic sur une forme sélectionnée | Colorie toute la sélection (groupes compris) |
+| `Alt` + clic | Colorie tout le groupe qui contient la forme |
+
+« Appliquer à la sélection » fait la même chose sans changer d'outil. Un modifieur de couleur placé au-dessus
+d'une forme reste prioritaire sur sa couleur propre.
 
 ## Calques et modifieurs
 

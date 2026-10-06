@@ -75,6 +75,7 @@ def build_actions(win):
         return lambda: None if _typing() else ed.set_tool(t)
     act("tool_select", "Sélection", tool("select"), "V")
     act("tool_pencil", "Crayon", tool("pencil"), "B")
+    act("tool_bucket", "Seau", tool("bucket"), "G")
     for k, label, _ in BASIC_SHAPES:
         act("tool_" + k, label, tool("shape:" + k), SHAPE_KEYS[k])
 

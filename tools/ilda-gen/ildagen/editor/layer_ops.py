@@ -276,6 +276,50 @@ class LayerOpsMixin:
         self.set_selection([m.id])
         return m
 
+    # ── Couleur de tracé et seau ─────────────────────────────────────────
+    def brush(self):
+        return self.settings.section("brush")
+
+    def brush_changed(self):
+        self.settings.save()
+        self.brushChanged.emit()
+
+    def apply_brush(self, node):
+        """Donne la couleur de tracé courante à une forme (sans historique : appelé dans un geste)."""
+        if node.kind != "shape":
+            return
+        b = self.brush()
+        node.color_mode = int(b["mode"])
+        node.color = tuple(b["color"])
+        node.stops = [list(s) for s in b["stops"]]
+        node.grad_type = int(b["type"])
+        node.grad_angle = float(b["angle"])
+
+    def shapes_in(self, nodes):
+        """Formes contenues dans des calques (les groupes sont parcourus, les modifieurs ignorés)."""
+        out = []
+        for n in nodes:
+            for x in n.walk():
+                if x.kind == "shape" and x not in out and not (x.locked or x.locked_ancestor()):
+                    out.append(x)
+        return out
+
+    def paint_nodes(self, nodes, label="Seau"):
+        shapes = self.shapes_in(nodes)
+        if not shapes:
+            return 0
+
+        def do():
+            for s in shapes:
+                self.apply_brush(s)
+        self.mutate(label, do, structure=False)
+        self.structureChanged.emit()
+        return len(shapes)
+
+    def paint_selection(self):
+        n = self.paint_nodes(self.top_selected(), "Colorier la sélection")
+        self.statusMessage.emit(f"{n} forme(s) coloriée(s)" if n else "Aucune forme sélectionnée à colorier")
+
     # ── Formes personnalisées ────────────────────────────────────────────
     def create_custom_shape(self, name):
         root = self.current_root()
