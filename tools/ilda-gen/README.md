@@ -7,10 +7,25 @@ L'ancien outil (tkinter) est conservé dans `tools/ilda-gen-legacy/`.
 
 ## Installation (macOS et Windows)
 
-Python 3.10 ou plus récent.
+Python 3.10 ou plus récent. Les dépendances s'installent dans un environnement virtuel `.venv` à la racine
+du dépôt (obligatoire avec le Python de Homebrew sur Mac, conseillé partout). À faire une seule fois :
 
 ```sh
+# macOS
+python3 -m venv .venv
+source .venv/bin/activate
 python -m pip install -r tools/ilda-gen/requirements.txt
+
+# Windows (PowerShell)
+py -m venv .venv
+.venv\Scripts\Activate.ps1
+python -m pip install -r tools/ilda-gen/requirements.txt
+```
+
+Ensuite, à chaque nouveau terminal : activer l'environnement (`source .venv/bin/activate` sur Mac,
+`.venv\Scripts\Activate.ps1` sur Windows) puis lancer :
+
+```sh
 python tools/ilda-gen/ilda-gen.py            # ou : python tools/ilda-gen/ilda-gen.py mon-projet.ildaproj
 ```
 
