@@ -377,6 +377,24 @@ def main():
     tl.bpm = 128
     t = tl.snap_time(1.01)
     check("aimant BPM", abs(t - 60 / 128 * 2) < 1e-6 or abs(t - 60 / 128 * 2) < 0.5, f"{t:.3f}")
+    # Clip déplié : les modifieurs de la forme et leurs réglages sont directement animables
+    clip.expanded = True
+    ed.notify(timeline=True)
+    app.processEvents()
+    tl_canvas = win.timeline.canvas
+    rows_ = tl_canvas.rows()
+    groups = [r for r in rows_ if r.kind == "group" and r.clip is clip]
+    check("modifieurs affichés sous le clip déplié", len(groups) >= 2, str(len(groups)))
+    lane_v = next(r for r in rows_ if r.kind == "lane" and r.node is not None and r.virtual
+                  and r.auto.key != "__active__" and not (r.auto.key in ("color",)))
+    n_auto = len(clip.automations)
+    click(tl_canvas, QPoint(int(tl_canvas.geo.x(clip.start + 1.0)), int(lane_v.y + lane_v.h * 0.3)))
+    check("clic dans un réglage de modifieur = automation créée", len(clip.automations) == n_auto + 1
+          and clip.automations[-1].node_id == lane_v.node.id and len(clip.automations[-1].keys) == 1)
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    check("annulable", len(clip.automations) == n_auto)
+    ed.enter_clip(clip.id)
     # Gestes à la souris dans la timeline
     canvas = win.timeline.canvas
     app.processEvents()

@@ -196,6 +196,18 @@ def draw_lane(p, geo, row, ed, sel_key):
     if b <= a:
         return
     xs = np.arange(a, b + 1, 2.0)
+    if not auto.keys and node is not None:
+        # Réglage pas encore animé : sa valeur fixe en pointillés (cliquer pour poser une clé)
+        from ...core import nodes as N
+        v = N.get_param(node, auto.key)
+        if L.is_color(spec) and v is not None:
+            p.fillRect(QRectF(a, row.y + row.h / 2 - 3, b - a, 6), QColor.fromRgbF(*v))
+        elif v is not None:
+            y = L.v_to_y(v, row, rng)
+            pen = QPen(theme.qc(theme.TEXT_OFF), 1, Qt.PenStyle.DashLine)
+            p.setPen(pen)
+            p.drawLine(QPointF(a, y), QPointF(b, y))
+        return
     if L.is_color(spec):
         for x in xs:
             v = auto.value_at(geo.t(x) - clip.start)
@@ -248,6 +260,14 @@ def bezier_handles(geo, row, clip, auto, key, rng):
     return (ax, ay), (bx, by), (ax + x1 * (bx - ax), ay + y1 * (by - ay)), (ax + x2 * (bx - ax), ay + y2 * (by - ay))
 
 
+def draw_group(p, geo, row):
+    """Ligne d'un modifieur sous un clip déplié."""
+    clip = row.clip
+    x0, x1 = geo.x(clip.start), geo.x(clip.end)
+    p.fillRect(QRectF(HEADER_W, row.y, geo.width - HEADER_W, row.h), theme.qc(theme.BG_APP))
+    p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.ACCENT, 0.06))
+
+
 def draw_headers(p, geo, rows, ed):
     w = HEADER_W
     p.fillRect(QRectF(0, geo.top, w, geo.height - geo.top), theme.qc(theme.BG_PANEL))
@@ -268,13 +288,37 @@ def draw_headers(p, geo, rows, ed):
                 p.setFont(theme.ui_font(10, True))
                 p.drawText(br, Qt.AlignmentFlag.AlignCenter, label)
             p.setBrush(Qt.BrushStyle.NoBrush)
+        elif r.kind == "group":
+            m = r.node
+            opened = m.id not in r.clip.closed_nodes
+            p.drawPixmap(QPointF(10, r.y + (r.h - 12) / 2),
+                         icons.pixmap("chevron-down" if opened else "chevron-right", theme.TEXT_DIM, 12))
+            p.drawPixmap(QPointF(24, r.y + (r.h - 14) / 2), icons.pixmap(m.modifier.icon, theme.ACCENT, 14))
+            p.setFont(theme.ui_font(11))
+            p.setPen(theme.qc(theme.TEXT))
+            fm = p.fontMetrics()
+            p.drawText(QRectF(44, r.y, w - 50, r.h), Qt.AlignmentFlag.AlignVCenter,
+                       fm.elidedText(m.name, Qt.TextElideMode.ElideRight, w - 50))
         else:
             p.setFont(theme.ui_font(11))
-            p.setPen(theme.qc(theme.ACCENT if r.auto.armed else theme.TEXT_DIM))
-            label = "Automation en attente…" if r.auto.armed else r.auto.label
+            if r.node is not None:
+                animated = bool(r.auto.keys)
+                label = r.label
+                x = 44
+                p.setPen(theme.qc(theme.TEXT if animated else theme.TEXT_DIM))
+                if animated:
+                    p.setBrush(theme.qc(theme.ACCENT))
+                    p.setPen(Qt.PenStyle.NoPen)
+                    p.drawEllipse(QPointF(34, r.y + r.h / 2), 3, 3)
+                    p.setBrush(Qt.BrushStyle.NoBrush)
+                    p.setPen(theme.qc(theme.TEXT))
+            else:
+                x = 22
+                p.setPen(theme.qc(theme.ACCENT if r.auto.armed else theme.TEXT_DIM))
+                label = "Automation en attente…" if r.auto.armed else r.auto.label
             fm = p.fontMetrics()
-            p.drawText(QRectF(22, r.y, w - 28, r.h), Qt.AlignmentFlag.AlignVCenter,
-                       fm.elidedText(label, Qt.TextElideMode.ElideRight, w - 28))
+            p.drawText(QRectF(x, r.y, w - x - 6, r.h), Qt.AlignmentFlag.AlignVCenter,
+                       fm.elidedText(label, Qt.TextElideMode.ElideRight, w - x - 6))
         p.setPen(QPen(theme.qc(theme.BORDER), 1))
         p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))
     p.setPen(QPen(theme.qc(theme.BORDER), 1))

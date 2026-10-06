@@ -33,6 +33,9 @@ class TimelineMenus:
             menu.addAction("Ajouter une piste").triggered.connect(ed.add_track)
             menu.exec(e.globalPos())
             return
+        if row.kind == "group" or (row.kind == "lane" and row.virtual and
+                                     self.key_hit(row, x, y) is None):
+            return
         if row.kind == "track":
             clip, _ = self.clip_hit(row, x) if x >= HEADER_W else (None, None)
             if clip is not None:

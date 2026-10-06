@@ -26,7 +26,19 @@ class TimelineEditing:
         tl.loop_on = True
         self.drag = {"kind": "loop_end"}
 
+    def toggle_group(self, row):
+        """Déplie / replie les réglages d'un modifieur sous le clip."""
+        ids = row.clip.closed_nodes
+        if row.node.id in ids:
+            ids.remove(row.node.id)
+        else:
+            ids.append(row.node.id)
+        self._changed()
+
     def _press_header(self, row, x, y):
+        if row.kind == "group":
+            self.toggle_group(row)
+            return
         if row.kind != "track":
             return
         tr = row.track
@@ -61,6 +73,9 @@ class TimelineEditing:
             if v is None:
                 self.editor.history.cancel()
                 return
+            if auto not in clip.automations:
+                # Premier clic sur un réglage pas encore animé : l'automation est créée
+                clip.automations.append(auto)
             k = auto.set_key(t_local, v)
             self.editor.notify(timeline=True)
         self.sel_key = k

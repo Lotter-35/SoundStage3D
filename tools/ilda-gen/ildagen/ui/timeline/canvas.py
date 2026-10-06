@@ -92,7 +92,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), theme.qc(theme.BG_APP))
-        rows = g.rows(self.tl)
+        rows = g.rows(self.editor)
         p.setClipRect(QRectF(HEADER_W, g.top, g.width - HEADER_W, g.height - g.top))
         for i, r in enumerate(rows):
             if r.kind == "track":
@@ -103,6 +103,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         for r in rows:
             if r.kind == "lane":
                 D.draw_lane(p, g, r, self.editor, self.sel_key)
+            elif r.kind == "group":
+                D.draw_group(p, g, r)
             else:
                 for c in r.track.clips:
                     D.draw_clip(p, g, r, c, self.editor, c.id == sel_clip, r.track.muted, self.thumb)
@@ -143,7 +145,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
 
     # ── Repérage ─────────────────────────────────────────────────────────
     def rows(self):
-        return self.geo.rows(self.tl)
+        return self.geo.rows(self.editor)
 
     def clip_hit(self, row, x):
         for c in sorted(row.track.clips, key=lambda c: c.start, reverse=True):
@@ -206,6 +208,9 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
             return
         if x < HEADER_W:
             self._press_header(row, x, y)
+            return
+        if row.kind == "group":
+            self.toggle_group(row)
             return
         if row.kind == "track":
             clip, part = self.clip_hit(row, x)
@@ -295,6 +300,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         row = self.geo.row_at(self.rows(), y)
         if row is None:
             return
+        if row.kind == "group":
+            return
         if row.kind == "track" and x < HEADER_W:
             name, ok = QInputDialog.getText(self, "Renommer la piste", "Nom :", text=row.track.name)
             if ok and name.strip():
@@ -337,7 +344,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
 
     def scroll_by(self, dy):
         g = self.geo
-        max_y = max(0, g.content_height(self.tl) - (self.height() - g.top))
+        max_y = max(0, g.content_height(self.editor) - (self.height() - g.top))
         g.scroll_y = int(min(max_y, max(0, g.scroll_y + dy)))
         self.scrollChanged.emit()
         self.update()

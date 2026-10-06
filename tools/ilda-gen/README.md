@@ -170,7 +170,11 @@ double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (an
 2. Glisser une forme personnalisée sur une piste : un clip est créé (des vignettes montrent la forme tout le
    long du clip, automations comprises). Glisser le clip pour le déplacer, ses bords
    pour changer sa durée. L'**aimant** accroche tout à la grille (`Alt` pendant un glisser = libre).
-3. Clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel
+3. **Déplier le clip** (chevron à gauche du clip, ou double-clic) : chaque modifieur de la forme s'affiche avec
+   tous ses réglages animables (cliquer sur le nom du modifieur pour replier / déplier ses réglages).
+   **Cliquer dans la ligne d'un réglage pose une clé** : l'automation est créée directement. La valeur fixe
+   d'un réglage pas encore animé est montrée en pointillés ; un point bleu signale les réglages animés.
+   Autre méthode : clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel
    réglage (Propriétés, ligne du modifieur, ou déplacer / tourner la forme dans la mire) : l'automation s'y lie.
    Chaque réglage touché ensuite écrit une clé à la tête de lecture.
 4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit = type de courbe

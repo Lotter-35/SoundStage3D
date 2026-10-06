@@ -44,7 +44,7 @@ class TimelinePanel(QWidget):
         self.hbar.setPageStep(view_w)
         self.hbar.setValue(int(g.t0 * g.pps))
         view_h = max(1, c.height() - g.top)
-        content = g.content_height(tl)
+        content = g.content_height(self.editor)
         self.vbar.setRange(0, max(0, content - view_h))
         self.vbar.setPageStep(view_h)
         self.vbar.setValue(g.scroll_y)

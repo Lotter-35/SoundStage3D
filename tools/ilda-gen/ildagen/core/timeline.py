@@ -18,6 +18,7 @@ class Clip:
         self.duration = float(duration)
         self.automations = []
         self.expanded = False
+        self.closed_nodes = []    # modifieurs repliés dans la timeline (par défaut leurs réglages sont affichés)
 
     @property
     def end(self):
@@ -48,13 +49,14 @@ class Clip:
 
     def to_dict(self):
         return {"id": self.id, "def_id": self.def_id, "start": round(self.start, 6),
-                "duration": round(self.duration, 6), "expanded": self.expanded,
+                "duration": round(self.duration, 6), "expanded": self.expanded, "closed_nodes": list(self.closed_nodes),
                 "automations": [a.to_dict() for a in self.automations]}
 
     @classmethod
     def from_dict(cls, d):
         c = cls(d.get("def_id", ""), d.get("start", 0.0), d.get("duration", 2.0), d.get("id"))
         c.expanded = d.get("expanded", False)
+        c.closed_nodes = list(d.get("closed_nodes", []))
         c.automations = [Automation.from_dict(a) for a in d.get("automations", [])]
         return c
 
