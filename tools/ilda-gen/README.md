@@ -59,6 +59,7 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Tout sélectionner | `Ctrl+A` |
 | Grouper / Dégrouper | `Ctrl+G` / `Ctrl+Maj+G` |
 | Sans grille / orthogonale / polaire | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` |
+| Aimant (les poignées s'accrochent à la grille) | `Ctrl+;` ou bouton aimant au-dessus de la mire |
 | Ajuster la vue | `Ctrl+0` |
 | Lecture / pause | `Espace` |
 | Enregistrer / Ouvrir / Nouveau | `Ctrl+S` / `Ctrl+O` / `Ctrl+N` |
@@ -95,7 +96,7 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Glisser dans le vide | Sélection rectangle |
 | Glisser une forme | Déplacer ; `Maj` : magnétisme (centre, bords, autres formes, grille) ; `Alt` : copie |
 | Flèches / `Maj` + flèches | Déplacement fin / rapide |
-| Coin | Redimensionner ; `Maj` : proportionnel ; `Alt` : depuis le centre |
+| Coin | Redimensionner ; `Maj` : proportionnel ; `Alt` : depuis le centre ; `Alt` + `Maj` : proportionnel depuis le centre |
 | Milieu d'un côté | Étirer ; `Alt` : symétrique |
 | `Ctrl` + coin | Distorsion libre |
 | `Ctrl` + `Maj` + côté | Inclinaison (cisaillement) ; `Alt` : symétrique |
@@ -126,6 +127,10 @@ Un modifieur de couleur placé au-dessus
 d'une forme reste prioritaire sur sa couleur propre.
 
 ## Calques et modifieurs
+
+Boutons sous les calques : **nouveau calque** (vide ; le prochain trait au crayon le remplit), **nouveau
+groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **supprimer**.
+
 
 - Chaque forme est un calque. Glisser-déposer pour réordonner ou ranger dans un groupe (ligne bleue = position).
 - Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas : verrouiller. Un groupe

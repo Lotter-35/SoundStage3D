@@ -139,6 +139,7 @@ QProgressBar::chunk {{ background: {ACCENT}; }}
 
 QLabel#sectionTitle {{ color: {TEXT_DIM}; font-size: 10px; font-weight: 600; letter-spacing: 1px; }}
 QLabel#dim {{ color: {TEXT_DIM}; }}
+QWidget#panelFooter {{ background: {BG_PANEL}; border-top: 1px solid {BORDER}; }}
 QWidget#panelHeader {{ background: {BG_PANEL}; border-bottom: 1px solid {BORDER}; }}
 QWidget#bar {{ background: {BG_APP}; border-bottom: 1px solid {BORDER}; }}
 """

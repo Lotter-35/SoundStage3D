@@ -92,6 +92,15 @@ def snap_lines(grid):
     return [0.0], [0.0]
 
 
+def snap_axes(p, grid, threshold):
+    """Accroche x et y séparément aux lignes de grille proches (aimant des poignées)."""
+    xs, ys = snap_lines(grid)
+    x, y = p
+    bx = min(xs, key=lambda v: abs(v - x))
+    by = min(ys, key=lambda v: abs(v - y))
+    return (bx if abs(bx - x) <= threshold else x), (by if abs(by - y) <= threshold else y)
+
+
 def smart_snap(box, others, grid, threshold):
     """Ajuste un déplacement pour aligner centre et bords d'une boîte sur la grille et les autres formes.
 

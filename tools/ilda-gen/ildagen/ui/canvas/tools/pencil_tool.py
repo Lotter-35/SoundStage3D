@@ -43,10 +43,15 @@ class PencilTool(Tool):
     def _new_node(self, first_world, label, name="Tracé"):
         ed = self.editor
         ed.begin(label)
-        parent, idx = ed.insertion_point()
-        node = ShapeNode("path", paths=[Path([[0.0, 0.0]])], name=name)
-        ed.apply_brush(node)
-        parent.add(node, idx)
+        node = ed.empty_selected_layer()
+        if node is not None:
+            # Calque vide sélectionné (bouton « Nouveau calque ») : le trait le remplit
+            node.paths = [Path([[0.0, 0.0]])]
+        else:
+            parent, idx = ed.insertion_point()
+            node = ShapeNode("path", paths=[Path([[0.0, 0.0]])], name=name)
+            ed.apply_brush(node)
+            parent.add(node, idx)
         try:
             self.inv = np.linalg.inv(ed.parent_matrix(node, ed.eval_context()))
         except np.linalg.LinAlgError:
@@ -88,7 +93,8 @@ class PencilTool(Tool):
             self.seg["preview"] = pts
             node = self.seg["node"]
             node.paths[0].pts = mu.apply(self.inv, pts)
-            node.name = "Point" if len(pts) == 1 else ("Arc" if len(pts) > 2 else "Ligne")
+            if node.name in ("Point", "Arc", "Ligne"):
+                node.name = "Point" if len(pts) == 1 else ("Arc" if len(pts) > 2 else "Ligne")
             self.editor.notify()
         self.hover(ev)
 
@@ -99,8 +105,9 @@ class PencilTool(Tool):
             self.free = None
             pts = np.array(self._free_pts)
             if len(pts) < 2 or np.ptp(pts, axis=0).max() < self.vt.px(2):
-                node.parent.remove(node)
-                ed.history.cancel()
+                restore = ed.history.cancel()
+                if restore is not None:
+                    ed.restore(restore)
                 ed.notify(structure=True)
                 ed.clear_selection()
                 return

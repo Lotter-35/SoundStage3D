@@ -318,6 +318,11 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.doc.grid.mode = mode
         self.gridChanged.emit()
 
+    def set_snap(self, on):
+        self.doc.grid.snap = bool(on)
+        self.gridChanged.emit()
+        self.statusMessage.emit("Aimant activé" if on else "Aimant désactivé")
+
     # ── Paramètres (avec automations) ────────────────────────────────────
     def param_label(self, node, key):
         if key.startswith("tf."):

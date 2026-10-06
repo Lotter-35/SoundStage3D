@@ -19,6 +19,7 @@ class GridSettings:
         self.divisions = 8     # cases par demi-axe (orthogonale)
         self.rings = 8         # cercles (polaire)
         self.rays = 16         # rayons (polaire)
+        self.snap = True       # aimant : les poignées de redimensionnement s'accrochent à la grille
 
     def to_dict(self):
         return dict(self.__dict__)

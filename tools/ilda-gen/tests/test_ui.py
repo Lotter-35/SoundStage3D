@@ -109,6 +109,18 @@ def main():
     ed.undo()
     rect = ed.find(rect.id)
     h = handles()
+    q0 = build_frame(ed, ed.eval_context()).quad
+    c0 = (q0[:, 0].min() + q0[:, 0].max()) / 2
+    target = sp(0.0, 0.5)    # près de la ligne de grille x = 0 (aimant)
+    drag(view, h["c1"], QPoint(target.x() + 3, target.y()), M.ShiftModifier | M.AltModifier)
+    q = build_frame(ed, ed.eval_context()).quad
+    x0, x1, y0, y1 = q[:, 0].min(), q[:, 0].max(), q[:, 1].min(), q[:, 1].max()
+    check("Alt + Maj + coin + aimant : depuis le centre, proportionnel, sur la grille",
+          abs((x0 + x1) / 2 - c0) < 1e-6 and abs((x1 - x0) - (y1 - y0)) < 1e-6 and abs(x1) < 1e-6,
+          f"x {x0:.3f}..{x1:.3f}  y {y0:.3f}..{y1:.3f}")
+    ed.undo()
+    rect = ed.find(rect.id)
+    h = handles()
     drag(view, h["rot"], QPoint(h["rot"].x() + 80, h["rot"].y() + 50), M.ShiftModifier)
     check("rotation + Maj = pas de 15°", abs(rect.transform.rot / 15 - round(rect.transform.rot / 15)) < 1e-6
           and rect.transform.rot != 0, f"{rect.transform.rot:.2f}°")
@@ -205,6 +217,15 @@ def main():
     ed.undo()
     ed.set_tool("pencil")
     ed.set_grid_mode(1)
+    # Bouton « Nouveau calque » : le prochain trait le remplit
+    layer = ed.new_empty_layer()
+    n_layers = len(ed.doc.scene.children)
+    ed.set_tool("pencil")
+    drag(view, sp(-0.9, 0.9), sp(-0.6, 0.8))
+    check("nouveau calque rempli par le trait", len(ed.doc.scene.children) == n_layers and ed.find(layer.id).paths
+          and len(ed.find(layer.id).paths[0].pts) >= 2)
+    ed.undo()
+    ed.undo()
     # Clic simple dans le vide avec le crayon = désélectionner
     ed.set_tool("pencil")
     ed.set_selection([guided.id])

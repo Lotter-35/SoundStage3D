@@ -196,6 +196,13 @@ class SelectTool(Tool):
             w, _ = GS.rotate_matrix(frame.pivot, d["press_w"], world, ev.shift)
             self._apply_all(d, w)
             return
+        g = self.editor.doc.grid
+        snap = None
+        if g.snap and g.mode != 0:
+            th = self.vt.px(8)
+            snap = lambda pt: G.snap_axes(pt, g, th)  # noqa: E731
+            if ev.ctrl:
+                world = np.array(snap(tuple(world)))
         single_shape = frame.single and frame.nodes[0].kind == "shape"
         corner = hid.startswith("c")
         if ev.ctrl and ev.shift and ev.alt and corner and single_shape:
@@ -206,7 +213,7 @@ class SelectTool(Tool):
         elif ev.ctrl and corner and single_shape and not ev.shift:
             self._bake(d, GS.distort_quad(frame, hid, world))
         else:
-            self._apply_all(d, GS.scale_matrix(frame, hid, world, ev.shift, ev.alt))
+            self._apply_all(d, GS.scale_matrix(frame, hid, world, ev.shift, ev.alt, snap))
 
     def _apply_all(self, d, w):
         if d["baked"]:

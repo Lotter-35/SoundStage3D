@@ -22,7 +22,8 @@ EDGE_CORNERS = {"e0": (0, 1), "e1": (1, 2), "e2": (2, 3), "e3": (3, 0)}
 OPPOSITE_EDGE = {"e0": "e2", "e2": "e0", "e1": "e3", "e3": "e1"}
 
 
-def scale_matrix(frame, hid, mouse, shift, alt):
+def scale_matrix(frame, hid, mouse, shift, alt, snap=None):
+    """snap(point) -> point : aimant de grille. En proportionnel, seul l'axe qui pilote l'échelle est aimanté."""
     f = frame.frame_matrix()
     try:
         finv = np.linalg.inv(f)
@@ -30,9 +31,23 @@ def scale_matrix(frame, hid, mouse, shift, alt):
         return np.eye(3)
     hs, ht = UNIT[hid]
     a_s, a_t = (0.5, 0.5) if alt else (1.0 - hs, 1.0 - ht)
-    ms, mt = mu.apply_point(finv, *mouse)
-    fx = (ms - a_s) / (hs - a_s) if abs(hs - a_s) > 1e-9 else 1.0
-    fy = (mt - a_t) / (ht - a_t) if abs(ht - a_t) > 1e-9 else 1.0
+    def factors(pt):
+        ms, mt = mu.apply_point(finv, *pt)
+        return ((ms - a_s) / (hs - a_s) if abs(hs - a_s) > 1e-9 else 1.0,
+                (mt - a_t) / (ht - a_t) if abs(ht - a_t) > 1e-9 else 1.0)
+
+    fx, fy = factors(mouse)
+    if snap is not None:
+        sx_, sy_ = snap(tuple(mouse))
+        if shift and hid.startswith("c"):
+            mouse = (sx_, mouse[1]) if abs(fx) >= abs(fy) else (mouse[0], sy_)
+        elif hid in ("e1", "e3"):
+            mouse = (sx_, mouse[1])
+        elif hid in ("e0", "e2"):
+            mouse = (mouse[0], sy_)
+        else:
+            mouse = (sx_, sy_)
+        fx, fy = factors(mouse)
     if hid.startswith("e"):
         if hid in ("e0", "e2"):
             fx = fy if shift else 1.0

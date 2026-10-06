@@ -70,6 +70,7 @@ def build_actions(win):
     for i, label in enumerate(("Sans grille", "Grille orthogonale", "Grille polaire")):
         a = act(f"grid{i}", label, lambda _=False, m=i: ed.set_grid_mode(m), f"Ctrl+{i + 1}", checkable=True)
         grid_group.addAction(a)
+    act("snap", "Aimant (grille)", lambda: ed.set_snap(not ed.doc.grid.snap), "Ctrl+;", checkable=True)
     act("fit", "Ajuster la vue", lambda: win.canvas.view.fit_view(), "Ctrl+0")
     act("zoom_in", "Zoomer", lambda: win.canvas.view.zoom_by(1.4), SK.ZoomIn)
     act("zoom_out", "Dézoomer", lambda: win.canvas.view.zoom_by(1 / 1.4), SK.ZoomOut)
@@ -120,7 +121,7 @@ def build_menus(win, A):
         m.addSeparator() if k is None else m.addAction(A[k])
 
     m = mb.addMenu("Affichage")
-    for k in ("grid0", "grid1", "grid2", None, "view_scene", "view_tl", None, "fit", "zoom_in", "zoom_out"):
+    for k in ("grid0", "grid1", "grid2", "snap", None, "view_scene", "view_tl", None, "fit", "zoom_in", "zoom_out"):
         m.addSeparator() if k is None else m.addAction(A[k])
 
     m = mb.addMenu("Lecture")

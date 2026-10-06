@@ -152,6 +152,28 @@ class LayerOpsMixin:
         child.transform.tilt_x += parent_tf.tilt_x
         child.transform.tilt_y += parent_tf.tilt_y
 
+    def new_empty_layer(self):
+        """Calque vide : le prochain trait au crayon le remplit."""
+        from ..core.nodes import ShapeNode
+        n = ShapeNode("path", name="Calque")
+        n.paths = []
+        self.apply_brush(n)
+        self.add_node(n, "Nouveau calque")
+        return n
+
+    def empty_selected_layer(self):
+        sel = self.top_selected()
+        if len(sel) == 1 and sel[0].kind == "shape" and sel[0].shape == "path" and not sel[0].paths \
+                and not sel[0].locked:
+            return sel[0]
+        return None
+
+    def group_or_new_group(self):
+        if self.top_selected():
+            self.group_selected()
+        else:
+            self.new_empty_group()
+
     def new_empty_group(self):
         self.add_node(N.GroupNode("Groupe"), "Nouveau groupe")
 
