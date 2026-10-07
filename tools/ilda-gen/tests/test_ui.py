@@ -317,6 +317,20 @@ def main():
     check("rendu avec modifieurs", len(strokes) > 4, str(len(strokes)))
     app.processEvents()
     check("réglages affichés dans la ligne du modifieur", m.id in tree.param_widgets)
+    # Glisser sur un modifieur : jamais dedans, au-dessus ou en dessous, ligne alignée (pas de décalage)
+    mi = tree.model_.index_for_id(m.id)
+    si = tree.model_.index_for_id(sym.id)
+    rm, rs = tree.visualRect(mi), tree.visualRect(si)
+    mid = tree._drop_target(QPoint(rm.center().x(), rm.center().y()))
+    top = tree._drop_target(QPoint(rm.center().x(), rm.top() + 2))
+    bot = tree._drop_target(QPoint(rm.center().x(), rm.bottom() - 1))
+    stop = tree._drop_target(QPoint(rs.center().x(), rs.top() + 2))
+    mm = ed.find(m.id)
+    check("glisser sur un modifieur : jamais dedans", mid[0] is not mm and top[0] is not mm and bot[0] is not mm
+          and mid[2][0] == "line")
+    check("au-dessus / en dessous du modifieur", top[1] == mm.index() and bot[1] == mm.index() + 1
+          and bot[2][1] >= tree.visualRect(tree.model_.params_index(m.id)).bottom())
+    check("ligne d'insertion au même niveau pour deux modifieurs", top[2][2] == stop[2][2], f"{top[2][2]} / {stop[2][2]}")
     # Réglage au clic-glisser (même après un premier clic qui a mis le champ en saisie)
     form = tree.param_widgets[sym.id]
     field = form.fields["angle"]

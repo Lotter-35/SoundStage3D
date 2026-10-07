@@ -150,7 +150,9 @@ groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **sup
 
 
 - Le panneau Calques montre **le contenu de la forme choisie à gauche** (son nom est écrit en haut du panneau).
-- Chaque forme est un calque. Glisser-déposer pour réordonner ou ranger dans un groupe (ligne bleue = position).
+- Chaque forme est un calque. Glisser-déposer pour réordonner (ligne bleue = position, toujours au niveau des
+  modifieurs, jamais décalée) ou ranger dans un groupe (lâcher au milieu de sa ligne : cadre bleu). On ne dépose
+  jamais *dans* un modifieur : sur sa ligne, on va au-dessus ou en dessous.
 - Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas (toujours affiché, ouvert ou fermé) : verrouiller. Un groupe
   verrouillé ne se déplie plus mais se sélectionne et se déplace comme un seul bloc.
 - **Modifieurs** (bouton « Modifieur » sous les calques, ou clic droit → Ajouter un modifieur) : ils agissent sur tout ce qui est **en dessous d'eux dans
@@ -161,7 +163,7 @@ groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **sup
   Modifieur sélectionné ou survolé : une barre bleue à gauche relie le modifieur aux calques qu'il modifie,
   ces formes sont entourées en pointillés dans la mire et Propriétés indique « Agit sur : … ».
 - **Modifieur sur modifieur** : clic droit sur un modifieur → Ajouter un sous-modifieur (Translation, Rotation,
-  Échelle), ou glisser une Translation sur un modifieur. Exemples : Translation sur Dots = décalage des points le
+  Échelle). Exemples : Translation sur Dots = décalage des points le
   long du trait ; Translation sur Symétrie = déplacement du centre du miroir.
 - Couleur par défaut : blanc (modifiable dans Paramètres).
 

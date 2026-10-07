@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QAbstractItemView, QProxyStyle, QStyle, QTreeView
 
 from .. import theme
 from ..properties.forms import ParamForm
-from .delegate import IND, LayerDelegate, chevron_rect, eye_rect, lock_rect
+from .delegate import CHEV, IND, LayerDelegate, chevron_rect, eye_rect, level_shift, lock_rect, own_shift
 from .model import KIND_ROLE, LAYER_MIME, NODE_ROLE, LayerModel
 
 
@@ -54,7 +54,8 @@ class LayerTreeView(QTreeView):
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         self.setDragDropMode(QAbstractItemView.DragDropMode.DragDrop)
         self.setDefaultDropAction(Qt.DropAction.MoveAction)
-        self.setDropIndicatorShown(True)
+        self.setDropIndicatorShown(False)   # indicateur maison (voir _drop_target)
+        self._drop = None
         self.setDragEnabled(True)
         self.setAcceptDrops(True)
         self.setExpandsOnDoubleClick(False)
@@ -191,28 +192,84 @@ class LayerTreeView(QTreeView):
         else:
             e.ignore()
 
+    def dragMoveEvent(self, e):
+        if not e.mimeData().hasFormat(LAYER_MIME):
+            e.ignore()
+            return
+        super().dragMoveEvent(e)          # défilement / dépliage automatiques
+        self._drop = self._drop_target(e.position().toPoint())
+        e.setDropAction(Qt.DropAction.MoveAction)
+        e.accept()
+        self.viewport().update()
+
+    def dragLeaveEvent(self, e):
+        self._drop = None
+        self.viewport().update()
+        super().dragLeaveEvent(e)
+
+    def _drop_target(self, pos):
+        """Où ira le dépôt : (parent, index, ligne ou cadre à dessiner).
+        Jamais « dans » un modifieur : au-dessus ou en dessous. Dans un groupe : au milieu de sa ligne."""
+        root = self.editor.current_root()
+        ix = self.indexAt(pos)
+        if not ix.isValid():
+            # Sous la dernière ligne : à la fin de la forme
+            last = self.model_.index(self.model_.rowCount() - 1, 0)
+            y = self.visualRect(last).bottom() + 1 if last.isValid() else 0
+            return root, len(root.children), ("line", y, 0)
+        params = ix.data(KIND_ROLE) == "params"
+        if params:
+            ix = ix.parent()
+        node = ix.data(NODE_ROLE)
+        r = self.visualRect(ix)
+        x = r.left() + level_shift(node, root)
+        if params:
+            pr = self.visualRect(self.model_.params_index(node.id))
+            return node.parent or root, node.index() + 1, ("line", pr.bottom() + 1, x)
+        frac = (pos.y() - r.top()) / max(1, r.height())
+        is_group = node.kind == "group" and not node.locked
+        if is_group and 0.25 <= frac <= 0.75:
+            return node, 0, ("frame", r, 0)
+        parent = node.parent or root
+        if frac < 0.5:
+            return parent, node.index(), ("line", r.top(), x)
+        if is_group and node.children and self.isExpanded(ix):
+            # Sous un groupe ouvert : en tête de son contenu
+            return node, 0, ("line", r.bottom() + 1, x + self.indentation() + own_shift(node))
+        if node.kind == "modifier" and node.id in self.param_widgets:
+            pr = self.visualRect(self.model_.params_index(node.id))
+            return parent, node.index() + 1, ("line", pr.bottom() + 1, x)
+        return parent, node.index() + 1, ("line", r.bottom() + 1, x)
+
+    def paintEvent(self, e):
+        super().paintEvent(e)
+        if self._drop is None:
+            return
+        kind, a, x = self._drop[2]
+        p = QPainter(self.viewport())
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
+        if kind == "frame":
+            p.setPen(QPen(theme.qc(theme.ACCENT), 1))
+            p.drawRect(a.adjusted(0, 0, -1, -1))
+        else:
+            p.setPen(QPen(theme.qc(theme.ACCENT), 2))
+            x0 = x + CHEV
+            p.drawLine(x0, a, self.viewport().width() - 4, a)
+            p.setBrush(theme.qc(theme.ACCENT))
+            p.drawEllipse(x0 - 3, a - 3, 6, 6)
+        p.end()
+
     def dropEvent(self, e):
         md = e.mimeData()
-        if not md.hasFormat(LAYER_MIME):
+        target = self._drop or self._drop_target(e.position().toPoint())
+        self._drop = None
+        self.viewport().update()
+        if not md.hasFormat(LAYER_MIME) or target is None:
             e.ignore()
             return
         ids = json.loads(bytes(md.data(LAYER_MIME)).decode("utf-8"))
-        ix = self.indexAt(e.position().toPoint())
-        pos = self.dropIndicatorPosition()
         root = self.editor.current_root()
-        DIP = QAbstractItemView.DropIndicatorPosition
-        if not ix.isValid() or pos == DIP.OnViewport:
-            work = self.editor.work_root()
-            parent, index = work, len(work.children)
-        else:
-            if ix.data(KIND_ROLE) == "params":
-                ix = ix.parent()
-            node = ix.data(NODE_ROLE)
-            if pos == DIP.OnItem and (node.kind in ("group", "modifier")):
-                parent, index = node, 0
-            else:
-                parent = node.parent or root
-                index = parent.children.index(node) + (1 if pos == DIP.BelowItem else 0)
+        parent, index, _ = target
         self.editor.move_nodes(ids, None if parent is root else parent.id, index)
         e.setDropAction(Qt.DropAction.CopyAction)   # le modèle est reconstruit : Qt ne doit rien retirer
         e.accept()
