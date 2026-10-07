@@ -22,13 +22,13 @@ class CurveStrip(QWidget):
         self.node_id = node_id
         self.spec = spec
         self.drag = None
-        self.setFixedHeight(34)
+        self.setFixedHeight(68)
         self.setMouseTracking(True)
         self.setToolTip("Valeur au cours du clip (gauche = début, droite = fin) · clic : ajouter un point · "
                         "clic sur un point : rampe → carré → sinusoïdale · glisser : le déplacer · clic droit : le supprimer")
 
     def sizeHint(self):
-        return QSize(120, 34)
+        return QSize(120, 68)
 
     # ── Données ──────────────────────────────────────────────────────────
     def target(self):

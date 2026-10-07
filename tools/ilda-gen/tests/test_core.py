@@ -212,6 +212,15 @@ def test_click_cycles_curve():
     assert a.cycle_curve(k2) == "Carré" and abs(a.value_at(1.9) - 50.0) < 1e-9      # 50 jusqu'au bout, puis 100
 
 
+def test_int_param_progressive():
+    """Un réglage entier (graine) animé varie progressivement entre deux points, arrondi à l'entier."""
+    from ildagen.core.evaluator import EvalContext, resolve_params
+    from ildagen.core.library import Library
+    m = ModifierNode("random_color")
+    c = EvalContext(Library(), 0.0, 120.0, (1.0, 1.0, 1.0), {(m.id, "seed"): 47.6})
+    assert resolve_params(m, c)["seed"] == 48
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

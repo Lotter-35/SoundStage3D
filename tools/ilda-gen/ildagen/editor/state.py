@@ -69,6 +69,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     # ── Document ─────────────────────────────────────────────────────────
     def set_document(self, doc):
         self.doc = doc
+        self.refresh_discrete()
         self.history.clear()
         self.selection = []
         self.context = ("def", doc.library.defs[0].id)
@@ -413,8 +414,20 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             return True
         if node.kind == "modifier":
             spec = node.modifier.spec(key)
-            return spec is not None and spec.kind in ("bool", "enum", "int")
-        return key.startswith("sp.") or key in ("col.mode", "col.type")
+            # Les entiers (graine, copies…) varient progressivement (arrondis) ; booléens et listes : paliers
+            return spec is not None and spec.kind in ("bool", "enum")
+        return key in ("col.mode", "col.type")
+
+    def refresh_discrete(self):
+        """Met à jour le mode palier / progressif des automations (anciens projets : entiers en paliers)."""
+        for _, clip in self.doc.timeline.all_clips():
+            d = self.doc.library.get(clip.def_id)
+            if d is None:
+                continue
+            for a in clip.automations:
+                node = d.root.find(a.node_id) if a.node_id else None
+                if node is not None:
+                    a.discrete = self.param_is_discrete(node, a.key)
 
     def effective_param(self, node, key):
         clip = self.current_clip()

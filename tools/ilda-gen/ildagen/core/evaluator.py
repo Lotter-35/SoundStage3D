@@ -83,10 +83,23 @@ def eval_children(children, ctx):
     return acc
 
 
+def shape_paths(node, ctx):
+    """Géométrie de la forme, réglages de forme animés compris (arrondis à l'entier)."""
+    ov = {k[3:]: v for k, v in ctx.node_overrides(node.id).items() if k.startswith("sp.")}
+    if not ov or node.shape == "path":
+        return node.local_paths()
+    from . import shapes
+    sp = dict(node.sparams)
+    for k, v in ov.items():
+        if k in sp:
+            sp[k] = int(round(float(v)))
+    return shapes.build(node.shape, node.rect, sp)
+
+
 def shape_strokes(node, ctx):
     tf = node_transform(node, ctx)
     out = []
-    for p in node.local_paths():
+    for p in shape_paths(node, ctx):
         if len(p.pts) == 0:
             continue
         out.append(Stroke(tf.apply(p.pts), None, p.closed, color=ctx.default_color))

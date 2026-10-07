@@ -78,4 +78,5 @@ def G(key, label, default):
 
 
 # Choix de pivot commun aux modifieurs de transformation
-PIVOT_OPTIONS = ["Auto (modifieur Pivot, sinon centre des formes)", "Centre des formes", "Centre de la mire"]
+# « Auto » : le modifieur Pivot s'il y en a un, sinon le centre des formes
+PIVOT_OPTIONS = ["Auto", "Centre des formes", "Centre de la mire"]
