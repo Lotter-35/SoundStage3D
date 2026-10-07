@@ -5,7 +5,7 @@
   Maj + clic : pose un POINT (un calque) ;
   Maj + glisser : trace UNE ligne (grille orthogonale) ou un arc / un rayon (grille polaire), un calque.
 - clic simple dans le vide : désélectionne.
-- symétrie de dessin active : les copies miroir / tournées s'ajoutent au même calque pendant le tracé.
+- symétrie de dessin active : le trait est rangé sous un modifieur Symétrie (ajouté automatiquement).
 """
 
 import math
@@ -14,7 +14,6 @@ import numpy as np
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QPen
 
-from ....core import draw_symmetry as DS
 from ....core import grid as G
 from ....core import mathutil as mu
 from ....core.nodes import ShapeNode
@@ -33,7 +32,6 @@ class PencilTool(Tool):
         self.seg = None         # point / ligne guidée en cours (Maj)
         self.hover_pt = None
         self.inv = np.eye(3)
-        self.mats = []
 
     def cursor(self):
         return Qt.CursorShape.CrossCursor
@@ -46,12 +44,12 @@ class PencilTool(Tool):
     def _new_node(self, first_world, label, name="Tracé"):
         ed = self.editor
         ed.begin(label)
-        node = ed.empty_selected_layer()
+        node = ed.empty_selected_layer() if not ed.doc.grid.sym else None
         if node is not None:
             # Calque vide sélectionné (bouton « Nouveau calque ») : le trait le remplit
             node.paths = [Path([[0.0, 0.0]])]
         else:
-            parent, idx = ed.insertion_point()
+            parent, idx = ed.draw_insertion_point()
             node = ShapeNode("path", paths=[Path([[0.0, 0.0]])], name=name)
             ed.apply_brush(node)
             parent.add(node, idx)
@@ -59,15 +57,14 @@ class PencilTool(Tool):
             self.inv = np.linalg.inv(ed.parent_matrix(node, ed.eval_context()))
         except np.linalg.LinAlgError:
             self.inv = np.eye(3)
-        self.mats = DS.matrices(ed.doc.grid)
         self._set_world(node, np.array([first_world], dtype=float))
         ed.notify(structure=True)
         return node
 
     def _set_world(self, node, pts):
-        """Géométrie du calque à partir des points « monde », plus les copies de la symétrie de dessin."""
+        """Géométrie du calque à partir des points « monde »."""
         pts = np.asarray(pts, dtype=float).reshape(-1, 2)
-        node.paths = [Path(mu.apply(self.inv, pts))] + [Path(mu.apply(self.inv, mu.apply(m, pts))) for m in self.mats]
+        node.paths = [Path(mu.apply(self.inv, pts))]
 
     # ── Souris ───────────────────────────────────────────────────────────
     def press(self, ev):

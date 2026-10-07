@@ -549,32 +549,34 @@ def main():
     win.live.set_blackout(False)
 
     check("groupe racine « Forme »", ed.doc.main_group.name == "Forme")
-    # ── Symétrie de dessin ───────────────────────────────────────────────
-    import numpy as np
+    # ── Symétrie de dessin : modifieur ajouté automatiquement, le trait reste simple ──
+    from ildagen.core import draw_symmetry as DS
+    from ildagen.core import nodes as N
     ed.set_symmetry(1)
     ed.set_tool("pencil")
     n_before = len(ed.doc.main_group.children)
     drag(view, sp(0.2, 0.2), sp(0.5, 0.35))
-    node = ed.doc.main_group.children[0]
-    ok = len(node.paths) == 2 and np.allclose(node.paths[1].pts[:, 0], -node.paths[0].pts[:, 0], atol=1e-6)
-    check("symétrie de dessin : le crayon trace aussi le miroir (même calque)",
-          ok and len(ed.doc.main_group.children) == n_before + 1)
+    g = ed.doc.main_group.children[0]
+    stroke = g.children[1] if g.kind == "group" and len(g.children) == 2 else None
+    check("symétrie de dessin : groupe « Symétrie » + modifieur ajoutés, le trait reste un seul trait",
+          stroke is not None and g.name == "Symétrie" and g.children[0].mod_type == "mirror_sym"
+          and len(stroke.paths) == 1 and len(ed.doc.main_group.children) == n_before + 1)
+    drag(view, sp(0.3, -0.2), sp(0.6, -0.4))
+    check("trait suivant (même mode) : sous le même modifieur", len(g.children) == 3
+          and len(ed.doc.main_group.children) == n_before + 1)
     ed.set_symmetry(3)
     ed.set_tool("shape:rect")
     drag(view, sp(0.2, 0.2), sp(0.5, 0.5))
-    g = ed.doc.main_group.children[0]
-    from ildagen.core import draw_symmetry as DS
-    from ildagen.core.evaluator import node_quad
-    quads = [node_quad(c, ed.eval_context()) for c in g.children] if g.kind == "group" else []
-    cs = sorted((round(float(q[:, 0].mean()), 2), round(float(q[:, 1].mean()), 2)) for q in quads)
-    check("symétrie de dessin : 4 carrés groupés, un par quart", g.kind == "group" and len(g.children) == 4
-          and cs == sorted([(x, y) for x in (-0.35, 0.35) for y in (-0.35, 0.35)]), f"{cs}")
+    g2 = ed.doc.main_group.children[0]
+    check("mode changé : nouveau groupe avec son modifieur (4 quarts)", g2 is not g and g2.kind == "group"
+          and N.get_param(g2.children[0], "axes") == 2 and g2.children[1].kind == "shape"
+          and len(ed.doc.main_group.children) == n_before + 2)
     shot(win, "04_symetrie")
     ed.set_symmetry(count=6)
-    check("radiale ×6 : 5 copies", len(DS.matrices(ed.doc.grid)) == 5)
+    check("radiale ×6", DS.modifier_spec(ed.doc.grid) == ("radial_sym", {"count": 6, "angle": 0.0, "kaleido": False}))
     ed.set_symmetry(0)
-    ed.undo()
-    ed.undo()
+    for _ in range(3):
+        ed.undo()
     check("symétrie de dessin annulable", len(ed.doc.main_group.children) == n_before)
     ed.set_tool("select")
 

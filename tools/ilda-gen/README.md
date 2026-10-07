@@ -92,16 +92,14 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 
 ### Symétrie de dessin
 
-Bouton **symétrie** au-dessus de la mire (ou Affichage → Mode de symétrie) : on dessine directement en
-symétrie, **sans modifieur**. Modes : miroir gauche / droite, miroir haut / bas, miroir 4 quarts, radiale et
-kaléidoscope (2 à 16 branches), toujours autour du centre de la mire. Les axes s'affichent en pointillés.
+Bouton **symétrie** au-dessus de la mire (ou Affichage → Mode de symétrie, `Ctrl+Maj+M`) : modes miroir
+gauche / droite, miroir haut / bas, miroir 4 quarts, radiale et kaléidoscope (2 à 16 branches), autour du
+centre de la mire. Les axes s'affichent en pointillés.
 
-- **Crayon** : les copies s'ajoutent au même calque pendant le tracé (un seul calque).
-- **Formes** : chaque copie est une vraie forme, l'ensemble est rangé dans un groupe « Symétrie » dont le
-  pivot est au centre de la mire (on peut ensuite le tourner, le déplacer ou dégrouper).
-
-Le réglage est enregistré avec le projet. Pour une symétrie qui reste modifiable / animable, utiliser
-plutôt le modifieur Symétrie.
+Ce qu'on dessine (crayon ou formes) est rangé automatiquement dans un groupe **« Symétrie »**, sous le
+**modifieur Symétrie** correspondant (ajouté tout seul) : le trait dessiné reste **un seul trait**, les
+copies viennent du modifieur, qu'on peut ensuite régler ou animer. Les traits suivants dessinés avec le même
+mode vont sous le même modifieur ; changer de mode crée un nouveau groupe.
 
 ### Formes
 

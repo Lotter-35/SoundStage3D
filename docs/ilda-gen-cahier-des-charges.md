@@ -142,7 +142,7 @@ Légende :
 | CRA-11 | `Maj` maintenu affiche bien le point aimanté ; `Maj` + clic pose un point visible. | Retour |
 | CRA-12 | `Maj` + glisser trace **une seule ligne** (pas d'enchaînement en polygone). | Retour |
 | CRA-13 | **Symétrie directement au dessin** (sans modifieur) : bouton au-dessus de la mire + `Ctrl+Maj+M` + menu Affichage. Modes : miroir gauche / droite, haut / bas, 4 quarts, radiale, kaléidoscope (2 à 16 branches), autour du centre de la mire ; axes affichés en pointillés ; réglage enregistré avec le projet. | Retour |
-| CRA-14 | Avec la symétrie de dessin, le **crayon** ajoute les copies **au même calque** pendant le tracé ; les **formes** créent de vraies copies modifiables, rangées dans un groupe « Symétrie » dont le pivot est au centre de la mire. Annulable en une fois. | Retour |
+| CRA-14 | Avec la symétrie de dessin, **le modifieur Symétrie est ajouté automatiquement** (dans un groupe « Symétrie », centré sur la mire) et ce qu'on dessine est rangé dessous : **le trait reste un seul trait** (pas de géométrie dupliquée), les copies viennent du modifieur, réglable et animable. Les tracés suivants du même mode vont sous le même modifieur ; un autre mode crée un nouveau groupe. Annulable. | Retour |
 
 ---
 

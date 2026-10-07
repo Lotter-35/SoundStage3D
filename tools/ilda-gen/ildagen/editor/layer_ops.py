@@ -2,9 +2,12 @@
 
 import json
 
+import numpy as np
 from PySide6.QtCore import QMimeData
 from PySide6.QtGui import QGuiApplication
 
+from ..core import draw_symmetry as DS
+from ..core import mathutil as mu
 from ..core import nodes as N
 from ..core.evaluator import EvalContext, eval_children
 from ..core.library import ShapeDef
@@ -169,6 +172,40 @@ class LayerOpsMixin:
         self.apply_brush(n)
         self.add_node(n, "Nouveau calque")
         return n
+
+    # ── Symétrie de dessin ───────────────────────────────────────────────
+    @staticmethod
+    def _sym_group(n):
+        return (n is not None and n.kind == "group" and n.name == DS.GROUP_NAME and n.children
+                and n.children[0].kind == "modifier" and n.children[0].mod_type in DS.SYM_TYPES)
+
+    def draw_insertion_point(self):
+        """Où ranger ce qu'on dessine. Symétrie de dessin active : sous le modifieur Symétrie
+        correspondant (créé au besoin dans un groupe « Symétrie », centré sur la mire)."""
+        parent, idx = self.insertion_point()
+        spec = DS.modifier_spec(self.doc.grid)
+        sg = parent if self._sym_group(parent) else None
+        if sg is not None:
+            m = sg.children[0]
+            if spec is not None and m.mod_type == spec[0] and all(
+                    abs(float(N.get_param(m, k)) - float(v)) < 1e-9 for k, v in spec[1].items()):
+                return sg, max(idx, 1)
+            # Mode changé (ou symétrie coupée) : on dessine à côté du groupe, pas dedans
+            parent, idx = sg.parent, sg.index()
+        if spec is None:
+            return parent, idx
+        g = N.GroupNode(DS.GROUP_NAME)
+        m = N.ModifierNode(spec[0], values=dict(spec[1]))
+        g.add(m)
+        parent.add(g, idx)
+        try:
+            cx, cy = mu.apply_point(np.linalg.inv(self.parent_matrix(m, self.eval_context())), 0.0, 0.0)
+        except np.linalg.LinAlgError:
+            cx, cy = 0.0, 0.0
+        N.set_param(m, "cx", cx)
+        N.set_param(m, "cy", cy)
+        g.transform.px, g.transform.py = cx, cy     # le groupe tourne autour du centre de la mire
+        return g, 1
 
     def empty_selected_layer(self):
         sel = self.top_selected()

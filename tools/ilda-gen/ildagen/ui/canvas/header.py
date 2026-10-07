@@ -85,7 +85,7 @@ class CanvasHeader(QWidget):
         grid = self.editor.doc.grid
         self.btn_sym.setChecked(bool(grid.sym))
         self.btn_sym.setToolTip("Symétrie de dessin (Ctrl+Maj+M) : " + DS.describe(grid) +
-                                "\nLe crayon et les formes créent directement leurs copies. Flèche : choisir le mode.")
+                                "\nCe qu'on dessine est rangé sous un modifieur Symétrie ajouté automatiquement. Flèche : choisir le mode.")
         mode = self.editor.display_mode()
         self.btn_scene.setChecked(mode != "timeline")
         self.btn_tl.setChecked(mode == "timeline")
