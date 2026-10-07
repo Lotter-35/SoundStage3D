@@ -5,6 +5,12 @@ from ..params import F, B, E, PIVOT_OPTIONS
 from .base import Modifier, map_pts, pivot_point
 
 
+def mix_of(p):
+    """Intensité 0..1. Les modifieurs de position l'appliquent à leurs réglages (½ intensité = ½ rotation,
+    ½ déplacement…) : mélanger les points en ligne droite rétrécirait la forme pendant une rotation."""
+    return max(0.0, min(1.0, p.get("mix", 100.0) / 100.0))
+
+
 class Translate(Modifier):
     type_id = "translate"
     label = "Translation"
@@ -12,12 +18,14 @@ class Translate(Modifier):
     icon = "move"
     description = "Déplace les formes en X / Y."
     blendable = True
+    self_mix = True
     params = [F("x", "X", 0.0, -4.0, 4.0, soft_min=-1.0, soft_max=1.0, decimals=3),
               F("y", "Y", 0.0, -4.0, 4.0, soft_min=-1.0, soft_max=1.0, decimals=3)]
     center_keys = ("x", "y")
 
     def apply(self, strokes, p, ctx):
-        dx, dy = p["x"], p["y"]
+        m = mix_of(p)
+        dx, dy = p["x"] * m, p["y"] * m
         if dx == 0 and dy == 0:
             return strokes
         return map_pts(strokes, lambda a: a + (dx, dy))
@@ -30,15 +38,17 @@ class Rotate(Modifier):
     icon = "rotate-cw"
     description = "Tourne les formes autour d'un pivot."
     blendable = True
+    self_mix = True
     params = [F("angle", "Angle", 0.0, -3600.0, 3600.0, "°", 1, soft_min=-180, soft_max=180),
               E("pivot", "Pivot", PIVOT_OPTIONS)]
     angle_key = "angle"
 
     def apply(self, strokes, p, ctx):
-        if p["angle"] == 0:
+        angle = p["angle"] * mix_of(p)
+        if angle == 0:
             return strokes
         cx, cy = pivot_point(p["pivot"], strokes, ctx)
-        m = mu.about(mu.rotation(p["angle"]), cx, cy)
+        m = mu.about(mu.rotation(angle), cx, cy)
         return map_pts(strokes, lambda a: mu.apply(m, a))
 
 
@@ -49,12 +59,14 @@ class Tilt3D(Modifier):
     icon = "rotate-3d"
     description = "Bascule les formes en perspective autour des axes X et Y."
     blendable = True
+    self_mix = True
     params = [F("tilt_x", "Axe X", 0.0, -89.0, 89.0, "°", 1),
               F("tilt_y", "Axe Y", 0.0, -89.0, 89.0, "°", 1),
               E("pivot", "Pivot", PIVOT_OPTIONS)]
 
     def apply(self, strokes, p, ctx):
-        tx, ty = p["tilt_x"], p["tilt_y"]
+        m = mix_of(p)
+        tx, ty = p["tilt_x"] * m, p["tilt_y"] * m
         if tx == 0 and ty == 0:
             return strokes
         cx, cy = pivot_point(p["pivot"], strokes, ctx)
@@ -68,11 +80,12 @@ class Depth(Modifier):
     icon = "move-3d"
     description = "Éloigne ou rapproche les formes en perspective."
     blendable = True
+    self_mix = True
     params = [F("z", "Z", 0.0, -2.0, 20.0, decimals=2, soft_min=-1.5, soft_max=5.0),
               E("pivot", "Point de fuite", PIVOT_OPTIONS, 2)]
 
     def apply(self, strokes, p, ctx):
-        z = p["z"]
+        z = p["z"] * mix_of(p)
         if z == 0:
             return strokes
         cx, cy = pivot_point(p["pivot"], strokes, ctx)
@@ -86,6 +99,7 @@ class Scale(Modifier):
     icon = "scaling"
     description = "Agrandit ou rétrécit (uniforme, ou X et Y séparés)."
     blendable = True
+    self_mix = True
     params = [F("scale", "Taille", 100.0, -1000.0, 1000.0, "%", 1, soft_min=0, soft_max=200),
               F("sx", "Largeur", 100.0, -1000.0, 1000.0, "%", 1, soft_min=0, soft_max=200),
               F("sy", "Hauteur", 100.0, -1000.0, 1000.0, "%", 1, soft_min=0, soft_max=200),
@@ -94,7 +108,9 @@ class Scale(Modifier):
 
     def apply(self, strokes, p, ctx):
         k = p["scale"] / 100.0
+        mix = mix_of(p)
         sx, sy = k * p["sx"] / 100.0, k * p["sy"] / 100.0
+        sx, sy = 1.0 + (sx - 1.0) * mix, 1.0 + (sy - 1.0) * mix
         if sx == 1 and sy == 1:
             return strokes
         cx, cy = pivot_point(p["pivot"], strokes, ctx)

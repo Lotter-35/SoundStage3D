@@ -291,6 +291,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | MOD-11 | Couleur par défaut sans modifieur : **blanc**, configurable dans les Paramètres. | Décidé |
 | MOD-09 | Activer / désactiver un modifieur (œil ou bouton bypass). | Décidé |
 | MOD-10 | Liste de modifieurs **extensible** facilement (architecture plug-in). | Demandé (« on verra pour en rajouter ») |
+| MOD-15 | **Intensité des modifieurs de position** (Translation, Rotation, Inclinaison 3D, Profondeur, Échelle) : elle s'applique à leur réglage (½ intensité = ½ angle, ½ déplacement…) ; la forme ne rétrécit pas pendant une rotation partielle. | Retour |
 | MOD-12 | Les réglages numériques se règlent par **cliquer-glisser gauche / droite** sur la valeur. | Retour |
 | MOD-13 | Double-clic pour saisir une valeur : **seul le nombre est sélectionné**, l'unité (°, %, s…) reste à part et ne se sélectionne pas. | Retour |
 | MOD-14 | Sous-modifieurs (Translation, Rotation, Échelle) via clic droit sur un modifieur → Ajouter un sous-modifieur, ou en glissant une Translation sur un modifieur. | Retour |

@@ -184,6 +184,19 @@ def test_always_one_form():
     assert len(doc.library.defs) == 1
 
 
+def test_rotation_intensity_keeps_size():
+    """Rotation de 150° à 50 % d'intensité = rotation de 75°, la forme ne rétrécit pas."""
+    root = GroupNode()
+    root.add(ModifierNode("rotate", values={"angle": 150.0, "mix": 50.0, "pivot": 2}))
+    root.add(ShapeNode("rect", (0.2, -0.1, 0.6, 0.1)))
+    ref = GroupNode()
+    ref.add(ModifierNode("rotate", values={"angle": 75.0, "pivot": 2}))
+    ref.add(ShapeNode("rect", (0.2, -0.1, 0.6, 0.1)))
+    a = np.vstack([s.pts for s in evaluate(root, ctx())])
+    b = np.vstack([s.pts for s in evaluate(ref, ctx())])
+    assert np.allclose(a, b, atol=1e-9)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
