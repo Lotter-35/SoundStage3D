@@ -398,7 +398,7 @@ Voir `docs/ilda-gen-direction-artistique.md` (thème sombre, épuré, profession
 
 ## 15. État d'avancement
 
-Tout ce qui est marqué Demandé ou Décidé est implémenté dans `tools/ilda-gen/` (mode d'emploi :
+Tout ce qui est marqué Demandé, Décidé ou Retour est implémenté dans `tools/ilda-gen/` (mode d'emploi :
 `tools/ilda-gen/README.md`). Propositions non retenues pour l'instant : bibliothèque de formes partagée entre
 projets (FPS-06), MDL catégorie G (dynamiques).
 
