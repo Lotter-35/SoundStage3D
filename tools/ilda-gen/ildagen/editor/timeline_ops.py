@@ -50,6 +50,9 @@ class TimelineOpsMixin:
         tl = self.doc.timeline
         tr = tl.find_track(track_id) or tl.tracks[0]
         clip = Clip(def_id, max(0.0, start), duration or tl.bar_len)
+        d = self.doc.library.get(def_id)
+        if d is not None:
+            clip.automations = d.automations      # lié à la forme : automations partagées
         self.timeline_mutate("Ajouter un clip", lambda: tr.clips.append(clip))
         return clip
 
@@ -70,7 +73,6 @@ class TimelineOpsMixin:
         cb = self.clip_clipboard
         if not cb:
             return None
-        from ..core.automation import Automation
         from ..core.nodes import new_id
         tl = self.doc.timeline
         new = []
@@ -80,7 +82,8 @@ class TimelineOpsMixin:
             c = Clip.from_dict(d)
             c.id = new_id()
             c.start = max(0.0, t + off)
-            c.automations = [Automation.from_dict(dict(a.to_dict(), id=new_id())) for a in c.automations]
+            # Le clip collé est lié à sa forme : mêmes automations (partagées)
+            c.automations = self.doc.library.get(c.def_id).automations
             new.append((ti, c))
 
         def do():
@@ -92,6 +95,46 @@ class TimelineOpsMixin:
         end = t + cb["length"]
         self.set_playhead(end)
         return t, end, [c for _, c in new]
+
+    def clip_is_linked(self, clip):
+        """(lié à une forme de la liste, partagé avec d'autres clips) ; une copie déliée est cachée."""
+        d = self.doc.library.get(clip.def_id)
+        if d is None or d.hidden:
+            return False, False
+        n = sum(1 for _, c in self.doc.timeline.all_clips() if c.def_id == d.id)
+        return True, n > 1
+
+    def unlink_clip(self, clip_id):
+        """Délier : le clip reçoit sa propre copie de la forme (modifiable seule, absente de la liste)."""
+        from ..core.library import unlink_clip
+        _, clip = self.doc.timeline.find_clip(clip_id)
+        if clip is None:
+            return None
+        res = []
+        self.mutate("Délier le clip", lambda: res.append(unlink_clip(self.doc.library, clip)),
+                    library=True, timeline=True)
+        if self.context[0] == "clip" and self.context[1] == clip_id:
+            self._set_context(("clip", clip_id), "timeline")
+        self.statusMessage.emit("Clip délié : sa forme se modifie seule (elle n'est pas dans la liste des formes)")
+        return res[0] if res else None
+
+    def relink_clip(self, clip_id):
+        """Relier : le clip délié reprend la forme d'origine et ses automations (sa copie est abandonnée)."""
+        from ..core.library import relink_clip
+        _, clip = self.doc.timeline.find_clip(clip_id)
+        if clip is None:
+            return None
+        res = []
+        self.mutate("Relier le clip", lambda: res.append(relink_clip(self.doc.library, clip)),
+                    library=True, timeline=True)
+        if self.context[0] == "clip" and self.context[1] == clip_id:
+            self._set_context(("clip", clip_id), "timeline")
+        src = res[0] if res else None
+        if src is None:
+            self.statusMessage.emit("Impossible de relier : la forme d'origine n'existe plus")
+        else:
+            self.statusMessage.emit(f"Clip relié à « {src.name} »")
+        return src
 
     def delete_clips(self, clips, label="Supprimer les clips"):
         ids = {c.id for _, c in clips}
@@ -141,7 +184,7 @@ class TimelineOpsMixin:
         a = Automation(label="En attente : touchez un réglage")
 
         def do():
-            clip.automations = [x for x in clip.automations if not x.armed]
+            clip.automations[:] = [x for x in clip.automations if not x.armed]
             clip.automations.append(a)
             clip.expanded = True
         self.timeline_mutate("Nouvelle automation", do)
@@ -151,8 +194,8 @@ class TimelineOpsMixin:
         return a
 
     def automation_clip(self):
-        """Clip qui reçoit un réglage envoyé dans la timeline : le clip sélectionné, sinon le seul clip de la
-        forme en cours (ou celui sous la tête de lecture). Renvoie (clip, message d'erreur)."""
+        """Clip qui reçoit un réglage envoyé dans la timeline : le clip sélectionné, sinon un clip de la forme
+        en cours (ses clips liés partagent les mêmes automations). Renvoie (clip, message d'erreur)."""
         clip = self.current_clip()
         if clip is not None:
             return clip, None
@@ -160,12 +203,7 @@ class TimelineOpsMixin:
         clips = sorted((c for _, c in self.doc.timeline.all_clips() if c.def_id == fid), key=lambda c: c.start)
         if not clips:
             return None, "Glissez d'abord cette forme dans la timeline (liste de gauche → piste)"
-        if len(clips) == 1:
-            return clips[0], None
-        here = [c for c in clips if c.active_at(self.playhead)]
-        if here:
-            return here[0], None
-        return None, "Plusieurs clips de cette forme : cliquez d'abord sur le clip voulu dans la timeline"
+        return clips[0], None        # clips liés : ils partagent les mêmes automations
 
     def param_in_timeline(self, node, key):
         clip, _ = self.automation_clip()
@@ -208,5 +246,5 @@ class TimelineOpsMixin:
             return
 
         def do():
-            clip.automations = [a for a in clip.automations if a.id != auto_id]
+            clip.automations[:] = [a for a in clip.automations if a.id != auto_id]
         self.timeline_mutate("Supprimer l'automation", do)

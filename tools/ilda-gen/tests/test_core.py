@@ -253,6 +253,40 @@ def test_dots_keep_ends():
     assert not np.allclose(off[0], [0, 0]) and np.diff(on[:, 0]).min() >= 0.15 - 1e-9
 
 
+def test_linked_clips_share_automations():
+    from ildagen.core.automation import Automation
+    from ildagen.core.timeline import Clip
+    doc = Document()
+    d = doc.library.visible()[0]
+    m = ModifierNode("rotate")
+    d.root.add(m)
+    tr = doc.timeline.tracks[0]
+    c1, c2 = Clip(d.id, 0, 2), Clip(d.id, 3, 2)
+    a1 = Automation()
+    a1.bind(m.id, "angle", "Angle")
+    a1.set_key(0.0, 90.0)
+    a2 = Automation()
+    a2.bind(m.id, "angle", "Angle")
+    a2.set_key(0.0, 180.0)
+    c1.automations, c2.automations = [a1], [a2]
+    tr.clips += [c1, c2]
+    data = doc.to_dict()
+    for x in data["library"]:
+        x.pop("automations", None)          # ancien format : automations rangées dans les clips
+    old = Document()
+    old.load_dict(data)
+    k1, k2 = old.timeline.tracks[0].clips
+    assert k1.def_id == d.id and k2.def_id != d.id and old.library.get(k2.def_id).hidden
+    assert k1.automations[0].keys[0].v == 90.0 and k2.automations[0].keys[0].v == 180.0
+    # Nouveau format : les clips liés partagent la même liste après réouverture
+    k2.def_id = d.id
+    data2 = old.to_dict()
+    new = Document()
+    new.load_dict(data2)
+    n1, n2 = new.timeline.tracks[0].clips
+    assert n1.automations is n2.automations and not any(x.hidden for x in new.library.defs)
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

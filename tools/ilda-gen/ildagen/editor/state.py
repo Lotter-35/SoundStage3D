@@ -46,7 +46,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.history = History()
         self.selection = []
         self.tool = "select"
-        self.context = ("def", self.doc.library.defs[0].id)
+        self.context = ("def", self.doc.library.visible()[0].id)
         self.view_source = "form"
         self.playhead = 0.0
         self.preview_time = None   # instant prévisualisé pendant le déplacement d'une clé (sinon la tête de lecture)
@@ -72,7 +72,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.refresh_discrete()
         self.history.clear()
         self.selection = []
-        self.context = ("def", doc.library.defs[0].id)
+        self.context = ("def", doc.library.visible()[0].id)
         self.view_source = "form"
         self.selected_clip = None
         self.playhead = 0.0
@@ -101,7 +101,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.doc = doc
         root = self.current_root()
         if root is None:
-            self.context = ("def", self.doc.library.defs[0].id)
+            self.context = ("def", self.doc.library.visible()[0].id)
             root = self.current_root()
         self.selection = [i for i in self.selection if root.find(i) is not None]
         self.notify(structure=True, library=True, timeline=True)
@@ -197,6 +197,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     def context_label(self):
         d = self.current_form()
         name = d.name if d else "?"
+        if d is not None and d.hidden:
+            name += " (délié)"
         return f"Clip : {name}" if self.context[0] == "clip" else name
 
     def _set_context(self, ctx, view="form"):
@@ -215,7 +217,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         """Choisir une forme (liste de gauche) : la mire et les calques la montrent, on l'édite sur place."""
         def_id = def_id or self.current_form_id()
         if self.doc.library.get(def_id) is None:
-            def_id = self.doc.library.defs[0].id
+            def_id = self.doc.library.visible()[0].id
         if self.context != ("def", def_id) or self.view_source != "form":
             self._set_context(("def", def_id), "form")
 

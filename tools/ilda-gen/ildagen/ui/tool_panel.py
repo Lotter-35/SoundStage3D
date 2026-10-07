@@ -93,7 +93,7 @@ class DefList(QListWidget):
         it = self.currentItem()
         if it is not None:
             d = self.editor.doc.library.get(it.data(Qt.ItemDataRole.UserRole))
-            last = len(self.editor.doc.library.defs) == 1
+            last = len(self.editor.doc.library.visible()) == 1
             self.editor.delete_def(it.data(Qt.ItemDataRole.UserRole))
             if d is not None:
                 extra = " — le projet garde toujours une forme : une forme vide a été créée" if last else ""
@@ -228,7 +228,7 @@ class ToolPanel(QWidget):
     def refresh_defs(self):
         cur = self.defs.currentItem().data(Qt.ItemDataRole.UserRole) if self.defs.currentItem() else None
         self.defs.clear()
-        for d in self.editor.doc.library.defs:
+        for d in self.editor.doc.library.visible():
             it = QListWidgetItem(d.name)
             it.setIcon(def_thumbnail(self.editor, d))
             it.setData(Qt.ItemDataRole.UserRole, d.id)

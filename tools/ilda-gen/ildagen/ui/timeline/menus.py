@@ -81,6 +81,13 @@ class TimelineMenus:
 
     def _clip_menu(self, menu, clip):
         ed = self.editor
+        linked, shared = ed.clip_is_linked(clip)
+        if not linked:
+            menu.addAction("Relier à la forme d'origine").triggered.connect(lambda: ed.relink_clip(clip.id))
+            menu.addSeparator()
+        elif shared:
+            menu.addAction("Délier (modifier ce clip seul)").triggered.connect(lambda: ed.unlink_clip(clip.id))
+            menu.addSeparator()
         menu.addAction("Nouvelle automation").triggered.connect(lambda: ed.new_automation(clip.id))
         menu.addAction("Replier" if clip.expanded else "Déplier").triggered.connect(lambda: self._toggle(clip))
         menu.addSeparator()
@@ -99,7 +106,7 @@ class TimelineMenus:
 
     def _rearm(self, clip, auto):
         def do():
-            clip.automations = [a for a in clip.automations if not a.armed or a is auto]
+            clip.automations[:] = [a for a in clip.automations if not a.armed or a is auto]
             auto.node_id = ""
             auto.key = ""
             auto.label = "En attente : touchez un réglage"

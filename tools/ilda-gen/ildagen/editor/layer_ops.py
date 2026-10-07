@@ -62,7 +62,7 @@ class LayerOpsMixin:
             d = self.doc.library.get(clip.def_id)
             if d is None:
                 continue
-            clip.automations = [a for a in clip.automations if a.armed or d.root.find(a.node_id) is not None]
+            clip.automations[:] = [a for a in clip.automations if a.armed or d.root.find(a.node_id) is not None]
 
     # ── Déplacement (glisser-déposer) ────────────────────────────────────
     def can_drop(self, node, parent):

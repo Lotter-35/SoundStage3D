@@ -3,7 +3,7 @@
 import json
 import os
 
-from .library import Library, ShapeDef
+from .library import Library, ShapeDef, link_clips
 from .timeline import Timeline
 
 PROJECT_EXT = ".ildaproj"
@@ -38,7 +38,7 @@ FORM_PREFIX = "Forme"
 
 def next_form_name(library):
     """« Forme 1 », « Forme 2 »… : premier numéro libre."""
-    names = {d.name for d in library.defs}
+    names = {d.name for d in library.visible()}
     i = 1
     while f"{FORM_PREFIX} {i}" in names:
         i += 1
@@ -47,9 +47,9 @@ def next_form_name(library):
 
 def ensure_form(library):
     """Le projet contient toujours au moins une forme."""
-    if not library.defs:
+    if not library.visible():
         library.add(ShapeDef(next_form_name(library)))
-    return library.defs[0]
+    return library.visible()[0]
 
 
 class Document:
@@ -71,6 +71,7 @@ class Document:
         self.library = Library.from_dict(d.get("library"))
         ensure_form(self.library)
         self.timeline = Timeline.from_dict(d.get("timeline", {}))
+        link_clips(self.library, self.timeline)
         self.grid = GridSettings.from_dict(d.get("grid"))
         self.network = dict(d.get("network", {}))
 

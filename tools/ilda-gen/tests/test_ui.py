@@ -505,12 +505,36 @@ def main():
           sum(1 for _ in tl_.all_clips()) == n_clips + 2 and any(abs(s - paste_at) < 1e-6 for s in starts)
           and any(abs(s - (paste_at + span)) < 1e-6 for s in starts) and abs(ed.playhead - (paste_at + 2 * span)) < 1e-6,
           f"{starts} tête {ed.playhead:.3f}")
-    check("clip collé avec ses automations", all(len(c.automations) == len(clip.automations) and
-          c.automations[0].id != clip.automations[0].id for c in pasted))
+    check("clip collé lié à sa forme : mêmes automations (partagées)",
+          all(c.automations is clip.automations for c in pasted))
     ed.undo()
     ed.undo()
     canvas.clear_range()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
+    ed.enter_clip(clip.id)
+    # Clips d'une même forme liés : une automation ajoutée à l'un apparaît dans l'autre ; délier / relier
+    cl2 = ed.add_clip(clip.def_id, tl_.tracks[0].id, clip.end + 3.0, 1.0)
+    check("nouveau clip de la forme : lié (automations partagées)", cl2.automations is clip.automations)
+    linked, shared = ed.clip_is_linked(cl2)
+    check("icône de lien : clips liés partagés", linked and shared)
+    ed.unlink_clip(cl2.id)
+    tl_ = ed.doc.timeline
+    clip = tl_.find_clip(clip.id)[1]
+    cl2 = tl_.find_clip(cl2.id)[1]
+    dd = ed.doc.library.get(cl2.def_id)
+    check("délier : copie de la forme cachée, automations à part", dd.hidden and cl2.def_id != clip.def_id
+          and cl2.automations is not clip.automations and len(cl2.automations) == len(clip.automations)
+          and dd not in ed.doc.library.visible())
+    ed.relink_clip(cl2.id)
+    tl_ = ed.doc.timeline
+    clip = tl_.find_clip(clip.id)[1]
+    cl2 = tl_.find_clip(cl2.id)[1]
+    check("relier : la forme d'origine et ses automations", cl2.def_id == clip.def_id and cl2.automations is clip.automations)
+    ed.undo()
+    ed.undo()
+    ed.undo()
+    tl_ = ed.doc.timeline
+    clip = tl_.find_clip(clip.id)[1]
     ed.enter_clip(clip.id)
     # Multi-sélection de clips : rectangle, Cmd/Ctrl + clic, déplacement en bloc, Ctrl+A, Ctrl+D, Suppr
     c2 = ed.add_clip(clip.def_id, tl_.tracks[0].id, clip.end + 1.0, 1.0)

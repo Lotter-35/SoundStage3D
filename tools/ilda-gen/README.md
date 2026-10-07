@@ -201,6 +201,11 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    long du clip, automations comprises). Glisser le clip pour le déplacer, ses bords
    pour changer sa durée : les **automations s'étirent proportionnellement** (une montée sur 10 s ramenée à
    5 s va toujours jusqu'au bout) ; `Maj` pendant le glisser = les clés gardent leurs instants (on coupe). L'**aimant** accroche tout à la grille (`Alt` pendant un glisser = libre).
+   **Clips liés** : tous les clips d'une même forme sont liés — ils partagent la forme **et ses automations**
+   (une modification dans l'un se voit dans tous). Une chaîne 🔗 en haut à droite des clips le rappelle.
+   Clic sur la chaîne (ou clic droit → **Délier**) : ce clip reçoit sa propre copie de la forme, modifiable
+   seule et absente de la liste des formes (chaîne brisée). Clic sur la chaîne brisée (ou clic droit →
+   **Relier**) : il reprend la forme d'origine et ses automations.
 3. **Envoyer un réglage dans la timeline** : à côté de chaque réglage (dans Calques et dans Propriétés), le
    bouton **〰 (courbe)** l'envoie dans la timeline : une ligne apparaît sous le clip de la forme, avec une clé
    à la tête de lecture. Le bouton devient bleu ; re-cliquer retire le réglage de la timeline (annulable).

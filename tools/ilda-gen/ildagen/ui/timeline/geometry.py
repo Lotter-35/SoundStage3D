@@ -108,6 +108,12 @@ def clip_bottoms(rows):
     return out
 
 
+def link_icon_rect(geo, row, clip):
+    """Icône de lien (chaîne) en haut à droite d'un clip."""
+    x, y, w, _ = geo.clip_rect(row, clip)
+    return (x + w - 18, y + 1, 14, 14)
+
+
 LABEL_H = 14   # bande du nom d'un réglage, en haut de sa ligne (dans le clip)
 
 

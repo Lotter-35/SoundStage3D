@@ -10,7 +10,7 @@ from .. import theme
 from ..canvas.view import DEF_MIME
 from . import draw as D
 from . import lanes as L
-from .geometry import CHEVRON_W, CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry, clip_bottoms, track_blocks
+from .geometry import CHEVRON_W, CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry, clip_bottoms, link_icon_rect, track_blocks
 from .edit import TimelineEditing
 from .clipboard import TimelineClipboard, range_modifier
 from .menus import TimelineMenus
@@ -180,6 +180,13 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
     def rows(self):
         return self.geo.rows(self.editor)
 
+    def _link_icon_hit(self, row, clip, x, y):
+        linked, shared = self.editor.clip_is_linked(clip)
+        if linked and not shared:
+            return False
+        ix, iy, iw, ih = link_icon_rect(self.geo, row, clip)
+        return ix - 2 <= x <= ix + iw + 2 and iy - 2 <= y <= iy + ih + 2
+
     def clip_hit(self, row, x):
         for c in sorted(row.track.clips, key=lambda c: c.start, reverse=True):
             cx, _, cw, _ = self.geo.clip_rect(row, c)
@@ -256,6 +263,14 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             return
         if row.kind == "track":
             clip, part = self.clip_hit(row, x)
+            if clip is not None and self._link_icon_hit(row, clip, x, y):
+                linked, shared = self.editor.clip_is_linked(clip)
+                if not linked:
+                    self.editor.relink_clip(clip.id)
+                elif shared:
+                    self.editor.unlink_clip(clip.id)
+                self._changed()
+                return
             if part == "chevron":
                 clip.expanded = not clip.expanded
                 self.editor.enter_clip(clip.id)

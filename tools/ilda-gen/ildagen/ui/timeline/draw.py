@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QPen, QPolygonF
 from ...core.timeline import SUBDIVISIONS
 from .. import icons, theme
 from . import lanes as L
-from .geometry import CHEVRON_W, HEADER_W, LOOP_H, RULER_H, WAVE_H, lane_reset_rect, lane_toggle_rect
+from .geometry import CHEVRON_W, HEADER_W, LOOP_H, RULER_H, WAVE_H, lane_reset_rect, lane_toggle_rect, link_icon_rect
 
 MIN_BAR_PX = 36
 
@@ -142,13 +142,20 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
     if w > CHEVRON_W + 4:
         pm = icons.pixmap("chevron-down" if clip.expanded else "chevron-right", theme.TEXT_DIM, 12)
         p.drawPixmap(QPointF(x + 3, y + (THUMB_LABEL_H - 12) / 2), pm)
+    # Lien avec la forme : chaîne = lié (les clips de cette forme partagent tout), chaîne brisée = délié
+    room = w - CHEVRON_W - 6
+    linked, shared = ed.clip_is_linked(clip)
+    if w > CHEVRON_W + 40 and (shared or not linked):
+        ix, iy, iw, ih = link_icon_rect(geo, row, clip)
+        p.drawPixmap(QPointF(ix + 1, iy + 1), icons.pixmap("link" if linked else "unlink", theme.TEXT_DIM, 12))
+        room -= iw + 2
     if w > CHEVRON_W + 20:
         p.setPen(theme.qc(theme.TEXT_OFF if muted else theme.TEXT))
         p.setFont(theme.ui_font(11))
         label = d.name if d else "?"
         fm = p.fontMetrics()
-        p.drawText(QRectF(x + CHEVRON_W + 2, y, w - CHEVRON_W - 6, THUMB_LABEL_H), Qt.AlignmentFlag.AlignVCenter,
-                   fm.elidedText(label, Qt.TextElideMode.ElideRight, int(w - CHEVRON_W - 6)))
+        p.drawText(QRectF(x + CHEVRON_W + 2, y, room, THUMB_LABEL_H), Qt.AlignmentFlag.AlignVCenter,
+                   fm.elidedText(label, Qt.TextElideMode.ElideRight, int(max(0, room))))
     p.setBrush(Qt.BrushStyle.NoBrush)
 
 
