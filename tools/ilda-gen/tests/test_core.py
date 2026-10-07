@@ -201,7 +201,8 @@ def test_click_cycles_curve():
     from ildagen.core.automation import Automation
     a = Automation()
     a.bind("n", "x", "x")
-    k0, k1, k2 = a.set_key(0.0, 0.0), a.set_key(1.0, 50.0), a.set_key(2.0, 100.0)
+    a.set_key(0.0, 0.0)
+    k1, k2 = a.set_key(1.0, 50.0), a.set_key(2.0, 100.0)
     assert abs(a.value_at(0.5) - 25.0) < 1e-4                                      # rampe par défaut
     assert a.cycle_curve(k1) == "Carré" and abs(a.value_at(0.9) - 0.0) < 1e-9       # reste à 0 puis saute à 50
     assert a.cycle_curve(k1) == "Sinusoïdale"
