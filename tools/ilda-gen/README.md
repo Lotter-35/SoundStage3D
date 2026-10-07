@@ -160,7 +160,8 @@ groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **sup
 - **Modifieurs** (bouton « Modifieur » sous les calques, ou clic droit → Ajouter un modifieur) : ils agissent sur tout ce qui est **en dessous d'eux dans
   le même groupe**. Leurs réglages s'affichent sous la ligne du calque et dans Propriétés.
   Dans la liste, une **ligne verticale part de chaque modifieur et longe tous les calques qu'il modifie**
-  (ils sont décalés vers la droite, comme rangés sous lui).
+  (ils sont décalés d'un cran vers la droite, comme rangés sous lui ; plusieurs modifieurs empilés restent
+  alignés entre eux et partagent la même ligne, seules les formes sont décalées).
   Modifieur sélectionné ou survolé : une barre bleue à gauche relie le modifieur aux calques qu'il modifie,
   ces formes sont entourées en pointillés dans la mire et Propriétés indique « Agit sur : … ».
 - **Modifieur sur modifieur** : clic droit sur un modifieur → Ajouter un sous-modifieur (Translation, Rotation,

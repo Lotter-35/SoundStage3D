@@ -22,7 +22,7 @@ def node_icon(node):
     return SHAPE_ICONS.get(getattr(node, "shape", "path"), "pencil")
 
 
-IND = 20      # décalage des calques placés sous un modifieur (= retrait de l'arbre)
+IND = 20      # décalage des formes placées sous un ou plusieurs modifieurs (= retrait de l'arbre)
 CHEV = 14     # place de la flèche de dépliage
 ICON_C = CHEV + 7   # centre de l'icône par rapport au début du contenu
 
@@ -44,23 +44,29 @@ def has_targets(m):
     return any(n.kind != "modifier" for n in sibs[sibs.index(m) + 1:])
 
 
+def own_shift(node):
+    """Une forme (ou un groupe) modifiée est décalée d'un cran ; les modifieurs empilés restent alignés."""
+    return IND if node.kind != "modifier" and mods_before(node) else 0
+
+
 def level_shift(node, root):
     """Décalage cumulé dû aux modifieurs des niveaux parents."""
     s = 0
     for a in node.ancestors():
         if a is root or a.parent is None:
             break
-        s += len(mods_before(a)) * IND
+        s += own_shift(a)
     return s
 
 
 def content_offset(node, root=None):
-    """Début du contenu d'une ligne : décalé d'un cran par modifieur qui agit sur le calque."""
-    return level_shift(node, root) + len(mods_before(node)) * IND
+    """Début du contenu d'une ligne : décalé d'un cran quand des modifieurs agissent sur la forme."""
+    return level_shift(node, root) + own_shift(node)
 
 
 def draw_scope_lines(p, view, node, rect, start_depth=0):
-    """Barre verticale sombre sous chaque modifieur, alignée sur son icône, le long des calques qu'il modifie."""
+    """Barre verticale sombre sous les modifieurs, alignée sur leur icône, le long des formes qu'ils modifient.
+    Plusieurs modifieurs empilés partagent la même barre."""
     indent = view.indentation()
     root = view.editor.current_root()
     selected = view.scope_sources
@@ -68,20 +74,24 @@ def draw_scope_lines(p, view, node, rect, start_depth=0):
     dd = start_depth
     mid = rect.top() + rect.height() // 2
 
-    def color(m):
-        return theme.qc("#ffffff", 0.30 if m.id in selected else 0.11)
+    def color(mods):
+        return theme.qc("#ffffff", 0.30 if any(m.id in selected for m in mods) else 0.11)
 
     while L is not None and L is not root and L.parent is not None:
-        base = rect.left() - dd * indent + level_shift(L, root)
+        x = rect.left() - dd * indent + level_shift(L, root) + ICON_C
         before = mods_before(L)
-        for i, m in enumerate(before):
-            p.fillRect(QRect(base + i * IND + ICON_C, rect.top(), 1, rect.height()), color(m))
-        if L.kind == "modifier" and has_targets(L):
-            x = base + len(before) * IND + ICON_C
+        if L.kind == "modifier":
+            covering = before if has_targets(L) else []
+            own = [L] if has_targets(L) else []
             if dd == 0:
-                p.fillRect(QRect(x, mid + 9, 1, rect.bottom() - mid - 8), color(L))
-            else:
-                p.fillRect(QRect(x, rect.top(), 1, rect.height()), color(L))
+                if covering:
+                    p.fillRect(QRect(x, rect.top(), 1, mid - 9 - rect.top()), color(covering))
+                if covering or own:
+                    p.fillRect(QRect(x, mid + 9, 1, rect.bottom() - mid - 8), color(covering + own))
+            elif covering or own:
+                p.fillRect(QRect(x, rect.top(), 1, rect.height()), color(covering + own))
+        elif before:
+            p.fillRect(QRect(x, rect.top(), 1, rect.height()), color(before))
         L = L.parent
         dd += 1
 
