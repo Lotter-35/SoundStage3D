@@ -337,6 +337,15 @@ def draw_corner(p, geo, tl):
     p.drawLine(QPointF(0, geo.top - 0.5), QPointF(HEADER_W, geo.top - 0.5))
 
 
+def draw_preview_marker(p, geo, t):
+    """Instant montré dans la mire pendant le déplacement d'une clé (trait pointillé)."""
+    x = geo.x(t)
+    if x < HEADER_W or x > geo.width:
+        return
+    p.setPen(QPen(theme.qc(theme.ACCENT, 0.7), 1, Qt.PenStyle.DashLine))
+    p.drawLine(QPointF(x, LOOP_H), QPointF(x, geo.height))
+
+
 def draw_playhead(p, geo, t):
     x = geo.x(t)
     if x < HEADER_W or x > geo.width:

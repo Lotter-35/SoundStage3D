@@ -101,6 +101,7 @@ class TimelineEditing:
             self.editor.notify(timeline=True)
         self.sel_key = k
         self.drag = {"kind": "key", "row": row, "key": k, "spec": spec}
+        self.editor.set_preview_time(row.clip.start + k.t)
         self.update()
 
     def _drag_clip(self, d, x, y, mods):
@@ -131,6 +132,8 @@ class TimelineEditing:
         if not L.is_color(spec):
             k.v = L.y_to_v(y, row, L.value_range(spec, auto), spec, auto)
         auto.sort()
+        # La mire montre l'instant de la clé, avec sa nouvelle valeur
+        self.editor.set_preview_time(clip.start + k.t)
         self.editor.notify(timeline=True)
 
     def _drag_handle(self, d, x, y):

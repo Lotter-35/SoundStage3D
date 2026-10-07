@@ -199,6 +199,8 @@ double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (an
    valeur par défaut, `Maj` + clic droit = type de courbe (linéaire, accélération, ralentissement, en S, palier,
    Bézier personnalisé avec poignées) ou supprimer. Le bouton ↺ à côté du nom d'une ligne supprime son automation
    (ou remet sa valeur fixe par défaut).
+   Pendant qu'on **glisse un point**, la mire (et le laser en live) montre l'instant de ce point avec sa
+   nouvelle valeur (trait pointillé dans la timeline) ; au relâchement, elle revient à la tête de lecture.
 5. Réglage **Actif** d'un modifieur (Propriétés) : automatisé, il n'active le modifieur que sur une partie du clip.
 6. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
    Pavé tactile : glisser à deux doigts vers le haut / le bas = pistes, sur le côté = temps.

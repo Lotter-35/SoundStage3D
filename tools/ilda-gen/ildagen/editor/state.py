@@ -49,6 +49,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.context = ("scene", None)
         self.view_source = "scene"
         self.playhead = 0.0
+        self.preview_time = None   # instant prévisualisé pendant le déplacement d'une clé (sinon la tête de lecture)
         self.playing = False
         self.clipboard = []
         self.dirty = False
@@ -71,6 +72,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.view_source = "scene"
         self.selected_clip = None
         self.playhead = 0.0
+        self.preview_time = None
         self.dirty = False
         self._touch()
         self.projectChanged.emit()
@@ -244,14 +246,18 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     def wall_time(self):
         return time.perf_counter() - self._t0
 
+    def view_time(self):
+        """Instant montré dans la mire : la tête de lecture, ou le point de courbe en cours de déplacement."""
+        return self.playhead if self.preview_time is None else self.preview_time
+
     def display_time(self):
-        return self.playhead if self.display_mode() == "timeline" else self.wall_time()
+        return self.view_time() if self.display_mode() == "timeline" else self.wall_time()
 
     def default_color(self):
         return tuple(self.settings.get("general", "default_color"))
 
     def clip_local_time(self, clip):
-        return min(max(self.playhead - clip.start, 0.0), clip.duration)
+        return min(max(self.view_time() - clip.start, 0.0), clip.duration)
 
     def eval_context(self):
         overrides = {}
@@ -273,7 +279,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         if self._cache is not None and self._cache[0] == key:
             return self._cache[1]
         if mode == "timeline":
-            strokes, animated = evaluate_timeline(self.doc.timeline, self.doc.library, self.playhead,
+            strokes, animated = evaluate_timeline(self.doc.timeline, self.doc.library, self.view_time(),
                                                   self.default_color())
         else:
             ctx = self.eval_context()

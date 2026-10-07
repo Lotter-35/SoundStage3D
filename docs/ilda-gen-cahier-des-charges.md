@@ -343,6 +343,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TML-11 | Clip déplié : **chaque modifieur de la forme apparaît avec tous ses réglages animables** (accès direct, même sans automation existante) ; la valeur fixe d'un réglage non animé est en pointillés, un point bleu signale les réglages animés. | Retour |
 | TML-12 | Cliquer sur le nom d'un modifieur dans la timeline replie / déplie ses réglages ; **replié, aucun de ses réglages (même animés) n'est affiché**. | Retour |
 | TML-13 | Déplier le clip par le chevron à gauche du clip ou par double-clic. | Retour |
+| TML-14 | **Glisser un point de courbe** : la mire (et la sortie live) montre **l'instant de ce point avec sa valeur en cours** (ex. pousser la largeur au maximum et voir la taille obtenue) ; un trait pointillé marque cet instant dans la timeline ; **au relâchement, retour à la tête de lecture**. | Retour |
 
 ### 12.2 Navigation et lecture
 

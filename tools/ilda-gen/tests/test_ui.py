@@ -430,6 +430,26 @@ def main():
     n_keys = len(lane.auto.keys)
     click(canvas, QPoint(int(canvas.geo.x(clip.start + 3.0)), int(lane.y + lane.h * 0.3)))
     check("clic dans une automation = nouvelle clé", len(lane.auto.keys) == n_keys + 1)
+    # Glisser une clé : la mire montre l'instant et la valeur de la clé, puis revient à la tête de lecture
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    ed.set_playhead(clip.start)
+    k = lane.auto.keys[-1]
+    from ildagen.ui.timeline import lanes as TL0
+    _, spec0 = TL0.target(ed, lane.clip, lane.auto)
+    kp0 = QPoint(int(canvas.geo.x(lane.clip.start + k.t)), int(TL0.v_to_y(k.v, lane, TL0.value_range(spec0, lane.auto))))
+    Lb, Nb = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    send(canvas, QEvent.Type.MouseButtonPress, kp0, Lb, Lb, M.NoModifier)
+    send(canvas, QEvent.Type.MouseMove, QPoint(kp0.x() + 20, int(lane.y + 3)), Nb, Lb, M.NoModifier)
+    inst_v = ed.eval_context().overrides.get((lane.auto.node_id, "tf.tx"))
+    check("glisser une clé : la mire montre l'instant de la clé", ed.preview_time is not None
+          and abs(ed.view_time() - (lane.clip.start + k.t)) < 1e-9 and inst_v is not None and abs(inst_v - k.v) < 1e-6,
+          f"{ed.preview_time} / {inst_v} vs {k.v}")
+    send(canvas, QEvent.Type.MouseButtonRelease, QPoint(kp0.x() + 20, int(lane.y + 3)), Lb, Nb, M.NoModifier)
+    check("relâcher : retour à la tête de lecture", ed.preview_time is None and ed.view_time() == ed.playhead)
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    ed.enter_clip(clip.id)
+    app.processEvents()
     # Clic droit sur un point : il revient à la valeur par défaut
     from PySide6.QtGui import QContextMenuEvent
     from ildagen.ui.timeline import lanes as TL

@@ -119,6 +119,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         D.draw_headers(p, g, rows, self.editor)
         p.setClipping(False)
         D.draw_corner(p, g, self.tl)
+        if self.editor.preview_time is not None:
+            D.draw_preview_marker(p, g, self.editor.preview_time)
         D.draw_playhead(p, g, self.editor.playhead)
         p.end()
         if self.thumbs.pending:
@@ -272,6 +274,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
         if self.drag is not None:
             kind = self.drag["kind"]
             self.drag = None
+            self.editor.set_preview_time(None)   # retour à la tête de lecture
             if kind != "scrub":
                 self.editor.commit()
                 self.editor.notify(timeline=True)
