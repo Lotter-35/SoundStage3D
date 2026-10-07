@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from .. import colorutil as cu
-from ..params import F, I, E, C, G
+from ..params import F, I, E, C, G, P
 from ..path import Stroke, closed_pts, cumulative, resample_stroke
 from .base import Modifier, stroke_rng
 
@@ -270,13 +270,18 @@ class RandomColor(Modifier):
     description = "Une couleur au hasard par tracé ou par segment (graine réglable)."
     params = [I("seed", "Graine", 1, 0, 99999),
               E("mode", "Par", ["Tracé", "Segment"]),
-              E("palette", "Palette", ["Toutes les teintes", "Couleurs laser pures"]),
+              E("palette", "Palette", ["Toutes les teintes", "Couleurs laser pures", "Couleurs choisies"]),
+              P("colors", "Couleurs", [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)]),
               F("sat", "Saturation", 100.0, 0.0, 100.0, "%", 0)]
 
     def _pick(self, rng, p, n):
         if p["palette"] == 1:
             idx = rng.integers(0, len(cu.LASER_COLORS), n)
             return np.array(cu.LASER_COLORS, dtype=float)[idx]
+        if p["palette"] == 2:
+            # Tirage au hasard parmi les couleurs choisies (palette « Couleurs »)
+            cols = np.array([tuple(c) for c in (p.get("colors") or [(1, 1, 1)])], dtype=float).reshape(-1, 3)
+            return cols[rng.integers(0, len(cols), n)]
         return cu.hue_colors(rng.random(n), p["sat"] / 100.0)
 
     def apply(self, strokes, p, ctx):

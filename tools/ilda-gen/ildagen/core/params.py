@@ -33,6 +33,8 @@ class ParamSpec:
             return bool(v)
         elif self.kind == "color":
             return tuple(min(1.0, max(0.0, float(c))) for c in v)
+        elif self.kind == "palette":
+            return [tuple(min(1.0, max(0.0, float(c))) for c in col) for col in (v or [])]
         else:
             return v
         if self.min is not None:
@@ -75,6 +77,11 @@ def C(key, label, default=(1.0, 1.0, 1.0)):
 
 def G(key, label, default):
     return ParamSpec(key, label, "gradient", default)
+
+
+def P(key, label, default):
+    """Liste de couleurs (palette), non animable."""
+    return ParamSpec(key, label, "palette", [tuple(c) for c in default])
 
 
 # Choix de pivot commun aux modifieurs de transformation

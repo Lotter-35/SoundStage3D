@@ -12,7 +12,7 @@ from ...core.params import B, F, I
 from ...core.shapes import SHAPE_PARAMS
 from .. import icons, theme
 from .curve_strip import CurveStrip
-from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, ScrubField
+from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, PaletteField, ScrubField
 
 # Réglages de transformation (clés « tf. ») ; facteur d'affichage pour les échelles en %
 TRANSFORM_SPECS = [
@@ -71,6 +71,8 @@ def make_field(spec, factor):
         return ColorSwatch()
     if spec.kind == "gradient":
         return GradientBar()
+    if spec.kind == "palette":
+        return PaletteField()
     return QLabel("?")
 
 
@@ -148,7 +150,7 @@ class ParamForm(QWidget):
             else:
                 grid.addWidget(label, row, 1)
                 # Les champs prennent toute la largeur disponible (sauf case à cocher / couleur)
-                grid.addWidget(field, row, 2, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color") else Qt.AlignmentFlag(0))
+                grid.addWidget(field, row, 2, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color", "palette") else Qt.AlignmentFlag(0))
                 grid.addWidget(reset, row, 3)
                 if auto is not None:
                     grid.addWidget(auto, row, 4)

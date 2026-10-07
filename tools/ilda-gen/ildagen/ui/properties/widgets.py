@@ -1,6 +1,6 @@
 """Champs de réglage : valeur glissable (scrub), couleur, dégradé, liste, case à cocher."""
 
-from PySide6.QtCore import QPointF, QRectF, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QPolygonF
 from PySide6.QtWidgets import QCheckBox, QColorDialog, QComboBox, QLineEdit, QSizePolicy, QToolButton, QWidget
 
@@ -366,4 +366,100 @@ class BoolField(QCheckBox):
     def _clicked(self, on):
         self.editStarted.emit()
         self.valueEdited.emit(on)
+        self.editFinished.emit()
+
+
+class PaletteField(QWidget):
+    """Liste de couleurs : clic sur une pastille = changer sa couleur, clic droit = la retirer,
+    « + » = en ajouter une."""
+
+    editStarted = Signal()
+    valueEdited = Signal(object)
+    editFinished = Signal()
+    SW = 22
+    GAP = 4
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.value = []
+        self.setFixedHeight(self.SW)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip("Clic : changer la couleur · clic droit : la retirer · + : ajouter une couleur")
+
+    def set_value(self, v):
+        if v is not None:
+            n = len(self.value)
+            self.value = [tuple(c) for c in v]
+            if len(self.value) != n:
+                self.updateGeometry()
+            self.update()
+
+    def sizeHint(self):
+        return QSize((len(self.value) + 1) * (self.SW + self.GAP), self.SW)
+
+    def minimumSizeHint(self):
+        return self.sizeHint()
+
+    def _rects(self):
+        out = [QRectF(i * (self.SW + self.GAP), 0, self.SW, self.SW).adjusted(0.5, 0.5, -0.5, -0.5)
+               for i in range(len(self.value))]
+        plus = QRectF(len(self.value) * (self.SW + self.GAP), 0, self.SW, self.SW).adjusted(0.5, 0.5, -0.5, -0.5)
+        return out, plus
+
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        rects, plus = self._rects()
+        for r, c in zip(rects, self.value):
+            p.setPen(QPen(theme.qc(theme.BORDER), 1))
+            p.setBrush(QColor.fromRgbF(*c))
+            p.drawRoundedRect(r, 3, 3)
+        p.setPen(QPen(theme.qc(theme.TEXT_DIM), 1, Qt.PenStyle.DashLine))
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        p.drawRoundedRect(plus, 3, 3)
+        c = plus.center()
+        p.setPen(QPen(theme.qc(theme.TEXT_DIM), 1.4))
+        p.drawLine(QPointF(c.x() - 5, c.y()), QPointF(c.x() + 5, c.y()))
+        p.drawLine(QPointF(c.x(), c.y() - 5), QPointF(c.x(), c.y() + 5))
+
+    def _emit(self):
+        self.updateGeometry()
+        self.update()
+        self.valueEdited.emit(list(self.value))
+
+    def mousePressEvent(self, e):
+        rects, plus = self._rects()
+        pos = e.position()
+        hit = next((i for i, r in enumerate(rects) if r.contains(pos)), None)
+        if e.button() == Qt.MouseButton.RightButton:
+            if hit is not None and len(self.value) > 1:
+                self.editStarted.emit()
+                del self.value[hit]
+                self._emit()
+                self.editFinished.emit()
+            return
+        if e.button() != Qt.MouseButton.LeftButton:
+            return
+        if plus.contains(pos):
+            self.editStarted.emit()
+            self.value.append(self.value[-1] if self.value else (1.0, 1.0, 1.0))
+            self._emit()
+            self._pick(len(self.value) - 1, started=True)
+            return
+        if hit is not None:
+            self.editStarted.emit()
+            self._pick(hit, started=True)
+
+    def _pick(self, i, started=False):
+        start = self.value[i]
+        dlg = QColorDialog(QColor.fromRgbF(*start), self)
+        dlg.setOption(QColorDialog.ColorDialogOption.DontUseNativeDialog, True)
+
+        def live(c):
+            self.value[i] = (c.redF(), c.greenF(), c.blueF())
+            self._emit()
+        dlg.currentColorChanged.connect(live)
+        if not dlg.exec():
+            self.value[i] = start
+            self._emit()
         self.editFinished.emit()

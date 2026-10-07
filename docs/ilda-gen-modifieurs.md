@@ -74,7 +74,7 @@ TouchDesigner, After Effects).
 | E4 | Arc-en-ciel | Cycle de toutes les teintes | ★ |
 | E5 | Teinte / saturation / luminosité | Ajuste la couleur existante | |
 | E6 | Segments alternés | Couleur différente par segment (rouge, vert, rouge…) | |
-| E7 | Couleur aléatoire | Couleur au hasard par segment ou par copie | |
+| E7 | Couleur aléatoire | Couleur au hasard par segment ou par copie ; palette : toutes les teintes, couleurs laser pures, ou **couleurs choisies** (liste modifiable : clic = changer, clic droit = retirer, + = ajouter) | |
 | E8 | Remplacement de couleur | Remplace une couleur par une autre | |
 
 ## F. Intensité

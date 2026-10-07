@@ -230,6 +230,16 @@ def test_line_snaps_center_in_thickness():
     assert abs((0.232 + 0.252) / 2 + dy - 0.25) < 1e-9, dy
 
 
+def test_random_color_chosen_palette():
+    """Couleur aléatoire, palette « Couleurs choisies » : seules ces couleurs sont tirées."""
+    root = GroupNode()
+    root.add(ModifierNode("random_color", values={"palette": 2, "mode": 1, "colors": [(1, 0, 0), (0, 0, 1)]}))
+    root.add(ShapeNode("polygon", (-0.5, -0.5, 0.5, 0.5)))
+    cols = np.vstack([s.col for s in evaluate(root, ctx())])
+    got = {tuple(np.round(c, 6)) for c in cols}
+    assert got <= {(1.0, 0.0, 0.0), (0.0, 0.0, 1.0)} and len(got) == 2, got
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
