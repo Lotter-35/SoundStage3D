@@ -88,7 +88,7 @@ def test_sub_modifier_moves_symmetry_center():
 
 def test_dots_phase_from_translation():
     root = GroupNode()
-    dots = ModifierNode("dots", {"spacing": 0.1})
+    dots = ModifierNode("dots", {"spacing": 0.1, "ends": False})
     root.add(dots)
     root.add(ShapeNode("line", (-0.5, 0.0, 0.5, 0.0)))
     a = evaluate(root, ctx())[0].pts[0, 0]
@@ -238,6 +238,19 @@ def test_random_color_chosen_palette():
     cols = np.vstack([s.col for s in evaluate(root, ctx())])
     got = {tuple(np.round(c, 6)) for c in cols}
     assert got <= {(1.0, 0.0, 0.0), (0.0, 0.0, 1.0)} and len(got) == 2, got
+
+
+def test_dots_keep_ends():
+    """Dots : premier et dernier point toujours présents sur un tracé ouvert (option active par défaut)."""
+    from ildagen.core.path import Path
+    def run(ends):
+        root = GroupNode()
+        root.add(ModifierNode("dots", values={"spacing": 0.3, "phase": 0.1, "ends": ends}))
+        root.add(ShapeNode("path", paths=[Path([[0.0, 0.0], [1.0, 0.0]])]))
+        return evaluate(root, ctx())[0].pts
+    on, off = run(True), run(False)
+    assert np.allclose(on[0], [0, 0]) and np.allclose(on[-1], [1, 0])
+    assert not np.allclose(off[0], [0, 0]) and np.diff(on[:, 0]).min() >= 0.15 - 1e-9
 
 
 if __name__ == "__main__":

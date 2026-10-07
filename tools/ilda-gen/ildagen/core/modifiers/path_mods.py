@@ -46,7 +46,8 @@ class Dots(Modifier):
     description = "Transforme les lignes en suite de points. Une Translation X posée dessus décale les points (phase)."
     params = [F("spacing", "Espacement", 0.06, 0.002, 4.0, decimals=3, soft_max=0.5),
               I("size", "Éclat", 3, 1, 60),
-              F("phase", "Phase", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1)]
+              F("phase", "Phase", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1),
+              B("ends", "Premier et dernier point", True)]
     phase_key = "phase"
     size_keys = ("spacing",)
 
@@ -62,6 +63,12 @@ class Dots(Modifier):
             pos = np.arange(first, L + (0 if s.closed else 1e-9), sp)
             if s.closed:
                 pos = pos[pos < L - 1e-9]
+            elif p.get("ends", True) and L > 0:
+                # Un point au tout début et un à la toute fin (le tracé ne s'arrête pas sur un vide) ;
+                # les points trop proches d'une extrémité sont retirés pour ne pas faire de paquet
+                gap = 0.5 * sp
+                pos = pos[(pos > gap) & (pos < L - gap)]
+                pos = np.concatenate(([0.0], pos, [L]))
             if len(pos) == 0:
                 continue
             dp, dc = at(pts, col, cum, pos)

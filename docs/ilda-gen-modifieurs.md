@@ -56,7 +56,7 @@ TouchDesigner, After Effects).
 
 | N° | Modifieur | Effet | |
 |---|---|---|---|
-| D1 | Dots (pointillés) | Ligne → suite de points ; espacement, taille, **phase** | ★ demandé |
+| D1 | Dots (pointillés) | Ligne → suite de points ; espacement, taille, **phase**, **premier et dernier point** (option, active par défaut : le tracé ne s'arrête pas sur un vide) | ★ demandé |
 | D2 | Tirets (dash) | Ligne → tirets ; longueur, espace, phase | ★ |
 | D3 | Dessin progressif (trim) | N'affiche que le tracé entre un début et une fin en % (effet « se dessine ») | ★ |
 | D4 | Décalage du point de départ | Change où commence le tracé (phase) | |
