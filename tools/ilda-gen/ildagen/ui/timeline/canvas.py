@@ -329,16 +329,32 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
             # Maj + molette : défilement vertical des pistes
             dy = pd.y() if not pd.isNull() else (ad.y() or ad.x()) / 2
             self.scroll_by(-dy)
+        elif self._is_trackpad(e):
+            # Pavé tactile : glisser à deux doigts = haut / bas (pistes) et gauche / droite (temps)
+            d = pd if not pd.isNull() else ad / 2
+            self._scroll_time(d.x())
+            if d.y():
+                self.scroll_by(-d.y())
         else:
             # Molette : la timeline défile de gauche à droite
-            if not pd.isNull():
-                dx = pd.x() if abs(pd.x()) > abs(pd.y()) else pd.y()
-            else:
-                dx = (ad.x() if abs(ad.x()) > abs(ad.y()) else ad.y()) / 2
-            self.geo.t0 = max(0.0, self.geo.t0 - dx / self.geo.pps)
-            self.scrollChanged.emit()
-            self.update()
+            dx = (ad.x() if abs(ad.x()) > abs(ad.y()) else ad.y()) / 2
+            self._scroll_time(dx)
         e.accept()
+
+    @staticmethod
+    def _is_trackpad(e):
+        from PySide6.QtGui import QInputDevice
+        dev = e.device()
+        if dev is not None and dev.type() == QInputDevice.DeviceType.TouchPad:
+            return True
+        return not e.pixelDelta().isNull() or e.phase() != Qt.ScrollPhase.NoScrollPhase
+
+    def _scroll_time(self, dx):
+        if not dx:
+            return
+        self.geo.t0 = max(0.0, self.geo.t0 - dx / self.geo.pps)
+        self.scrollChanged.emit()
+        self.update()
 
     def scroll_by(self, dy):
         g = self.geo

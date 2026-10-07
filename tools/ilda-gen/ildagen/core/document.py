@@ -34,7 +34,8 @@ class GridSettings:
         return g
 
 
-MAIN_NAME = "Forme principale"
+MAIN_NAME = "Forme"
+OLD_MAIN_NAMES = ("Forme principale",)
 
 
 def ensure_main_group(scene):
@@ -50,6 +51,8 @@ def ensure_main_group(scene):
     if main.parent is not scene:
         scene.add(main, 0)
     main.expanded = True
+    if main.name in OLD_MAIN_NAMES:
+        main.name = MAIN_NAME
     return main
 
 

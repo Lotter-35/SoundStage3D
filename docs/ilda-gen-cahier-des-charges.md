@@ -217,10 +217,11 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | CAL-11 | Toutes ces actions aussi au **clic droit** (copier, couper, coller, supprimer, sélectionner…). | Demandé |
 | CAL-12 | Renommer un calque (double-clic ou clic droit). | Proposé |
 | CAL-13 | Glisser-déposer **fluide**. | Demandé |
-| CAL-14 | Dans la scène, on travaille **obligatoirement dans un groupe racine « Forme principale »**, toujours en tête de liste : ni supprimable, ni dégroupable, ni déplaçable ; les nouveaux calques y vont automatiquement ; les anciens projets sont convertis à l'ouverture. | Retour |
+| CAL-14 | Dans la scène, on travaille **obligatoirement dans un groupe racine « Forme »** (icône des formes, renommable), toujours en tête de liste : ni supprimable, ni dégroupable, ni déplaçable ; les nouveaux calques y vont automatiquement ; les anciens projets sont convertis à l'ouverture. | Retour |
 | CAL-15 | **Boutons sous les calques** : Modifieur (menu de tous les modifieurs), nouveau calque (vide, le prochain trait au crayon le remplit), nouveau groupe (groupe la sélection s'il y en a une), forme personnalisée, supprimer. | Retour |
 | CAL-16 | **Portée des modifieurs visible en permanence** (pas seulement au survol) : les calques modifiés sont **décalés vers la droite** sous le modifieur et une **barre verticale sombre**, alignée sur le centre de l'icône du modifieur, longe tous les calques qu'il modifie ; elle s'éclaircit quand le modifieur est sélectionné. | Retour |
 | CAL-17 | Modifieur sélectionné : ses formes sont entourées en pointillés dans la mire et Propriétés indique « Agit sur : … ». | Retour |
+| CAL-19 | Le **cadenas est toujours affiché** à côté de l'œil : ouvert et discret quand le calque est libre, fermé quand il est verrouillé. | Retour |
 | CAL-18 | Lignes de calques sobres : flèche de dépliage dans la ligne, alignée sur le contenu ; **pas d'effet de survol**. | Retour |
 
 ### 9.2 Groupes
@@ -353,6 +354,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TMN-04 | **Lecture en boucle** (zone de boucle). | Demandé |
 | TMN-05 | Pendant la lecture, le rendu est affiché dans la mire et **envoyé au laser** si l'envoi live est actif. | Déduit |
 | TMN-06 | **Molette = défilement horizontal** ; `Maj` + molette = pistes de haut en bas ; `Ctrl` + molette = zoom. | Retour |
+| TMN-09 | **Pavé tactile** : glisser à deux doigts vers le haut / le bas fait défiler les pistes, sur le côté fait défiler le temps (les deux en même temps). | Retour |
 | TMN-07 | Zone de boucle : se règle en glissant dans la bande en haut de la règle ; elle **ne peut pas passer avant 0**. | Retour |
 | TMN-08 | La timeline (clips, automations, BPM, boucle…) est **sauvegardée et restaurée** avec le projet. | Retour |
 

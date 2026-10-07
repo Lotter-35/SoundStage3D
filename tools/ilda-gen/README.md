@@ -151,11 +151,11 @@ Boutons sous les calques : **Modifieur** (menu de tous les modifieurs), **nouvea
 groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **supprimer**.
 
 
-- Dans la scène, tout est rangé dans le groupe **Forme principale**, toujours en tête de la liste : il ne
+- Dans la scène, tout est rangé dans le groupe **Forme** (icône des formes), toujours en tête de la liste : il ne
   peut être ni supprimé, ni dégroupé, ni déplacé ; les nouveaux calques y vont automatiquement (les anciens
   projets sont convertis à l'ouverture).
 - Chaque forme est un calque. Glisser-déposer pour réordonner ou ranger dans un groupe (ligne bleue = position).
-- Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas : verrouiller. Un groupe
+- Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas (toujours affiché, ouvert ou fermé) : verrouiller. Un groupe
   verrouillé ne se déplie plus mais se sélectionne et se déplace comme un seul bloc.
 - **Modifieurs** (bouton « Modifieur » sous les calques, ou clic droit → Ajouter un modifieur) : ils agissent sur tout ce qui est **en dessous d'eux dans
   le même groupe**. Leurs réglages s'affichent sous la ligne du calque et dans Propriétés.
@@ -201,6 +201,7 @@ double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (an
    (ou remet sa valeur fixe par défaut).
 5. Réglage **Actif** d'un modifieur (Propriétés) : automatisé, il n'active le modifieur que sur une partie du clip.
 6. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
+   Pavé tactile : glisser à deux doigts vers le haut / le bas = pistes, sur le côté = temps.
 7. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle.
 
 En lecture, la mire montre la sortie de la timeline et l'envoi live suit.

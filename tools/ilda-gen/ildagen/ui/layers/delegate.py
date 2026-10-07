@@ -14,7 +14,7 @@ BTN = 22
 
 def node_icon(node):
     if node.kind == "group":
-        return "layers" if getattr(node, "main", False) else "folder"
+        return "component" if getattr(node, "main", False) else "folder"
     if node.kind == "instance":
         return "component"
     if node.kind == "modifier":
@@ -156,9 +156,10 @@ class LayerDelegate(QStyledItemDelegate):
             fm2 = p.fontMetrics()
             p.drawText(QRect(x, r.top(), right_limit - x, r.height()), Qt.AlignmentFlag.AlignVCenter,
                        fm2.elidedText(summary, Qt.TextElideMode.ElideRight, right_limit - x))
-        if node.locked:
-            lr = lock_rect(r)
-            p.drawPixmap(lr.left() + 4, lr.top() + (lr.height() - 14) // 2, icons.pixmap("lock", theme.TEXT, 14))
+        # Cadenas toujours visible à côté de l'œil : ouvert (discret) ou fermé
+        lr = lock_rect(r)
+        lock = icons.pixmap("lock", theme.TEXT, 14) if node.locked else icons.pixmap("lock-open", theme.TEXT_OFF, 14)
+        p.drawPixmap(lr.left() + 4, lr.top() + (lr.height() - 14) // 2, lock)
         er = eye_rect(r)
         eye = icons.pixmap("eye" if node.visible else "eye-off", theme.TEXT_DIM if node.visible else theme.TEXT_OFF, 14)
         p.drawPixmap(er.left() + 4, er.top() + (er.height() - 14) // 2, eye)

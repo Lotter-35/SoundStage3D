@@ -458,6 +458,17 @@ def main():
         win.playback._tick()
     win.playback.pause()
     check("lecture : la tête avance", ed.playhead > t_before, f"{t_before:.3f} → {ed.playhead:.3f}")
+    # Pavé tactile : deux doigts = défilement horizontal ET vertical
+    from PySide6.QtGui import QWheelEvent
+    canvas.geo.t0, canvas.geo.scroll_y = 2.0, 0
+    canvas.resize(canvas.width(), 140)
+    pos = QPointF(400, 120)
+    ev = QWheelEvent(pos, canvas.mapToGlobal(pos), QPoint(30, -40), QPoint(30, -40), Qt.MouseButton.NoButton,
+                     M.NoModifier, Qt.ScrollPhase.ScrollUpdate, False)
+    QApplication.sendEvent(canvas, ev)
+    check("pavé tactile : défilement sur le côté et vers le bas", canvas.geo.t0 < 2.0 and canvas.geo.scroll_y > 0,
+          f"t0 {canvas.geo.t0:.3f}, y {canvas.geo.scroll_y}")
+    canvas.geo.t0, canvas.geo.scroll_y = 0.0, 0
     app.processEvents()
     shot(win, "03_timeline")
 
@@ -489,6 +500,7 @@ def main():
     check("blackout coupe l'envoi", not win.live.live and win.live.blackout)
     win.live.set_blackout(False)
 
+    check("groupe racine « Forme »", ed.doc.main_group.name == "Forme")
     # ── Symétrie de dessin ───────────────────────────────────────────────
     import numpy as np
     ed.set_symmetry(1)
