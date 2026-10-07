@@ -153,6 +153,16 @@ class MainWindow(QMainWindow):
         if not (self._timeline_focused() and self.timeline.canvas.paste_clips()):
             self.editor.paste()
 
+    def duplicate_pressed(self):
+        if not (self._timeline_focused() and self.timeline.canvas.duplicate_clips()):
+            self.editor.duplicate_selection()
+
+    def select_all_pressed(self):
+        if self._timeline_focused():
+            self.timeline.canvas.select_all_clips()
+        else:
+            self.editor.select_all()
+
     def export_ilda(self):
         ExportDialog(self.editor, self).exec()
 

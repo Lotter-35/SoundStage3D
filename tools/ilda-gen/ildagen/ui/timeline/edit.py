@@ -130,6 +130,13 @@ class TimelineEditing:
         min_d = max(0.02, self.tl.grid_step if self.tl.snap else 0.02)
         if d["kind"] == "clip_body":
             clip.start = max(0.0, self.snap(d["start"] + dt, mods))
+            group = d.get("group") or []
+            if group:
+                # Plusieurs clips sélectionnés : ils bougent ensemble (sans passer avant 0)
+                delta = max(clip.start - d["start"], -min(s0 for _, s0 in group))
+                clip.start = d["start"] + delta
+                for c, s0 in group:
+                    c.start = s0 + delta
             row = g.row_at(self.rows(), y)
             if row is not None and row.kind == "track" and row.track is not d["track"]:
                 d["track"].clips.remove(clip)
@@ -191,6 +198,10 @@ class TimelineEditing:
     def delete_selection(self):
         if getattr(self, "range_sel", None) and self.clips_in_range():
             self.editor.delete_clips(self.clips_in_range())
+            return
+        if self.sel_key is None and len(self.sel_clips) > 1:
+            self.editor.delete_clips(self.selected_clips())
+            self.set_clip_selection(())
             return
         if self.sel_key is not None:
             for _, c in self.tl.all_clips():

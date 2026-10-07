@@ -20,19 +20,28 @@ def range_modifier(mods):
 class TimelineClipboard:
     range_sel = None     # (début, fin) de la zone de temps sélectionnée
 
-    def start_range(self, x, mods):
+    def start_range(self, x, mods, clip=None):
         t = max(0.0, self.snap(self.geo.t(x), mods))
-        self.range_sel = (t, t)
-        self.drag = {"kind": "range", "t0": t}
-        self.update()
+        self.drag = {"kind": "range", "t0": t, "x0": x, "clip": clip, "moved": False, "old": self.range_sel}
 
     def drag_range(self, x, mods):
+        d = self.drag
+        if not d["moved"] and abs(x - d["x0"]) < 4:
+            return
+        d["moved"] = True
         t = max(0.0, self.snap(self.geo.t(x), mods))
-        a = self.drag["t0"]
+        a = d["t0"]
         self.range_sel = (min(a, t), max(a, t))
         self.update()
 
     def end_range(self):
+        d = self.drag
+        if not d["moved"]:
+            # Simple Cmd/Ctrl + clic : multi-sélection de clips
+            self.range_sel = d["old"]
+            if d["clip"] is not None:
+                self.toggle_clip(d["clip"])
+            return
         if self.range_sel and self.range_sel[1] - self.range_sel[0] < EPS:
             self.range_sel = None
         if self.range_sel:
@@ -53,10 +62,14 @@ class TimelineClipboard:
         return [(tr, c) for tr, c in self.tl.all_clips() if a - EPS <= c.start < b - EPS]
 
     def _selection(self):
-        """(clips, début, longueur) à copier : la zone de temps, sinon le clip sélectionné."""
+        """(clips, début, longueur) à copier : la zone de temps, sinon les clips sélectionnés."""
         if self.range_sel:
             a, b = self.range_sel
             return self.clips_in_range(), a, b - a
+        sel = self.selected_clips()
+        if sel:
+            a = min(c.start for _, c in sel)
+            return sel, a, max(c.end for _, c in sel) - a
         clip = self.editor.current_clip()
         if clip is not None:
             tr, _ = self.tl.find_clip(clip.id)
@@ -76,6 +89,7 @@ class TimelineClipboard:
             return False
         self.editor.copy_clips(*sel)
         self.editor.delete_clips(sel[0], "Couper")
+        self.set_clip_selection(())
         return True
 
     def paste_clips(self):
@@ -85,7 +99,7 @@ class TimelineClipboard:
         a, b, clips = res
         if self.range_sel is not None:
             self.range_sel = (a, b)        # la zone suit : on peut recopier ce qu'on vient de coller
-        self.update()
+        self.set_clip_selection(c.id for c in clips)
         return True
 
     def draw_range(self, p):

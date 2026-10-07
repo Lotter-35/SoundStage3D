@@ -14,13 +14,14 @@ from .geometry import CHEVRON_W, CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry
 from .edit import TimelineEditing
 from .clipboard import TimelineClipboard, range_modifier
 from .menus import TimelineMenus
+from .selection import TimelineSelection
 from .thumbs import ThumbCache
 
 MIN_PPS = 4.0
 MAX_PPS = 2000.0
 
 
-class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard):
+class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard, TimelineSelection):
     scrollChanged = Signal()
     # QWidget est en tête : sa version masquerait celle du mixin, on la relie explicitement
     contextMenuEvent = TimelineMenus.contextMenuEvent
@@ -111,8 +112,10 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard)
                 D.draw_group(p, g, r)
             else:
                 for c in r.track.clips:
-                    D.draw_clip(p, g, r, c, self.editor, c.id == sel_clip, r.track.muted, self.thumb)
+                    D.draw_clip(p, g, r, c, self.editor, c.id == sel_clip or c.id in self.sel_clips,
+                                r.track.muted, self.thumb)
         self.draw_range(p)
+        self.draw_rect(p)
         p.setClipping(False)
         if self.peaks is not None:
             p.drawPixmap(0, 0, self._waveform_pixmap())
@@ -205,13 +208,16 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard)
         rows = self.rows()
         row = g.row_at(rows, y)
         if x >= HEADER_W and (row is None or row.kind == "track") and range_modifier(e.modifiers()):
-            # Cmd/Ctrl + glisser : sélection d'une zone de temps (clips + vide) à copier
-            self.start_range(x, e.modifiers())
+            # Cmd/Ctrl + clic sur un clip : l'ajouter / le retirer ; Cmd/Ctrl + glisser : zone de temps à copier
+            hit = self.clip_hit(row, x)[0] if row is not None else None
+            self.start_range(x, e.modifiers(), hit)
             return
         if x >= HEADER_W:
             self.clear_range()
-        if row is None:
-            self._click_empty(x, e)
+        shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if row is None or (row.kind == "track" and x >= HEADER_W and self.clip_hit(row, x)[0] is None):
+            # Glisser dans le vide : rectangle de sélection de clips ; simple clic : tête de lecture
+            self.start_rect(x, y, shift)
             return
         if x < HEADER_W:
             self._press_header(row, x, y)
@@ -221,18 +227,21 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard)
             return
         if row.kind == "track":
             clip, part = self.clip_hit(row, x)
-            if clip is None:
-                self._click_empty(x, e)
-                return
             if part == "chevron":
                 clip.expanded = not clip.expanded
                 self.editor.enter_clip(clip.id)
                 self._changed()
                 return
+            if shift:
+                self.toggle_clip(clip)          # Maj + clic : ajouter / retirer de la sélection
+                return
+            if clip.id not in self.sel_clips:
+                self.set_clip_selection([clip.id])
             self.editor.enter_clip(clip.id)
             self.editor.begin("Déplacer le clip" if part == "body" else "Durée du clip")
+            group = [(c, c.start) for _, c in self.selected_clips() if c is not clip] if part == "body" else []
             self.drag = {"kind": "clip_" + part, "clip": clip, "track": row.track, "x0": x,
-                         "start": clip.start, "end": clip.end,
+                         "start": clip.start, "end": clip.end, "group": group,
                          "keys": [(k, k.t) for a in clip.automations for k in a.keys]}
             self.update()
             return
@@ -261,6 +270,9 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard)
         if kind == "range":
             self.drag_range(x, e.modifiers())
             return
+        if kind == "rect":
+            self.drag_rect(x, y)
+            return
         if kind in ("loop_start", "loop_end", "loop_move"):
             t = max(0.0, self.snap(g.t(x), e.modifiers()))
             if kind == "loop_start":
@@ -285,11 +297,21 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard)
     def mouseReleaseEvent(self, e):
         if self.drag is not None:
             kind = self.drag["kind"]
-            self.drag = None
-            self.editor.set_preview_time(None)   # retour à la tête de lecture
+            if kind == "rect":
+                self.end_rect(e)
+                self.drag = None
+                self.update()
+                return
             if kind == "range":
                 self.end_range()
-            elif kind != "scrub":
+                self.drag = None
+                return
+            d = self.drag
+            self.drag = None
+            self.editor.set_preview_time(None)   # retour à la tête de lecture
+            if kind == "clip_body" and d.get("group") and abs(e.position().x() - d["x0"]) < 2:
+                self.set_clip_selection([d["clip"].id])     # simple clic dans une sélection : ce clip seul
+            if kind != "scrub":
                 self.editor.commit()
                 self.editor.notify(timeline=True)
 

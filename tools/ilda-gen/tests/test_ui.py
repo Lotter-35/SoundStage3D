@@ -473,6 +473,46 @@ def main():
     canvas.clear_range()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     ed.enter_clip(clip.id)
+    # Multi-sélection de clips : rectangle, Cmd/Ctrl + clic, déplacement en bloc, Ctrl+A, Ctrl+D, Suppr
+    c2 = ed.add_clip(clip.def_id, tl_.tracks[0].id, clip.end + 1.0, 1.0)
+    app.processEvents()
+    tr_row = next(r for r in canvas.rows() if r.kind == "track")
+    yy = int(tr_row.y + tr_row.h / 2)
+    x_end = int(canvas.geo.x(c2.end)) + 20
+    drag(canvas, QPoint(x_end, int(tr_row.y) + 2), QPoint(int(canvas.geo.x(clip.start + 1.0)), yy))
+    check("rectangle de sélection : les deux clips", canvas.sel_clips == {clip.id, c2.id}, str(len(canvas.sel_clips)))
+    s1, s2 = clip.start, c2.start
+    x1 = int(canvas.geo.x(c2.start + 0.5))
+    drag(canvas, QPoint(x1, yy), QPoint(x1 + int(canvas.geo.pps), yy), M.AltModifier)
+    check("glisser un clip sélectionné : tous bougent ensemble", abs((clip.start - s1) - 1.0) < 0.05
+          and abs((c2.start - s2) - 1.0) < 0.05, f"{clip.start - s1:.3f} / {c2.start - s2:.3f}")
+    ed.undo()
+    tl_ = ed.doc.timeline
+    clip, c2 = tl_.find_clip(clip.id)[1], tl_.find_clip(c2.id)[1]
+    app.processEvents()
+    click(canvas, QPoint(int(canvas.geo.x(clip.start + 1.0)), yy))
+    click(canvas, QPoint(int(canvas.geo.x(c2.start + 0.5)), yy), M.ControlModifier)
+    check("Cmd/Ctrl + clic : ajouter à la sélection", canvas.sel_clips == {clip.id, c2.id})
+    click(canvas, QPoint(int(canvas.geo.x(c2.start + 0.5)), yy), M.ControlModifier)
+    check("Cmd/Ctrl + clic : retirer de la sélection", canvas.sel_clips == {clip.id})
+    canvas.setFocus()
+    app.processEvents()
+    win.select_all_pressed()
+    check("Ctrl+A dans la timeline : tous les clips", canvas.sel_clips == {clip.id, c2.id})
+    n = sum(1 for _ in tl_.all_clips())
+    win.duplicate_pressed()
+    starts = sorted(c.start for _, c in tl_.all_clips())
+    check("Ctrl+D : la sélection est recopiée juste après", sum(1 for _ in tl_.all_clips()) == n + 2
+          and any(abs(s - c2.end) < 1e-6 for s in starts) and len(canvas.sel_clips) == 2)
+    canvas.delete_selection()
+    check("Suppr : supprime les clips sélectionnés", sum(1 for _ in tl_.all_clips()) == n)
+    ed.undo()
+    ed.undo()
+    ed.undo()
+    canvas.set_clip_selection(())
+    tl_ = ed.doc.timeline
+    clip = tl_.find_clip(clip.id)[1]
+    ed.enter_clip(clip.id)
     # Raccourcir le clip : les automations s'étirent proportionnellement
     times = [(a.id, [k.t for k in a.keys]) for a in clip.automations]
     d0 = clip.duration
@@ -692,11 +732,12 @@ def main():
     n = export_ilda(ed, os.path.join(tempfile.mkdtemp(), "t.ild"), 5, 25, 0.0, 4.0)
     check("export ILDA de l'animation", n == 100, f"{n} images")
     # Suppr sur une forme personnalisée de la liste de gauche (annulable)
-    win.tools.defs.setCurrentRow(1)
+    motif = next(x for x in ed.doc.library.defs if x.id != F1)
+    ed.enter_def(motif.id)                  # comme un clic sur la forme dans la liste
     win.tools.defs.setFocus()
     app.processEvents()
     win.tools.defs.delete_current()
-    check("Suppr supprime la forme personnalisée", len(ed.doc.library.defs) == 1 and not ed.doc.timeline.has_clips())
+    check("Suppr supprime la forme personnalisée", len(ed.doc.library.defs) == 1 and not ed.doc.timeline.has_clips(), f"{[d.name for d in ed.doc.library.defs]} {[(c.def_id, c.start) for _, c in ed.doc.timeline.all_clips()]}")
     ed.undo()
     check("annuler la suppression de la forme", len(ed.doc.library.defs) == 2 and ed.doc.timeline.has_clips())
     ed.dirty = False
