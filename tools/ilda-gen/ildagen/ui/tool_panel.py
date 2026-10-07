@@ -93,9 +93,11 @@ class DefList(QListWidget):
         it = self.currentItem()
         if it is not None:
             d = self.editor.doc.library.get(it.data(Qt.ItemDataRole.UserRole))
+            last = len(self.editor.doc.library.defs) == 1
             self.editor.delete_def(it.data(Qt.ItemDataRole.UserRole))
             if d is not None:
-                self.editor.statusMessage.emit(f"Forme « {d.name} » supprimée (Ctrl+Z pour annuler)")
+                extra = " — le projet garde toujours une forme : une forme vide a été créée" if last else ""
+                self.editor.statusMessage.emit(f"Forme « {d.name} » supprimée{extra} (Ctrl+Z pour annuler)")
 
     def _rename(self, it):
         def_id = it.data(Qt.ItemDataRole.UserRole)
