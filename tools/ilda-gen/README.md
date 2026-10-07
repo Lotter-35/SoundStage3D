@@ -205,8 +205,9 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    bouton **〰 (courbe)** l'envoie dans la timeline : une ligne apparaît sous le clip de la forme, avec une clé
    à la tête de lecture. Le bouton devient bleu ; re-cliquer retire le réglage de la timeline (annulable).
    Le clip visé : le clip sélectionné, sinon le seul clip de cette forme (ou celui sous la tête de lecture).
-   **Mini-courbe** : sous chaque réglage envoyé, dans Calques et Propriétés, un petit rectangle montre sa
-   courbe sur **toute la durée du clip** (gauche = début de la forme, droite = fin), quel que soit le zoom de
+   **Mini-courbe** : un réglage envoyé a une petite **flèche** devant son nom (fermée par défaut) ; elle ouvre,
+   sous le réglage (Calques et Propriétés), un petit rectangle qui montre sa courbe sur **toute la durée du
+   clip**, avec les traits de la grille choisie (mesures, temps, subdivisions) en fond, sans numéros (gauche = début de la forme, droite = fin), quel que soit le zoom de
    la timeline : clic = ajouter un point, glisser = le déplacer (la mire montre cet instant), clic droit =
    le supprimer, `Alt` = sans aimant.
    **Déplier le clip** (chevron à gauche du clip, ou double-clic) : on ne voit **que les réglages envoyés**,

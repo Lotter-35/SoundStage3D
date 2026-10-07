@@ -434,7 +434,10 @@ def main():
     strip = form.strips["angle"]
     form.resize(300, form.sizeHint().height())
     app.processEvents()
-    check("mini-courbe affichée sous le réglage envoyé", strip.isVisibleTo(form))
+    check("réglage envoyé : flèche visible, mini-courbe fermée par défaut",
+          form.chevrons["angle"].isVisibleTo(form) and not strip.isVisibleTo(form))
+    form.chevrons["angle"].click()
+    check("flèche : la mini-courbe s'ouvre", strip.isVisibleTo(form))
     auto_a = clip.automation_for(sym_def.id, "angle")
     nk = len(auto_a.keys)
     strip.resize(240, 34)

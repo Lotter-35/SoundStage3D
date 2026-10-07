@@ -53,6 +53,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.preview_clip = None   # clip de cette clé : reste visible même sur sa toute dernière image
         self.playing = False
         self.clipboard = []
+        self.open_strips = set()      # (calque, réglage) dont la mini-courbe est dépliée dans les réglages
         self.clip_clipboard = None   # clips copiés dans la timeline (avec la longueur de la zone copiée)
         self.dirty = False
         self.selected_clip = None

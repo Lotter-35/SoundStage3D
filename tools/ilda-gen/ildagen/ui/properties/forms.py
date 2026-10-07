@@ -94,7 +94,8 @@ class ParamForm(QWidget):
         grid.setContentsMargins(*m)
         grid.setHorizontalSpacing(4 if compact else 8)
         grid.setVerticalSpacing(3 if compact else 4)
-        grid.setColumnStretch(1, 1)
+        grid.setColumnStretch(2, 1)
+        self.chevrons = {}      # flèche « afficher la courbe » (réglage envoyé dans la timeline)
         if node is None:
             return
         row = 0
@@ -125,20 +126,31 @@ class ParamForm(QWidget):
                 auto.setFixedSize(18, 18)
                 auto.clicked.connect(lambda _=False, s=spec: self._automate(s))
                 self.autos[spec.key] = auto
+            if auto is not None:
+                # Flèche (fermée par défaut) : afficher la courbe du réglage sous la ligne
+                chev = QToolButton()
+                chev.setAutoRaise(True)
+                chev.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                chev.setFixedSize(14, 18)
+                chev.setToolTip("Afficher / masquer la courbe au cours du clip")
+                chev.clicked.connect(lambda _=False, s=spec: self._toggle_strip(s))
+                chev.setVisible(False)
+                self.chevrons[spec.key] = chev
+                grid.addWidget(chev, row, 0)
             if spec.kind == "gradient":
-                grid.addWidget(label, row, 0, 1, 2)
-                grid.addWidget(reset, row, 2)
+                grid.addWidget(label, row, 1, 1, 2)
+                grid.addWidget(reset, row, 3)
                 if auto is not None:
-                    grid.addWidget(auto, row, 3)
+                    grid.addWidget(auto, row, 4)
                 row += 1
-                grid.addWidget(field, row, 0, 1, 2)
+                grid.addWidget(field, row, 1, 1, 2)
             else:
-                grid.addWidget(label, row, 0)
+                grid.addWidget(label, row, 1)
                 # Les champs prennent toute la largeur disponible (sauf case à cocher / couleur)
-                grid.addWidget(field, row, 1, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color") else Qt.AlignmentFlag(0))
-                grid.addWidget(reset, row, 2)
+                grid.addWidget(field, row, 2, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color") else Qt.AlignmentFlag(0))
+                grid.addWidget(reset, row, 3)
                 if auto is not None:
-                    grid.addWidget(auto, row, 3)
+                    grid.addWidget(auto, row, 4)
             label.setToolTip("Clic droit : réinitialiser / automatiser · Alt + clic sur la valeur : réinitialiser")
             if hasattr(field, "resetRequested"):
                 field.resetRequested.connect(lambda s=spec: self._reset(s))
@@ -154,7 +166,7 @@ class ParamForm(QWidget):
                 # Sous le réglage : sa courbe au cours du clip (visible quand il est dans la timeline)
                 strip = CurveStrip(editor, node_id, spec)
                 strip.setVisible(False)
-                grid.addWidget(strip, row, 0, 1, 4)
+                grid.addWidget(strip, row, 1, 1, 4)
                 self.strips[spec.key] = strip
                 row += 1
         self.refresh()
@@ -181,12 +193,17 @@ class ParamForm(QWidget):
         for key, btn in self.autos.items():
             on = self.editor.param_in_timeline(node, key)
             btn.setChecked(on)
+            chev = self.chevrons.get(key)
+            opened = on and (self.node_id, key) in self.editor.open_strips
+            if chev is not None:
+                chev.setVisible(on)
+                chev.setIcon(icons.icon("chevron-down" if opened else "chevron-right", 10))
             strip = self.strips.get(key)
             if strip is not None:
-                if strip.isVisibleTo(self) != on:
-                    strip.setVisible(on)
+                if strip.isVisibleTo(self) != opened:
+                    strip.setVisible(opened)
                     resized = True
-                elif on:
+                elif opened:
                     strip.update()
             label = self.specs[key].label
             btn.setToolTip(f"« {label} » est dans la timeline (clic : l'en retirer)" if on else
@@ -194,6 +211,11 @@ class ParamForm(QWidget):
         if resized:
             self.adjustSize()
             self.heightChanged.emit()
+
+    def _toggle_strip(self, spec):
+        k = (self.node_id, spec.key)
+        self.editor.open_strips ^= {k}
+        self.refresh()
 
     def _automate(self, spec):
         node = self.node()

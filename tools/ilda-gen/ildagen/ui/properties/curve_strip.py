@@ -102,6 +102,7 @@ class CurveStrip(QWidget):
             p.end()
             return
         a = self._area()
+        self._draw_grid(p, clip, a)
         xs = [a.left() + i for i in range(int(a.width()) + 1)]
         if self._is_color():
             for x in xs:
@@ -129,6 +130,19 @@ class CurveStrip(QWidget):
                 p.setBrush(theme.qc(theme.ACCENT) if k is sel else theme.qc(theme.BG_MIRE))
             p.drawPolygon(QPolygonF([QPointF(kx, ky - 4), QPointF(kx + 4, ky), QPointF(kx, ky + 4), QPointF(kx - 4, ky)]))
         p.end()
+
+    def _draw_grid(self, p, clip, a):
+        """Traits de la grille musicale choisie (mesures, temps, subdivisions), sans numéros."""
+        from ..timeline.draw import grid_lines
+        tl = self.editor.doc.timeline
+        pps = a.width() / max(clip.duration, 1e-9)
+        lines, _ = grid_lines(tl, clip.start, clip.end, pps)
+        alpha = {0: 0.16, 1: 0.08, 2: 0.045}
+        for t, level, _ in lines:
+            if clip.start - 1e-9 <= t <= clip.end + 1e-9:
+                x = self._x(t - clip.start, clip)
+                p.setPen(QPen(theme.qc("#ffffff", alpha.get(level, 0.045)), 1))
+                p.drawLine(QPointF(x, 1.5), QPointF(x, self.height() - 1.5))
 
     # ── Souris ───────────────────────────────────────────────────────────
     def mousePressEvent(self, e):
