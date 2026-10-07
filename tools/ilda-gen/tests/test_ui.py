@@ -595,6 +595,20 @@ def main():
     n_keys = len(lane.auto.keys)
     click(canvas, QPoint(int(canvas.geo.x(clip.start + 3.0)), int(lane.y + lane.h * 0.3)))
     check("clic dans une automation = nouvelle clé", len(lane.auto.keys) == n_keys + 1)
+    # Simple clic sur un point existant : rampe → carré → sinusoïdale (la façon d'arriver sur lui)
+    from ildagen.ui.timeline import lanes as TLc
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    kc = min(lane.auto.keys, key=lambda kk: abs(kk.t - 3.0))
+    prev = lane.auto.keys[lane.auto.keys.index(kc) - 1]
+    _, spc = TLc.target(ed, lane.clip, lane.auto)
+    kpc = QPoint(int(canvas.geo.x(lane.clip.start + kc.t)), int(TLc.v_to_y(kc.v, lane, TLc.value_range(spc, lane.auto))))
+    c_before = prev.curve
+    t_before = kc.t
+    click(canvas, kpc)
+    check("clic sur un point : la courbe change (sans le déplacer)", prev.curve != c_before and kc.t == t_before,
+          f"{c_before} → {prev.curve}")
+    ed.undo()
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     # Lignes de réglage repliables à la main
     from ildagen.ui.timeline.geometry import LANE_H, LANE_SMALL_H, lane_toggle_rect
     rows_now = canvas.rows()

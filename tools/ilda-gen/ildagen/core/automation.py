@@ -11,6 +11,9 @@ CURVES = [
     ("hold", "Palier", None),
     ("custom", "Bézier personnalisé", None),
 ]
+# Clic simple sur un point (rampe par défaut) : carré → sinusoïdale (S réglable avec les poignées) → rampe…
+CLICK_CYCLE = [("linear", "Rampe"), ("hold", "Carré"), ("custom", "Sinusoïdale")]
+S_HANDLES = [0.42, 0.0, 0.58, 1.0]
 CURVE_HANDLES = {c[0]: c[2] for c in CURVES}
 CURVE_LABELS = {c[0]: c[1] for c in CURVES}
 
@@ -96,6 +99,21 @@ class Automation:
 
     def sort(self):
         self.keys.sort(key=lambda k: k.t)
+
+    def cycle_curve(self, k):
+        """Clic sur un point : la façon d'arriver sur lui change (rampe → carré → sinusoïdale → rampe).
+        Le premier point règle le trajet qui part de lui. Renvoie le libellé choisi, ou None."""
+        if self.discrete or k not in self.keys:
+            return None
+        i = self.keys.index(k)
+        seg = self.keys[i - 1] if i > 0 else k
+        order = [c for c, _ in CLICK_CYCLE]
+        cur = seg.curve if seg.curve in order else ("custom" if seg.curve.startswith("ease") else "linear")
+        nxt = order[(order.index(cur) + 1) % len(order)]
+        seg.curve = nxt
+        if nxt == "custom":
+            seg.h = list(S_HANDLES)
+        return dict(CLICK_CYCLE)[nxt]
 
     def value_at(self, t):
         ks = self.keys

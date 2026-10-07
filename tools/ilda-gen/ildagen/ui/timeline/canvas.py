@@ -332,6 +332,11 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             d = self.drag
             self.drag = None
             self.editor.set_preview_time(None)   # retour à la tête de lecture
+            if kind == "key" and d["existing"] and not d["moved"]:
+                # Simple clic sur un point : rampe → carré → sinusoïdale
+                label = d["row"].auto.cycle_curve(d["key"])
+                if label:
+                    self.editor.statusMessage.emit(f"Courbe : {label} (cliquer à nouveau pour changer)")
             if kind == "clip_body" and d.get("group") and abs(e.position().x() - d["x0"]) < 2:
                 self.set_clip_selection([d["clip"].id])     # simple clic dans une sélection : ce clip seul
             if kind != "scrub":

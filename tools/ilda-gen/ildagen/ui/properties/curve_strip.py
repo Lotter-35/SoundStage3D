@@ -1,7 +1,8 @@
 """Mini-courbe d'automation sous un réglage envoyé dans la timeline (Calques et Propriétés).
 
 Toute la largeur = toute la durée du clip (du début à la fin de la forme), quel que soit le zoom de la
-timeline. Clic : ajouter une clé · glisser : la déplacer · clic droit : la supprimer · Alt : sans aimant.
+timeline. Clic : ajouter une clé · clic sur une clé : rampe → carré → sinusoïdale · glisser : la déplacer ·
+clic droit : la supprimer · Alt : sans aimant.
 """
 
 from PySide6.QtCore import QPointF, QRectF, QSize, Qt
@@ -24,7 +25,7 @@ class CurveStrip(QWidget):
         self.setFixedHeight(34)
         self.setMouseTracking(True)
         self.setToolTip("Valeur au cours du clip (gauche = début, droite = fin) · clic : ajouter un point · "
-                        "glisser : le déplacer · clic droit : le supprimer")
+                        "clic sur un point : rampe → carré → sinusoïdale · glisser : le déplacer · clic droit : le supprimer")
 
     def sizeHint(self):
         return QSize(120, 34)
@@ -158,6 +159,7 @@ class CurveStrip(QWidget):
         if e.button() != Qt.MouseButton.LeftButton:
             return
         self.editor.begin("Clé d'automation")
+        existing = k is not None
         if k is None:
             t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
             v = auto.value_at(t) if self._is_color() else self._v(pos.y(), auto)
@@ -166,7 +168,7 @@ class CurveStrip(QWidget):
                 return
             k = auto.set_key(t, v)
             self.editor.notify(timeline=True)
-        self.drag = {"key": k, "clip": clip, "auto": auto}
+        self.drag = {"key": k, "clip": clip, "auto": auto, "pos": pos, "moved": False, "existing": existing}
         self.editor.set_preview_time(clip.start + k.t, clip.id)
         self.update()
 
@@ -176,6 +178,10 @@ class CurveStrip(QWidget):
             return
         clip, auto, k = d["clip"], d["auto"], d["key"]
         pos = e.position()
+        if not d["moved"]:
+            if abs(pos.x() - d["pos"].x()) < 3 and abs(pos.y() - d["pos"].y()) < 3:
+                return          # pas encore un glisser (un simple clic change le type de courbe)
+            d["moved"] = True
         k.t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
         if not self._is_color():
             k.v = self._v(pos.y(), auto)
@@ -185,9 +191,15 @@ class CurveStrip(QWidget):
         self.editor.notify(timeline=True)
 
     def mouseReleaseEvent(self, e):
-        if self.drag is None:
+        d = self.drag
+        if d is None:
             return
         self.drag = None
+        if d["existing"] and not d["moved"]:
+            # Simple clic sur un point : rampe → carré → sinusoïdale
+            label = d["auto"].cycle_curve(d["key"])
+            if label:
+                self.editor.statusMessage.emit(f"Courbe : {label} (cliquer à nouveau pour changer)")
         self.editor.set_preview_time(None)
         self.editor.commit()
         self.editor.notify(timeline=True)

@@ -101,6 +101,7 @@ class TimelineEditing:
             self.drag = {"kind": "handle", "row": row, "which": hidx}
             return
         k = self.key_hit(row, x, y)
+        existing = k is not None
         node, spec = L.target(self.editor, clip, auto)
         self.editor.begin("Clé d'automation")
         if k is None:
@@ -120,7 +121,8 @@ class TimelineEditing:
             k = auto.set_key(t_local, v)
             self.editor.notify(timeline=True)
         self.sel_key = k
-        self.drag = {"kind": "key", "row": row, "key": k, "spec": spec}
+        self.drag = {"kind": "key", "row": row, "key": k, "spec": spec, "x0": x, "y0": y,
+                     "moved": False, "existing": existing}
         self.editor.set_preview_time(row.clip.start + k.t, row.clip.id)
         self.update()
 
@@ -169,6 +171,10 @@ class TimelineEditing:
                 k.t = t0 * f
 
     def _drag_key(self, d, x, y, mods):
+        if not d["moved"]:
+            if abs(x - d["x0"]) < 3 and abs(y - d["y0"]) < 3:
+                return          # pas encore un glisser (un simple clic change le type de courbe)
+            d["moved"] = True
         row, k, spec = d["row"], d["key"], d["spec"]
         clip, auto = row.clip, row.auto
         k.t = min(max(self.snap(self.geo.t(x), mods) - clip.start, 0.0), clip.duration)
