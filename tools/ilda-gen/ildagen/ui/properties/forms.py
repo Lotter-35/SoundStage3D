@@ -3,7 +3,7 @@
 Le formulaire garde l'identifiant du calque (et non l'objet) : il reste valable après annuler / rétablir.
 """
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGridLayout, QLabel, QMenu, QToolButton, QWidget
 
 from ...core import nodes as N
@@ -11,6 +11,7 @@ from ...core import shape_color
 from ...core.params import B, F, I
 from ...core.shapes import SHAPE_PARAMS
 from .. import icons, theme
+from .curve_strip import CurveStrip
 from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, ScrubField
 
 # Réglages de transformation (clés « tf. ») ; facteur d'affichage pour les échelles en %
@@ -74,6 +75,8 @@ def make_field(spec, factor):
 
 
 class ParamForm(QWidget):
+    heightChanged = Signal()     # une mini-courbe est apparue / a disparu
+
     def __init__(self, editor, node_id, compact=False, parent=None):
         super().__init__(parent)
         self.editor = editor
@@ -83,6 +86,7 @@ class ParamForm(QWidget):
         self.specs = {}
         self.resets = {}
         self.autos = {}         # boutons « envoyer dans la timeline »
+        self.strips = {}        # mini-courbes des réglages envoyés dans la timeline
         self._editing = False
         node = editor.find(node_id)
         grid = QGridLayout(self)
@@ -145,6 +149,13 @@ class ParamForm(QWidget):
             self.fields[spec.key] = field
             self.specs[spec.key] = spec
             row += 1
+            if auto is not None:
+                # Sous le réglage : sa courbe au cours du clip (visible quand il est dans la timeline)
+                strip = CurveStrip(editor, node_id, spec)
+                strip.setVisible(False)
+                grid.addWidget(strip, row, 0, 1, 4)
+                self.strips[spec.key] = strip
+                row += 1
         self.refresh()
         editor.docChanged.connect(self.refresh)
 
@@ -165,12 +176,23 @@ class ParamForm(QWidget):
             field.set_value(v)
             # Le bouton ↺ s'allume quand la valeur n'est plus celle par défaut
             self.resets[key].setEnabled(not same_value(v, self.specs[key].default_value()))
+        resized = False
         for key, btn in self.autos.items():
             on = self.editor.param_in_timeline(node, key)
             btn.setChecked(on)
+            strip = self.strips.get(key)
+            if strip is not None:
+                if strip.isVisibleTo(self) != on:
+                    strip.setVisible(on)
+                    resized = True
+                elif on:
+                    strip.update()
             label = self.specs[key].label
             btn.setToolTip(f"« {label} » est dans la timeline (clic : l'en retirer)" if on else
                            f"Envoyer « {label} » dans la timeline pour le faire varier dans le temps")
+        if resized:
+            self.adjustSize()
+            self.heightChanged.emit()
 
     def _automate(self, spec):
         node = self.node()

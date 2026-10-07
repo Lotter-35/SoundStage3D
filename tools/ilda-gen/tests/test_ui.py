@@ -428,12 +428,29 @@ def main():
     new_lane = [r for r in tl_canvas.rows() if r.kind == "lane" and r.clip is clip and r.auto.key == "angle"]
     check("bouton : le réglage arrive dans la timeline (ligne + clé)", len(clip.automations) == n_auto + 1
           and new_lane and len(new_lane[0].auto.keys) == 1 and form.autos["angle"].isChecked())
+    strip = form.strips["angle"]
+    form.resize(300, form.sizeHint().height())
+    app.processEvents()
+    check("mini-courbe affichée sous le réglage envoyé", strip.isVisibleTo(form))
+    auto_a = clip.automation_for(sym_def.id, "angle")
+    nk = len(auto_a.keys)
+    strip.resize(240, 34)
+    click(strip, QPoint(int(4 + 0.75 * 232), 4), M.AltModifier)     # aux 3/4 du clip, tout en haut
+    lo, hi = strip._range(auto_a)
+    k_new = max(auto_a.keys, key=lambda k: k.t)
+    check("mini-courbe : clic = clé (instant proportionnel à la durée du clip, valeur bornée)",
+          len(auto_a.keys) == nk + 1 and abs(k_new.t - 0.75 * clip.duration) < 0.05 * clip.duration
+          and abs(k_new.v - hi) < 1e-6, f"t {k_new.t:.2f}/{clip.duration} v {k_new.v}")
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    form.refresh()
     clip.closed_nodes.append(sym_def.id)
     hidden = [r for r in tl_canvas.rows() if r.kind == "lane" and r.auto.node_id == sym_def.id]
     check("modifieur replié : ses réglages (même animés) sont cachés", hidden == [])
     clip.closed_nodes.remove(sym_def.id)
     form.autos["angle"].click()
     check("re-cliquer : retiré de la timeline", len(clip.automations) == n_auto and not form.autos["angle"].isChecked())
+    check("retiré : la mini-courbe disparaît", not form.strips["angle"].isVisibleTo(form))
     ed.undo()
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]

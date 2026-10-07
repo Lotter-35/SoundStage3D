@@ -86,6 +86,7 @@ class LayerTreeView(QTreeView):
             if node is None:
                 continue
             form = ParamForm(self.editor, nid, compact=True)
+            form.heightChanged.connect(self.scheduleDelayedItemsLayout)   # la ligne suit sa hauteur
             self.param_widgets[nid] = form
             self.setIndexWidget(self.model_.params_index(nid), form)
         self._syncing = False

@@ -1,0 +1,179 @@
+"""Mini-courbe d'automation sous un réglage envoyé dans la timeline (Calques et Propriétés).
+
+Toute la largeur = toute la durée du clip (du début à la fin de la forme), quel que soit le zoom de la
+timeline. Clic : ajouter une clé · glisser : la déplacer · clic droit : la supprimer · Alt : sans aimant.
+"""
+
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
+from PySide6.QtGui import QColor, QPainter, QPen, QPolygonF
+from PySide6.QtWidgets import QWidget
+
+from .. import theme
+
+PAD = 4
+HIT = 6
+
+
+class CurveStrip(QWidget):
+    def __init__(self, editor, node_id, spec, parent=None):
+        super().__init__(parent)
+        self.editor = editor
+        self.node_id = node_id
+        self.spec = spec
+        self.drag = None
+        self.setFixedHeight(34)
+        self.setMouseTracking(True)
+        self.setToolTip("Valeur au cours du clip (gauche = début, droite = fin) · clic : ajouter un point · "
+                        "glisser : le déplacer · clic droit : le supprimer")
+
+    def sizeHint(self):
+        return QSize(120, 34)
+
+    # ── Données ──────────────────────────────────────────────────────────
+    def target(self):
+        """(clip, automation) suivis, ou (None, None)."""
+        clip, _ = self.editor.automation_clip()
+        if clip is None:
+            return None, None
+        return clip, clip.automation_for(self.node_id, self.spec.key)
+
+    def _range(self, auto):
+        from ..timeline import lanes as L
+        return L.value_range(self.spec, auto)
+
+    def _is_color(self):
+        return self.spec.kind == "color"
+
+    def _area(self):
+        return QRectF(PAD, PAD, max(1.0, self.width() - 2 * PAD), max(1.0, self.height() - 2 * PAD))
+
+    def _x(self, t, clip):
+        a = self._area()
+        return a.left() + (t / max(clip.duration, 1e-9)) * a.width()
+
+    def _t(self, x, clip):
+        a = self._area()
+        return min(1.0, max(0.0, (x - a.left()) / a.width())) * clip.duration
+
+    def _y(self, v, auto):
+        a = self._area()
+        lo, hi = self._range(auto)
+        if isinstance(v, bool):
+            v = 1.0 if v else 0.0
+        if isinstance(v, tuple):
+            return a.center().y()
+        k = min(1.0, max(0.0, (float(v) - lo) / (hi - lo)))
+        return a.bottom() - k * a.height()
+
+    def _v(self, y, auto):
+        a = self._area()
+        lo, hi = self._range(auto)
+        k = min(1.0, max(0.0, (a.bottom() - y) / a.height()))
+        v = lo + k * (hi - lo)
+        s = self.spec
+        if s.kind == "bool":
+            return v >= 0.5
+        if s.kind in ("int", "enum"):
+            v = int(round(v))
+        return s.clamp(v) if s.kind in ("float", "int") else v
+
+    def _key_at(self, pos, clip, auto):
+        for k in auto.keys:
+            if abs(self._x(k.t, clip) - pos.x()) <= HIT and abs(self._y(k.v, auto) - pos.y()) <= HIT + 2:
+                return k
+        return None
+
+    def _snap(self, t, clip, mods):
+        tl = self.editor.doc.timeline
+        if mods & Qt.KeyboardModifier.AltModifier or not tl.snap:
+            return t
+        return min(clip.duration, max(0.0, tl.snap_time(clip.start + t) - clip.start))
+
+    # ── Dessin ───────────────────────────────────────────────────────────
+    def paintEvent(self, _e):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(0.5, 0.5, self.width() - 1, self.height() - 1)
+        p.setPen(QPen(theme.qc(theme.BORDER), 1))
+        p.setBrush(theme.qc(theme.BG_FIELD))
+        p.drawRoundedRect(r, 3, 3)
+        clip, auto = self.target()
+        if auto is None:
+            p.end()
+            return
+        a = self._area()
+        xs = [a.left() + i for i in range(int(a.width()) + 1)]
+        if self._is_color():
+            for x in xs:
+                v = auto.value_at(self._t(x, clip))
+                if v is not None:
+                    p.fillRect(QRectF(x, a.center().y() - 5, 1.2, 10), QColor.fromRgbF(*v))
+        elif auto.keys:
+            pts = [QPointF(x, self._y(auto.value_at(self._t(x, clip)), auto)) for x in xs]
+            p.setPen(QPen(theme.qc(theme.ACCENT), 1.4))
+            p.drawPolyline(QPolygonF(pts))
+        # Tête de lecture (si elle est dans le clip)
+        tl = self.editor.view_time() - clip.start
+        if 0.0 <= tl <= clip.duration:
+            x = self._x(tl, clip)
+            p.setPen(QPen(theme.qc(theme.TEXT, 0.45), 1))
+            p.drawLine(QPointF(x, r.top() + 1), QPointF(x, r.bottom() - 1))
+        # Clés
+        sel = self.drag["key"] if self.drag else None
+        for k in auto.keys:
+            kx, ky = self._x(k.t, clip), self._y(k.v, auto)
+            p.setPen(QPen(theme.qc(theme.ACCENT), 1.1))
+            if self._is_color():
+                p.setBrush(QColor.fromRgbF(*k.v))
+            else:
+                p.setBrush(theme.qc(theme.ACCENT) if k is sel else theme.qc(theme.BG_MIRE))
+            p.drawPolygon(QPolygonF([QPointF(kx, ky - 4), QPointF(kx + 4, ky), QPointF(kx, ky + 4), QPointF(kx - 4, ky)]))
+        p.end()
+
+    # ── Souris ───────────────────────────────────────────────────────────
+    def mousePressEvent(self, e):
+        clip, auto = self.target()
+        if auto is None:
+            return
+        pos = e.position()
+        k = self._key_at(pos, clip, auto)
+        if e.button() == Qt.MouseButton.RightButton:
+            if k is not None:
+                self.editor.timeline_mutate("Supprimer la clé", lambda: auto.keys.remove(k))
+            return
+        if e.button() != Qt.MouseButton.LeftButton:
+            return
+        self.editor.begin("Clé d'automation")
+        if k is None:
+            t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
+            v = auto.value_at(t) if self._is_color() else self._v(pos.y(), auto)
+            if v is None:
+                self.editor.history.cancel()
+                return
+            k = auto.set_key(t, v)
+            self.editor.notify(timeline=True)
+        self.drag = {"key": k, "clip": clip, "auto": auto}
+        self.editor.set_preview_time(clip.start + k.t, clip.id)
+        self.update()
+
+    def mouseMoveEvent(self, e):
+        d = self.drag
+        if d is None:
+            return
+        clip, auto, k = d["clip"], d["auto"], d["key"]
+        pos = e.position()
+        k.t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
+        if not self._is_color():
+            k.v = self._v(pos.y(), auto)
+        auto.sort()
+        # La mire montre l'instant de la clé avec sa valeur (comme dans la timeline)
+        self.editor.set_preview_time(clip.start + k.t, clip.id)
+        self.editor.notify(timeline=True)
+
+    def mouseReleaseEvent(self, e):
+        if self.drag is None:
+            return
+        self.drag = None
+        self.editor.set_preview_time(None)
+        self.editor.commit()
+        self.editor.notify(timeline=True)
