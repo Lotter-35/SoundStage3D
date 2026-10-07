@@ -37,8 +37,19 @@ class Clip:
     def armed_automation(self):
         return next((a for a in self.automations if a.armed), None)
 
+    # Les clés d'automation sont placées en proportion de la durée du clip (0 = début, 1 = fin) :
+    # des clips liés de durées différentes jouent la même courbe, chacun sur sa propre durée.
+    def u(self, t_local):
+        """Secondes depuis le début du clip → position relative (0..1)."""
+        return t_local / self.duration if self.duration > 1e-9 else 0.0
+
+    def secs(self, u):
+        """Position relative (0..1) → secondes depuis le début du clip."""
+        return u * self.duration
+
     def overrides_at(self, t_local):
-        """{(node_id, clé): valeur} des automations à l'instant local t."""
+        """{(node_id, clé): valeur} des automations à l'instant local t (secondes)."""
+        t_local = self.u(t_local)
         out = {}
         for a in self.automations:
             if a.armed:

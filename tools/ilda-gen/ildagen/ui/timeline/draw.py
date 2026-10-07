@@ -200,16 +200,16 @@ def _draw_lane_content(p, geo, row, ed, sel_key):
         return
     if L.is_color(spec):
         for x in xs:
-            v = auto.value_at(geo.t(x) - clip.start)
+            v = auto.value_at(clip.u(geo.t(x) - clip.start))
             if v is not None:
                 p.fillRect(QRectF(x, row.y + row.h / 2 - 6, 2.0, 12), QColor.fromRgbF(*v))
     elif auto.keys:
-        pts = [QPointF(x, L.v_to_y(auto.value_at(geo.t(x) - clip.start), row, rng)) for x in xs]
+        pts = [QPointF(x, L.v_to_y(auto.value_at(clip.u(geo.t(x) - clip.start)), row, rng)) for x in xs]
         p.setPen(QPen(theme.qc(theme.TEXT, 0.8), 1.3))
         p.drawPolyline(QPolygonF(pts))
     # Clés
     for k in auto.keys:
-        kx = geo.x(clip.start + k.t)
+        kx = geo.x(clip.start + clip.secs(k.t))
         if kx < HEADER_W - 6 or kx > geo.width + 6:
             continue
         ky = row.y + row.h / 2 if L.is_color(spec) else L.v_to_y(k.v, row, rng)
@@ -245,7 +245,7 @@ def bezier_handles(geo, row, clip, auto, key, rng):
     if i + 1 >= len(auto.keys):
         return None
     nxt = auto.keys[i + 1]
-    ax, bx = geo.x(clip.start + key.t), geo.x(clip.start + nxt.t)
+    ax, bx = geo.x(clip.start + clip.secs(key.t)), geo.x(clip.start + clip.secs(nxt.t))
     ay, by = L.v_to_y(key.v, row, rng), L.v_to_y(nxt.v, row, rng)
     x1, y1, x2, y2 = key.h
     return (ax, ay), (bx, by), (ax + x1 * (bx - ax), ay + y1 * (by - ay)), (ax + x2 * (bx - ax), ay + y2 * (by - ay))

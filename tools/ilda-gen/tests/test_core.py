@@ -122,7 +122,7 @@ def test_timeline_automation():
     a = Automation()
     a.bind(shape.id, "tf.tx", "Position X")
     a.set_key(0.0, 0.0)
-    a.set_key(4.0, 0.8)
+    a.set_key(1.0, 0.8)          # fin du clip (instants en proportion de la durée)
     clip.automations.append(a)
     doc.timeline.tracks[0].clips.append(clip)
     out, _ = evaluate_timeline(doc.timeline, doc.library, 3.0)
@@ -285,6 +285,27 @@ def test_linked_clips_share_automations():
     new.load_dict(data2)
     n1, n2 = new.timeline.tracks[0].clips
     assert n1.automations is n2.automations and not any(x.hidden for x in new.library.defs)
+
+
+def test_linked_clips_different_durations():
+    """Clips liés de durées différentes : la même courbe, jouée sur la durée de chacun."""
+    from ildagen.core.automation import Automation
+    from ildagen.core.timeline import Clip
+    doc = Document()
+    d = doc.library.visible()[0]
+    shape = ShapeNode("rect", (-0.1, -0.1, 0.1, 0.1))
+    d.root.add(shape)
+    a = Automation()
+    a.bind(shape.id, "tf.tx", "X")
+    a.set_key(0.0, 0.0)
+    a.set_key(1.0, 0.8)
+    d.automations.append(a)
+    c1, c2 = Clip(d.id, 0.0, 4.0), Clip(d.id, 5.0, 2.0)
+    c1.automations = c2.automations = d.automations
+    doc.timeline.tracks[0].clips += [c1, c2]
+    x1 = evaluate_timeline(doc.timeline, doc.library, 2.0)[0][0].pts[:, 0].mean()     # milieu du clip 1
+    x2 = evaluate_timeline(doc.timeline, doc.library, 6.0)[0][0].pts[:, 0].mean()     # milieu du clip 2
+    assert abs(x1 - 0.4) < 1e-6 and abs(x2 - 0.4) < 1e-6, (x1, x2)
 
 
 if __name__ == "__main__":

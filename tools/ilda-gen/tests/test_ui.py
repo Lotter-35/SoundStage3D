@@ -388,7 +388,7 @@ def main():
     ed.set_param(inner_shape, "tf.tx", 0.4)
     check("automation liée au réglage touché", not a.armed and a.key == "tf.tx" and a.node_id == inner_shape.id,
           a.label)
-    check("clé écrite à la tête de lecture", any(abs(k.t - 2.0) < 1e-6 for k in a.keys))
+    check("clé écrite à la tête de lecture", any(abs(clip.secs(k.t) - 2.0) < 1e-6 for k in a.keys))
     ed.set_playhead(0.0)
     v0 = ed.effective_param(inner_shape, "tf.tx")
     ed.set_playhead(2.0)
@@ -445,8 +445,8 @@ def main():
     lo, hi = strip._range(auto_a)
     k_new = max(auto_a.keys, key=lambda k: k.t)
     check("mini-courbe : clic = clé (instant proportionnel à la durée du clip, valeur bornée)",
-          len(auto_a.keys) == nk + 1 and abs(k_new.t - 0.75 * clip.duration) < 0.05 * clip.duration
-          and abs(k_new.v - hi) < 1e-6, f"t {k_new.t:.2f}/{clip.duration} v {k_new.v}")
+          len(auto_a.keys) == nk + 1 and abs(k_new.t - 0.75) < 0.05
+          and abs(k_new.v - hi) < 1e-6, f"t {k_new.t:.2f} v {k_new.v}")
     form.strip_resets["angle"].click()
     auto_r = clip.automation_for(sym_def.id, "angle")
     check("↺ à droite de la courbe : un seul point à la valeur par défaut", form.strip_resets["angle"].isVisibleTo(form)
@@ -606,7 +606,7 @@ def main():
     drag(canvas, QPoint(int(canvas.geo.x(clip.end)) - 2, yy),
          QPoint(int(canvas.geo.x(clip.start + d0 / 2)) - 2, yy), M.AltModifier)
     f = clip.duration / d0
-    ok = abs(f - 0.5) < 0.05 and all(abs(k.t - t0 * f) < 1e-6 for a in clip.automations
+    ok = abs(f - 0.5) < 0.05 and all(abs(k.t - t0) < 1e-6 for a in clip.automations
                                       for (aid, ts) in times if aid == a.id for k, t0 in zip(a.keys, ts))
     check("raccourcir le clip étire les automations", ok, f"facteur {f:.3f}")
     ed.undo()
@@ -622,10 +622,10 @@ def main():
     # Simple clic sur un point existant : rampe → carré → sinusoïdale (la façon d'arriver sur lui)
     from ildagen.ui.timeline import lanes as TLc
     lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    kc = min(lane.auto.keys, key=lambda kk: abs(kk.t - 3.0))
+    kc = min(lane.auto.keys, key=lambda kk: abs(lane.clip.secs(kk.t) - 3.0))
     prev = lane.auto.keys[lane.auto.keys.index(kc) - 1]
     _, spc = TLc.target(ed, lane.clip, lane.auto)
-    kpc = QPoint(int(canvas.geo.x(lane.clip.start + kc.t)), int(TLc.v_to_y(kc.v, lane, TLc.value_range(spc, lane.auto))))
+    kpc = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(kc.t))), int(TLc.v_to_y(kc.v, lane, TLc.value_range(spc, lane.auto))))
     c_before = prev.curve
     t_before = kc.t
     click(canvas, kpc)
@@ -664,7 +664,7 @@ def main():
     k = lane.auto.keys[-1]
     from ildagen.ui.timeline import lanes as TL0
     _, spec0 = TL0.target(ed, lane.clip, lane.auto)
-    kp0 = QPoint(int(canvas.geo.x(lane.clip.start + k.t)), int(TL0.v_to_y(k.v, lane, TL0.value_range(spec0, lane.auto))))
+    kp0 = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(k.t))), int(TL0.v_to_y(k.v, lane, TL0.value_range(spec0, lane.auto))))
     Lb, Nb = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
     rng0 = TL0.value_range(spec0, lane.auto)
     v_hi = TL0.y_to_v(lane.y - 500, lane, rng0, spec0, lane.auto)
@@ -674,13 +674,13 @@ def main():
     send(canvas, QEvent.Type.MouseMove, QPoint(kp0.x() + 20, int(lane.y + 3)), Nb, Lb, M.NoModifier)
     inst_v = ed.eval_context().overrides.get((lane.auto.node_id, "tf.tx"))
     check("glisser une clé : la mire montre l'instant de la clé", ed.preview_time is not None
-          and abs(ed.view_time() - (lane.clip.start + k.t)) < 1e-9 and inst_v is not None and abs(inst_v - k.v) < 1e-6,
+          and abs(ed.view_time() - (lane.clip.start + lane.clip.secs(k.t))) < 1e-9 and inst_v is not None and abs(inst_v - k.v) < 1e-6,
           f"{ed.preview_time} / {inst_v} vs {k.v}")
     # Tout au bout du clip : la clé est bloquée sur la fin et la mire montre toujours l'image
     far = QPoint(int(canvas.geo.x(lane.clip.end)) + 80, int(lane.y + 3))
     send(canvas, QEvent.Type.MouseMove, far, Nb, Lb, M.NoModifier)
     check("clé tirée au-delà de la fin : bloquée sur la dernière image, la forme reste visible",
-          abs(k.t - lane.clip.duration) < 1e-9 and len(ed.display_strokes()) > 0, f"t {k.t:.3f}")
+          abs(k.t - 1.0) < 1e-9 and len(ed.display_strokes()) > 0, f"t {k.t:.3f}")
     send(canvas, QEvent.Type.MouseButtonRelease, QPoint(kp0.x() + 20, int(lane.y + 3)), Lb, Nb, M.NoModifier)
     check("relâcher : retour à la tête de lecture", ed.preview_time is None and ed.view_time() == ed.playhead)
     ed.undo()
@@ -693,7 +693,7 @@ def main():
     ks = max(lane.auto.keys, key=lambda kk: kk.t)
     _, sps = TLs.target(ed, lane.clip, lane.auto)
     rgs = TLs.value_range(sps, lane.auto)
-    p0 = QPoint(int(canvas.geo.x(lane.clip.start + ks.t)), int(TLs.v_to_y(ks.v, lane, rgs)))
+    p0 = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(ks.t))), int(TLs.v_to_y(ks.v, lane, rgs)))
     p1 = QPoint(p0.x(), int(TLs.v_to_y(0.0, lane, rgs)) + 6)        # un peu à côté de 0
     drag(canvas, p0, p1, M.ShiftModifier)
     check("Maj : le point s'aimante sur la valeur par défaut", ks.v == 0.0, f"{ks.v}")
@@ -704,10 +704,10 @@ def main():
     from ildagen.ui.timeline import lanes as TL
     from ildagen.ui.timeline.geometry import lane_reset_rect
     lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    k = min(lane.auto.keys, key=lambda kk: abs(kk.t - 3.0))
+    k = min(lane.auto.keys, key=lambda kk: abs(lane.clip.secs(kk.t) - 3.0))
     _, spec_tx = TL.target(ed, lane.clip, lane.auto)
     ky = TL.v_to_y(k.v, lane, TL.value_range(spec_tx, lane.auto))
-    kp = QPoint(int(canvas.geo.x(lane.clip.start + k.t)), int(ky))
+    kp = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(k.t))), int(ky))
     n_k = len(lane.auto.keys)
     QApplication.sendEvent(canvas, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, kp, canvas.mapToGlobal(kp)))
     QApplication.processEvents()

@@ -206,7 +206,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         node, spec = L.target(self.editor, row.clip, row.auto)
         rng = L.value_range(spec, row.auto)
         for k in row.auto.keys:
-            kx = self.geo.x(row.clip.start + k.t)
+            kx = self.geo.x(row.clip.start + row.clip.secs(k.t))
             ky = row.y + row.h / 2 if L.is_color(spec) else L.v_to_y(k.v, row, rng)
             if abs(kx - x) <= 6 and abs(ky - y) <= 7:
                 return k

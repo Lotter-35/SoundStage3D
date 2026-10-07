@@ -7,7 +7,7 @@ from .library import Library, ShapeDef, link_clips
 from .timeline import Timeline
 
 PROJECT_EXT = ".ildaproj"
-FORMAT_VERSION = 2
+FORMAT_VERSION = 3   # 3 : clés d'automation en proportion de la durée du clip
 
 
 class GridSettings:
@@ -71,9 +71,25 @@ class Document:
         self.library = Library.from_dict(d.get("library"))
         ensure_form(self.library)
         self.timeline = Timeline.from_dict(d.get("timeline", {}))
+        if d.get("version", 1) < 3:
+            self._keys_to_ratio()
         link_clips(self.library, self.timeline)
         self.grid = GridSettings.from_dict(d.get("grid"))
         self.network = dict(d.get("network", {}))
+
+    def _keys_to_ratio(self):
+        """Anciens projets : instants des clés en secondes → proportion de la durée du clip."""
+        first = {}
+        for _, c in self.timeline.all_clips():
+            first.setdefault(c.def_id, c)
+            for a in c.automations:
+                for k in a.keys:
+                    k.t = c.u(k.t)
+        for dfn in self.library.defs:
+            c = first.get(dfn.id)
+            for a in dfn.automations:
+                for k in a.keys:
+                    k.t = c.u(k.t) if c is not None else k.t
 
     def save(self, path):
         data = self.to_dict()

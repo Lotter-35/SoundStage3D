@@ -436,7 +436,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         if clip is not None:
             a = clip.automation_for(node.id, key)
             if a is not None and a.keys:
-                return a.value_at(self.clip_local_time(clip))
+                return a.value_at(clip.u(self.clip_local_time(clip)))
         return N.get_param(node, key)
 
     def set_param(self, node, key, value):
@@ -457,7 +457,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
                     auto = armed
                     self.statusMessage.emit(f"Automation liée à « {armed.label} »")
             if auto is not None:
-                auto.set_key(self.clip_local_time(clip), value)
+                auto.set_key(clip.u(self.clip_local_time(clip)), value)
                 self._touch()
                 self.timelineChanged.emit()
                 self.docChanged.emit()

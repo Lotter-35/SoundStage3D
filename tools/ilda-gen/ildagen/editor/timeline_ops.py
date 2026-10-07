@@ -230,7 +230,7 @@ class TimelineOpsMixin:
 
         def do():
             if v is not None:
-                a.set_key(t_local, v)
+                a.set_key(clip.u(t_local), v)
             clip.automations.append(a)
             clip.expanded = True
         self.timeline_mutate("Envoyer dans la timeline", do)

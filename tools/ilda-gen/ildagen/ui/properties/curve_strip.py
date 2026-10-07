@@ -80,7 +80,7 @@ class CurveStrip(QWidget):
 
     def _key_at(self, pos, clip, auto):
         for k in auto.keys:
-            if abs(self._x(k.t, clip) - pos.x()) <= HIT and abs(self._y(k.v, auto) - pos.y()) <= HIT + 2:
+            if abs(self._x(clip.secs(k.t), clip) - pos.x()) <= HIT and abs(self._y(k.v, auto) - pos.y()) <= HIT + 2:
                 return k
         return None
 
@@ -107,11 +107,11 @@ class CurveStrip(QWidget):
         xs = [a.left() + i for i in range(int(a.width()) + 1)]
         if self._is_color():
             for x in xs:
-                v = auto.value_at(self._t(x, clip))
+                v = auto.value_at(clip.u(self._t(x, clip)))
                 if v is not None:
                     p.fillRect(QRectF(x, a.center().y() - 5, 1.2, 10), QColor.fromRgbF(*v))
         elif auto.keys:
-            pts = [QPointF(x, self._y(auto.value_at(self._t(x, clip)), auto)) for x in xs]
+            pts = [QPointF(x, self._y(auto.value_at(clip.u(self._t(x, clip))), auto)) for x in xs]
             p.setPen(QPen(theme.qc(theme.TEXT, 0.8), 1.3))
             p.drawPolyline(QPolygonF(pts))
         # Tête de lecture (si elle est dans le clip)
@@ -126,7 +126,7 @@ class CurveStrip(QWidget):
         # Clés
         sel = self.drag["key"] if self.drag else None
         for k in auto.keys:
-            kx, ky = self._x(k.t, clip), self._y(k.v, auto)
+            kx, ky = self._x(clip.secs(k.t), clip), self._y(k.v, auto)
             p.setPen(QPen(theme.qc(theme.ACCENT) if k is sel else theme.qc(theme.TEXT, 0.85), 1.1))
             if self._is_color():
                 p.setBrush(QColor.fromRgbF(*k.v))
@@ -165,14 +165,14 @@ class CurveStrip(QWidget):
         existing = k is not None
         if k is None:
             t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
-            v = auto.value_at(t) if self._is_color() else self._v(pos.y(), auto)
+            v = auto.value_at(clip.u(t)) if self._is_color() else self._v(pos.y(), auto)
             if v is None:
                 self.editor.history.cancel()
                 return
-            k = auto.set_key(t, v)
+            k = auto.set_key(clip.u(t), v)
             self.editor.notify(timeline=True)
         self.drag = {"key": k, "clip": clip, "auto": auto, "pos": pos, "moved": False, "existing": existing}
-        self.editor.set_preview_time(clip.start + k.t, clip.id)
+        self.editor.set_preview_time(clip.start + clip.secs(k.t), clip.id)
         self.update()
 
     def mouseMoveEvent(self, e):
@@ -185,7 +185,7 @@ class CurveStrip(QWidget):
             if abs(pos.x() - d["pos"].x()) < 3 and abs(pos.y() - d["pos"].y()) < 3:
                 return          # pas encore un glisser (un simple clic change le type de courbe)
             d["moved"] = True
-        k.t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
+        k.t = clip.u(self._snap(self._t(pos.x(), clip), clip, e.modifiers()))
         self._guide_y = None
         if not self._is_color():
             k.v = self._v(pos.y(), auto)
@@ -198,7 +198,7 @@ class CurveStrip(QWidget):
                     k.v = dv
         auto.sort()
         # La mire montre l'instant de la clé avec sa valeur (comme dans la timeline)
-        self.editor.set_preview_time(clip.start + k.t, clip.id)
+        self.editor.set_preview_time(clip.start + clip.secs(k.t), clip.id)
         self.editor.notify(timeline=True)
 
     def mouseReleaseEvent(self, e):

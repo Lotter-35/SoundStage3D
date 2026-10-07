@@ -107,7 +107,7 @@ class TimelineEditing:
         if k is None:
             t_local = min(max(self.snap(self.geo.t(x), e.modifiers()) - clip.start, 0.0), clip.duration)
             if L.is_color(spec):
-                v = auto.value_at(t_local)
+                v = auto.value_at(clip.u(t_local))
                 if v is None and node is not None:
                     v = N.get_param(node, auto.key)
             else:
@@ -118,12 +118,12 @@ class TimelineEditing:
             if auto not in clip.automations:
                 # Premier clic sur un réglage pas encore animé : l'automation est créée
                 clip.automations.append(auto)
-            k = auto.set_key(t_local, v)
+            k = auto.set_key(clip.u(t_local), v)
             self.editor.notify(timeline=True)
         self.sel_key = k
         self.drag = {"kind": "key", "row": row, "key": k, "spec": spec, "x0": x, "y0": y,
                      "moved": False, "existing": existing}
-        self.editor.set_preview_time(row.clip.start + k.t, row.clip.id)
+        self.editor.set_preview_time(row.clip.start + row.clip.secs(k.t), row.clip.id)
         self.update()
 
     def _drag_clip(self, d, x, y, mods):
@@ -158,17 +158,17 @@ class TimelineEditing:
 
     @staticmethod
     def _stretch_keys(d, clip, mods):
-        """Changer la durée d'un clip étire ses automations proportionnellement (une montée sur 10 s
-        ramenée à 5 s va toujours jusqu'au bout). Maj : les clés gardent leurs instants (on coupe)."""
+        """Les clés sont placées en proportion de la durée du clip : changer la durée étire déjà la courbe
+        (une montée sur 10 s ramenée à 5 s va toujours jusqu'au bout). Maj : les clés gardent leurs
+        instants en secondes (on coupe) — ce qui vaut pour tous les clips liés à la forme."""
         old = d["end"] - d["start"]
         keep = bool(mods & Qt.KeyboardModifier.ShiftModifier)
-        f = 1.0 if keep or old <= 1e-9 else clip.duration / old
-        for k, t0 in d["keys"]:
-            if keep and d["kind"] == "clip_left":
-                # Les clés restent à leur place dans le temps quand on rogne le début
-                k.t = t0 + d["start"] - clip.start
-            else:
-                k.t = t0 * f
+        for k, u0 in d["keys"]:
+            if not keep or clip.duration <= 1e-9:
+                k.t = u0
+                continue
+            secs = u0 * old + (d["start"] - clip.start if d["kind"] == "clip_left" else 0.0)
+            k.t = secs / clip.duration
 
     def _drag_key(self, d, x, y, mods):
         if not d["moved"]:
@@ -177,7 +177,7 @@ class TimelineEditing:
             d["moved"] = True
         row, k, spec = d["row"], d["key"], d["spec"]
         clip, auto = row.clip, row.auto
-        k.t = min(max(self.snap(self.geo.t(x), mods) - clip.start, 0.0), clip.duration)
+        k.t = clip.u(min(max(self.snap(self.geo.t(x), mods) - clip.start, 0.0), clip.duration))
         self.default_guide = None
         if not L.is_color(spec):
             rng = L.value_range(spec, auto)
@@ -191,7 +191,7 @@ class TimelineEditing:
                     k.v = dv
         auto.sort()
         # La mire montre l'instant de la clé, avec sa nouvelle valeur
-        self.editor.set_preview_time(clip.start + k.t, clip.id)
+        self.editor.set_preview_time(clip.start + clip.secs(k.t), clip.id)
         self.editor.notify(timeline=True)
 
     def _drag_handle(self, d, x, y):
