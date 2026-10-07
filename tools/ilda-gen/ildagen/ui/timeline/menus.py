@@ -52,16 +52,20 @@ class TimelineMenus:
         else:
             k = self.key_hit(row, x, y) if x >= HEADER_W else None
             if k is not None and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                # Clic droit sur un point : il revient à la valeur par défaut du réglage
-                self.sel_key = k
-                node, spec = L.target(ed, row.clip, row.auto)
-                if spec is not None:
-                    ed.timeline_mutate("Réinitialiser la clé", lambda: setattr(k, "v", spec.default_value()))
-                    ed.statusMessage.emit("Clé remise à la valeur par défaut (Maj + clic droit : type de courbe)")
+                # Clic droit sur un point : il est supprimé
+                auto = row.auto
+                self.sel_key = None
+                ed.timeline_mutate("Supprimer la clé", lambda: auto.keys.remove(k) if k in auto.keys else None)
+                ed.statusMessage.emit("Clé supprimée (Maj + clic droit : courbe, réinitialiser)")
                 return
             if k is not None:
                 self.sel_key = k
                 self.update()
+                node, spec = L.target(ed, row.clip, row.auto)
+                if spec is not None and not L.is_color(spec):
+                    menu.addAction("Réinitialiser la valeur").triggered.connect(
+                        lambda: ed.timeline_mutate("Réinitialiser la clé", lambda: setattr(k, "v", spec.default_value())))
+                    menu.addSeparator()
                 for cid, label, _ in CURVES:
                     a = QAction(label, menu, checkable=True, checked=k.curve == cid)
                     a.triggered.connect(lambda _=False, c=cid: ed.timeline_mutate("Courbe", lambda: setattr(k, "curve", c)))

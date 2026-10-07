@@ -464,7 +464,7 @@ def main():
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     ed.enter_clip(clip.id)
     app.processEvents()
-    # Clic droit sur un point : il revient à la valeur par défaut
+    # Clic droit sur un point : il est supprimé (annulable)
     from PySide6.QtGui import QContextMenuEvent
     from ildagen.ui.timeline import lanes as TL
     from ildagen.ui.timeline.geometry import lane_reset_rect
@@ -473,8 +473,17 @@ def main():
     _, spec_tx = TL.target(ed, lane.clip, lane.auto)
     ky = TL.v_to_y(k.v, lane, TL.value_range(spec_tx, lane.auto))
     kp = QPoint(int(canvas.geo.x(lane.clip.start + k.t)), int(ky))
+    n_k = len(lane.auto.keys)
     QApplication.sendEvent(canvas, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, kp, canvas.mapToGlobal(kp)))
-    check("clic droit sur un point = valeur par défaut", abs(k.v - spec_tx.default_value()) < 1e-9, f"{k.v}")
+    QApplication.processEvents()
+    check("clic droit sur un point = supprimé", k not in lane.auto.keys and len(lane.auto.keys) == n_k - 1,
+          f"{len(lane.auto.keys)}/{n_k}")
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    ed.enter_clip(clip.id)
+    app.processEvents()
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    check("annulable (suppression de la clé)", len(lane.auto.keys) == n_k)
     # ↺ d'une ligne : supprime l'automation
     lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     n_auto = len(lane.clip.automations)

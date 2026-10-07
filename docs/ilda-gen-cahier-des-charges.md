@@ -318,7 +318,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | RST-02 | **Bouton ↺ à droite de chaque réglage**, dans Propriétés **et** dans les réglages affichés sous les calques / modifieurs. Estompé quand la valeur est déjà celle par défaut. | Retour |
 | RST-03 | **`Alt` + clic** sur une valeur, ou clic droit sur son nom / sa valeur → Réinitialiser : remet ce réglage seul. | Retour |
 | RST-04 | Timeline : **bouton ↺ à côté du nom de chaque ligne** de réglage : supprime son automation (le réglage reprend sa valeur fixe), ou remet la valeur fixe par défaut s'il n'est pas animé. | Retour |
-| RST-05 | Timeline : **clic droit sur un point de courbe** = le remettre à la valeur par défaut ; **`Maj` + clic droit** = menu type de courbe / supprimer. | Retour |
+| RST-05 | Timeline : **clic droit sur un point de courbe = le supprimer** (annulable) ; **`Maj` + clic droit** = menu : réinitialiser la valeur, type de courbe, supprimer. | Retour |
 | RST-06 | Couleurs de tracé : `D` remet les couleurs par défaut. | Retour |
 | RST-07 | Toutes les réinitialisations sont **annulables**. | Retour |
 

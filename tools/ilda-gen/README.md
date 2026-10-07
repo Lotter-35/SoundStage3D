@@ -196,9 +196,9 @@ double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (an
    Autre méthode : clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel
    réglage (Propriétés, ligne du modifieur, ou déplacer / tourner la forme dans la mire) : l'automation s'y lie.
    Chaque réglage touché ensuite écrit une clé à la tête de lecture.
-4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit sur un point = le remettre à la
-   valeur par défaut, `Maj` + clic droit = type de courbe (linéaire, accélération, ralentissement, en S, palier,
-   Bézier personnalisé avec poignées) ou supprimer. Le bouton ↺ à côté du nom d'une ligne supprime son automation
+4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit sur un point = le supprimer,
+   `Maj` + clic droit = menu (réinitialiser la valeur, type de courbe : linéaire, accélération, ralentissement,
+   en S, palier, Bézier personnalisé avec poignées). Le bouton ↺ à côté du nom d'une ligne supprime son automation
    (ou remet sa valeur fixe par défaut).
    Pendant qu'on **glisse un point**, la mire (et le laser en live) montre l'instant de ce point avec sa
    nouvelle valeur (trait pointillé dans la timeline) ; au relâchement, elle revient à la tête de lecture.
