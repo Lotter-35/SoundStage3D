@@ -87,6 +87,7 @@ class ParamForm(QWidget):
         self.resets = {}
         self.autos = {}         # boutons « envoyer dans la timeline »
         self.strips = {}        # mini-courbes des réglages envoyés dans la timeline
+        self.strip_resets = {}  # ↺ à droite de chaque mini-courbe
         self._editing = False
         node = editor.find(node_id)
         grid = QGridLayout(self)
@@ -166,8 +167,19 @@ class ParamForm(QWidget):
                 # Sous le réglage : sa courbe au cours du clip (visible quand il est dans la timeline)
                 strip = CurveStrip(editor, node_id, spec)
                 strip.setVisible(False)
-                grid.addWidget(strip, row, 1, 1, 4)
+                grid.addWidget(strip, row, 1, 1, 3)
                 self.strips[spec.key] = strip
+                sreset = QToolButton()
+                sreset.setIcon(icons.icon("rotate-ccw", 12))
+                sreset.setIconSize(icons.qsize(12))
+                sreset.setAutoRaise(True)
+                sreset.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                sreset.setFixedSize(18, 18)
+                sreset.setToolTip(f"Réinitialiser la courbe de « {spec.label} » (un seul point, valeur par défaut)")
+                sreset.clicked.connect(lambda _=False, s=spec: self._reset_curve(s))
+                sreset.setVisible(False)
+                grid.addWidget(sreset, row, 4, Qt.AlignmentFlag.AlignTop)
+                self.strip_resets[spec.key] = sreset
                 row += 1
         self.refresh()
         editor.docChanged.connect(self.refresh)
@@ -200,6 +212,7 @@ class ParamForm(QWidget):
                 chev.setIcon(icons.icon("chevron-down" if opened else "chevron-right", 10))
             strip = self.strips.get(key)
             if strip is not None:
+                self.strip_resets[key].setVisible(opened)
                 if strip.isVisibleTo(self) != opened:
                     strip.setVisible(opened)
                     resized = True
@@ -211,6 +224,23 @@ class ParamForm(QWidget):
         if resized:
             self.adjustSize()
             self.heightChanged.emit()
+
+    def _reset_curve(self, spec):
+        """Courbe remise à plat : un seul point (début du clip) à la valeur par défaut du réglage."""
+        node = self.node()
+        if node is None:
+            return
+        clip, _ = self.editor.automation_clip()
+        auto = clip.automation_for(node.id, spec.key) if clip is not None else None
+        if auto is None:
+            return
+        from ...core.automation import Keyframe
+        v = self.default_for(node, spec)
+
+        def do():
+            auto.keys = [Keyframe(0.0, v, "hold" if auto.discrete else "linear")]
+        self.editor.timeline_mutate("Réinitialiser la courbe", do)
+        self.editor.statusMessage.emit(f"Courbe de « {spec.label} » réinitialisée")
 
     def _toggle_strip(self, spec):
         k = (self.node_id, spec.key)

@@ -447,6 +447,11 @@ def main():
     check("mini-courbe : clic = clé (instant proportionnel à la durée du clip, valeur bornée)",
           len(auto_a.keys) == nk + 1 and abs(k_new.t - 0.75 * clip.duration) < 0.05 * clip.duration
           and abs(k_new.v - hi) < 1e-6, f"t {k_new.t:.2f}/{clip.duration} v {k_new.v}")
+    form.strip_resets["angle"].click()
+    auto_r = clip.automation_for(sym_def.id, "angle")
+    check("↺ à droite de la courbe : un seul point à la valeur par défaut", form.strip_resets["angle"].isVisibleTo(form)
+          and len(auto_r.keys) == 1 and auto_r.keys[0].v == sym_def.modifier.spec("angle").default_value())
+    ed.undo()
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     form.refresh()
