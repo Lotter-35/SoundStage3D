@@ -243,6 +243,10 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             return "timeline"
         return "def"
 
+    def panels_empty(self):
+        """Vue Timeline sans clip sélectionné : Calques et Propriétés n'affichent rien."""
+        return self.view_source == "timeline" and self.context[0] != "clip"
+
     def editing_visible(self):
         """La sélection et les outils agissent-ils sur ce que montre la mire ?"""
         mode = self.display_mode()

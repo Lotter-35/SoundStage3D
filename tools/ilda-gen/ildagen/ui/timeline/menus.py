@@ -31,6 +31,9 @@ class TimelineMenus:
             menu.exec(e.globalPos())
             return
         row = g.row_at(self.rows(), y, x)
+        if row is not None and row.kind != "track" and x >= HEADER_W and \
+                not (g.x(row.clip.start) - 6 <= x <= g.x(row.clip.end) + 6):
+            row = None      # à côté des clips : vide
         if row is None:
             menu.addAction("Ajouter une piste").triggered.connect(ed.add_track)
             menu.exec(e.globalPos())

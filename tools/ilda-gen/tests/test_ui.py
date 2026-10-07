@@ -458,6 +458,25 @@ def main():
     clip.closed_nodes.append(sym_def.id)
     hidden = [r for r in tl_canvas.rows() if r.kind == "lane" and r.auto.node_id == sym_def.id]
     check("modifieur replié : ses réglages (même animés) sont cachés", hidden == [])
+    # Clic dans le vide à droite d'un clip, à la hauteur d'un groupe : ne replie rien, désélectionne
+    g_row = next(r for r in tl_canvas.rows() if r.kind == "group" and r.clip is clip)
+    closed_before = list(clip.closed_nodes)
+    ed.enter_clip(clip.id)
+    x_void = int(tl_canvas.geo.x(clip.end + 3.0)) if tl_canvas.geo.x(clip.end + 3.0) < tl_canvas.width() - 4 else tl_canvas.width() - 4
+    click(tl_canvas, QPoint(x_void, int(g_row.y + g_row.h / 2)))
+    app.processEvents()
+    check("clic dans le vide (hauteur d'un groupe) : aucun groupe replié/déplié",
+          clip.closed_nodes == closed_before, f"{closed_before} -> {clip.closed_nodes}")
+    check("vue Timeline sans clip : Calques et Propriétés vides",
+          ed.panels_empty() and not win.layers.tree.isVisibleTo(win.layers) and win.layers.empty.isVisibleTo(win.layers)
+          and not win.properties.findChildren(ParamForm))
+    ed.enter_clip(clip.id)
+    app.processEvents()
+    check("clip sélectionné : ses calques réapparaissent", not ed.panels_empty() and win.layers.tree.isVisibleTo(win.layers))
+    ed.enter_def()
+    app.processEvents()
+    check("mode Forme : calques visibles", win.layers.tree.isVisibleTo(win.layers))
+    ed.enter_clip(clip.id)
     clip.closed_nodes.remove(sym_def.id)
     form.autos["angle"].click()
     check("re-cliquer : retiré de la timeline", len(clip.automations) == n_auto and not form.autos["angle"].isChecked())

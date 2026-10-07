@@ -251,6 +251,9 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         if x >= HEADER_W:
             self.clear_range()
         shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
+        if row is not None and row.kind != "track" and x >= HEADER_W and \
+                not (g.x(row.clip.start) - 6 <= x <= g.x(row.clip.end) + 6):
+            row = None      # à côté des clips (à la hauteur de leurs lignes) : c'est du vide
         if row is None or (row.kind == "track" and x >= HEADER_W and self.clip_hit(row, x)[0] is None):
             # Glisser dans le vide : rectangle de sélection de clips ; simple clic : tête de lecture
             self.start_rect(x, y, shift)

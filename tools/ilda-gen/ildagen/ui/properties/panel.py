@@ -86,7 +86,7 @@ class PropertiesPanel(QWidget):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        nodes = self.editor.selected_nodes()
+        nodes = [] if self.editor.panels_empty() else self.editor.selected_nodes()
         self.reset_btn.setVisible(bool(nodes))
         if len(nodes) == 1:
             n = nodes[0]
@@ -118,6 +118,8 @@ class PropertiesPanel(QWidget):
             lay.addWidget(ParamForm(self.editor, n.id))
         elif len(nodes) > 1:
             lay.addWidget(self._hint(f"{len(nodes)} calques sélectionnés"))
+        elif self.editor.panels_empty():
+            lay.addWidget(self._hint("Sélectionnez un clip dans la timeline pour voir ses réglages."))
         elif self.editor.current_clip() is not None:
             lay.addWidget(self._clip_form())
         else:
