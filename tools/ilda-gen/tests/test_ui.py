@@ -68,6 +68,10 @@ def main():
     app.processEvents()
     ed = win.editor
     view = win.canvas.view
+    F1 = ed.doc.library.defs[0].id      # « Forme 1 », toujours présente
+
+    def root():
+        return ed.doc.library.get(F1).root
 
     def sp(x, y):
         p = view.vt.to_screen(x, y)
@@ -80,16 +84,16 @@ def main():
     # ── Formes ──────────────────────────────────────────────────────────
     ed.set_tool("shape:rect")
     drag(view, sp(-0.6, 0.6), sp(-0.1, 0.1))
-    rect = ed.doc.main_group.children[0]
+    rect = root().children[0]
     check("carré créé", rect.shape == "rect")
     ed.set_tool("shape:ellipse")
     drag(view, sp(0.3, 0.3), sp(0.6, 0.4), M.ShiftModifier)
-    circ = ed.doc.main_group.children[0]
+    circ = root().children[0]
     b = circ.local_bbox()
     check("Maj = cercle parfait", abs((b[2] - b[0]) - (b[3] - b[1])) < 1e-6)
     ed.set_tool("shape:star")
     drag(view, sp(0.0, -0.5), sp(0.2, -0.3), M.AltModifier)
-    star = ed.doc.main_group.children[0]
+    star = root().children[0]
     b = star.local_bbox()
     check("Alt = depuis le centre", abs((b[0] + b[2]) / 2) < 0.02, f"centre x {(b[0] + b[2]) / 2:.3f}")
 
@@ -155,12 +159,12 @@ def main():
     check("Maj + déplacer = aligné sur la grille", off < 1e-6, f"bords / centre x {[round(x, 4) for x in xs]}")
     ed.undo()
     # Alt + glisser = copie
-    n_before = len(ed.doc.main_group.children)
+    n_before = len(root().children)
     drag(view, sp(-0.6, 0.5), sp(-0.6, 0.8), M.AltModifier)
-    check("Alt + glisser = duplique", len(ed.doc.main_group.children) == n_before + 1)
+    check("Alt + glisser = duplique", len(root().children) == n_before + 1)
     ed.undo()
     ed.undo()
-    check("annuler la copie", len(ed.doc.main_group.children) == n_before)
+    check("annuler la copie", len(root().children) == n_before)
     # Sélection rectangle
     ed.clear_selection()
     drag(view, sp(-0.95, 0.95), sp(0.95, -0.95))
@@ -174,7 +178,7 @@ def main():
     for i in range(50):
         send(view, QEvent.Type.MouseMove, sp(-0.8 + i * 0.03, -0.8 + 0.1 * math.sin(i / 5)), Qt.MouseButton.NoButton, L, M.NoModifier)
     send(view, QEvent.Type.MouseButtonRelease, sp(0.7, -0.8), L, Qt.MouseButton.NoButton, M.NoModifier)
-    free = ed.doc.main_group.children[0]
+    free = root().children[0]
     check("main levée lissée et simplifiée", free.shape == "path" and 2 < len(free.paths[0].pts) < 50,
           f"{len(free.paths[0].pts)} points")
     ed.set_grid_mode(2)
@@ -185,19 +189,19 @@ def main():
         send(view, QEvent.Type.MouseMove, sp(0.5 * math.cos(math.radians(a)), 0.5 * math.sin(math.radians(a))),
              Qt.MouseButton.NoButton, L, M.ShiftModifier)
     send(view, QEvent.Type.MouseButtonRelease, sp(-0.5, 0.0), L, Qt.MouseButton.NoButton, M.ShiftModifier)
-    guided = ed.doc.main_group.children[0]
+    guided = root().children[0]
     pts = guided.paths[0].pts
     radii = [math.hypot(*p) for p in pts]
     check("polaire : arc le long du cercle", len(pts) > 10 and max(radii) - min(radii) < 0.02,
           f"{len(pts)} points, rayon {min(radii):.3f}-{max(radii):.3f}")
-    n0 = len(ed.doc.main_group.children)
+    n0 = len(root().children)
     drag(view, sp(-0.25, 0.0), sp(-0.25, 0.0), M.ShiftModifier, steps=0)
-    point = ed.doc.main_group.children[0]
-    check("Maj + clic = un point visible (nouveau calque)", len(ed.doc.main_group.children) == n0 + 1
+    point = root().children[0]
+    check("Maj + clic = un point visible (nouveau calque)", len(root().children) == n0 + 1
           and len(point.paths[0].pts) == 1 and any(len(s_.pts) == 1 for s_ in ed.display_strokes()))
     ed.set_grid_mode(1)
     drag(view, sp(-0.5, 0.75), sp(0.25, 0.75), M.ShiftModifier)
-    line = ed.doc.main_group.children[0]
+    line = root().children[0]
     check("Maj + glisser = une ligne (2 points)", len(line.paths[0].pts) == 2 and line.name == "Ligne")
     # Ligne sélectionnée : poignées aux extrémités, pas d'épaisseur
     ed.set_tool("select")
@@ -219,11 +223,11 @@ def main():
     ed.set_grid_mode(1)
     # Plusieurs traits au crayon puis V : tout le dessin est sélectionné
     ed.set_tool("pencil")
-    n_before = len(ed.doc.main_group.children)
+    n_before = len(root().children)
     drag(view, sp(-0.9, -0.2), sp(-0.7, -0.3))
     drag(view, sp(-0.9, -0.4), sp(-0.7, -0.5))
     drag(view, sp(-0.9, -0.6), sp(-0.7, -0.7))
-    new_ids = [n.id for n in ed.doc.main_group.children[:len(ed.doc.main_group.children) - n_before]]
+    new_ids = [n.id for n in root().children[:len(root().children) - n_before]]
     ed.set_tool("select")
     check("V après plusieurs traits : tous sélectionnés", sorted(ed.selection) == sorted(new_ids) and len(new_ids) == 3,
           f"{len(ed.selection)} / {len(new_ids)}")
@@ -232,19 +236,19 @@ def main():
     ed.clear_selection()
     # Bouton « Nouveau calque » : le prochain trait le remplit
     layer = ed.new_empty_layer()
-    n_layers = len(ed.doc.main_group.children)
+    n_layers = len(root().children)
     ed.set_tool("pencil")
     drag(view, sp(-0.9, 0.9), sp(-0.6, 0.8))
-    check("nouveau calque rempli par le trait", len(ed.doc.main_group.children) == n_layers and ed.find(layer.id).paths
+    check("nouveau calque rempli par le trait", len(root().children) == n_layers and ed.find(layer.id).paths
           and len(ed.find(layer.id).paths[0].pts) >= 2)
     ed.undo()
     ed.undo()
     # Clic simple dans le vide avec le crayon = désélectionner
     ed.set_tool("pencil")
     ed.set_selection([guided.id])
-    n_layers = len(ed.doc.main_group.children)
+    n_layers = len(root().children)
     click(view, sp(0.9, 0.9))
-    check("crayon : clic dans le vide désélectionne", ed.selection == [] and len(ed.doc.main_group.children) == n_layers)
+    check("crayon : clic dans le vide désélectionne", ed.selection == [] and len(root().children) == n_layers)
     ed.set_tool("select")
     check("V reprend le dernier calque touché", len(ed.selection) == 1 and ed.selection[0] == ed.last_touched)
     ed.clear_selection()
@@ -256,7 +260,7 @@ def main():
     check("X : inverser les couleurs", b["color"] == [0.0, 1.0, 0.0] and b["bg"] == [1.0, 1.0, 1.0])
     ed.set_tool("shape:rect")
     drag(view, sp(0.6, -0.6), sp(0.9, -0.9))
-    green = ed.doc.main_group.children[0]
+    green = root().children[0]
     check("nouvelle forme à la couleur de tracé", green.color_mode == 1 and tuple(green.color) == (0.0, 1.0, 0.0))
     ed.clear_selection()
     b.update(color=[0.0, 0.0, 1.0])
@@ -291,10 +295,10 @@ def main():
     ed.set_locked([g], False)
     ed.copy_selection()
     ed.paste()
-    check("copier / coller", len(ed.doc.main_group.children) >= 4)
+    check("copier / coller", len(root().children) >= 4)
     ed.undo()
     ed.select_all()
-    check("Ctrl+A", len(ed.selection) == len(ed.doc.main_group.children))
+    check("Ctrl+A", len(ed.selection) == len(root().children))
     # Glisser-déposer dans l'arbre (API du modèle)
     tree = win.layers.tree
     ok = ed.move_nodes([free.id], g.id, 0)
@@ -346,17 +350,17 @@ def main():
     # ── Forme personnalisée ─────────────────────────────────────────────
     ed.select_all()
     d = ed.create_custom_shape("Motif")
-    check("forme personnalisée créée", d is not None and len(ed.doc.library.defs) == 1)
-    check("remplacée par une occurrence", ed.doc.main_group.children[0].kind == "instance")
+    check("forme personnalisée créée", d is not None and len(ed.doc.library.defs) == 2)
+    check("remplacée par une occurrence", root().children[0].kind == "instance")
     app.processEvents()
-    check("forme listée à gauche", win.tools.defs.count() == 1)
+    check("forme listée à gauche", win.tools.defs.count() == 2)
 
     # ── Timeline ─────────────────────────────────────────────────────────
     clip = ed.add_clip(d.id, ed.doc.timeline.tracks[0].id, 0.0, 4.0)
     ed.enter_clip(clip.id)
     check("contexte clip", ed.context == ("clip", clip.id) and ed.display_mode() == "timeline")
     win.tools.defs.setCurrentRow(-1)
-    ed.enter_scene()
+    ed.enter_def(F1)
     ed.enter_clip(clip.id)
     cur = win.tools.defs.currentItem()
     check("clip sélectionné = forme surlignée à gauche", cur is not None and cur.data(Qt.ItemDataRole.UserRole) == d.id)
@@ -382,7 +386,7 @@ def main():
     check("modifieur actif avant la clé", ed.eval_context().is_visible(mod_in_def))
     ed.set_playhead(1.5)
     check("modifieur coupé après la clé", not ed.eval_context().is_visible(mod_in_def))
-    ed.set_selection([ed.doc.main_group.children[0].id] if False else [])
+    ed.set_selection([root().children[0].id] if False else [])
     clip.expanded = True
     ed.notify(timeline=True)
     tl = ed.doc.timeline
@@ -521,8 +525,8 @@ def main():
     shot(win, "03_timeline")
 
     # ── Sortie live ──────────────────────────────────────────────────────
-    ed.enter_scene()
-    inst = ed.doc.main_group.children[0]
+    ed.enter_def(F1)
+    inst = root().children[0]
     ed.set_selection([inst.id])
     app.processEvents()
     from ildagen.ui.properties.forms import ParamForm
@@ -548,36 +552,63 @@ def main():
     check("blackout coupe l'envoi", not win.live.live and win.live.blackout)
     win.live.set_blackout(False)
 
-    check("groupe racine « Forme »", ed.doc.main_group.name == "Forme")
     # ── Symétrie de dessin : modifieur ajouté automatiquement, le trait reste simple ──
     from ildagen.core import draw_symmetry as DS
     from ildagen.core import nodes as N
     ed.set_symmetry(1)
     ed.set_tool("pencil")
-    n_before = len(ed.doc.main_group.children)
+    n_before = len(root().children)
     drag(view, sp(0.2, 0.2), sp(0.5, 0.35))
-    g = ed.doc.main_group.children[0]
+    g = root().children[0]
     stroke = g.children[1] if g.kind == "group" and len(g.children) == 2 else None
     check("symétrie de dessin : groupe « Symétrie » + modifieur ajoutés, le trait reste un seul trait",
           stroke is not None and g.name == "Symétrie" and g.children[0].mod_type == "mirror_sym"
-          and len(stroke.paths) == 1 and len(ed.doc.main_group.children) == n_before + 1)
+          and len(stroke.paths) == 1 and len(root().children) == n_before + 1)
     drag(view, sp(0.3, -0.2), sp(0.6, -0.4))
     check("trait suivant (même mode) : sous le même modifieur", len(g.children) == 3
-          and len(ed.doc.main_group.children) == n_before + 1)
+          and len(root().children) == n_before + 1)
     ed.set_symmetry(3)
     ed.set_tool("shape:rect")
     drag(view, sp(0.2, 0.2), sp(0.5, 0.5))
-    g2 = ed.doc.main_group.children[0]
+    g2 = root().children[0]
     check("mode changé : nouveau groupe avec son modifieur (4 quarts)", g2 is not g and g2.kind == "group"
           and N.get_param(g2.children[0], "axes") == 2 and g2.children[1].kind == "shape"
-          and len(ed.doc.main_group.children) == n_before + 2)
+          and len(root().children) == n_before + 2)
     shot(win, "04_symetrie")
     ed.set_symmetry(count=6)
     check("radiale ×6", DS.modifier_spec(ed.doc.grid) == ("radial_sym", {"count": 6, "angle": 0.0, "kaleido": False}))
     ed.set_symmetry(0)
     for _ in range(3):
         ed.undo()
-    check("symétrie de dessin annulable", len(ed.doc.main_group.children) == n_before)
+    check("symétrie de dessin annulable", len(root().children) == n_before)
+    ed.set_tool("select")
+
+    # ── Liste des formes : clic = afficher / éditer, + = nouvelle forme ──
+    lst = win.tools.defs
+    n_forms = len(ed.doc.library.defs)
+    win.tools.btn_new.click()
+    app.processEvents()
+    new = ed.current_form()
+    check("+ : nouvelle forme vide, sélectionnée", len(ed.doc.library.defs) == n_forms + 1 and not new.root.children
+          and ed.context == ("def", new.id) and lst.currentItem().data(Qt.ItemDataRole.UserRole) == new.id
+          and win.layers.ctx.text() == new.name, new.name)
+    ed.set_tool("shape:ellipse")
+    drag(view, sp(-0.2, -0.2), sp(0.2, 0.2))
+    check("on dessine directement dans la forme choisie", len(new.root.children) == 1 and not
+          any(c.shape == "ellipse" and c.local_bbox()[0] < -0.19 for c in root().children if c.kind == "shape"))
+    item = next(lst.item(i) for i in range(lst.count()) if lst.item(i).data(Qt.ItemDataRole.UserRole) == F1)
+    r = lst.visualItemRect(item)
+    click(lst.viewport(), r.center())
+    check("clic sur une forme de la liste : elle s'affiche et ses calques aussi", ed.context == ("def", F1)
+          and ed.display_mode() == "def" and win.layers.tree.model_.rowCount() == len(root().children))
+    dup = ed.duplicate_form(new.id)
+    check("dupliquer une forme", dup is not None and len(dup.root.children) == 1 and dup.root.children[0].id !=
+          new.root.children[0].id and ed.context == ("def", dup.id))
+    ed.delete_def(dup.id)
+    check("supprimer la forme en cours : on passe sur une autre", ed.doc.library.get(dup.id) is None
+          and ed.current_root() is not None)
+    ed.delete_def(new.id)
+    ed.enter_def(F1)
     ed.set_tool("select")
 
     # ── Enregistrer / ouvrir ─────────────────────────────────────────────
@@ -585,18 +616,18 @@ def main():
     win.project._write(path)
     ed.dirty = False
     win.project.open(path)
-    check("projet rouvert", len(ed.doc.library.defs) == 1 and ed.doc.timeline.has_clips())
+    check("projet rouvert", len(ed.doc.library.defs) == 2 and ed.doc.timeline.has_clips())
     from ildagen.editor.export import export_ilda
     n = export_ilda(ed, os.path.join(tempfile.mkdtemp(), "t.ild"), 5, 25, 0.0, 4.0)
     check("export ILDA de l'animation", n == 100, f"{n} images")
     # Suppr sur une forme personnalisée de la liste de gauche (annulable)
-    win.tools.defs.setCurrentRow(0)
+    win.tools.defs.setCurrentRow(1)
     win.tools.defs.setFocus()
     app.processEvents()
     win.tools.defs.delete_current()
-    check("Suppr supprime la forme personnalisée", len(ed.doc.library.defs) == 0 and not ed.doc.timeline.has_clips())
+    check("Suppr supprime la forme personnalisée", len(ed.doc.library.defs) == 1 and not ed.doc.timeline.has_clips())
     ed.undo()
-    check("annuler la suppression de la forme", len(ed.doc.library.defs) == 1 and ed.doc.timeline.has_clips())
+    check("annuler la suppression de la forme", len(ed.doc.library.defs) == 2 and ed.doc.timeline.has_clips())
     ed.dirty = False
     print("\n" + ("TOUT EST OK" if not errors else f"{len(errors)} problème(s) : {', '.join(errors)}"))
     # Fermeture comme dans l'application (vérifie aussi qu'elle ne plante pas)

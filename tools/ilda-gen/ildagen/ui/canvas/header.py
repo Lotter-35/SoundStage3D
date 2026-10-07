@@ -1,4 +1,4 @@
-"""Barre au-dessus de la mire : source affichée (Scène / Timeline), grilles, zoom."""
+"""Barre au-dessus de la mire : source affichée (Forme / Timeline), grilles, zoom."""
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget
@@ -31,16 +31,16 @@ class CanvasHeader(QWidget):
         lay.setSpacing(4)
 
         self.src_group = QButtonGroup(self)
-        self.btn_scene = QPushButton("Scène")
+        self.btn_scene = QPushButton("Forme")
         self.btn_tl = QPushButton("Timeline")
         for i, b in enumerate((self.btn_scene, self.btn_tl)):
             b.setCheckable(True)
             b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
             self.src_group.addButton(b, i)
             lay.addWidget(b)
-        self.btn_scene.setToolTip("Afficher et éditer la scène")
+        self.btn_scene.setToolTip("Afficher et éditer la forme sélectionnée à gauche")
         self.btn_tl.setToolTip("Afficher la sortie de la timeline à la tête de lecture")
-        self.src_group.idClicked.connect(lambda i: editor.set_view_source("scene" if i == 0 else "timeline"))
+        self.src_group.idClicked.connect(lambda i: editor.set_view_source("form" if i == 0 else "timeline"))
 
         self.ctx_label = QLabel("")
         self.ctx_label.setObjectName("dim")
@@ -89,10 +89,7 @@ class CanvasHeader(QWidget):
         mode = self.editor.display_mode()
         self.btn_scene.setChecked(mode != "timeline")
         self.btn_tl.setChecked(mode == "timeline")
-        self.btn_scene.setEnabled(self.editor.context[0] != "def")
-        self.btn_tl.setEnabled(self.editor.context[0] != "def")
-        kind = self.editor.context[0]
-        self.ctx_label.setText("" if kind == "scene" else self.editor.context_label())
+        self.ctx_label.setText(self.editor.context_label())
 
 
 class CanvasArea(QWidget):

@@ -41,7 +41,7 @@ automatique et rouvert la fois suivante). Ces trois comportements se désactiven
 | Zone | Contenu |
 |---|---|
 | Haut | Menus · IP / port / canal / images par seconde · état de la connexion · **Envoi live** · **BLACKOUT** |
-| Gauche | Outils (sélection, crayon, seau), formes de base, couleur de tracé, formes personnalisées |
+| Gauche | Outils (sélection, crayon, seau), formes de base, couleur de tracé, **liste des formes** du projet |
 | Centre | La mire (zone de projection), grille orthogonale ou polaire, compteur de points |
 | Droite | Calques, puis Propriétés (repliable) |
 | Bas | Timeline : transport, BPM, grille musicale, musique, pistes, automations |
@@ -122,7 +122,7 @@ mode vont sous le même modifieur ; changer de mode crée un nouveau groupe.
 | Poignée ronde au-dessus, ou juste à l'extérieur d'un coin | Rotation ; `Maj` : pas de 15° |
 | Poignée en losange | Inclinaison 3D (gauche / droite = axe Y, haut / bas = axe X) |
 | Croix au centre | Déplacer le pivot ; `Maj` : aimanté (coins, milieux, centre, grille) |
-| Double-clic sur une forme personnalisée | L'éditer (toutes ses occurrences suivent) |
+| Double-clic sur une forme placée dans une autre | Afficher cette forme (toutes ses occurrences suivent) |
 
 Une **ligne** seule n'a pas d'épaisseur : pas de cadre, seulement ses deux extrémités (glisser ; `Maj` =
 aimant de grille, ou pas de 15° sans grille) et une poignée de rotation.
@@ -149,9 +149,7 @@ Boutons sous les calques : **Modifieur** (menu de tous les modifieurs), **nouvea
 groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **supprimer**.
 
 
-- Dans la scène, tout est rangé dans le groupe **Forme** (icône des formes), toujours en tête de la liste : il ne
-  peut être ni supprimé, ni dégroupé, ni déplacé ; les nouveaux calques y vont automatiquement (les anciens
-  projets sont convertis à l'ouverture).
+- Le panneau Calques montre **le contenu de la forme choisie à gauche** (son nom est écrit en haut du panneau).
 - Chaque forme est un calque. Glisser-déposer pour réordonner ou ranger dans un groupe (ligne bleue = position).
 - Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas (toujours affiché, ouvert ou fermé) : verrouiller. Un groupe
   verrouillé ne se déplie plus mais se sélectionne et se déplace comme un seul bloc.
@@ -173,18 +171,31 @@ Dessin progressif, Masque de zone, Beams · Couleur, Dégradé, Défilement de c
 Teinte / saturation / luminosité, Segments alternés, Couleur aléatoire, Remplacement de couleur ·
 Luminosité, Fondu le long du tracé, Stroboscope, Pulsation.
 
-## Formes personnalisées
+## Formes (liste de gauche)
 
-Sélectionner des calques (ou rien = tout) → clic droit → **Créer une forme personnalisée**. Les calques sont
-remplacés par une occurrence de la forme, qui apparaît à gauche. Glisser : vers la mire ou la timeline ;
-double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (annulable).
+Un projet, ce sont des **formes** (la liste « Formes perso » à gauche) et la **timeline** qui les joue. Il n'y
+a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
+
+- **Clic** sur une forme : elle est sélectionnée (en bleu), la mire l'affiche et le panneau Calques montre son
+  contenu. On la modifie directement (traits, formes, modifieurs, autres formes…), sans bouton « Terminer ».
+- **+** (en haut de la liste, ou clic droit → Nouvelle forme) : nouvelle forme vide, « Forme 2 », « Forme 3 »…
+- **Double-clic** : renommer. **Clic droit** : renommer, dupliquer, placer dans la forme en cours, supprimer.
+  `Suppr` : supprimer la forme et toutes ses occurrences (annulable).
+- **Glisser** une forme : sur une piste de la timeline (clip) ou dans la mire (elle est placée dans la forme en
+  cours, liée : la modifier met à jour toutes ses occurrences).
+- Une forme peut aussi naître d'une sélection : clic droit → **Créer une forme personnalisée** (les calques
+  sont remplacés par une occurrence de la nouvelle forme).
+- Les **groupes** servent seulement à ranger les calques d'une forme.
+- Au-dessus de la mire, **Forme / Timeline** : la forme choisie (modifiable) ou la sortie de la timeline à la
+  tête de lecture (aussi pendant la lecture). Cliquer sur un clip affiche sa forme telle qu'elle est à la tête
+  de lecture (automations comprises).
 
 ## Timeline
 
 1. **Musique…** pour importer un morceau (forme d'onde affichée), régler le **BPM** (ou **Tap**), le nombre de
    temps par mesure, la **grille** (temps, 1/2, 1/4, 1/8, triolets) et le départ de la **mesure 1** (« Ici » =
    tête de lecture).
-2. Glisser une forme personnalisée sur une piste : un clip est créé (des vignettes montrent la forme tout le
+2. Glisser une forme (liste de gauche) sur une piste : un clip est créé (des vignettes montrent la forme tout le
    long du clip, automations comprises). Glisser le clip pour le déplacer, ses bords
    pour changer sa durée : les **automations s'étirent proportionnellement** (une montée sur 10 s ramenée à
    5 s va toujours jusqu'au bout) ; `Maj` pendant le glisser = les clés gardent leurs instants (on coupe). L'**aimant** accroche tout à la grille (`Alt` pendant un glisser = libre).

@@ -25,11 +25,8 @@ class LayerOpsMixin:
         if sel:
             n = sel[0]
             parent = n.parent
-            if parent is not None and not parent.locked and parent.kind == "group" and not n.locked_ancestor() \
-                    and not getattr(n, "main", False):
+            if parent is not None and not parent.locked and parent.kind == "group" and not n.locked_ancestor():
                 return parent, parent.children.index(n)
-            if getattr(n, "main", False) and not n.locked:
-                return n, 0
         work = self.work_root()
         return (work if work is not None else root), 0
 
@@ -44,7 +41,7 @@ class LayerOpsMixin:
 
     # ── Suppression ──────────────────────────────────────────────────────
     def delete_nodes(self, nodes, label="Supprimer"):
-        nodes = [n for n in nodes if n.parent is not None and not getattr(n, "main", False)]
+        nodes = [n for n in nodes if n.parent is not None]
         if not nodes:
             return
 
@@ -57,10 +54,7 @@ class LayerOpsMixin:
         self.set_selection([])
 
     def delete_selected(self):
-        sel = self.top_selected()
-        if any(getattr(n, "main", False) for n in sel):
-            self.statusMessage.emit("Le groupe principal ne peut pas être supprimé (sélectionnez ses calques)")
-        self.delete_nodes(sel)
+        self.delete_nodes(self.top_selected())
 
     def prune_automations(self):
         """Supprime les automations dont le calque n'existe plus."""
@@ -72,9 +66,7 @@ class LayerOpsMixin:
 
     # ── Déplacement (glisser-déposer) ────────────────────────────────────
     def can_drop(self, node, parent):
-        if parent is None or node is parent or parent.is_descendant_of(node) or getattr(node, "main", False):
-            return False
-        if parent is self.doc.scene:
+        if parent is None or node is parent or parent.is_descendant_of(node):
             return False
         if parent.kind == "group":
             return not parent.locked and not parent.locked_ancestor()
@@ -112,7 +104,7 @@ class LayerOpsMixin:
 
     # ── Groupes ──────────────────────────────────────────────────────────
     def group_selected(self):
-        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)]
+        nodes = self.top_selected()
         if not nodes:
             return
         parent = nodes[0].parent
@@ -138,7 +130,7 @@ class LayerOpsMixin:
             g.transform.px, g.transform.py = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
 
     def ungroup_selected(self):
-        groups = [n for n in self.top_selected() if n.kind == "group" and not getattr(n, "main", False)]
+        groups = [n for n in self.top_selected() if n.kind == "group"]
         if not groups:
             return
         moved = []
@@ -263,8 +255,7 @@ class LayerOpsMixin:
 
     # ── Presse-papiers ───────────────────────────────────────────────────
     def copy_selection(self):
-        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)] or \
-            [c for n in self.top_selected() for c in n.children]
+        nodes = self.top_selected()
         if not nodes:
             return False
         self.clipboard = [n.to_dict() for n in nodes]
@@ -276,8 +267,7 @@ class LayerOpsMixin:
 
     def cut_selection(self):
         if self.copy_selection():
-            nodes = [c for n in self.top_selected() for c in (n.children if getattr(n, "main", False) else [n])]
-            self.delete_nodes(nodes, "Couper")
+            self.delete_nodes(self.top_selected(), "Couper")
 
     def _clipboard_items(self):
         md = QGuiApplication.clipboard().mimeData()
@@ -293,7 +283,7 @@ class LayerOpsMixin:
         if not items:
             return
         root = self.current_root()
-        own_def = self.context[1] if self.context[0] == "def" else None
+        own_def = self.current_form_id()
         new_nodes = []
         for d in items:
             n = N.clone_node(N.node_from_dict(d))
@@ -316,7 +306,7 @@ class LayerOpsMixin:
         self.set_selection([n.id for n in new_nodes])
 
     def duplicate_selection(self):
-        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)]
+        nodes = self.top_selected()
         if not nodes:
             return []
         copies = []
@@ -455,11 +445,10 @@ class LayerOpsMixin:
 
     # ── Formes personnalisées ────────────────────────────────────────────
     def create_custom_shape(self, name):
-        nodes = [n for n in self.top_selected() if not getattr(n, "main", False)] or \
-            [c for c in self.work_root().children]
+        nodes = self.top_selected() or list(self.work_root().children)
         if not nodes:
             return None
-        own_def = self.context[1] if self.context[0] in ("def",) else None
+        own_def = self.current_form_id()
         parent = nodes[0].parent
         d = ShapeDef(name)
         inst = N.InstanceNode(d.id, name)
@@ -485,12 +474,10 @@ class LayerOpsMixin:
         d = self.doc.library.get(def_id)
         if d is None:
             return None
-        if self.context[0] in ("def", "clip"):
-            own = self.current_root()
-            cur_def = next((x for x in self.doc.library.defs if x.root is own), None)
-            if cur_def and (cur_def.id == def_id or d.uses_def(cur_def.id, self.doc.library)):
-                self.statusMessage.emit("Impossible : une forme ne peut pas se contenir elle-même")
-                return None
+        cur = self.current_form_id()
+        if cur and (cur == def_id or d.uses_def(cur, self.doc.library)):
+            self.statusMessage.emit("Impossible : une forme ne peut pas se contenir elle-même")
+            return None
         inst = N.InstanceNode(def_id, d.name)
         ctx = EvalContext(self.doc.library, 0.0, self.doc.timeline.bpm, self.default_color())
         b = strokes_bbox(eval_children(d.root.children, ctx))
@@ -509,20 +496,50 @@ class LayerOpsMixin:
                 d.root.name = d.name
             self.mutate("Renommer la forme", do, library=True, timeline=True)
 
-    def delete_def(self, def_id):
-        if self.context[1] == def_id or (self.context[0] == "clip" and self.current_clip() and
-                                          self.current_clip().def_id == def_id):
-            self.enter_scene()
+    def new_form(self, name=None):
+        """Bouton « + » de la liste des formes : nouvelle forme vide, sélectionnée."""
+        from ..core.document import next_form_name
+        d = ShapeDef(name or next_form_name(self.doc.library))
+        d.root.name = d.name
+        self.mutate("Nouvelle forme", lambda: self.doc.library.add(d), library=True)
+        self.enter_def(d.id)
+        return d
+
+    def duplicate_form(self, def_id):
+        src = self.doc.library.get(def_id)
+        if src is None:
+            return None
+        root = N.clone_node(src.root)
+        d = ShapeDef(src.name + " copie", root)
+        root.name = d.name
 
         def do():
-            self.doc.library.remove(def_id)
-            for n in list(self.doc.scene.walk()):
-                if n.kind == "instance" and n.def_id == def_id and n.parent:
-                    n.parent.remove(n)
-            for other in self.doc.library.defs:
+            lib = self.doc.library
+            lib.defs.insert(lib.defs.index(src) + 1, d)
+        self.mutate("Dupliquer la forme", do, library=True)
+        self.enter_def(d.id)
+        return d
+
+    def delete_def(self, def_id):
+        lib = self.doc.library
+        if lib.get(def_id) is None:
+            return
+        removing_current = self.current_form_id() == def_id
+
+        def do():
+            lib.remove(def_id)
+            for other in lib.defs:
                 for n in list(other.root.walk()):
                     if n.kind == "instance" and n.def_id == def_id and n.parent:
                         n.parent.remove(n)
             self.doc.timeline.remove_def(def_id)
+            if not lib.defs:
+                from ..core.document import ensure_form
+                ensure_form(lib)
+            if removing_current:
+                self.selection = []
+                self.context = ("def", lib.defs[0].id)     # le contexte doit rester valide
         self.mutate("Supprimer la forme", do, library=True, timeline=True)
+        if removing_current:
+            self._set_context(("def", lib.defs[0].id), "form")
         self.set_selection([])

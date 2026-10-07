@@ -133,21 +133,22 @@ def test_timeline_automation():
 
 def test_save_load_and_history():
     doc = Document()
-    doc.main_group.add(ShapeNode("star"))
+    form = doc.library.defs[0].root
+    form.add(ShapeNode("star"))
     m = ModifierNode("gradient")
-    doc.main_group.add(m)
+    form.add(m)
     h = History()
     h.begin("x", doc.to_dict())
-    doc.main_group.children[0].transform.tx = 0.3
+    form.children[0].transform.tx = 0.3
     assert h.commit(doc.to_dict())
     before = h.undo(doc.to_dict())
-    assert before["scene"]["children"][0]["children"][0]["transform"]["tx"] == 0.0
+    assert before["library"][0]["root"]["children"][0]["transform"]["tx"] == 0.0
     path = os.path.join(tempfile.mkdtemp(), "t.ildaproj")
     doc.save(path)
     doc2 = Document.load(path)
-    assert doc2.main_group.children[1].mod_type == "gradient"
-    c = clone_node(doc2.scene)
-    assert c.id != doc2.scene.id
+    assert doc2.library.defs[0].root.children[1].mod_type == "gradient"
+    c = clone_node(doc2.library.defs[0].root)
+    assert c.id != doc2.library.defs[0].root.id
 
 
 def test_output_idn_ilda():
@@ -174,15 +175,13 @@ def test_line_snaps_on_center():
     assert abs((-0.3 + 0.21) / 2 + dx) < 1e-9, dx
 
 
-def test_main_group():
-    from ildagen.core.document import ensure_main_group
+def test_always_one_form():
+    from ildagen.core.document import next_form_name
     doc = Document()
-    root = GroupNode("Scène")
-    root.add(ShapeNode("rect"))
-    root.add(ShapeNode("star"))
-    main = ensure_main_group(root)
-    assert root.children == [main] and len(main.children) == 2 and main.main
-    assert len(doc.scene.children) == 1 and doc.main_group.main
+    assert len(doc.library.defs) == 1 and doc.library.defs[0].name == "Forme 1"
+    assert next_form_name(doc.library) == "Forme 2"
+    doc.load_dict({"library": [], "timeline": {}})
+    assert len(doc.library.defs) == 1
 
 
 if __name__ == "__main__":

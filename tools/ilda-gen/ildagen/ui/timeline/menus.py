@@ -84,7 +84,7 @@ class TimelineMenus:
         menu.addAction("Nouvelle automation").triggered.connect(lambda: ed.new_automation(clip.id))
         menu.addAction("Replier" if clip.expanded else "Déplier").triggered.connect(lambda: self._toggle(clip))
         menu.addSeparator()
-        menu.addAction("Éditer la forme personnalisée").triggered.connect(lambda: ed.enter_def(clip.def_id))
+        menu.addAction("Afficher cette forme").triggered.connect(lambda: ed.enter_def(clip.def_id))
         menu.addAction("Dupliquer").triggered.connect(lambda: ed.duplicate_clip(clip.id))
         menu.addAction("Supprimer").triggered.connect(lambda: ed.delete_clip(clip.id))
 

@@ -1,9 +1,9 @@
-"""Barre d'outils de gauche : outils, formes de base, formes personnalisées."""
+"""Barre d'outils de gauche : outils, formes de base, couleur, liste des formes du projet."""
 
 from PySide6.QtCore import QMimeData, QSize, Qt, QTimer
 from PySide6.QtGui import QPainter, QPixmap
-from PySide6.QtWidgets import (QButtonGroup, QGridLayout, QLabel, QListWidget, QListWidgetItem, QMenu,
-                               QToolButton, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QButtonGroup, QGridLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+                               QMenu, QToolButton, QVBoxLayout, QWidget)
 
 from ..core.evaluator import EvalContext, eval_children
 from ..core.path import strokes_bbox
@@ -76,7 +76,9 @@ class DefList(QListWidget):
         self.setSpacing(1)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self._menu)
-        self.itemDoubleClicked.connect(lambda it: editor.enter_def(it.data(Qt.ItemDataRole.UserRole)))
+        # Un clic choisit la forme : la mire et les calques la montrent, on l'édite directement
+        self.itemClicked.connect(lambda it: editor.enter_def(it.data(Qt.ItemDataRole.UserRole)))
+        self.itemDoubleClicked.connect(self._rename)
 
     def mimeData(self, items):
         md = QMimeData()
@@ -95,27 +97,41 @@ class DefList(QListWidget):
             if d is not None:
                 self.editor.statusMessage.emit(f"Forme « {d.name} » supprimée (Ctrl+Z pour annuler)")
 
-    def _menu(self, pos):
-        it = self.itemAt(pos)
-        if it is None:
-            return
+    def _rename(self, it):
         def_id = it.data(Qt.ItemDataRole.UserRole)
         d = self.editor.doc.library.get(def_id)
+        if d is None:
+            return
+        name = ask_text(self, "Renommer la forme", "Nom :", d.name)
+        if name:
+            self.editor.rename_def(def_id, name)
+
+    def _menu(self, pos):
+        it = self.itemAt(pos)
         m = QMenu(self)
-        a_place = m.addAction("Placer dans la mire")
-        a_edit = m.addAction("Éditer")
-        a_ren = m.addAction("Renommer…")
-        m.addSeparator()
-        a_del = m.addAction("Supprimer (Suppr)")
+        a_new = m.addAction("Nouvelle forme")
+        a_place = a_ren = a_dup = a_del = None
+        if it is not None:
+            def_id = it.data(Qt.ItemDataRole.UserRole)
+            cur = self.editor.current_form()
+            m.addSeparator()
+            a_ren = m.addAction("Renommer… (double-clic)")
+            a_dup = m.addAction("Dupliquer")
+            if cur is not None and cur.id != def_id:
+                a_place = m.addAction(f"Placer dans « {cur.name} »")
+            m.addSeparator()
+            a_del = m.addAction("Supprimer (Suppr)")
         chosen = m.exec(self.mapToGlobal(pos))
-        if chosen is a_place:
+        if chosen is None:
+            return
+        if chosen is a_new:
+            self.editor.new_form()
+        elif chosen is a_place:
             self.editor.place_instance(def_id)
-        elif chosen is a_edit:
-            self.editor.enter_def(def_id)
         elif chosen is a_ren:
-            name = ask_text(self, "Renommer la forme", "Nom :", d.name)
-            if name:
-                self.editor.rename_def(def_id, name)
+            self._rename(it)
+        elif chosen is a_dup:
+            self.editor.duplicate_form(def_id)
         elif chosen is a_del:
             self.setCurrentItem(it)
             self.delete_current()
@@ -140,14 +156,23 @@ class ToolPanel(QWidget):
                                   for k, label, ic in BASIC_SHAPES]))
         lay.addWidget(section("Couleur"))
         lay.addWidget(ColorPanel(editor))
-        lay.addWidget(section("Formes perso"))
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        head.addWidget(section("Formes perso"))
+        head.addStretch(1)
+        self.btn_new = QToolButton()
+        self.btn_new.setIcon(icons.icon("plus", 14))
+        self.btn_new.setIconSize(QSize(14, 14))
+        self.btn_new.setAutoRaise(True)
+        self.btn_new.setToolTip("Nouvelle forme (vide)")
+        self.btn_new.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_new.clicked.connect(lambda: editor.new_form())
+        head.addWidget(self.btn_new, 0, Qt.AlignmentFlag.AlignBottom)
+        lay.addLayout(head)
         self.defs = DefList(editor)
-        self.defs.setToolTip("Glisser vers la mire ou la timeline · Double-clic : éditer · Suppr : supprimer")
+        self.defs.setToolTip("Clic : afficher et éditer la forme · Double-clic : renommer · "
+                             "Glisser vers la timeline (ou dans une autre forme) · Suppr : supprimer")
         lay.addWidget(self.defs, 1)
-        self.empty = QLabel("Sélectionnez des calques puis clic droit → Créer une forme personnalisée.")
-        self.empty.setWordWrap(True)
-        self.empty.setObjectName("dim")
-        lay.addWidget(self.empty)
 
         self._thumb_timer = QTimer(self)
         self._thumb_timer.setSingleShot(True)
@@ -184,18 +209,11 @@ class ToolPanel(QWidget):
             b.setChecked(True)
 
     def _doc_changed(self):
-        if self.editor.context[0] in ("def", "clip"):
-            self._thumb_timer.start(400)
+        self._thumb_timer.start(400)
 
     def highlight_context(self):
-        """Clip sélectionné dans la timeline (ou forme en édition) : sa forme est surlignée dans la liste."""
-        kind, ref = self.editor.context
-        def_id = None
-        if kind == "clip":
-            clip = self.editor.current_clip()
-            def_id = clip.def_id if clip else None
-        elif kind == "def":
-            def_id = ref
+        """La forme en cours (ou celle du clip sélectionné dans la timeline) est surlignée dans la liste."""
+        def_id = self.editor.current_form_id()
         if def_id is None:
             return
         for i in range(self.defs.count()):
@@ -215,6 +233,4 @@ class ToolPanel(QWidget):
             self.defs.addItem(it)
             if d.id == cur:
                 self.defs.setCurrentItem(it)
-        has = bool(self.editor.doc.library.defs)
-        self.empty.setVisible(not has)
         self.highlight_context()

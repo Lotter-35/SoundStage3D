@@ -78,7 +78,7 @@ def build_layer_menu(parent, editor, actions):
             editor.create_custom_shape(name)
     a.triggered.connect(create)
     if one is not None and one.kind == "instance":
-        a = menu.addAction("Éditer la forme personnalisée")
+        a = menu.addAction("Afficher cette forme")
         a.triggered.connect(lambda: editor.enter_def(one.def_id))
     menu.addSeparator()
     menu.addAction(actions["select_all"])

@@ -14,7 +14,7 @@ BTN = 22
 
 def node_icon(node):
     if node.kind == "group":
-        return "component" if getattr(node, "main", False) else "folder"
+        return "folder"
     if node.kind == "instance":
         return "component"
     if node.kind == "modifier":

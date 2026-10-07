@@ -1,4 +1,4 @@
-"""Export ILDA : animation de la timeline (si elle a des clips) sinon image fixe de la scène."""
+"""Export ILDA : animation de la timeline (si elle a des clips) sinon image fixe de la forme en cours."""
 
 import numpy as np
 
@@ -19,7 +19,7 @@ def export_frames(editor, start, end, fps, progress=None):
     color = editor.default_color()
     if not doc.timeline.has_clips() or end <= start:
         ctx = EvalContext(doc.library, 0.0, doc.timeline.bpm, color)
-        root = editor.current_root() if editor.context[0] == "def" else doc.scene
+        root = editor.current_form().root      # pas de timeline : la forme en cours
         return [frame_from_strokes(evaluate(root, ctx), editor.settings)]
     n = max(1, int(round((end - start) * fps)))
     frames = []

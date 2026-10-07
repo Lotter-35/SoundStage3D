@@ -1,4 +1,4 @@
-"""Formes personnalisées : définitions partagées par toutes leurs occurrences (scène et timeline)."""
+"""Formes personnalisées : définitions partagées par toutes leurs occurrences (autres formes et timeline)."""
 
 from .nodes import GroupNode, new_id
 

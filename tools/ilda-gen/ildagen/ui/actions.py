@@ -76,7 +76,7 @@ def build_actions(win):
     act("fit", "Ajuster la vue", lambda: win.canvas.view.fit_view(), "Ctrl+0")
     act("zoom_in", "Zoomer", lambda: win.canvas.view.zoom_by(1.4), SK.ZoomIn)
     act("zoom_out", "Dézoomer", lambda: win.canvas.view.zoom_by(1 / 1.4), SK.ZoomOut)
-    act("view_scene", "Afficher la scène", lambda: ed.set_view_source("scene"))
+    act("view_scene", "Afficher la forme", lambda: ed.set_view_source("form"))
     act("view_tl", "Afficher la timeline", lambda: ed.set_view_source("timeline"))
 
     # Lecture

@@ -1,14 +1,13 @@
-"""Document (projet) : scène, formes personnalisées, timeline, réglages enregistrés avec le projet."""
+"""Document (projet) : formes, timeline, réglages enregistrés avec le projet."""
 
 import json
 import os
 
-from .library import Library
-from .nodes import GroupNode, node_from_dict
+from .library import Library, ShapeDef
 from .timeline import Timeline
 
 PROJECT_EXT = ".ildaproj"
-FORMAT_VERSION = 1
+FORMAT_VERSION = 2
 
 
 class GridSettings:
@@ -34,50 +33,43 @@ class GridSettings:
         return g
 
 
-MAIN_NAME = "Forme"
-OLD_MAIN_NAMES = ("Forme principale",)
+FORM_PREFIX = "Forme"
 
 
-def ensure_main_group(scene):
-    """La scène contient toujours UN groupe principal, en tête, qui contient tous les calques."""
-    main = next((c for c in scene.children if c.kind == "group" and getattr(c, "main", False)), None)
-    if main is None:
-        main = GroupNode(MAIN_NAME)
-        main.main = True
-    for c in list(scene.children):
-        if c is not main:
-            scene.remove(c)
-            main.add(c)
-    if main.parent is not scene:
-        scene.add(main, 0)
-    main.expanded = True
-    if main.name in OLD_MAIN_NAMES:
-        main.name = MAIN_NAME
-    return main
+def next_form_name(library):
+    """« Forme 1 », « Forme 2 »… : premier numéro libre."""
+    names = {d.name for d in library.defs}
+    i = 1
+    while f"{FORM_PREFIX} {i}" in names:
+        i += 1
+    return f"{FORM_PREFIX} {i}"
+
+
+def ensure_form(library):
+    """Le projet contient toujours au moins une forme."""
+    if not library.defs:
+        library.add(ShapeDef(next_form_name(library)))
+    return library.defs[0]
 
 
 class Document:
+    """Un projet = des formes (la liste de gauche) + la timeline qui les joue."""
+
     def __init__(self):
-        self.scene = GroupNode("Scène")
-        ensure_main_group(self.scene)
         self.library = Library()
+        ensure_form(self.library)
         self.timeline = Timeline()
         self.grid = GridSettings()
         self.network = {}      # copie des réglages réseau au moment de l'enregistrement
         self.path = ""         # fichier du projet
 
-    @property
-    def main_group(self):
-        return ensure_main_group(self.scene)
-
     def to_dict(self):
-        return {"version": FORMAT_VERSION, "scene": self.scene.to_dict(), "library": self.library.to_dict(),
+        return {"version": FORMAT_VERSION, "library": self.library.to_dict(),
                 "timeline": self.timeline.to_dict(), "grid": self.grid.to_dict(), "network": dict(self.network)}
 
     def load_dict(self, d):
-        self.scene = node_from_dict(d["scene"]) if "scene" in d else GroupNode("Scène")
-        ensure_main_group(self.scene)
         self.library = Library.from_dict(d.get("library"))
+        ensure_form(self.library)
         self.timeline = Timeline.from_dict(d.get("timeline", {}))
         self.grid = GridSettings.from_dict(d.get("grid"))
         self.network = dict(d.get("network", {}))

@@ -38,7 +38,7 @@ class TimelineOpsMixin:
         if tr is None:
             return
         if self.context[0] == "clip" and any(c.id == self.context[1] for c in tr.clips):
-            self.enter_scene()
+            self.enter_def()
 
         def do():
             tl.tracks.remove(tr)
@@ -59,7 +59,7 @@ class TimelineOpsMixin:
         if clip is None:
             return
         if self.context == ("clip", clip_id):
-            self.enter_scene()
+            self.enter_def()
             self.set_view_source("timeline")
         self.timeline_mutate("Supprimer le clip", lambda: tr.clips.remove(clip))
         if self.selected_clip == clip_id:

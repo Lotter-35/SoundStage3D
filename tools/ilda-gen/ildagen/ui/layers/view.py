@@ -210,9 +210,6 @@ class LayerTreeView(QTreeView):
             node = ix.data(NODE_ROLE)
             if pos == DIP.OnItem and (node.kind in ("group", "modifier")):
                 parent, index = node, 0
-            elif getattr(node, "main", False):
-                # Au-dessus / au-dessous du groupe principal : on reste dedans
-                parent, index = node, (0 if pos == DIP.AboveItem else len(node.children))
             else:
                 parent = node.parent or root
                 index = parent.children.index(node) + (1 if pos == DIP.BelowItem else 0)

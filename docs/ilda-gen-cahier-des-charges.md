@@ -217,7 +217,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | CAL-11 | Toutes ces actions aussi au **clic droit** (copier, couper, coller, supprimer, sélectionner…). | Demandé |
 | CAL-12 | Renommer un calque (double-clic ou clic droit). | Proposé |
 | CAL-13 | Glisser-déposer **fluide**. | Demandé |
-| CAL-14 | Dans la scène, on travaille **obligatoirement dans un groupe racine « Forme »** (icône des formes, renommable), toujours en tête de liste : ni supprimable, ni dégroupable, ni déplaçable ; les nouveaux calques y vont automatiquement ; les anciens projets sont convertis à l'ouverture. | Retour |
+| CAL-14 | Le panneau Calques montre **le contenu de la forme choisie dans la liste de gauche** (nom en en-tête) ; plus de scène ni de groupe racine (remplacé par FPS-09 à FPS-15). | Retour |
 | CAL-15 | **Boutons sous les calques** : Modifieur (menu de tous les modifieurs), nouveau calque (vide, le prochain trait au crayon le remplit), nouveau groupe (groupe la sélection s'il y en a une), forme personnalisée, supprimer. | Retour |
 | CAL-16 | **Portée des modifieurs visible en permanence** (pas seulement au survol) : les calques modifiés sont **décalés vers la droite** sous le modifieur et une **barre verticale sombre**, alignée sur le centre de l'icône du modifieur, longe tous les calques qu'il modifie ; elle s'éclaircit quand le modifieur est sélectionné. | Retour |
 | CAL-20 | **Plusieurs modifieurs empilés ne se décalent pas entre eux** : ils restent alignés et partagent la même barre ; seules les formes (et groupes) qu'ils modifient sont décalées, d'un seul cran quel que soit le nombre de modifieurs. | Retour |
@@ -260,7 +260,14 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | FPS-05 | Une forme personnalisée peut être replacée dans la mire (dessin) **et dans la timeline**. | Demandé |
 | FPS-06 | Bibliothèque de formes partagée entre projets. | Proposé |
 | FPS-07 | Cliquer sur un clip de la timeline **met en évidence sa forme personnalisée** dans la liste de gauche. | Retour |
-| FPS-08 | Double-clic sur une occurrence (mire ou liste) = éditer la forme ; toutes les occurrences suivent. | Retour |
+| FPS-08 | Double-clic sur une occurrence placée dans une autre forme = afficher cette forme ; toutes les occurrences suivent. | Retour |
+| FPS-09 | **Plus de « scène »** : un projet = des **formes** (liste de gauche) + la **timeline** qui les joue. | Retour |
+| FPS-10 | La liste contient **toujours au moins une forme** (« Forme 1 », créée d'office). | Retour |
+| FPS-11 | **Clic sur une forme** : sélectionnée en bleu, **affichée dans la mire** et **ses calques dans le panneau Calques** ; on l'édite sur place, **sans bouton « Terminer »** (plus de décalage : la forme est montrée telle qu'elle est). | Retour |
+| FPS-12 | Une forme contient traits, formes de base, modifieurs **et d'autres formes** (liées) ; un **groupe** ne sert qu'à ranger les calques, une **forme** se copie, se colle, se déplace, se pose dans la timeline. | Retour |
+| FPS-13 | Bouton **+** dans la liste (et clic droit → Nouvelle forme) : nouvelle forme vide « Forme N », sélectionnée. Clic droit : renommer (aussi double-clic), dupliquer, placer dans la forme en cours, supprimer. | Retour |
+| FPS-14 | Au-dessus de la mire, **Forme / Timeline** : hors lecture la mire montre la forme choisie (modifiable) ; en lecture ou avec « Timeline », la sortie de la timeline ; cliquer sur un clip montre sa forme à la tête de lecture (automations comprises). | Retour |
+| FPS-15 | Pas de conversion des anciens projets (format « scène ») : seules leurs formes et leur timeline sont reprises. | Décidé |
 
 ---
 

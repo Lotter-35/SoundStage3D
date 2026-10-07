@@ -123,7 +123,7 @@ def transform_strokes(strokes, tf):
 
 
 def evaluate(root, ctx):
-    """Tracés de tout un arbre (racine = groupe de scène ou de forme personnalisée)."""
+    """Tracés de tout un arbre (racine d'une forme)."""
     return eval_children(root.children, ctx)
 
 

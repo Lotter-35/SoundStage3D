@@ -232,7 +232,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
 
     def _click_empty(self, x, e):
         if self.editor.context[0] == "clip":
-            self.editor.enter_scene()
+            self.editor.enter_def()
             self.editor.set_view_source("timeline")
         if x >= HEADER_W:
             self.playback.seek(max(0.0, self.snap(self.geo.t(x), e.modifiers())))

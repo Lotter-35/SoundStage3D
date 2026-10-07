@@ -1,10 +1,10 @@
 """État de l'éditeur : document, contexte d'édition, sélection, annuler / rétablir, évaluation de l'affichage.
 
 Contextes d'édition :
-- « scene » : la scène principale (calques dessinés dans la mire) ;
-- « def »   : une forme personnalisée ouverte pour être modifiée (toutes ses occurrences suivent) ;
-- « clip »  : un clip de la timeline ; la mire montre la timeline à la tête de lecture et les réglages
-              touchés alimentent les automations du clip.
+- « def »  : la forme sélectionnée dans la liste de gauche (ses calques sont dans le panneau Calques ;
+             toutes ses occurrences suivent) ;
+- « clip » : un clip de la timeline ; la mire montre la timeline à la tête de lecture et les réglages
+             touchés alimentent les automations du clip.
 """
 
 import time
@@ -46,8 +46,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.history = History()
         self.selection = []
         self.tool = "select"
-        self.context = ("scene", None)
-        self.view_source = "scene"
+        self.context = ("def", self.doc.library.defs[0].id)
+        self.view_source = "form"
         self.playhead = 0.0
         self.preview_time = None   # instant prévisualisé pendant le déplacement d'une clé (sinon la tête de lecture)
         self.preview_clip = None   # clip de cette clé : reste visible même sur sa toute dernière image
@@ -69,8 +69,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.doc = doc
         self.history.clear()
         self.selection = []
-        self.context = ("scene", None)
-        self.view_source = "scene"
+        self.context = ("def", doc.library.defs[0].id)
+        self.view_source = "form"
         self.selected_clip = None
         self.playhead = 0.0
         self.preview_time = None
@@ -98,7 +98,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.doc = doc
         root = self.current_root()
         if root is None:
-            self.context = ("scene", None)
+            self.context = ("def", self.doc.library.defs[0].id)
             root = self.current_root()
         self.selection = [i for i in self.selection if root.find(i) is not None]
         self.notify(structure=True, library=True, timeline=True)
@@ -163,8 +163,6 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     # ── Contexte ─────────────────────────────────────────────────────────
     def current_root(self):
         kind, ref = self.context
-        if kind == "scene":
-            return self.doc.scene
         if kind == "def":
             d = self.doc.library.get(ref)
             return d.root if d else None
@@ -175,9 +173,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         return None
 
     def work_root(self):
-        """Où vont les nouveaux calques : le groupe principal dans la scène, la racine ailleurs."""
-        if self.context[0] == "scene":
-            return self.doc.main_group
+        """Où vont les nouveaux calques : la racine de la forme en cours."""
         return self.current_root()
 
     def current_clip(self):
@@ -185,18 +181,22 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             return None
         return self.doc.timeline.find_clip(self.context[1])[1]
 
-    def context_label(self):
-        kind, ref = self.context
-        if kind == "def":
-            d = self.doc.library.get(ref)
-            return f"Forme personnalisée : {d.name if d else '?'}"
-        if kind == "clip":
+    def current_form_id(self):
+        """Forme en cours : celle choisie à gauche, ou celle du clip sélectionné."""
+        if self.context[0] == "clip":
             clip = self.current_clip()
-            d = self.doc.library.get(clip.def_id) if clip else None
-            return f"Clip : {d.name if d else '?'}"
-        return "Scène"
+            return clip.def_id if clip else None
+        return self.context[1]
 
-    def _set_context(self, ctx, view="scene"):
+    def current_form(self):
+        return self.doc.library.get(self.current_form_id())
+
+    def context_label(self):
+        d = self.current_form()
+        name = d.name if d else "?"
+        return f"Clip : {name}" if self.context[0] == "clip" else name
+
+    def _set_context(self, ctx, view="form"):
         self.history.cancel()
         self.context = ctx
         self.view_source = view
@@ -208,12 +208,13 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.selectionChanged.emit()
         self.docChanged.emit()
 
-    def enter_scene(self):
-        self._set_context(("scene", None), "scene")
-
-    def enter_def(self, def_id):
-        if self.doc.library.get(def_id):
-            self._set_context(("def", def_id), "scene")
+    def enter_def(self, def_id=None):
+        """Choisir une forme (liste de gauche) : la mire et les calques la montrent, on l'édite sur place."""
+        def_id = def_id or self.current_form_id()
+        if self.doc.library.get(def_id) is None:
+            def_id = self.doc.library.defs[0].id
+        if self.context != ("def", def_id) or self.view_source != "form":
+            self._set_context(("def", def_id), "form")
 
     def enter_clip(self, clip_id):
         if self.context == ("clip", clip_id):
@@ -222,8 +223,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.clipSelected.emit(clip_id)
 
     def set_view_source(self, src):
-        if self.context[0] == "clip" and src == "scene":
-            self.enter_scene()
+        if self.context[0] == "clip" and src == "form":
+            self.enter_def()
             return
         if src != self.view_source:
             self.view_source = src
@@ -232,16 +233,15 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             self.docChanged.emit()
 
     def display_mode(self):
-        if self.context[0] == "def":
-            return "def"
+        """« def » : la forme en cours ; « timeline » : la sortie de la timeline (lecture, clip, bouton Timeline)."""
         if self.context[0] == "clip" or self.view_source == "timeline" or self.playing:
             return "timeline"
-        return "scene"
+        return "def"
 
     def editing_visible(self):
         """La sélection et les outils agissent-ils sur ce que montre la mire ?"""
         mode = self.display_mode()
-        return mode in ("scene", "def") or self.context[0] == "clip"
+        return mode == "def" or self.context[0] == "clip"
 
     # ── Évaluation ───────────────────────────────────────────────────────
     def wall_time(self):

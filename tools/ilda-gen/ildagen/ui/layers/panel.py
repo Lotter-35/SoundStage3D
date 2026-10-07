@@ -1,7 +1,7 @@
 """Panneau des calques : en-tête (contexte d'édition) + arbre."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QPushButton, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QMenu, QToolButton, QVBoxLayout, QWidget
 
 from ...core.modifiers import SUB_MODIFIER_TYPES, by_category, registry
 
@@ -22,11 +22,7 @@ class LayersPanel(QWidget):
         self.header = PanelHeader("Calques")
         self.ctx = QLabel("")
         self.ctx.setObjectName("dim")
-        self.done = QPushButton("Terminer")
-        self.done.setToolTip("Revenir à la scène")
-        self.done.clicked.connect(editor.enter_scene)
         self.header.extra.addWidget(self.ctx)
-        self.header.extra.addWidget(self.done)
         lay.addWidget(self.header)
         self.tree = LayerTreeView(editor)
         lay.addWidget(self.tree, 1)
@@ -94,12 +90,12 @@ class LayersPanel(QWidget):
         if root is None or not root.children:
             self.editor.statusMessage.emit("Rien à transformer en forme personnalisée")
             return
+        from ...core.document import next_form_name
         name = ask_text(self, "Forme personnalisée", "Nom de la nouvelle forme :",
-                        f"Forme {len(self.editor.doc.library.defs) + 1}")
+                        next_form_name(self.editor.doc.library))
         if name:
             self.editor.create_custom_shape(name)
 
     def refresh(self):
-        kind = self.editor.context[0]
-        self.ctx.setText("" if kind == "scene" else self.editor.context_label())
-        self.done.setVisible(kind != "scene")
+        """En-tête : la forme dont on voit les calques (ou le clip sélectionné)."""
+        self.ctx.setText(self.editor.context_label())

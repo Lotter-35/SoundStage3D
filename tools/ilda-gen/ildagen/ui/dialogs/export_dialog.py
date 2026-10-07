@@ -35,7 +35,7 @@ class ExportDialog(QDialog):
             self.range.addItem("Toute la timeline", "all")
             if tl.loop_end > tl.loop_start:
                 self.range.addItem("Zone de boucle", "loop")
-        self.range.addItem("Image fixe (scène)", "still")
+        self.range.addItem("Image fixe (forme en cours)", "still")
         form.addRow("Contenu", self.range)
         self.fps = SpinBox()
         self.fps.setRange(1, 120)
@@ -44,7 +44,7 @@ class ExportDialog(QDialog):
         form.addRow("Cadence", self.fps)
         lay.addLayout(form)
         info = QLabel("La timeline contient des clips : l'animation est exportée." if self.has_anim else
-                      "La timeline est vide : l'image fixe de la scène est exportée.")
+                      "La timeline est vide : l'image fixe de la forme en cours est exportée.")
         info.setObjectName("dim")
         info.setWordWrap(True)
         lay.addWidget(info)
