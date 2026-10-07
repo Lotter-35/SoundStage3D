@@ -3,7 +3,9 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget
 
+from ...core import draw_symmetry as DS
 from .. import icons
+from .symmetry_menu import build_symmetry_menu
 from .view import CanvasView
 
 
@@ -52,9 +54,14 @@ class CanvasHeader(QWidget):
         self.btn_polar.clicked.connect(lambda on: editor.set_grid_mode(2 if on else 0))
         self.btn_snap = tool_button("magnet", "Aimant : les poignées s'accrochent à la grille (Ctrl+;)", True)
         self.btn_snap.clicked.connect(editor.set_snap)
+        self.btn_sym = tool_button("flip-horizontal-2", "", True)
+        self.btn_sym.setMenu(build_symmetry_menu(editor, self.btn_sym))
+        self.btn_sym.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
+        self.btn_sym.clicked.connect(lambda _=False: editor.toggle_symmetry())
         lay.addWidget(self.btn_ortho)
         lay.addWidget(self.btn_polar)
         lay.addWidget(self.btn_snap)
+        lay.addWidget(self.btn_sym)
         lay.addSpacing(10)
         zo = tool_button("zoom-out", "Dézoomer")
         fit = tool_button("maximize", "Ajuster la vue")
@@ -75,6 +82,10 @@ class CanvasHeader(QWidget):
         self.btn_ortho.setChecked(g == 1)
         self.btn_polar.setChecked(g == 2)
         self.btn_snap.setChecked(self.editor.doc.grid.snap)
+        grid = self.editor.doc.grid
+        self.btn_sym.setChecked(bool(grid.sym))
+        self.btn_sym.setToolTip("Symétrie de dessin (Ctrl+Maj+M) : " + DS.describe(grid) +
+                                "\nLe crayon et les formes créent directement leurs copies. Flèche : choisir le mode.")
         mode = self.editor.display_mode()
         self.btn_scene.setChecked(mode != "timeline")
         self.btn_tl.setChecked(mode == "timeline")

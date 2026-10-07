@@ -2,6 +2,8 @@
 
 Glisser pour tracer. Maj : proportions forcées + aimant de grille ; Alt : depuis le centre.
 Un simple clic pose la forme à une taille par défaut (la mire ILDA occupe toute la zone).
+Symétrie de dessin active : les copies miroir / tournées suivent le tracé, puis l'ensemble est rangé dans
+un groupe « Symétrie » (pivot au centre de la mire) ; chaque copie reste une vraie forme modifiable.
 """
 
 import math
@@ -9,9 +11,10 @@ import math
 import numpy as np
 from PySide6.QtCore import Qt
 
+from ....core import draw_symmetry as DS
 from ....core import grid as G
 from ....core import mathutil as mu
-from ....core.nodes import ShapeNode
+from ....core.nodes import GroupNode, ShapeNode, clone_node
 from .base import Tool
 
 DEFAULT_HALF = 0.25
@@ -26,6 +29,7 @@ class ShapeTool(Tool):
         self.node = None
         self.start = None
         self.inv = np.eye(3)
+        self.copies = []        # [(calque copie, matrice monde)]
 
     def cursor(self):
         return Qt.CursorShape.CrossCursor
@@ -77,11 +81,44 @@ class ShapeTool(Tool):
         self.node = ShapeNode(self.kind)
         ed.apply_brush(self.node)
         parent.add(self.node, idx)
+        self.pm = ed.parent_matrix(self.node, ed.eval_context())
         try:
-            self.inv = np.linalg.inv(ed.parent_matrix(self.node, ed.eval_context()))
+            self.inv = np.linalg.inv(self.pm)
         except np.linalg.LinAlgError:
             self.inv = np.eye(3)
+        self.copies = []
+        for i, m in enumerate(DS.matrices(ed.doc.grid)):
+            c = clone_node(self.node)
+            parent.add(c, idx + 1 + i)
+            self.copies.append((c, m))
         ed.notify(structure=True)
+
+    def _sync_copies(self):
+        """Les copies reprennent la forme d'origine, transformée par leur matrice de symétrie."""
+        n = self.node
+        for c, m in self.copies:
+            c.rect = n.rect
+            c.sparams = dict(n.sparams)
+            tf = n.transform.copy()
+            tf.set_affine(self.inv @ m @ self.pm @ n.transform.affine())
+            c.transform = tf
+
+    def _group_copies(self):
+        if not self.copies:
+            return [self.node]
+        n = self.node
+        parent = n.parent
+        idx = n.index()
+        g = GroupNode("Symétrie")
+        members = [n] + [c for c, _ in self.copies]
+        for m in members:
+            parent.remove(m)
+            g.add(m)
+        parent.add(g, idx)
+        g.transform.px, g.transform.py = mu.apply_point(self.inv, 0.0, 0.0)
+        g.expanded = False
+        self.copies = []
+        return [g]
 
     def move(self, ev):
         if self.start is None:
@@ -92,6 +129,7 @@ class ShapeTool(Tool):
             self._create()
         self.node.rect = self._local_rect(self._rect(ev))
         self.node.center_pivot()
+        self._sync_copies()
         self.editor.notify()
 
     def release(self, ev):
@@ -109,9 +147,12 @@ class ShapeTool(Tool):
                 r = (x - DEFAULT_HALF, y - DEFAULT_HALF, x + DEFAULT_HALF, y + DEFAULT_HALF)
             self.node.rect = self._local_rect(r)
         self.node.center_pivot()
+        self._sync_copies()
+        made = self._group_copies()
         ed.commit()
         ed.notify(structure=True)
-        ed.note_drawn(self.node)
-        ed.set_selection([self.node.id])
+        for n in made:
+            ed.note_drawn(n)
+        ed.set_selection([n.id for n in made])
         self.node = None
         self.start = None

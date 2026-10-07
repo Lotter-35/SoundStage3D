@@ -83,6 +83,8 @@ class CanvasView(QWidget):
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         P.draw_background(p, self.vt, self.rect())
         P.draw_grid(p, self.vt, self.editor.doc.grid)
+        if self.editor.editing_visible():
+            P.draw_symmetry_axes(p, self.vt, self.editor.doc.grid)
         strokes = self.editor.display_strokes()
         show_points = self.vt.zoom >= POINTS_ZOOM
         P.draw_strokes(p, self.vt, strokes, alpha=0.55 if show_points else 1.0)

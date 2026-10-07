@@ -66,6 +66,7 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Réinitialiser un seul réglage | bouton ↺ à droite du réglage, `Alt` + clic sur sa valeur (ou clic droit sur son nom / sa valeur) |
 | Sans grille / orthogonale / polaire | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` |
 | Aimant (les poignées s'accrochent à la grille) | `Ctrl+;` ou bouton aimant au-dessus de la mire |
+| Symétrie de dessin marche / arrêt | `Ctrl+Maj+M` ou bouton symétrie au-dessus de la mire (flèche : choisir le mode) |
 | Ajuster la vue | `Ctrl+0` |
 | Lecture / pause | `Espace` |
 | Enregistrer / Ouvrir / Nouveau | `Ctrl+S` / `Ctrl+O` / `Ctrl+N` |
@@ -88,6 +89,19 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | `Maj` + clic | Pose un point (un calque) |
 | `Maj` + glisser | Une ligne (grille orthogonale) ; un arc le long d'un cercle ou un trait le long d'un rayon (grille polaire) |
 | Clic simple dans le vide | Désélectionne |
+
+### Symétrie de dessin
+
+Bouton **symétrie** au-dessus de la mire (ou Affichage → Mode de symétrie) : on dessine directement en
+symétrie, **sans modifieur**. Modes : miroir gauche / droite, miroir haut / bas, miroir 4 quarts, radiale et
+kaléidoscope (2 à 16 branches), toujours autour du centre de la mire. Les axes s'affichent en pointillés.
+
+- **Crayon** : les copies s'ajoutent au même calque pendant le tracé (un seul calque).
+- **Formes** : chaque copie est une vraie forme, l'ensemble est rangé dans un groupe « Symétrie » dont le
+  pivot est au centre de la mire (on peut ensuite le tourner, le déplacer ou dégrouper).
+
+Le réglage est enregistré avec le projet. Pour une symétrie qui reste modifiable / animable, utiliser
+plutôt le modifieur Symétrie.
 
 ### Formes
 

@@ -355,6 +355,25 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.doc.grid.mode = mode
         self.gridChanged.emit()
 
+    def set_symmetry(self, mode=None, count=None):
+        """Symétrie de dessin (aide au tracé, comme la grille)."""
+        from ..core import draw_symmetry as DS
+        g = self.doc.grid
+        if mode is not None:
+            g.sym = int(mode)
+            if g.sym:
+                g.sym_last = g.sym
+        if count is not None:
+            g.sym_count = int(count)
+            if g.sym not in (4, 5):
+                g.sym = g.sym_last = 4
+        self.gridChanged.emit()
+        self.statusMessage.emit("Symétrie de dessin : " + DS.describe(g) if g.sym else "Symétrie de dessin désactivée")
+
+    def toggle_symmetry(self):
+        g = self.doc.grid
+        self.set_symmetry(0 if g.sym else (g.sym_last or 1))
+
     def set_snap(self, on):
         self.doc.grid.snap = bool(on)
         self.gridChanged.emit()

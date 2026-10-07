@@ -20,6 +20,9 @@ class GridSettings:
         self.rings = 8         # cercles (polaire)
         self.rays = 16         # rayons (polaire)
         self.snap = True       # aimant : les poignées de redimensionnement s'accrochent à la grille
+        self.sym = 0           # symétrie de dessin (voir core/draw_symmetry.py)
+        self.sym_count = 6     # nombre de branches (radiale / kaléidoscope)
+        self.sym_last = 1      # dernier mode utilisé (bouton marche / arrêt)
 
     def to_dict(self):
         return dict(self.__dict__)

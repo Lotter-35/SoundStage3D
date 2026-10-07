@@ -489,6 +489,35 @@ def main():
     check("blackout coupe l'envoi", not win.live.live and win.live.blackout)
     win.live.set_blackout(False)
 
+    # ── Symétrie de dessin ───────────────────────────────────────────────
+    import numpy as np
+    ed.set_symmetry(1)
+    ed.set_tool("pencil")
+    n_before = len(ed.doc.main_group.children)
+    drag(view, sp(0.2, 0.2), sp(0.5, 0.35))
+    node = ed.doc.main_group.children[0]
+    ok = len(node.paths) == 2 and np.allclose(node.paths[1].pts[:, 0], -node.paths[0].pts[:, 0], atol=1e-6)
+    check("symétrie de dessin : le crayon trace aussi le miroir (même calque)",
+          ok and len(ed.doc.main_group.children) == n_before + 1)
+    ed.set_symmetry(3)
+    ed.set_tool("shape:rect")
+    drag(view, sp(0.2, 0.2), sp(0.5, 0.5))
+    g = ed.doc.main_group.children[0]
+    from ildagen.core import draw_symmetry as DS
+    from ildagen.core.evaluator import node_quad
+    quads = [node_quad(c, ed.eval_context()) for c in g.children] if g.kind == "group" else []
+    cs = sorted((round(float(q[:, 0].mean()), 2), round(float(q[:, 1].mean()), 2)) for q in quads)
+    check("symétrie de dessin : 4 carrés groupés, un par quart", g.kind == "group" and len(g.children) == 4
+          and cs == sorted([(x, y) for x in (-0.35, 0.35) for y in (-0.35, 0.35)]), f"{cs}")
+    shot(win, "04_symetrie")
+    ed.set_symmetry(count=6)
+    check("radiale ×6 : 5 copies", len(DS.matrices(ed.doc.grid)) == 5)
+    ed.set_symmetry(0)
+    ed.undo()
+    ed.undo()
+    check("symétrie de dessin annulable", len(ed.doc.main_group.children) == n_before)
+    ed.set_tool("select")
+
     # ── Enregistrer / ouvrir ─────────────────────────────────────────────
     path = os.path.join(tempfile.mkdtemp(), "test.ildaproj")
     win.project._write(path)

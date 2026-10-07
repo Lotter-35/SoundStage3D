@@ -5,6 +5,7 @@
   Maj + clic : pose un POINT (un calque) ;
   Maj + glisser : trace UNE ligne (grille orthogonale) ou un arc / un rayon (grille polaire), un calque.
 - clic simple dans le vide : désélectionne.
+- symétrie de dessin active : les copies miroir / tournées s'ajoutent au même calque pendant le tracé.
 """
 
 import math
@@ -13,6 +14,7 @@ import numpy as np
 from PySide6.QtCore import QPointF, Qt
 from PySide6.QtGui import QPen
 
+from ....core import draw_symmetry as DS
 from ....core import grid as G
 from ....core import mathutil as mu
 from ....core.nodes import ShapeNode
@@ -31,6 +33,7 @@ class PencilTool(Tool):
         self.seg = None         # point / ligne guidée en cours (Maj)
         self.hover_pt = None
         self.inv = np.eye(3)
+        self.mats = []
 
     def cursor(self):
         return Qt.CursorShape.CrossCursor
@@ -56,9 +59,15 @@ class PencilTool(Tool):
             self.inv = np.linalg.inv(ed.parent_matrix(node, ed.eval_context()))
         except np.linalg.LinAlgError:
             self.inv = np.eye(3)
-        node.paths[0].pts = np.array([mu.apply_point(self.inv, *first_world)])
+        self.mats = DS.matrices(ed.doc.grid)
+        self._set_world(node, np.array([first_world], dtype=float))
         ed.notify(structure=True)
         return node
+
+    def _set_world(self, node, pts):
+        """Géométrie du calque à partir des points « monde », plus les copies de la symétrie de dessin."""
+        pts = np.asarray(pts, dtype=float).reshape(-1, 2)
+        node.paths = [Path(mu.apply(self.inv, pts))] + [Path(mu.apply(self.inv, mu.apply(m, pts))) for m in self.mats]
 
     # ── Souris ───────────────────────────────────────────────────────────
     def press(self, ev):
@@ -79,7 +88,7 @@ class PencilTool(Tool):
             if math.hypot(ev.screen.x() - self._last_screen.x(), ev.screen.y() - self._last_screen.y()) >= 1.5:
                 self._last_screen = ev.screen
                 self._free_pts.append(np.array(ev.world, dtype=float))
-                self.free.paths[0].pts = mu.apply(self.inv, np.array(self._free_pts))
+                self._set_world(self.free, np.array(self._free_pts))
                 self.editor.notify()
             return
         if self.seg is not None:
@@ -92,7 +101,7 @@ class PencilTool(Tool):
                 pts = pts[:1]
             self.seg["preview"] = pts
             node = self.seg["node"]
-            node.paths[0].pts = mu.apply(self.inv, pts)
+            self._set_world(node, pts)
             if node.name in ("Point", "Arc", "Ligne"):
                 node.name = "Point" if len(pts) == 1 else ("Arc" if len(pts) > 2 else "Ligne")
             self.editor.notify()
@@ -114,7 +123,7 @@ class PencilTool(Tool):
             s = float(ed.settings.get("general", "smoothing"))
             pts = smooth(pts, 1 + int(s / 12))
             pts = rdp(pts, 0.0004 + s / 100.0 * 0.005)
-            node.paths[0].pts = mu.apply(self.inv, pts)
+            self._set_world(node, pts)
             node.center_pivot()
             ed.commit()
             ed.notify(structure=True)

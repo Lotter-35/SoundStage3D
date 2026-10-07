@@ -6,6 +6,7 @@ import numpy as np
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QPen, QBrush
 
+from ...core import draw_symmetry as DS
 from ...core import grid as G
 from .. import theme
 
@@ -25,6 +26,22 @@ def draw_background(p, vt, rect):
     p.setPen(QPen(theme.qc(theme.BORDER), 1))
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.drawRect(m)
+
+
+def draw_symmetry_axes(p, vt, grid):
+    """Axes de la symétrie de dessin (pointillés couleur accent)."""
+    angles = DS.axes(grid)
+    if not angles:
+        return
+    p.setPen(QPen(theme.qc(theme.ACCENT, 0.45), 1, Qt.PenStyle.DashLine))
+    c = vt.to_screen(0, 0)
+    for a in angles:
+        r = math.radians(a)
+        dx, dy = math.cos(r), math.sin(r)
+        L = 1.0 / max(abs(dx), abs(dy))      # jusqu'au bord du carré
+        end = vt.to_screen(dx * L, dy * L)
+        start = c if grid.sym == 4 else vt.to_screen(-dx * L, -dy * L)
+        p.drawLine(start, end)
 
 
 def draw_grid(p, vt, grid):

@@ -112,6 +112,7 @@ class MainWindow(QMainWindow):
     def _grid_actions(self):
         self.actions_[f"grid{self.editor.doc.grid.mode}"].setChecked(True)
         self.actions_["snap"].setChecked(self.editor.doc.grid.snap)
+        self.actions_["symmetry"].setChecked(bool(self.editor.doc.grid.sym))
 
     def _recent_menu(self):
         m = self.recent_menu
