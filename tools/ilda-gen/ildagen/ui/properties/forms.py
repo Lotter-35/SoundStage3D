@@ -134,7 +134,8 @@ class ParamForm(QWidget):
                 chev = QToolButton()
                 chev.setAutoRaise(True)
                 chev.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-                chev.setFixedSize(14, 18)
+                chev.setFixedSize(20, 20)
+                chev.setIconSize(icons.qsize(14))
                 chev.setToolTip("Afficher / masquer la courbe au cours du clip")
                 chev.clicked.connect(lambda _=False, s=spec: self._toggle_strip(s))
                 chev.setVisible(False)
@@ -211,7 +212,7 @@ class ParamForm(QWidget):
             opened = on and (self.node_id, key) in self.editor.open_strips
             if chev is not None:
                 chev.setVisible(on)
-                chev.setIcon(icons.icon("chevron-down" if opened else "chevron-right", 10))
+                chev.setIcon(icons.icon("chevron-down" if opened else "chevron-right", 14))
             strip = self.strips.get(key)
             if strip is not None:
                 self.strip_resets[key].setVisible(opened)

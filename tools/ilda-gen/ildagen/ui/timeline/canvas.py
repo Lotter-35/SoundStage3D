@@ -35,6 +35,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         self._wave_cache = None
         self.drag = None
         self.sel_key = None
+        self.default_guide = None     # (ligne, y) de la valeur par défaut (Maj pendant le glisser d'un point)
         self.thumbs = ThumbCache(editor)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
@@ -123,6 +124,11 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             p.drawLine(QPointF(HEADER_W, b - 0.5), QPointF(g.width, b - 0.5))     # fin du bloc d'une piste
         self.draw_range(p)
         self.draw_rect(p)
+        if self.default_guide is not None:
+            # Maj pendant le glisser d'un point : la valeur par défaut, où il s'aimante
+            gr, gy = self.default_guide
+            p.setPen(QPen(theme.qc(theme.TEXT_DIM, 0.8), 1, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(max(HEADER_W, g.x(gr.clip.start)), gy), QPointF(g.x(gr.clip.end), gy))
         p.setClipping(False)
         if self.peaks is not None:
             p.drawPixmap(0, 0, self._waveform_pixmap())
@@ -331,6 +337,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
                 return
             d = self.drag
             self.drag = None
+            self.default_guide = None
             self.editor.set_preview_time(None)   # retour à la tête de lecture
             if kind == "key" and d["existing"] and not d["moved"]:
                 # Simple clic sur un point : rampe → carré → sinusoïdale

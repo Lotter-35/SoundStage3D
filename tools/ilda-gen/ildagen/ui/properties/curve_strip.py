@@ -120,6 +120,9 @@ class CurveStrip(QWidget):
             x = self._x(tl, clip)
             p.setPen(QPen(theme.qc(theme.TEXT, 0.45), 1))
             p.drawLine(QPointF(x, r.top() + 1), QPointF(x, r.bottom() - 1))
+        if getattr(self, "_guide_y", None) is not None:
+            p.setPen(QPen(theme.qc(theme.TEXT_DIM, 0.8), 1, Qt.PenStyle.DashLine))
+            p.drawLine(QPointF(a.left(), self._guide_y), QPointF(a.right(), self._guide_y))
         # Clés
         sel = self.drag["key"] if self.drag else None
         for k in auto.keys:
@@ -183,8 +186,16 @@ class CurveStrip(QWidget):
                 return          # pas encore un glisser (un simple clic change le type de courbe)
             d["moved"] = True
         k.t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
+        self._guide_y = None
         if not self._is_color():
             k.v = self._v(pos.y(), auto)
+            # Maj : la valeur s'aimante sur la valeur par défaut du réglage (0°, 0, 100 %…)
+            if e.modifiers() & Qt.KeyboardModifier.ShiftModifier and self.spec.kind in ("float", "int"):
+                dv = self.spec.default_value()
+                gy = self._y(dv, auto)
+                self._guide_y = gy
+                if abs(pos.y() - gy) <= 8:
+                    k.v = dv
         auto.sort()
         # La mire montre l'instant de la clé avec sa valeur (comme dans la timeline)
         self.editor.set_preview_time(clip.start + k.t, clip.id)
@@ -195,6 +206,7 @@ class CurveStrip(QWidget):
         if d is None:
             return
         self.drag = None
+        self._guide_y = None
         if d["existing"] and not d["moved"]:
             # Simple clic sur un point : rampe → carré → sinusoïdale
             label = d["auto"].cycle_curve(d["key"])

@@ -209,7 +209,7 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    sous le réglage (Calques et Propriétés), un petit rectangle qui montre sa courbe sur **toute la durée du
    clip**, avec les traits de la grille choisie (mesures, temps, subdivisions) en fond, sans numéros (gauche = début de la forme, droite = fin), quel que soit le zoom de
    la timeline : clic = ajouter un point, glisser = le déplacer (la mire montre cet instant), clic droit =
-   le supprimer, `Alt` = sans aimant ; ↺ à sa droite = réinitialiser la courbe (un seul point, valeur par défaut).
+   le supprimer, `Alt` = sans aimant, `Maj` = aimant sur la valeur par défaut ; ↺ à sa droite = réinitialiser la courbe (un seul point, valeur par défaut).
    **Déplier le clip** (chevron à gauche du clip, ou double-clic) : on ne voit **que les réglages envoyés**,
    regroupés sous leur calque / modifieur (cliquer sur son nom pour les replier). Rien au départ.
    Autre méthode : clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel

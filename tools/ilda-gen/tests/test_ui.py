@@ -663,6 +663,18 @@ def main():
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     ed.enter_clip(clip.id)
     app.processEvents()
+    # Maj pendant le glisser d'un point : la valeur s'aimante sur la valeur par défaut (ici 0, au milieu)
+    from ildagen.ui.timeline import lanes as TLs
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    ks = max(lane.auto.keys, key=lambda kk: kk.t)
+    _, sps = TLs.target(ed, lane.clip, lane.auto)
+    rgs = TLs.value_range(sps, lane.auto)
+    p0 = QPoint(int(canvas.geo.x(lane.clip.start + ks.t)), int(TLs.v_to_y(ks.v, lane, rgs)))
+    p1 = QPoint(p0.x(), int(TLs.v_to_y(0.0, lane, rgs)) + 6)        # un peu à côté de 0
+    drag(canvas, p0, p1, M.ShiftModifier)
+    check("Maj : le point s'aimante sur la valeur par défaut", ks.v == 0.0, f"{ks.v}")
+    ed.undo()
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     # Clic droit sur un point : il est supprimé (annulable)
     from PySide6.QtGui import QContextMenuEvent
     from ildagen.ui.timeline import lanes as TL

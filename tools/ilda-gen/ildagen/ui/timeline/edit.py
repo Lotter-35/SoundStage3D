@@ -178,8 +178,17 @@ class TimelineEditing:
         row, k, spec = d["row"], d["key"], d["spec"]
         clip, auto = row.clip, row.auto
         k.t = min(max(self.snap(self.geo.t(x), mods) - clip.start, 0.0), clip.duration)
+        self.default_guide = None
         if not L.is_color(spec):
-            k.v = L.y_to_v(y, row, L.value_range(spec, auto), spec, auto)
+            rng = L.value_range(spec, auto)
+            k.v = L.y_to_v(y, row, rng, spec, auto)
+            # Maj : la valeur s'aimante sur la valeur par défaut du réglage (0°, 0, 100 %…)
+            if mods & Qt.KeyboardModifier.ShiftModifier and spec is not None and spec.kind in ("float", "int"):
+                dv = spec.default_value()
+                gy = L.v_to_y(dv, row, rng)
+                self.default_guide = (row, gy)
+                if abs(y - gy) <= 10:
+                    k.v = dv
         auto.sort()
         # La mire montre l'instant de la clé, avec sa nouvelle valeur
         self.editor.set_preview_time(clip.start + k.t, clip.id)
