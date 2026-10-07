@@ -21,6 +21,8 @@ MAX_PPS = 2000.0
 
 class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
     scrollChanged = Signal()
+    # QWidget est en tête : sa version masquerait celle du mixin, on la relie explicitement
+    contextMenuEvent = TimelineMenus.contextMenuEvent
 
     def __init__(self, editor, playback, parent=None):
         super().__init__(parent)

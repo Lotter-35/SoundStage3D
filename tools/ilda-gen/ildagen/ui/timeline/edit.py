@@ -3,7 +3,7 @@
 from ...core import nodes as N
 from . import draw as D
 from . import lanes as L
-from .geometry import HEADER_W
+from .geometry import HEADER_W, lane_reset_rect
 
 
 class TimelineEditing:
@@ -26,6 +26,22 @@ class TimelineEditing:
         tl.loop_on = True
         self.drag = {"kind": "loop_end"}
 
+    def reset_lane(self, row):
+        """↺ d'une ligne : supprime l'automation (le réglage reprend sa valeur fixe) ;
+        sans automation, remet la valeur fixe par défaut."""
+        clip, auto = row.clip, row.auto
+        if auto in clip.automations:
+            self.sel_key = None
+            self.editor.delete_automation(clip.id, auto.id)
+            self.editor.statusMessage.emit(f"Automation « {auto.label} » supprimée")
+            return
+        node, spec = L.target(self.editor, clip, auto)
+        if node is None or spec is None:
+            return
+        from ...core import nodes as N
+        self.editor.mutate("Réinitialiser", lambda: N.set_param(node, auto.key, spec.default_value()),
+                           structure=False, timeline=True)
+
     def toggle_group(self, row):
         """Déplie / replie les réglages d'un modifieur sous le clip."""
         ids = row.clip.closed_nodes
@@ -38,6 +54,11 @@ class TimelineEditing:
     def _press_header(self, row, x, y):
         if row.kind == "group":
             self.toggle_group(row)
+            return
+        if row.kind == "lane":
+            bx, by, bw, bh = lane_reset_rect(row)
+            if bx <= x <= bx + bw and by <= y <= by + bh:
+                self.reset_lane(row)
             return
         if row.kind != "track":
             return

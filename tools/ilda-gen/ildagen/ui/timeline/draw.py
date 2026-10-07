@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QPen, QPolygonF
 from ...core.timeline import SUBDIVISIONS
 from .. import icons, theme
 from . import lanes as L
-from .geometry import CHEVRON_W, HEADER_W, LOOP_H, RULER_H, WAVE_H
+from .geometry import CHEVRON_W, HEADER_W, LOOP_H, RULER_H, WAVE_H, lane_reset_rect
 
 MIN_BAR_PX = 36
 
@@ -238,6 +238,20 @@ def bezier_handles(geo, row, clip, auto, key, rng):
     return (ax, ay), (bx, by), (ax + x1 * (bx - ax), ay + y1 * (by - ay)), (ax + x2 * (bx - ax), ay + y2 * (by - ay))
 
 
+def lane_resettable(ed, row):
+    """Une ligne peut être réinitialisée : réglage animé, ou valeur fixe différente du défaut."""
+    from ...core import nodes as N
+    from ..properties.forms import same_value
+    if row.auto.armed:
+        return True
+    if row.auto in row.clip.automations and row.auto.keys:
+        return True
+    node, spec = L.target(ed, row.clip, row.auto)
+    if node is None or spec is None:
+        return False
+    return not same_value(N.get_param(node, row.auto.key), spec.default_value())
+
+
 def draw_group(p, geo, row):
     """Ligne d'un modifieur sous un clip déplié."""
     clip = row.clip
@@ -295,8 +309,12 @@ def draw_headers(p, geo, rows, ed):
                 p.setPen(theme.qc(theme.ACCENT if r.auto.armed else theme.TEXT_DIM))
                 label = "Automation en attente…" if r.auto.armed else r.auto.label
             fm = p.fontMetrics()
-            p.drawText(QRectF(x, r.y, w - x - 6, r.h), Qt.AlignmentFlag.AlignVCenter,
-                       fm.elidedText(label, Qt.TextElideMode.ElideRight, w - x - 6))
+            p.drawText(QRectF(x, r.y, w - x - 30, r.h), Qt.AlignmentFlag.AlignVCenter,
+                       fm.elidedText(label, Qt.TextElideMode.ElideRight, w - x - 30))
+            # Bouton ↺ : allumé s'il y a quelque chose à réinitialiser
+            bx, by, bw, bh = lane_reset_rect(r)
+            on = lane_resettable(ed, r)
+            p.drawPixmap(QPointF(bx + 3, by + 3), icons.pixmap("rotate-ccw", theme.TEXT_DIM if on else theme.TEXT_OFF, 12))
         p.setPen(QPen(theme.qc(theme.BORDER), 1))
         p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))
     p.setPen(QPen(theme.qc(theme.BORDER), 1))

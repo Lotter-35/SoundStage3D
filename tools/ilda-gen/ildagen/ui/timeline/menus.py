@@ -1,9 +1,11 @@
 """Menus clic droit de la timeline (règle, pistes, clips, automations, clés)."""
 
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QInputDialog, QMenu
 
 from ...core.automation import CURVES
+from . import lanes as L
 from .geometry import HEADER_W
 
 
@@ -49,6 +51,14 @@ class TimelineMenus:
                 a.triggered.connect(lambda: ed.remove_track(tr.id))
         else:
             k = self.key_hit(row, x, y) if x >= HEADER_W else None
+            if k is not None and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
+                # Clic droit sur un point : il revient à la valeur par défaut du réglage
+                self.sel_key = k
+                node, spec = L.target(ed, row.clip, row.auto)
+                if spec is not None:
+                    ed.timeline_mutate("Réinitialiser la clé", lambda: setattr(k, "v", spec.default_value()))
+                    ed.statusMessage.emit("Clé remise à la valeur par défaut (Maj + clic droit : type de courbe)")
+                return
             if k is not None:
                 self.sel_key = k
                 self.update()

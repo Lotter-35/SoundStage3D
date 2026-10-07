@@ -430,6 +430,26 @@ def main():
     n_keys = len(lane.auto.keys)
     click(canvas, QPoint(int(canvas.geo.x(clip.start + 3.0)), int(lane.y + lane.h * 0.3)))
     check("clic dans une automation = nouvelle clé", len(lane.auto.keys) == n_keys + 1)
+    # Clic droit sur un point : il revient à la valeur par défaut
+    from PySide6.QtGui import QContextMenuEvent
+    from ildagen.ui.timeline import lanes as TL
+    from ildagen.ui.timeline.geometry import lane_reset_rect
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    k = min(lane.auto.keys, key=lambda kk: abs(kk.t - 3.0))
+    _, spec_tx = TL.target(ed, lane.clip, lane.auto)
+    ky = TL.v_to_y(k.v, lane, TL.value_range(spec_tx, lane.auto))
+    kp = QPoint(int(canvas.geo.x(lane.clip.start + k.t)), int(ky))
+    QApplication.sendEvent(canvas, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, kp, canvas.mapToGlobal(kp)))
+    check("clic droit sur un point = valeur par défaut", abs(k.v - spec_tx.default_value()) < 1e-9, f"{k.v}")
+    # ↺ d'une ligne : supprime l'automation
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    n_auto = len(lane.clip.automations)
+    bx, by, bw, bh = lane_reset_rect(lane)
+    click(canvas, QPoint(int(bx + bw / 2), int(by + bh / 2)))
+    check("↺ de la ligne supprime l'automation", len(lane.clip.automations) == n_auto - 1)
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    check("annulable (↺ timeline)", len(clip.automations) == n_auto)
     t_before = ed.playhead
     win.playback.play()
     import time as _t
@@ -445,6 +465,19 @@ def main():
     ed.enter_scene()
     inst = ed.doc.main_group.children[0]
     ed.set_selection([inst.id])
+    app.processEvents()
+    from ildagen.ui.properties.forms import ParamForm
+    from ildagen.core import nodes as N
+    old_tx = N.get_param(inst, "tf.tx")
+    ed.mutate("test", lambda: N.set_param(inst, "tf.tx", 0.25))
+    app.processEvents()
+    form = next((f for f in win.properties.findChildren(ParamForm) if f.node() is inst), None)
+    ok = form is not None and form.resets["tf.tx"].isEnabled()
+    if ok:
+        form.resets["tf.tx"].click()
+    check("bouton ↺ à côté d'un réglage", ok and abs(N.get_param(inst, "tf.tx")) < 1e-9
+          and not form.resets["tf.tx"].isEnabled(), f"{N.get_param(inst, 'tf.tx')}")
+    ed.mutate("test", lambda: N.set_param(inst, "tf.tx", old_tx))
     before = ed.effective_transform(inst).sx
     ed.flip_selection(True)
     check("retourner horizontalement", ed.find(inst.id).transform.sx * before < 0 or

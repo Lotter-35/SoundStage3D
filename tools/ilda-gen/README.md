@@ -63,7 +63,7 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Tout sélectionner | `Ctrl+A` |
 | Grouper / Dégrouper | `Ctrl+G` / `Ctrl+Maj+G` |
 | Réinitialiser les réglages de la sélection | `Ctrl+Maj+R` (ou bouton ↺ de Propriétés, ou clic droit) |
-| Réinitialiser un seul réglage | `Alt` + clic sur sa valeur (ou clic droit sur son nom / sa valeur) |
+| Réinitialiser un seul réglage | bouton ↺ à droite du réglage, `Alt` + clic sur sa valeur (ou clic droit sur son nom / sa valeur) |
 | Sans grille / orthogonale / polaire | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` |
 | Aimant (les poignées s'accrochent à la grille) | `Ctrl+;` ou bouton aimant au-dessus de la mire |
 | Ajuster la vue | `Ctrl+0` |
@@ -181,8 +181,10 @@ double-clic : l'éditer ; `Suppr` : la supprimer avec toutes ses occurrences (an
    Autre méthode : clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel
    réglage (Propriétés, ligne du modifieur, ou déplacer / tourner la forme dans la mire) : l'automation s'y lie.
    Chaque réglage touché ensuite écrit une clé à la tête de lecture.
-4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit = type de courbe
-   (linéaire, accélération, ralentissement, en S, palier, Bézier personnalisé avec poignées) ou supprimer.
+4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit sur un point = le remettre à la
+   valeur par défaut, `Maj` + clic droit = type de courbe (linéaire, accélération, ralentissement, en S, palier,
+   Bézier personnalisé avec poignées) ou supprimer. Le bouton ↺ à côté du nom d'une ligne supprime son automation
+   (ou remet sa valeur fixe par défaut).
 5. Réglage **Actif** d'un modifieur (Propriétés) : automatisé, il n'active le modifieur que sur une partie du clip.
 6. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
 7. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle.

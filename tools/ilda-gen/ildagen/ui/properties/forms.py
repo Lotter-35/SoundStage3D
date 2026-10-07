@@ -4,12 +4,13 @@ Le formulaire garde l'identifiant du calque (et non l'objet) : il reste valable 
 """
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QLabel, QMenu, QWidget
+from PySide6.QtWidgets import QGridLayout, QLabel, QMenu, QToolButton, QWidget
 
 from ...core import nodes as N
 from ...core import shape_color
 from ...core.params import B, F, I
 from ...core.shapes import SHAPE_PARAMS
+from .. import icons
 from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, ScrubField
 
 # Réglages de transformation (clés « tf. ») ; facteur d'affichage pour les échelles en %
@@ -48,6 +49,15 @@ def specs_for(node, compact):
     return out
 
 
+def same_value(a, b):
+    """Comparaison tolérante (nombres, couleurs, dégradés)."""
+    if isinstance(a, (list, tuple)) and isinstance(b, (list, tuple)):
+        return len(a) == len(b) and all(same_value(x, y) for x, y in zip(a, b))
+    if isinstance(a, (int, float)) and isinstance(b, (int, float)):
+        return abs(float(a) - float(b)) < 1e-6
+    return a == b
+
+
 def make_field(spec, factor):
     if spec.kind in ("float", "int"):
         return ScrubField(spec.decimals, spec.min, spec.max, (spec.soft_min, spec.soft_max),
@@ -71,6 +81,7 @@ class ParamForm(QWidget):
         self.compact = compact
         self.fields = {}
         self.specs = {}
+        self.resets = {}
         self._editing = False
         node = editor.find(node_id)
         grid = QGridLayout(self)
@@ -88,13 +99,24 @@ class ParamForm(QWidget):
             label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             label.customContextMenuRequested.connect(lambda pos, s=spec, w=label: self._label_menu(s, w.mapToGlobal(pos)))
             field = make_field(spec, factor)
+            reset = QToolButton()
+            reset.setIcon(icons.icon("rotate-ccw", 12))
+            reset.setIconSize(icons.qsize(12))
+            reset.setAutoRaise(True)
+            reset.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+            reset.setFixedSize(18, 18)
+            reset.setToolTip(f"Réinitialiser « {spec.label} »")
+            reset.clicked.connect(lambda _=False, s=spec: self._reset(s))
+            self.resets[spec.key] = reset
             if spec.kind == "gradient":
                 grid.addWidget(label, row, 0, 1, 2)
+                grid.addWidget(reset, row, 2)
                 row += 1
                 grid.addWidget(field, row, 0, 1, 2)
             else:
                 grid.addWidget(label, row, 0)
                 grid.addWidget(field, row, 1, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color") else Qt.AlignmentFlag(0))
+                grid.addWidget(reset, row, 2)
             label.setToolTip("Clic droit : réinitialiser / automatiser · Alt + clic sur la valeur : réinitialiser")
             if hasattr(field, "resetRequested"):
                 field.resetRequested.connect(lambda s=spec: self._reset(s))
@@ -124,6 +146,8 @@ class ParamForm(QWidget):
                 if v is None:
                     v = self.specs[key].default_value()
             field.set_value(v)
+            # Le bouton ↺ s'allume quand la valeur n'est plus celle par défaut
+            self.resets[key].setEnabled(not same_value(v, self.specs[key].default_value()))
 
     def _started(self, spec):
         self._editing = True

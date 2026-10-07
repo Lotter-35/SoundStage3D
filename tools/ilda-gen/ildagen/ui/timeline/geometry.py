@@ -67,6 +67,11 @@ def clip_rows(clip, library, editor):
     return out
 
 
+def lane_reset_rect(row):
+    """Bouton ↺ à droite du nom d'une ligne de réglage (en-tête de gauche)."""
+    return (HEADER_W - 24, row.y + (row.h - 18) / 2, 18, 18)
+
+
 class TimelineGeometry:
     def __init__(self):
         self.pps = 60.0       # pixels par seconde
