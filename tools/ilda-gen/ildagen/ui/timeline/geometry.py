@@ -13,7 +13,7 @@ CHEVRON_W = 16
 
 
 class Row:
-    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "slot")
+    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "slot", "depth")
 
     def __init__(self, kind, track, clip, auto, y, h, node=None, label="", small=False, used=True):
         self.kind = kind      # "track", "group" (un modifieur du clip) ou "lane" (un réglage animable)
@@ -27,6 +27,7 @@ class Row:
         self.small = small    # ligne de réglage réduite
         self.used = used      # réglage utilisé (sinon grisé)
         self.slot = [self]    # lignes des autres clips de la piste posées à la même hauteur
+        self.depth = 0        # niveau dans la hiérarchie des calques (groupes → modifieurs → réglages)
 
     def contains(self, y):
         return self.y <= y < self.y + self.h
@@ -42,9 +43,13 @@ def modifier_specs(node):
     return [ACTIVE_SPEC] + [s for s in node.modifier.all_params() if s.animatable]
 
 
+DEPTH_W = 12   # retrait par niveau (groupe de calques, modifieur, réglage)
+
+
 def clip_rows(clip, library, editor):
     """Lignes sous un clip déplié : seulement les réglages envoyés dans la timeline (ses automations),
-    regroupés sous leur calque / modifieur ; puis l'automation en attente éventuelle."""
+    rangés comme dans les calques : groupes → calque / modifieur → réglages ; puis l'automation en attente.
+    Renvoie [(kind, automation, nœud, libellé, profondeur)]."""
     out = []
     d = library.get(clip.def_id)
     by_node = {}
@@ -52,22 +57,36 @@ def clip_rows(clip, library, editor):
         if not a.armed:
             by_node.setdefault(a.node_id, []).append(a)
     placed = set()
-    if d is not None:
-        for n in d.root.walk():
-            autos = by_node.get(n.id)
-            if not autos:
-                continue
+
+    def has_autos(n):
+        return any(x.id in by_node for x in n.walk())
+
+    def visit(n, depth):
+        if not has_autos(n):
+            return
+        autos = by_node.get(n.id, [])
+        child_depth = depth
+        if n.kind == "group" or autos:
+            out.append(("group", None, n, n.name, depth))
+            if n.id in clip.closed_nodes:
+                placed.update(a.id for x in n.walk() for a in by_node.get(x.id, []))
+                return
             if n.kind == "modifier" and n.modifier is not None:
                 order = [sp.key for sp in modifier_specs(n)]
                 autos = sorted(autos, key=lambda a: order.index(a.key) if a.key in order else len(order))
-            out.append(("group", None, n, n.name))
             for a in autos:
                 placed.add(a.id)
-                if n.id not in clip.closed_nodes:
-                    out.append(("lane", a, n, editor.param_label(n, a.key)))
+                out.append(("lane", a, n, editor.param_label(n, a.key), depth + 1))
+            child_depth = depth + 1
+        for c in n.children:
+            visit(c, child_depth)
+
+    if d is not None:
+        for c in d.root.children:
+            visit(c, 0)
     for a in clip.automations:
         if a.id not in placed:
-            out.append(("lane", a, None, ""))       # en attente, ou calque disparu
+            out.append(("lane", a, None, "", 0))       # en attente, ou calque disparu
     return out
 
 
@@ -94,7 +113,7 @@ LABEL_H = 14   # bande du nom d'un réglage, en haut de sa ligne (dans le clip)
 
 def lane_toggle_rect(geo, row):
     """Flèche avant le nom d'un réglage (dans le clip) : réduire / agrandir la ligne."""
-    x = max(HEADER_W, geo.x(row.clip.start)) + 3
+    x = max(HEADER_W, geo.x(row.clip.start)) + 3 + row.depth * DEPTH_W
     return (x, row.y + 1, 12, min(LABEL_H, row.h - 2))
 
 
@@ -145,12 +164,14 @@ class TimelineGeometry:
                 for clip, entries in expanded:
                     if i >= len(entries):
                         continue
-                    kind, auto, node, label = entries[i]
+                    kind, auto, node, label, depth = entries[i]
                     if kind == "group":
-                        slot.append(Row(kind, tr, clip, auto, y, GROUP_H, node, label))
+                        r = Row(kind, tr, clip, auto, y, GROUP_H, node, label)
                     else:
-                        slot.append(Row(kind, tr, clip, auto, y, LANE_H, node, label,
-                                        L.is_small(editor, clip, auto), L.assigned(editor, clip, auto)))
+                        r = Row(kind, tr, clip, auto, y, LANE_H, node, label,
+                                L.is_small(editor, clip, auto), L.assigned(editor, clip, auto))
+                    r.depth = depth
+                    slot.append(r)
                 lanes_ = [r for r in slot if r.kind == "lane"]
                 small = bool(lanes_) and len(lanes_) == len(slot) and all(r.small for r in lanes_)
                 h = LANE_SMALL_H if small else (LANE_H if lanes_ else GROUP_H)

@@ -773,6 +773,31 @@ def main():
     check("symétrie de dessin annulable", len(root().children) == n_before)
     ed.set_tool("select")
 
+    # ── Dupliquer un groupe : ses automations sont dupliquées ; la timeline montre les groupes ──
+    from ildagen.core.nodes import ShapeNode as _SN
+    fnew = ed.new_form("Groupes")
+    sh = ed.add_node(_SN("line"))
+    ed.set_selection([sh.id])
+    ed.group_selected()
+    grp = ed.top_selected()[0]
+    ed.set_selection([sh.id])
+    dm = ed.add_modifier("dots")
+    cg = ed.add_clip(fnew.id, ed.doc.timeline.tracks[0].id, 20.0, 2.0)
+    ed.automate_param(ed.find(dm.id), "phase")
+    ed.enter_def(fnew.id)
+    ed.set_selection([grp.id])
+    ed.duplicate_selection()
+    cg = ed.doc.timeline.find_clip(cg.id)[1]
+    check("dupliquer un groupe : ses automations sont dupliquées", len(cg.automations) == 2
+          and len({a.node_id for a in cg.automations}) == 2)
+    cg.expanded = True
+    ed.notify(timeline=True)
+    gr = [(r.kind, r.label, r.depth) for r in win.timeline.canvas.rows() if r.clip is cg]
+    check("timeline : groupe → modifieur → réglage (avec retrait)",
+          gr[:3] == [("group", "Groupe", 0), ("group", "Dots", 1), ("lane", "Phase", 2)], str(gr[:3]))
+    ed.delete_def(fnew.id)
+    ed.enter_def(F1)
+
     # ── Liste des formes : clic = afficher / éditer, + = nouvelle forme ──
     lst = win.tools.defs
     n_forms = len(ed.doc.library.defs)

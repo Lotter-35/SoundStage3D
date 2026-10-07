@@ -259,6 +259,12 @@ class LayerOpsMixin:
         if not nodes:
             return False
         self.clipboard = [n.to_dict() for n in nodes]
+        # Les automations de ces calques (dans les clips de la forme) voyagent avec eux
+        ids = {x.id for n in nodes for x in n.walk()}
+        fid = self.current_form_id()
+        self.clipboard_autos = {"form": fid, "by_clip": {
+            c.id: [a.to_dict() for a in c.automations if a.node_id in ids]
+            for _, c in self.doc.timeline.all_clips() if c.def_id == fid}}
         md = QMimeData()
         md.setData(CLIP_MIME, json.dumps(self.clipboard).encode("utf-8"))
         QGuiApplication.clipboard().setMimeData(md)
@@ -285,16 +291,20 @@ class LayerOpsMixin:
         root = self.current_root()
         own_def = self.current_form_id()
         new_nodes = []
+        mapping = {}
         for d in items:
-            n = N.clone_node(N.node_from_dict(d))
+            orig = N.node_from_dict(d)
+            n = N.clone_node(orig)
             bad = [x for x in n.walk() if x.kind == "instance" and (
                 self.doc.library.get(x.def_id) is None or x.def_id == own_def or
                 (own_def and self.doc.library.get(x.def_id).uses_def(own_def, self.doc.library)))]
             if bad:
                 continue
             new_nodes.append(n)
+            mapping.update({a.id: b.id for a, b in zip(orig.walk(), n.walk())})
         if not new_nodes:
             return
+        saved = getattr(self, "clipboard_autos", None)
 
         def do():
             parent, idx = self.insertion_point()
@@ -302,7 +312,12 @@ class LayerOpsMixin:
                 parent, idx = root, 0
             for k, n in enumerate(new_nodes):
                 parent.add(n, idx + k)
-        self.mutate("Coller", do)
+            if saved and saved.get("form") == own_def:
+                for clip_id, autos in saved["by_clip"].items():
+                    _, clip = self.doc.timeline.find_clip(clip_id)
+                    if clip is not None and clip.def_id == own_def:
+                        self._add_mapped_automations(clip, autos, mapping)
+        self.mutate("Coller", do, timeline=True)
         self.set_selection([n.id for n in new_nodes])
 
     def duplicate_selection(self):
@@ -311,14 +326,32 @@ class LayerOpsMixin:
             return []
         copies = []
 
+        fid = self.current_form_id()
+
         def do():
+            mapping = {}
             for n in nodes:
                 c = N.clone_node(n)
                 n.parent.add(c, n.index())
                 copies.append(c)
-        self.mutate("Dupliquer", do)
+                mapping.update({a.id: b.id for a, b in zip(n.walk(), c.walk())})
+            # Les automations des calques dupliqués sont dupliquées aussi (dans chaque clip de la forme)
+            for _, clip in self.doc.timeline.all_clips():
+                if clip.def_id == fid:
+                    self._add_mapped_automations(clip, [a.to_dict() for a in clip.automations], mapping)
+        self.mutate("Dupliquer", do, timeline=True)
         self.set_selection([c.id for c in copies])
         return copies
+
+    @staticmethod
+    def _add_mapped_automations(clip, autos, mapping):
+        """Ajoute au clip une copie des automations (dicts) dont le calque a été copié (ancien → nouvel id)."""
+        from ..core.automation import Automation
+        for d in autos:
+            nid = mapping.get(d.get("node_id"))
+            if nid is None or clip.automation_for(nid, d.get("key")) is not None:
+                continue
+            clip.automations.append(Automation.from_dict(dict(d, id=N.new_id(), node_id=nid)))
 
     # ── Réinitialiser ────────────────────────────────────────────────────
     def reset_params(self, nodes=None):

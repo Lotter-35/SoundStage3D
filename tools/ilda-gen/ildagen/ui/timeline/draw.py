@@ -254,7 +254,8 @@ def draw_group(p, geo, row):
     clip = row.clip
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
     p.fillRect(QRectF(x0, row.y, x1 - x0, row.h), theme.qc(theme.BG_FIELD, 0.7))
-    a, b = max(HEADER_W, x0) + 3, x1 - 3
+    from .geometry import DEPTH_W
+    a, b = max(HEADER_W, x0) + 3 + row.depth * DEPTH_W, x1 - 3
     if b - a < 14:
         return
     opened = row.node.id not in clip.closed_nodes
