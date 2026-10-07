@@ -407,27 +407,38 @@ def main():
     tl.bpm = 128
     t = tl.snap_time(1.01)
     check("aimant BPM", abs(t - 60 / 128 * 2) < 1e-6 or abs(t - 60 / 128 * 2) < 0.5, f"{t:.3f}")
-    # Clip déplié : les modifieurs de la forme et leurs réglages sont directement animables
+    # Clip déplié : seulement les réglages envoyés dans la timeline (pas tous les modifieurs)
     clip.expanded = True
     ed.notify(timeline=True)
     app.processEvents()
     tl_canvas = win.timeline.canvas
     rows_ = tl_canvas.rows()
+    lanes_ = [r for r in rows_ if r.kind == "lane" and r.clip is clip]
     groups = [r for r in rows_ if r.kind == "group" and r.clip is clip]
-    check("modifieurs affichés sous le clip déplié", len(groups) >= 2, str(len(groups)))
-    lane_v = next(r for r in rows_ if r.kind == "lane" and r.node is not None and r.virtual
-                  and r.auto.key != "__active__" and not (r.auto.key in ("color",)))
+    check("clip déplié : seulement les réglages envoyés dans la timeline",
+          len(lanes_) == len(clip.automations) and not any(r.virtual for r in lanes_)
+          and len(groups) == len({a.node_id for a in clip.automations}), f"{len(lanes_)} lignes, {len(groups)} groupes")
+    # Bouton « envoyer dans la timeline » à côté d'un réglage
+    from ildagen.ui.properties.forms import ParamForm
+    sym_def = next(n for n in d.root.walk() if n.kind == "modifier" and n.mod_type == "mirror_sym")
+    form = ParamForm(ed, sym_def.id)
     n_auto = len(clip.automations)
-    click(tl_canvas, QPoint(int(tl_canvas.geo.x(clip.start + 1.0)), int(lane_v.y + lane_v.h * 0.3)))
-    check("clic dans un réglage de modifieur = automation créée", len(clip.automations) == n_auto + 1
-          and clip.automations[-1].node_id == lane_v.node.id and len(clip.automations[-1].keys) == 1)
-    clip.closed_nodes.append(lane_v.node.id)
-    hidden = [r for r in tl_canvas.rows() if r.kind == "lane" and r.auto.node_id == lane_v.node.id]
+    form.autos["angle"].click()
+    app.processEvents()
+    new_lane = [r for r in tl_canvas.rows() if r.kind == "lane" and r.clip is clip and r.auto.key == "angle"]
+    check("bouton : le réglage arrive dans la timeline (ligne + clé)", len(clip.automations) == n_auto + 1
+          and new_lane and len(new_lane[0].auto.keys) == 1 and form.autos["angle"].isChecked())
+    clip.closed_nodes.append(sym_def.id)
+    hidden = [r for r in tl_canvas.rows() if r.kind == "lane" and r.auto.node_id == sym_def.id]
     check("modifieur replié : ses réglages (même animés) sont cachés", hidden == [])
-    clip.closed_nodes.remove(lane_v.node.id)
+    clip.closed_nodes.remove(sym_def.id)
+    form.autos["angle"].click()
+    check("re-cliquer : retiré de la timeline", len(clip.automations) == n_auto and not form.autos["angle"].isChecked())
+    ed.undo()
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     check("annulable", len(clip.automations) == n_auto)
+    form.deleteLater()
     ed.enter_clip(clip.id)
     # Gestes à la souris dans la timeline
     canvas = win.timeline.canvas
@@ -475,6 +486,9 @@ def main():
     ed.enter_clip(clip.id)
     # Multi-sélection de clips : rectangle, Cmd/Ctrl + clic, déplacement en bloc, Ctrl+A, Ctrl+D, Suppr
     c2 = ed.add_clip(clip.def_id, tl_.tracks[0].id, clip.end + 1.0, 1.0)
+    from ildagen.core.automation import Automation as _A
+    from ildagen.core.nodes import new_id as _nid
+    c2.automations = [_A.from_dict(dict(a.to_dict(), id=_nid())) for a in clip.automations]   # mêmes réglages envoyés
     app.processEvents()
     tr_row = next(r for r in canvas.rows() if r.kind == "track")
     yy = int(tr_row.y + tr_row.h / 2)
@@ -553,13 +567,11 @@ def main():
     n_keys = len(lane.auto.keys)
     click(canvas, QPoint(int(canvas.geo.x(clip.start + 3.0)), int(lane.y + lane.h * 0.3)))
     check("clic dans une automation = nouvelle clé", len(lane.auto.keys) == n_keys + 1)
-    # Lignes de réglage : réduites automatiquement quand le réglage n'est pas utilisé, repliables à la main
+    # Lignes de réglage repliables à la main
     from ildagen.ui.timeline.geometry import LANE_H, LANE_SMALL_H, lane_toggle_rect
     rows_now = canvas.rows()
-    unused = next((r for r in rows_now if r.kind == "lane" and r.virtual and not r.used), None)
     used = next(r for r in rows_now if r.kind == "lane" and r.auto.key == "tf.tx")
-    check("réglage non utilisé : ligne grisée et réduite", unused is not None and unused.small and unused.h == LANE_SMALL_H
-          and not used.small and used.h == LANE_H)
+    check("réglage animé : ligne de taille normale", not used.small and used.h == LANE_H)
     tx, ty, tw, th = lane_toggle_rect(canvas.geo, used)
     click(canvas, QPoint(int(tx + tw / 2), int(ty + th / 2)))
     used2 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
@@ -568,12 +580,13 @@ def main():
     click(canvas, QPoint(int(tx + tw / 2), int(ty + th / 2)))
     used3 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     check("flèche : l'agrandir à nouveau", not used3.small and lane.clip.lane_sizes == {})
-    un_key = (unused.auto.node_id, unused.auto.key)
-    n_auto = len(lane.clip.automations)
-    click(canvas, QPoint(int(canvas.geo.x(lane.clip.start + 1.0)), int(unused.y + unused.h / 2)))
-    unused2 = next(r for r in canvas.rows() if r.kind == "lane" and (r.auto.node_id, r.auto.key) == un_key)
-    check("clic dans une ligne réduite : elle s'agrandit (sans poser de clé)", not unused2.small
-          and len(lane.clip.automations) == n_auto)
+    canvas.set_lane_small(used3, True)
+    small = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    n_keys = len(small.auto.keys)
+    click(canvas, QPoint(int(canvas.geo.x(lane.clip.start + 1.7)), int(small.y + small.h - 3)))
+    big = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    check("clic dans une ligne réduite : elle s'agrandit (sans poser de clé)", not big.small
+          and len(big.auto.keys) == n_keys)
     lane.clip.lane_sizes.clear()
     canvas.update()
     app.processEvents()

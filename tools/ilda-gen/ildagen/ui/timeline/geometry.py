@@ -43,31 +43,31 @@ def modifier_specs(node):
 
 
 def clip_rows(clip, library, editor):
-    """Lignes sous un clip déplié : chaque modifieur de la forme, ses réglages s'il est ouvert,
-    puis les autres automations (position de formes, automation en attente…)."""
-    from ...core.automation import Automation
+    """Lignes sous un clip déplié : seulement les réglages envoyés dans la timeline (ses automations),
+    regroupés sous leur calque / modifieur ; puis l'automation en attente éventuelle."""
     out = []
     d = library.get(clip.def_id)
-    shown = set()
-    mod_ids = set()
-    if d is not None:
-        for m in d.root.walk():
-            if m.kind != "modifier" or m.modifier is None:
-                continue
-            mod_ids.add(m.id)
-            out.append(("group", None, m, m.name))
-            if m.id not in clip.closed_nodes:
-                for spec in modifier_specs(m):
-                    a = clip.automation_for(m.id, spec.key)
-                    if a is None:
-                        a = Automation()
-                        a.bind(m.id, spec.key, f"{m.name} › {spec.label}", editor.param_is_discrete(m, spec.key))
-                    out.append(("lane", a, m, spec.label))
-                    shown.add((m.id, spec.key))
+    by_node = {}
     for a in clip.automations:
-        # Réglages d'un modifieur replié : cachés avec lui
-        if (a.node_id, a.key) not in shown and a.node_id not in mod_ids:
-            out.append(("lane", a, None, ""))
+        if not a.armed:
+            by_node.setdefault(a.node_id, []).append(a)
+    placed = set()
+    if d is not None:
+        for n in d.root.walk():
+            autos = by_node.get(n.id)
+            if not autos:
+                continue
+            if n.kind == "modifier" and n.modifier is not None:
+                order = [sp.key for sp in modifier_specs(n)]
+                autos = sorted(autos, key=lambda a: order.index(a.key) if a.key in order else len(order))
+            out.append(("group", None, n, n.name))
+            for a in autos:
+                placed.add(a.id)
+                if n.id not in clip.closed_nodes:
+                    out.append(("lane", a, n, editor.param_label(n, a.key)))
+    for a in clip.automations:
+        if a.id not in placed:
+            out.append(("lane", a, None, ""))       # en attente, ou calque disparu
     return out
 
 

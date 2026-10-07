@@ -150,22 +150,56 @@ class TimelineOpsMixin:
         self.statusMessage.emit("Automation en attente : modifiez un réglage (Propriétés ou mire) pour la lier")
         return a
 
-    def automate_param(self, node, key):
-        """Crée directement une automation liée à un réglage (clic droit sur le réglage)."""
+    def automation_clip(self):
+        """Clip qui reçoit un réglage envoyé dans la timeline : le clip sélectionné, sinon le seul clip de la
+        forme en cours (ou celui sous la tête de lecture). Renvoie (clip, message d'erreur)."""
         clip = self.current_clip()
-        if clip is None or clip.automation_for(node.id, key) is not None:
+        if clip is not None:
+            return clip, None
+        fid = self.current_form_id()
+        clips = sorted((c for _, c in self.doc.timeline.all_clips() if c.def_id == fid), key=lambda c: c.start)
+        if not clips:
+            return None, "Glissez d'abord cette forme dans la timeline (liste de gauche → piste)"
+        if len(clips) == 1:
+            return clips[0], None
+        here = [c for c in clips if c.active_at(self.playhead)]
+        if here:
+            return here[0], None
+        return None, "Plusieurs clips de cette forme : cliquez d'abord sur le clip voulu dans la timeline"
+
+    def param_in_timeline(self, node, key):
+        clip, _ = self.automation_clip()
+        return clip is not None and clip.automation_for(node.id, key) is not None
+
+    def automate_param(self, node, key):
+        """Envoie un réglage dans la timeline : une ligne d'automation apparaît sous le clip (clé à la tête
+        de lecture avec la valeur actuelle). Déjà présent : il est retiré de la timeline."""
+        clip, err = self.automation_clip()
+        if clip is None:
+            self.statusMessage.emit(err)
+            return None
+        label = f"{node.name} › {self.param_label(node, key)}"
+        existing = clip.automation_for(node.id, key)
+        if existing is not None:
+            self.timeline_mutate("Retirer de la timeline", lambda: clip.automations.remove(existing))
+            self.statusMessage.emit(f"« {label} » retiré de la timeline")
             return None
         from ..core import nodes as N
         a = Automation()
-        a.bind(node.id, key, f"{node.name} › {self.param_label(node, key)}", self.param_is_discrete(node, key))
+        a.bind(node.id, key, label, self.param_is_discrete(node, key))
         v = N.get_param(node, key)
+        t_local = min(max(self.playhead - clip.start, 0.0), clip.duration)
 
         def do():
             if v is not None:
-                a.set_key(self.clip_local_time(clip), v)
+                a.set_key(t_local, v)
             clip.automations.append(a)
             clip.expanded = True
-        self.timeline_mutate("Créer une automation", do)
+        self.timeline_mutate("Envoyer dans la timeline", do)
+        if self.context != ("clip", clip.id):
+            self.enter_clip(clip.id)
+        self.statusMessage.emit(f"« {label} » ajouté à la timeline : modifiez-le à différents instants "
+                                "ou posez des points dans sa ligne")
         return a
 
     def delete_automation(self, clip_id, auto_id):

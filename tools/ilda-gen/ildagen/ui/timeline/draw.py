@@ -264,7 +264,9 @@ def draw_group(p, geo, row):
     cy = row.y + row.h / 2
     p.drawPixmap(QPointF(a, cy - 5), icons.pixmap("chevron-down" if opened else "chevron-right", theme.TEXT_DIM, 10))
     if b - a > 30:
-        p.drawPixmap(QPointF(a + 12, cy - 6), icons.pixmap(row.node.modifier.icon, theme.ACCENT, 12))
+        from ..layers.delegate import node_icon
+        is_mod = row.node.kind == "modifier"
+        p.drawPixmap(QPointF(a + 12, cy - 6), icons.pixmap(node_icon(row.node), theme.ACCENT if is_mod else theme.TEXT_DIM, 12))
     if b - a > 50:
         p.setFont(theme.ui_font(10))
         p.setPen(theme.qc(theme.TEXT))

@@ -201,17 +201,19 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    long du clip, automations comprises). Glisser le clip pour le déplacer, ses bords
    pour changer sa durée : les **automations s'étirent proportionnellement** (une montée sur 10 s ramenée à
    5 s va toujours jusqu'au bout) ; `Maj` pendant le glisser = les clés gardent leurs instants (on coupe). L'**aimant** accroche tout à la grille (`Alt` pendant un glisser = libre).
-3. **Déplier le clip** (chevron à gauche du clip, ou double-clic) : chaque modifieur de la forme s'affiche avec
-   tous ses réglages animables (cliquer sur le nom du modifieur pour replier / déplier ses réglages).
-   **Cliquer dans la ligne d'un réglage pose une clé** : l'automation est créée directement. La valeur fixe
-   d'un réglage pas encore animé est montrée en pointillés ; un point bleu signale les réglages animés.
+3. **Envoyer un réglage dans la timeline** : à côté de chaque réglage (dans Calques et dans Propriétés), le
+   bouton **〰 (courbe)** l'envoie dans la timeline : une ligne apparaît sous le clip de la forme, avec une clé
+   à la tête de lecture. Le bouton devient bleu ; re-cliquer retire le réglage de la timeline (annulable).
+   Le clip visé : le clip sélectionné, sinon le seul clip de cette forme (ou celui sous la tête de lecture).
+   **Déplier le clip** (chevron à gauche du clip, ou double-clic) : on ne voit **que les réglages envoyés**,
+   regroupés sous leur calque / modifieur (cliquer sur son nom pour les replier). Rien au départ.
    Autre méthode : clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel
    réglage (Propriétés, ligne du modifieur, ou déplacer / tourner la forme dans la mire) : l'automation s'y lie.
    Chaque réglage touché ensuite écrit une clé à la tête de lecture.
 4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit sur un point = le supprimer,
    `Maj` + clic droit = menu (réinitialiser la valeur, type de courbe : linéaire, accélération, ralentissement,
    en S, palier, Bézier personnalisé avec poignées). Le bouton ↺ (en haut à droite de la ligne, dans le clip) supprime son automation
-   (ou remet sa valeur fixe par défaut).
+   (retire le réglage de la timeline).
    **Tout est dans le clip** : la colonne de gauche ne montre que les pistes. Sous un clip déplié, chaque
    modifieur (flèche, icône, nom : clic = replier / déplier pour ce clip) et chaque réglage (flèche pour
    réduire / agrandir, nom, ↺ à droite) sont écrits dans la largeur du clip. Plusieurs clips dépliés sur une

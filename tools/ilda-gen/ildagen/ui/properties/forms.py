@@ -10,7 +10,7 @@ from ...core import nodes as N
 from ...core import shape_color
 from ...core.params import B, F, I
 from ...core.shapes import SHAPE_PARAMS
-from .. import icons
+from .. import icons, theme
 from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, ScrubField
 
 # Réglages de transformation (clés « tf. ») ; facteur d'affichage pour les échelles en %
@@ -82,6 +82,7 @@ class ParamForm(QWidget):
         self.fields = {}
         self.specs = {}
         self.resets = {}
+        self.autos = {}         # boutons « envoyer dans la timeline »
         self._editing = False
         node = editor.find(node_id)
         grid = QGridLayout(self)
@@ -108,15 +109,31 @@ class ParamForm(QWidget):
             reset.setToolTip(f"Réinitialiser « {spec.label} »")
             reset.clicked.connect(lambda _=False, s=spec: self._reset(s))
             self.resets[spec.key] = reset
+            auto = None
+            if spec.animatable:
+                # Envoyer ce réglage dans la timeline (pour le faire varier dans le temps)
+                auto = QToolButton()
+                auto.setIcon(icons.icon("spline", 12, active_color=theme.ACCENT))
+                auto.setIconSize(icons.qsize(12))
+                auto.setAutoRaise(True)
+                auto.setCheckable(True)
+                auto.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+                auto.setFixedSize(18, 18)
+                auto.clicked.connect(lambda _=False, s=spec: self._automate(s))
+                self.autos[spec.key] = auto
             if spec.kind == "gradient":
                 grid.addWidget(label, row, 0, 1, 2)
                 grid.addWidget(reset, row, 2)
+                if auto is not None:
+                    grid.addWidget(auto, row, 3)
                 row += 1
                 grid.addWidget(field, row, 0, 1, 2)
             else:
                 grid.addWidget(label, row, 0)
                 grid.addWidget(field, row, 1, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color") else Qt.AlignmentFlag(0))
                 grid.addWidget(reset, row, 2)
+                if auto is not None:
+                    grid.addWidget(auto, row, 3)
             label.setToolTip("Clic droit : réinitialiser / automatiser · Alt + clic sur la valeur : réinitialiser")
             if hasattr(field, "resetRequested"):
                 field.resetRequested.connect(lambda s=spec: self._reset(s))
@@ -148,6 +165,18 @@ class ParamForm(QWidget):
             field.set_value(v)
             # Le bouton ↺ s'allume quand la valeur n'est plus celle par défaut
             self.resets[key].setEnabled(not same_value(v, self.specs[key].default_value()))
+        for key, btn in self.autos.items():
+            on = self.editor.param_in_timeline(node, key)
+            btn.setChecked(on)
+            label = self.specs[key].label
+            btn.setToolTip(f"« {label} » est dans la timeline (clic : l'en retirer)" if on else
+                           f"Envoyer « {label} » dans la timeline pour le faire varier dans le temps")
+
+    def _automate(self, spec):
+        node = self.node()
+        if node is not None:
+            self.editor.automate_param(node, spec.key)
+        self.refresh()
 
     def _started(self, spec):
         self._editing = True
@@ -175,16 +204,14 @@ class ParamForm(QWidget):
         if node is None:
             return
         menu = QMenu(self)
-        clip = self.editor.current_clip()
-        a_auto = menu.addAction("Créer une automation pour ce réglage")
-        a_auto.setEnabled(clip is not None and spec.animatable and clip.automation_for(node.id, spec.key) is None)
-        if clip is None:
-            a_auto.setToolTip("Sélectionnez un clip dans la timeline")
+        inside = self.editor.param_in_timeline(node, spec.key)
+        a_auto = menu.addAction("Retirer de la timeline" if inside else "Envoyer dans la timeline")
+        a_auto.setEnabled(spec.animatable)
         a_reset = menu.addAction("Réinitialiser (Alt + clic)")
         a_all = menu.addAction("Réinitialiser tous les réglages du calque")
         chosen = menu.exec(gpos)
         if chosen is a_auto:
-            self.editor.automate_param(node, spec.key)
+            self._automate(spec)
         elif chosen is a_reset:
             self._reset(spec)
         elif chosen is a_all:
