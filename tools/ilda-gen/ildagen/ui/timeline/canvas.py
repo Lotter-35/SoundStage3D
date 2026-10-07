@@ -107,9 +107,13 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
                 p.fillRect(QRectF(HEADER_W, a, g.width - HEADER_W, b - a), theme.qc("#ffffff", 0.012))
         D.draw_grid(p, g, self.tl, g.top, g.height)
         sel_clip = self.editor.context[1] if self.editor.context[0] == "clip" else None
+        def tr_id(r):
+            return r.track.id
         for r in rows:
-            if r.kind != "track" and r is r.slot[0]:
-                p.fillRect(QRectF(HEADER_W, r.y, g.width - HEADER_W, r.h), theme.qc(theme.BG_APP, 0.6))
+            if r.kind == "track" and blocks[tr_id(r)][1] > r.y + r.h:
+                # Zone des lignes dépliées sous la piste
+                p.fillRect(QRectF(HEADER_W, r.y + r.h, g.width - HEADER_W, blocks[tr_id(r)][1] - r.y - r.h),
+                           theme.qc(theme.BG_APP, 0.6))
             if r.kind == "lane":
                 D.draw_lane(p, g, r, self.editor, self.sel_key)
             elif r.kind == "group":

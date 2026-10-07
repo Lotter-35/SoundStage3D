@@ -13,7 +13,7 @@ CHEVRON_W = 16
 
 
 class Row:
-    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "slot", "depth")
+    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "depth")
 
     def __init__(self, kind, track, clip, auto, y, h, node=None, label="", small=False, used=True):
         self.kind = kind      # "track", "group" (un modifieur du clip) ou "lane" (un réglage animable)
@@ -26,7 +26,6 @@ class Row:
         self.label = label
         self.small = small    # ligne de réglage réduite
         self.used = used      # réglage utilisé (sinon grisé)
-        self.slot = [self]    # lignes des autres clips de la piste posées à la même hauteur
         self.depth = 0        # niveau dans la hiérarchie des calques (groupes → modifieurs → réglages)
 
     def contains(self, y):
@@ -159,34 +158,26 @@ class TimelineGeometry:
         for tr in tl.tracks:
             out.append(Row("track", tr, None, None, y, TRACK_H))
             y += TRACK_H
-            # Clips dépliés de la piste : leurs lignes sont posées côte à côte (même hauteur pour la
-            # même position), chacune dans la plage de temps de son clip — pas d'empilement en escalier
+            # Clips dépliés de la piste : chacun empile ses propres lignes sous la piste, à sa hauteur
+            # (pas d'alignement forcé avec les autres clips) ; la piste prend la hauteur du plus haut
             from . import lanes as L
-            expanded = [(c, clip_rows(c, editor.doc.library, editor))
-                        for c in sorted(tr.clips, key=lambda c: c.start) if c.expanded]
-            n = max((len(e) for _, e in expanded), default=0)
-            for i in range(n):
-                slot = []
-                for clip, entries in expanded:
-                    if i >= len(entries):
-                        continue
-                    kind, auto, node, label, depth = entries[i]
+            bottom = y
+            for clip in sorted(tr.clips, key=lambda c: c.start):
+                if not clip.expanded:
+                    continue
+                cy = y
+                for kind, auto, node, label, depth in clip_rows(clip, editor.doc.library, editor):
                     if kind == "group":
-                        r = Row(kind, tr, clip, auto, y, GROUP_H, node, label)
+                        r = Row(kind, tr, clip, auto, cy, GROUP_H, node, label)
                     else:
-                        r = Row(kind, tr, clip, auto, y, LANE_H, node, label,
-                                L.is_small(editor, clip, auto), L.assigned(editor, clip, auto))
+                        small = L.is_small(editor, clip, auto)
+                        r = Row(kind, tr, clip, auto, cy, LANE_SMALL_H if small else LANE_H, node, label,
+                                small, L.assigned(editor, clip, auto))
                     r.depth = depth
-                    slot.append(r)
-                lanes_ = [r for r in slot if r.kind == "lane"]
-                small = bool(lanes_) and len(lanes_) == len(slot) and all(r.small for r in lanes_)
-                h = LANE_SMALL_H if small else (LANE_H if lanes_ else GROUP_H)
-                for r in slot:
-                    r.h, r.slot = h, slot
-                    if r.kind == "lane":
-                        r.small = small
-                out.extend(slot)
-                y += h
+                    out.append(r)
+                    cy += r.h
+                bottom = max(bottom, cy)
+            y = bottom
         return out
 
     def content_height(self, editor):

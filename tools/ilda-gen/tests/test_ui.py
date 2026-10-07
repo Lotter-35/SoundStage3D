@@ -573,8 +573,16 @@ def main():
     c2.expanded = True
     h2 = canvas.geo.content_height(ed)
     lanes2 = [r for r in canvas.rows() if r.kind == "lane" and r.clip is c2]
-    check("clips dépliés côte à côte (pas d'empilement)", h1 == h2 and lanes2 and all(len(r.slot) == 2 for r in lanes2),
-          f"{h1} / {h2}")
+    lanes1 = [r for r in canvas.rows() if r.kind == "lane" and r.clip is clip]
+    check("clips dépliés côte à côte (pas d'empilement)", h1 == h2 and lanes2
+          and [r.y for r in lanes1] == [r.y for r in lanes2], f"{h1} / {h2}")
+    # Chaque clip garde sa propre hauteur : agrandir une ligne de l'un n'agrandit pas l'autre
+    bottoms = lambda: {c: max(r.y + r.h for r in canvas.rows() if r.kind != "track" and r.clip is c) for c in (clip, c2)}
+    b0 = bottoms()
+    canvas.set_lane_small(lanes2[0], True)
+    b1 = bottoms()
+    check("chaque clip déplié a sa propre hauteur", b1[c2] < b0[c2] and b1[clip] == b0[clip], f"{b0} / {b1}")
+    canvas.set_lane_small(lanes2[0], False)
     grp2 = next(r for r in canvas.rows() if r.kind == "group" and r.clip is c2)
     click(canvas, QPoint(int(canvas.geo.x(c2.start + 0.3)), int(grp2.y + grp2.h / 2)))
     check("clic sur un modifieur dans son clip : seul ce clip le replie", grp2.node.id in c2.closed_nodes

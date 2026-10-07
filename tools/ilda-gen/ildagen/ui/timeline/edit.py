@@ -85,8 +85,7 @@ class TimelineEditing:
             tx, ty, tw, th = lane_toggle_rect(self.geo, row)
             bx, by, bw, bh = lane_reset_rect(self.geo, row)
             if ty <= y <= ty + th and tx - 2 <= x <= tx + tw + 2:
-                for r in row.slot:          # la ligne est commune aux clips de la piste
-                    self.set_lane_small(r, not row.small)
+                self.set_lane_small(row, not row.small)
                 return
             if by <= y <= by + bh and bx - 2 <= x <= bx + bw + 2 and self.geo.x(clip.end) - self.geo.x(clip.start) > 66:
                 self.reset_lane(row)

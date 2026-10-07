@@ -227,7 +227,8 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    **Tout est dans le clip** : la colonne de gauche ne montre que les pistes. Sous un clip déplié, chaque
    modifieur (flèche, icône, nom : clic = replier / déplier pour ce clip) et chaque réglage (flèche pour
    réduire / agrandir, nom, ↺ à droite) sont écrits dans la largeur du clip. Plusieurs clips dépliés sur une
-   piste sont côte à côte, sur les mêmes lignes (pas d'empilement). Replié : seulement le carré de la forme.
+   piste sont côte à côte (pas d'empilement), chacun à sa propre hauteur : ouvrir une courbe dans un
+   clip n'agrandit pas les autres. Replié : seulement le carré de la forme.
    La piste forme un seul bloc avec les lignes de ses clips dépliés (en-tête étendu, barre à gauche, trait de
    fin de bloc) et chaque clip déplié est encadré, de la forme jusqu'à son dernier réglage.
    **Hauteur des lignes** : un réglage pas utilisé (pas animé, valeur par défaut) est grisé et sa ligne est
