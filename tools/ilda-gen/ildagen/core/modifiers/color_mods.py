@@ -102,7 +102,7 @@ class Gradient(Modifier):
     params = [G("stops", "Couleurs", [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]]),
               E("mode", "Type", GRAD_MODES),
               E("scope", "Portée", SCOPES),
-              F("angle", "Angle", 0.0, -3600.0, 3600.0, "°", 1, soft_min=-180, soft_max=180),
+              F("angle", "Angle", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
               F("size", "Étendue", 2.0, 0.01, 20.0, decimals=2, soft_max=4.0),
               F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
               F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
@@ -178,7 +178,7 @@ class Rainbow(Modifier):
               F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1),
               F("speed", "Vitesse", 0.0, -50.0, 50.0, " tours/s", 2, soft_min=-4, soft_max=4),
               F("sat", "Saturation", 100.0, 0.0, 100.0, "%", 0),
-              F("angle", "Angle", 0.0, -3600.0, 3600.0, "°", 1, soft_min=-180, soft_max=180),
+              F("angle", "Angle", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
               F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
               F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3)]
     center_keys = ("cx", "cy")

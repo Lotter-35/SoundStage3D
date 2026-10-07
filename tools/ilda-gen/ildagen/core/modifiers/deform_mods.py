@@ -20,7 +20,7 @@ class Wave(Modifier):
     params = [E("direction", "Direction", ["Horizontale (ondule en Y)", "Verticale (ondule en X)", "Radiale"]),
               F("amp", "Amplitude", 0.08, -2.0, 2.0, soft_min=0.0, soft_max=0.5, decimals=3),
               F("freq", "Fréquence", 3.0, 0.0, 100.0, " cycles", 2, soft_max=20.0),
-              F("phase", "Phase", 0.0, -36000.0, 36000.0, "°", 1, soft_min=-360, soft_max=360)]
+              F("phase", "Phase", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360)]
     phase_key = "phase"
     phase_scale = 180.0
     size_keys = ("amp",)

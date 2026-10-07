@@ -221,8 +221,8 @@ class Beams(Modifier):
     icon = "zap"
     description = "Remplace les formes par des points fixes très lumineux (faisceaux dans la fumée)."
     params = [E("mode", "Placement", ["Sur les sommets", "Répartis le long du tracé"]),
-              I("count", "Nombre", 8, 1, 256),
-              I("dwell", "Éclat", 20, 1, 200)]
+              I("count", "Nombre", 8, 1, 256, soft_max=64),
+              I("dwell", "Éclat", 20, 1, 200, soft_max=60)]
 
     def apply(self, strokes, p, ctx):
         out = []

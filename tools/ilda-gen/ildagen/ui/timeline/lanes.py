@@ -56,7 +56,8 @@ def target(editor, clip, auto):
 
 
 def value_range(spec, auto):
-    """Plage affichée (min, max) ; élargie pour contenir toutes les clés."""
+    """Plage affichée (min, max) : fixe, celle du réglage (pas élargie par les clés, sinon tirer un point
+    au-dessus de la ligne ferait grandir la plage sans fin)."""
     if auto.key == "__active__" or (spec is not None and spec.kind == "bool"):
         return 0.0, 1.0
     if spec is not None and spec.kind == "enum":
@@ -65,9 +66,6 @@ def value_range(spec, auto):
         return 0.0, 1.0
     lo = spec.soft_min if spec is not None and spec.soft_min is not None else -1.0
     hi = spec.soft_max if spec is not None and spec.soft_max is not None else 1.0
-    vals = [k.v for k in auto.keys if isinstance(k.v, (int, float)) and not isinstance(k.v, bool)]
-    if vals:
-        lo, hi = min(lo, min(vals)), max(hi, max(vals))
     if hi - lo < 1e-9:
         hi = lo + 1.0
     return float(lo), float(hi)
@@ -83,13 +81,14 @@ def v_to_y(v, row, rng):
         v = 1.0 if v else 0.0
     if isinstance(v, tuple):
         v = 0.5
-    k = (float(v) - lo) / (hi - lo)
+    k = min(1.0, max(0.0, (float(v) - lo) / (hi - lo)))
     return row.y + row.h - PAD - k * (row.h - 2 * PAD)
 
 
 def y_to_v(y, row, rng, spec, auto):
     lo, hi = rng
     k = (row.y + row.h - PAD - y) / max(1.0, row.h - 2 * PAD)
+    k = min(1.0, max(0.0, k))        # bloqué entre le bas et le haut de la ligne
     v = lo + k * (hi - lo)
     if auto.key == "__active__" or (spec is not None and spec.kind == "bool"):
         return v >= 0.5

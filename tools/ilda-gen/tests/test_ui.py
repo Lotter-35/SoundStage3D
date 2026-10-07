@@ -600,6 +600,10 @@ def main():
     _, spec0 = TL0.target(ed, lane.clip, lane.auto)
     kp0 = QPoint(int(canvas.geo.x(lane.clip.start + k.t)), int(TL0.v_to_y(k.v, lane, TL0.value_range(spec0, lane.auto))))
     Lb, Nb = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    rng0 = TL0.value_range(spec0, lane.auto)
+    v_hi = TL0.y_to_v(lane.y - 500, lane, rng0, spec0, lane.auto)
+    check("plage d'une ligne fixe : un point tiré très haut reste au maximum", v_hi == rng0[1] and
+          TL0.value_range(spec0, lane.auto) == rng0, f"{v_hi} / {rng0}")
     send(canvas, QEvent.Type.MouseButtonPress, kp0, Lb, Lb, M.NoModifier)
     send(canvas, QEvent.Type.MouseMove, QPoint(kp0.x() + 20, int(lane.y + 3)), Nb, Lb, M.NoModifier)
     inst_v = ed.eval_context().overrides.get((lane.auto.node_id, "tf.tx"))

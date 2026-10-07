@@ -39,7 +39,7 @@ class Rotate(Modifier):
     description = "Tourne les formes autour d'un pivot."
     blendable = True
     self_mix = True
-    params = [F("angle", "Angle", 0.0, -3600.0, 3600.0, "°", 1, soft_min=-180, soft_max=180),
+    params = [F("angle", "Angle", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
               E("pivot", "Pivot", PIVOT_OPTIONS)]
     angle_key = "angle"
 

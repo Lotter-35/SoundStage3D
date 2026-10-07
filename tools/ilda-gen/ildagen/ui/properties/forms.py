@@ -17,7 +17,7 @@ from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, ScrubField
 TRANSFORM_SPECS = [
     (F("tf.tx", "Position X", 0.0, -8.0, 8.0, decimals=3, soft_min=-1, soft_max=1), 1.0),
     (F("tf.ty", "Position Y", 0.0, -8.0, 8.0, decimals=3, soft_min=-1, soft_max=1), 1.0),
-    (F("tf.rot", "Rotation", 0.0, -36000.0, 36000.0, "°", 1, soft_min=-180, soft_max=180), 1.0),
+    (F("tf.rot", "Rotation", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360), 1.0),
     (F("tf.sx", "Échelle X", 1.0, -100.0, 100.0, " %", 1, soft_min=0, soft_max=2), 100.0),
     (F("tf.sy", "Échelle Y", 1.0, -100.0, 100.0, " %", 1, soft_min=0, soft_max=2), 100.0),
     (F("tf.shear", "Cisaillement", 0.0, -10.0, 10.0, decimals=3, soft_min=-1, soft_max=1), 1.0),

@@ -31,7 +31,7 @@ class MirrorSymmetry(Modifier):
     icon = "square-split-horizontal"
     description = "Reflète les formes : 1 axe = x2, 2 axes = x4, 4 axes = x8…"
     params = [I("axes", "Axes", 1, 1, 16),
-              F("angle", "Angle de l'axe", 90.0, -360.0, 360.0, "°", 1),
+              F("angle", "Angle de l'axe", 90.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
               F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
               F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3)]
     center_keys = ("cx", "cy")
@@ -54,8 +54,8 @@ class RadialSymmetry(Modifier):
     category = "Duplication"
     icon = "flower-2"
     description = "Copies tournées autour d'un centre ; mode kaléidoscope = une copie sur deux en miroir."
-    params = [I("count", "Copies", 6, 1, 128),
-              F("angle", "Décalage", 0.0, -3600.0, 3600.0, "°", 1, soft_min=-180, soft_max=180),
+    params = [I("count", "Copies", 6, 1, 64, soft_max=32),
+              F("angle", "Décalage", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
               B("kaleido", "Kaléidoscope", False),
               F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
               F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3)]
@@ -83,11 +83,11 @@ class LinearRepeat(Modifier):
     category = "Duplication"
     icon = "copy"
     description = "N copies avec un décalage constant de position, rotation et taille."
-    params = [I("count", "Copies", 3, 1, 128),
+    params = [I("count", "Copies", 3, 1, 64, soft_max=32),
               F("dx", "Décalage X", 0.2, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
               F("dy", "Décalage Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("rot", "Rotation", 0.0, -360.0, 360.0, "°", 1),
-              F("scale", "Taille", 100.0, 1.0, 400.0, "%", 1),
+              F("rot", "Rotation", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
+              F("scale", "Taille", 100.0, 1.0, 400.0, "%", 1, soft_max=200),
               B("centered", "Centrer les copies", False)]
     angle_key = "rot"
 

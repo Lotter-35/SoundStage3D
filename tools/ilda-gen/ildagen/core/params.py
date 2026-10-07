@@ -57,8 +57,8 @@ def F(key, label, default=0.0, min=None, max=None, unit="", decimals=2, step=Non
                      soft_min=soft_min, soft_max=soft_max)
 
 
-def I(key, label, default=0, min=None, max=None, unit=""):
-    return ParamSpec(key, label, "int", default, min, max, 1, unit, decimals=0)
+def I(key, label, default=0, min=None, max=None, unit="", soft_min=None, soft_max=None):
+    return ParamSpec(key, label, "int", default, min, max, 1, unit, decimals=0, soft_min=soft_min, soft_max=soft_max)
 
 
 def B(key, label, default=False):
