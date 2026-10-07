@@ -112,7 +112,7 @@ class CurveStrip(QWidget):
                     p.fillRect(QRectF(x, a.center().y() - 5, 1.2, 10), QColor.fromRgbF(*v))
         elif auto.keys:
             pts = [QPointF(x, self._y(auto.value_at(self._t(x, clip)), auto)) for x in xs]
-            p.setPen(QPen(theme.qc(theme.ACCENT), 1.4))
+            p.setPen(QPen(theme.qc(theme.TEXT, 0.8), 1.3))
             p.drawPolyline(QPolygonF(pts))
         # Tête de lecture (si elle est dans le clip)
         tl = self.editor.view_time() - clip.start
@@ -124,11 +124,11 @@ class CurveStrip(QWidget):
         sel = self.drag["key"] if self.drag else None
         for k in auto.keys:
             kx, ky = self._x(k.t, clip), self._y(k.v, auto)
-            p.setPen(QPen(theme.qc(theme.ACCENT), 1.1))
+            p.setPen(QPen(theme.qc(theme.ACCENT) if k is sel else theme.qc(theme.TEXT, 0.85), 1.1))
             if self._is_color():
                 p.setBrush(QColor.fromRgbF(*k.v))
             else:
-                p.setBrush(theme.qc(theme.ACCENT) if k is sel else theme.qc(theme.BG_MIRE))
+                p.setBrush(theme.qc(theme.ACCENT) if k is sel else theme.qc(theme.BG_FIELD))
             p.drawPolygon(QPolygonF([QPointF(kx, ky - 4), QPointF(kx + 4, ky), QPointF(kx, ky + 4), QPointF(kx - 4, ky)]))
         p.end()
 

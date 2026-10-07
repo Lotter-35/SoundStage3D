@@ -152,7 +152,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
                     continue
                 sel = c.id == sel_clip or c.id in self.sel_clips
                 x0, x1 = g.x(c.start), g.x(c.end)
-                p.setPen(QPen(theme.qc(theme.ACCENT, 0.75) if sel else theme.qc("#ffffff", 0.16), 1))
+                p.setPen(QPen(theme.qc("#ffffff", 0.22 if sel else 0.10), 1))
                 p.drawRoundedRect(QRectF(x0 + 0.5, r.y + 3.5, x1 - x0 - 1, bottoms[c.id] - r.y - 5), 3, 3)
 
     def thumb(self, clip, t_local, size):

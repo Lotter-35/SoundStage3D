@@ -3,6 +3,11 @@
 from ..properties.forms import TRANSFORM_SPECS
 
 PAD = 8
+TOP_PAD = 18     # ligne normale : bande du nom du réglage en haut, la courbe passe dessous
+
+
+def _pads(row):
+    return (TOP_PAD if row.h >= 40 else PAD // 2), (PAD if row.h >= 40 else PAD // 2)
 
 
 def lane_id(auto):
@@ -82,12 +87,14 @@ def v_to_y(v, row, rng):
     if isinstance(v, tuple):
         v = 0.5
     k = min(1.0, max(0.0, (float(v) - lo) / (hi - lo)))
-    return row.y + row.h - PAD - k * (row.h - 2 * PAD)
+    top, bottom = _pads(row)
+    return row.y + row.h - bottom - k * (row.h - top - bottom)
 
 
 def y_to_v(y, row, rng, spec, auto):
     lo, hi = rng
-    k = (row.y + row.h - PAD - y) / max(1.0, row.h - 2 * PAD)
+    top, bottom = _pads(row)
+    k = (row.y + row.h - bottom - y) / max(1.0, row.h - top - bottom)
     k = min(1.0, max(0.0, k))        # bloqué entre le bas et le haut de la ligne
     v = lo + k * (hi - lo)
     if auto.key == "__active__" or (spec is not None and spec.kind == "bool"):

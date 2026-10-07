@@ -59,11 +59,8 @@ def draw_ruler(p, geo, tl):
     # Zone de boucle
     if tl.loop_end > tl.loop_start:
         x0, x1 = geo.x(tl.loop_start), geo.x(tl.loop_end)
-        c = theme.qc(theme.ACCENT, 0.55) if tl.loop_on else theme.qc(theme.TEXT_OFF, 0.45)
-        p.fillRect(QRectF(max(HEADER_W, x0), 1, max(0.0, min(w, x1) - max(HEADER_W, x0)), LOOP_H - 2), c)
-        if tl.loop_on:
-            p.fillRect(QRectF(max(HEADER_W, x0), RULER_H, max(0.0, min(w, x1) - max(HEADER_W, x0)), geo.height),
-                       theme.qc(theme.ACCENT, 0.04))
+        c = theme.qc(theme.TEXT_DIM, 0.55) if tl.loop_on else theme.qc(theme.TEXT_OFF, 0.35)
+        p.fillRect(QRectF(max(HEADER_W, x0), 2, max(0.0, min(w, x1) - max(HEADER_W, x0)), LOOP_H - 4), c)
     t_a, t_b = geo.visible_range()
     lines, every = grid_lines(tl, t_a, t_b, geo.pps)
     p.setFont(theme.mono_font(10))
@@ -117,7 +114,7 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
     x, y, w, h = geo.clip_rect(row, clip)
     r = QRectF(x, y, w, h)
     d = ed.doc.library.get(clip.def_id)
-    fill = theme.qc(theme.ACCENT, 0.22) if selected else theme.qc(theme.BG_FIELD)
+    fill = theme.qc(theme.BG_HOVER) if selected else theme.qc(theme.BG_FIELD)
     p.setBrush(fill)
     p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(r, 3, 3)
@@ -140,7 +137,7 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
             k += 1
         p.restore()
     p.setBrush(Qt.BrushStyle.NoBrush)
-    p.setPen(QPen(theme.qc(theme.ACCENT) if selected else theme.qc(theme.BORDER), 1.5 if selected else 1))
+    p.setPen(QPen(theme.qc(theme.ACCENT, 0.9) if selected else theme.qc(theme.BORDER), 1))
     p.drawRoundedRect(r, 3, 3)
     if w > CHEVRON_W + 4:
         pm = icons.pixmap("chevron-down" if clip.expanded else "chevron-right", theme.TEXT_DIM, 12)
@@ -149,8 +146,6 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
         p.setPen(theme.qc(theme.TEXT_OFF if muted else theme.TEXT))
         p.setFont(theme.ui_font(11))
         label = d.name if d else "?"
-        if clip.automations:
-            label += f"   · {len(clip.automations)} automation" + ("s" if len(clip.automations) > 1 else "")
         fm = p.fontMetrics()
         p.drawText(QRectF(x + CHEVRON_W + 2, y, w - CHEVRON_W - 6, THUMB_LABEL_H), Qt.AlignmentFlag.AlignVCenter,
                    fm.elidedText(label, Qt.TextElideMode.ElideRight, int(w - CHEVRON_W - 6)))
@@ -168,9 +163,10 @@ def _draw_lane_content(p, geo, row, ed, sel_key):
     clip, auto = row.clip, row.auto
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
     # Réglage pas utilisé : fond du clip grisé (plus sombre)
-    p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.BG_PANEL, 1.0 if row.used else 0.45))
+    p.fillRect(QRectF(x0, row.y, x1 - x0, row.h), theme.qc(theme.BG_PANEL, 1.0 if row.used else 0.5))
+    p.fillRect(QRectF(x0, row.y + row.h - 1, x1 - x0, 1), theme.qc(theme.BORDER, 0.6))   # séparation discrète
     if auto.armed:
-        p.setPen(theme.qc(theme.ACCENT))
+        p.setPen(theme.qc(theme.TEXT_DIM))
         p.setFont(theme.ui_font(11))
         p.drawText(QRectF(max(HEADER_W, x0) + 8, row.y, max(10.0, x1 - max(HEADER_W, x0) - 16), row.h),
                    Qt.AlignmentFlag.AlignVCenter, "En attente : modifiez un réglage (Propriétés ou mire)")
@@ -202,7 +198,7 @@ def _draw_lane_content(p, geo, row, ed, sel_key):
                 p.fillRect(QRectF(x, row.y + row.h / 2 - 6, 2.0, 12), QColor.fromRgbF(*v))
     elif auto.keys:
         pts = [QPointF(x, L.v_to_y(auto.value_at(geo.t(x) - clip.start), row, rng)) for x in xs]
-        p.setPen(QPen(theme.qc(theme.ACCENT), 1.5))
+        p.setPen(QPen(theme.qc(theme.TEXT, 0.8), 1.3))
         p.drawPolyline(QPolygonF(pts))
     # Clés
     for k in auto.keys:
@@ -211,15 +207,16 @@ def _draw_lane_content(p, geo, row, ed, sel_key):
             continue
         ky = row.y + row.h / 2 if L.is_color(spec) else L.v_to_y(k.v, row, rng)
         is_sel = sel_key is k
-        p.setPen(QPen(theme.qc(theme.ACCENT), 1.2))
+        r_ = 5 if is_sel else 4
+        p.setPen(QPen(theme.qc(theme.ACCENT) if is_sel else theme.qc(theme.TEXT, 0.85), 1.2))
         if L.is_color(spec):
             p.setBrush(QColor.fromRgbF(*k.v))
         else:
-            p.setBrush(theme.qc(theme.ACCENT) if is_sel else theme.qc(theme.BG_MIRE))
-        p.drawPolygon(QPolygonF([QPointF(kx, ky - 5), QPointF(kx + 5, ky), QPointF(kx, ky + 5), QPointF(kx - 5, ky)]))
+            p.setBrush(theme.qc(theme.ACCENT) if is_sel else theme.qc(theme.BG_PANEL))
+        p.drawPolygon(QPolygonF([QPointF(kx, ky - r_), QPointF(kx + r_, ky), QPointF(kx, ky + r_), QPointF(kx - r_, ky)]))
         if is_sel and not row.small:
-            p.setPen(theme.qc(theme.TEXT))
-            p.setFont(theme.mono_font(10))
+            p.setPen(theme.qc(theme.TEXT_DIM))
+            p.setFont(theme.mono_font(9))
             p.drawText(QPointF(kx + 8, max(row.y + 11, ky - 6)), L.format_value(k.v, spec))
     p.setBrush(Qt.BrushStyle.NoBrush)
     # Poignées de Bézier de la clé sélectionnée
@@ -256,7 +253,7 @@ def draw_group(p, geo, row):
     """Ligne d'un modifieur sous un clip déplié : flèche, icône et nom dans le clip (clic = replier)."""
     clip = row.clip
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
-    p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.ACCENT, 0.08))
+    p.fillRect(QRectF(x0, row.y, x1 - x0, row.h), theme.qc(theme.BG_FIELD, 0.7))
     a, b = max(HEADER_W, x0) + 3, x1 - 3
     if b - a < 14:
         return
@@ -266,10 +263,10 @@ def draw_group(p, geo, row):
     if b - a > 30:
         from ..layers.delegate import node_icon
         is_mod = row.node.kind == "modifier"
-        p.drawPixmap(QPointF(a + 12, cy - 6), icons.pixmap(node_icon(row.node), theme.ACCENT if is_mod else theme.TEXT_DIM, 12))
+        p.drawPixmap(QPointF(a + 12, cy - 6), icons.pixmap(node_icon(row.node), theme.TEXT_DIM if is_mod else theme.TEXT_OFF, 12))
     if b - a > 50:
         p.setFont(theme.ui_font(10))
-        p.setPen(theme.qc(theme.TEXT))
+        p.setPen(theme.qc(theme.TEXT_DIM))
         fm = p.fontMetrics()
         p.drawText(QRectF(a + 28, row.y, b - a - 28, row.h), Qt.AlignmentFlag.AlignVCenter,
                    fm.elidedText(row.node.name, Qt.TextElideMode.ElideRight, int(b - a - 28)))
@@ -289,13 +286,12 @@ def draw_lane_label(p, geo, row, ed):
     if room > 60:
         on = lane_resettable(ed, row)
         p.drawPixmap(QPointF(rx + 1, ry + (rh - 11) / 2),
-                     icons.pixmap("rotate-ccw", theme.TEXT_DIM if on else theme.TEXT_OFF, 11))
+                     icons.pixmap("rotate-ccw", theme.TEXT_OFF if on else theme.BORDER, 11))
     if room > 30:
         label = ("Automation en attente…" if auto.armed else auto.label) if row.node is None else row.label
         animated = bool(auto.keys)
         p.setFont(theme.ui_font(9))
-        p.setPen(theme.qc(theme.ACCENT if auto.armed else
-                          (theme.TEXT if animated else (theme.TEXT_DIM if row.used else theme.TEXT_OFF))))
+        p.setPen(theme.qc(theme.TEXT_DIM if (animated or auto.armed) else theme.TEXT_OFF))
         fm = p.fontMetrics()
         w = (rx - 4 if room > 60 else b) - (tx + tw + 2)
         p.drawText(QRectF(tx + tw + 2, ty, max(0.0, w), th), Qt.AlignmentFlag.AlignVCenter,
@@ -317,7 +313,7 @@ def draw_headers(p, geo, rows, ed):
         if bottom - top > r.h:
             # Clips dépliés : l'en-tête de la piste s'étend sur toutes leurs lignes
             p.fillRect(QRectF(0, top, w, bottom - top), theme.qc("#ffffff", 0.02))
-            p.fillRect(QRectF(3, top + 6, 2, bottom - top - 12), theme.qc(theme.ACCENT, 0.45))
+            p.fillRect(QRectF(3, top + 6, 2, bottom - top - 12), theme.qc(theme.TEXT_OFF, 0.6))
         p.setPen(theme.qc(theme.TEXT_OFF if r.track.muted else theme.TEXT))
         p.setFont(theme.ui_font(12))
         p.drawText(QRectF(10, r.y, w - 70, r.h), Qt.AlignmentFlag.AlignVCenter, r.track.name)

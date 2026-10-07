@@ -68,3 +68,12 @@ Emplacements retenus :
 - Glisser-déposer des calques : **ligne d'insertion** de 2 px couleur accent ; cadre accent quand on dépose dans un groupe.
 - Envoi live actif : le bouton passe en rouge plein — on doit toujours savoir d'un coup d'œil si le laser émet.
 - Éléments masqués / verrouillés : texte en couleur désactivée, pas d'autre décoration.
+
+## Timeline : hiérarchie visuelle
+
+- **Le bleu (accent) est réservé à ce qui est actif** : tête de lecture, clip sélectionné (liseré), point de
+  courbe sélectionné, sélection en cours. Tout le reste est en gris.
+- Priorité de lecture : 1) les formes (vignettes) et leur nom, 2) les courbes (gris clair), 3) les noms des
+  modifieurs et réglages (gris, petits), 4) les aides (grille, ↺, flèches : très discrets).
+- Pas de compteur ni de résumé dans les clips ; la zone de boucle est une fine barre grise.
+- Les noms des réglages ont leur bande en haut de la ligne : la courbe passe toujours dessous.
