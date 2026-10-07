@@ -44,6 +44,7 @@ Légende :
 | WIN-02 | Interface **responsive** : tout se réorganise quand la fenêtre change de taille. | Demandé |
 | WIN-03 | **Tous les panneaux internes sont redimensionnables** (séparateurs déplaçables : colonnes, sous-fenêtres). | Demandé |
 | WIN-04 | Disposition : barre de menus (haut) → barre de connexion (haut) → barre d'outils (gauche) → mire (centre) → calques (droite, collés au bord droit de la fenêtre) → timeline (bas). | Demandé (timeline en bas : Déduit) |
+| WIN-06 | Le panneau **Calques + Propriétés prend toute la hauteur** (sous la barre de connexion) ; la **timeline** est en bas, sous les outils et la mire, et **s'arrête contre ce panneau** (elle ne prend plus toute la largeur). | Retour |
 | WIN-05 | Toutes les actions secondaires passent par le **clic droit** (menus contextuels), pas de boutons partout. | Demandé |
 
 ---

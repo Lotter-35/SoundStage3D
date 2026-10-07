@@ -51,31 +51,39 @@ class MainWindow(QMainWindow):
         self.right_split.setChildrenCollapsible(False)
         self.properties.collapsedChanged.connect(self._properties_collapsed)
 
+        # Gauche : outils + mire, et la timeline dessous (elle s'arrête contre le panneau de droite)
         self.h_split = QSplitter(Qt.Orientation.Horizontal)
         self.h_split.addWidget(self.tools)
         self.h_split.addWidget(self.canvas)
-        self.h_split.addWidget(self.right_split)
         self.h_split.setStretchFactor(0, 0)
         self.h_split.setStretchFactor(1, 1)
-        self.h_split.setStretchFactor(2, 0)
         self.h_split.setCollapsible(1, False)
-        self.h_split.setSizes([180, 880, 320])
-
-        top = QWidget()
-        tl = QVBoxLayout(top)
-        tl.setContentsMargins(0, 0, 0, 0)
-        tl.setSpacing(0)
-        tl.addWidget(self.connection)
-        tl.addWidget(self.h_split, 1)
+        self.h_split.setSizes([180, 880])
 
         self.v_split = QSplitter(Qt.Orientation.Vertical)
-        self.v_split.addWidget(top)
+        self.v_split.addWidget(self.h_split)
         self.v_split.addWidget(self.timeline)
         self.v_split.setStretchFactor(0, 3)
         self.v_split.setStretchFactor(1, 1)
         self.v_split.setCollapsible(0, False)
         self.v_split.setSizes([620, 260])
-        self.setCentralWidget(self.v_split)
+
+        # Droite : calques + propriétés sur toute la hauteur
+        self.main_split = QSplitter(Qt.Orientation.Horizontal)
+        self.main_split.addWidget(self.v_split)
+        self.main_split.addWidget(self.right_split)
+        self.main_split.setStretchFactor(0, 1)
+        self.main_split.setStretchFactor(1, 0)
+        self.main_split.setCollapsible(0, False)
+        self.main_split.setSizes([1100, 320])
+
+        central = QWidget()
+        cl = QVBoxLayout(central)
+        cl.setContentsMargins(0, 0, 0, 0)
+        cl.setSpacing(0)
+        cl.addWidget(self.connection)
+        cl.addWidget(self.main_split, 1)
+        self.setCentralWidget(central)
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
@@ -180,7 +188,7 @@ class MainWindow(QMainWindow):
         try:
             if ui.get("geometry"):
                 self.restoreGeometry(QByteArray.fromBase64(ui["geometry"].encode()))
-            for key, split in (("h_split", self.h_split), ("v_split", self.v_split), ("r_split", self.right_split)):
+            for key, split in self._splits():
                 if ui.get(key):
                     split.restoreState(QByteArray.fromBase64(ui[key].encode()))
         except (TypeError, ValueError):
@@ -189,9 +197,13 @@ class MainWindow(QMainWindow):
     def save_layout(self):
         ui = self.settings.section("ui")
         ui["geometry"] = bytes(self.saveGeometry().toBase64()).decode()
-        ui["h_split"] = bytes(self.h_split.saveState().toBase64()).decode()
-        ui["v_split"] = bytes(self.v_split.saveState().toBase64()).decode()
-        ui["r_split"] = bytes(self.right_split.saveState().toBase64()).decode()
+        for key, split in self._splits():
+            ui[key] = bytes(split.saveState().toBase64()).decode()
+
+    def _splits(self):
+        # Clés « 2 » : nouvelle disposition (calques sur toute la hauteur), les anciennes tailles ne s'appliquent plus
+        return (("h_split2", self.h_split), ("v_split2", self.v_split), ("r_split", self.right_split),
+                ("main_split", self.main_split))
 
     def closeEvent(self, e):
         if self.project.auto_on():

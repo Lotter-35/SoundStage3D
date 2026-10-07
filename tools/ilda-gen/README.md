@@ -43,8 +43,8 @@ automatique et rouvert la fois suivante). Ces trois comportements se désactiven
 | Haut | Menus · IP / port / canal / images par seconde · état de la connexion · **Envoi live** · **BLACKOUT** |
 | Gauche | Outils (sélection, crayon, seau), formes de base, couleur de tracé, **liste des formes** du projet |
 | Centre | La mire (zone de projection), grille orthogonale ou polaire, compteur de points |
-| Droite | Calques, puis Propriétés (repliable) |
-| Bas | Timeline : transport, BPM, grille musicale, musique, pistes, automations |
+| Droite | Calques, puis Propriétés (repliable) — **sur toute la hauteur** (sous la barre de connexion) |
+| Bas (à gauche du panneau de droite) | Timeline : transport, BPM, grille musicale, musique, pistes, automations ; elle s'arrête contre le panneau Calques / Propriétés |
 
 Tous les séparateurs se déplacent ; la disposition est mémorisée.
 
