@@ -189,6 +189,9 @@ class TimelineEditing:
         self.editor.notify(timeline=True)
 
     def delete_selection(self):
+        if getattr(self, "range_sel", None) and self.clips_in_range():
+            self.editor.delete_clips(self.clips_in_range())
+            return
         if self.sel_key is not None:
             for _, c in self.tl.all_clips():
                 for a in c.automations:

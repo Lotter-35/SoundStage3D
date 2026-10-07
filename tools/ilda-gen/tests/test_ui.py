@@ -441,6 +441,38 @@ def main():
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     ed.enter_clip(clip.id)
+    # Zone de temps (Ctrl + glisser) : copier le clip + le vide, coller à la tête de lecture, à la suite
+    tl_ = ed.doc.timeline
+    tr_row = next(r for r in canvas.rows() if r.kind == "track")
+    yy = int(tr_row.y + tr_row.h / 2)
+    span = clip.duration + tl_.beat_len / 4          # le clip + un quart de temps de vide
+    n_clips = sum(1 for _ in tl_.all_clips())
+    drag(canvas, QPoint(int(canvas.geo.x(clip.start)) + 1, yy), QPoint(int(canvas.geo.x(clip.start + span)), yy),
+         M.ControlModifier)
+    rs = canvas.range_sel
+    span = tl_.snap_time(clip.start + span) - clip.start      # aimantée à la grille
+    check("Ctrl + glisser : zone de temps sélectionnée", rs is not None and abs((rs[1] - rs[0]) - span) < 1e-6
+          and len(canvas.clips_in_range()) == 1, f"{rs}")
+    canvas.setFocus()
+    app.processEvents()
+    win.copy_pressed()
+    paste_at = clip.end + 2.0
+    ed.set_playhead(paste_at)
+    win.paste_pressed()
+    win.paste_pressed()
+    starts = sorted(c.start for _, c in tl_.all_clips())
+    pasted = [c for _, c in tl_.all_clips() if c.id != clip.id]
+    check("coller deux fois : à la tête de lecture puis à la suite, même écart",
+          sum(1 for _ in tl_.all_clips()) == n_clips + 2 and any(abs(s - paste_at) < 1e-6 for s in starts)
+          and any(abs(s - (paste_at + span)) < 1e-6 for s in starts) and abs(ed.playhead - (paste_at + 2 * span)) < 1e-6,
+          f"{starts} tête {ed.playhead:.3f}")
+    check("clip collé avec ses automations", all(len(c.automations) == len(clip.automations) and
+          c.automations[0].id != clip.automations[0].id for c in pasted))
+    ed.undo()
+    ed.undo()
+    canvas.clear_range()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    ed.enter_clip(clip.id)
     # Raccourcir le clip : les automations s'étirent proportionnellement
     times = [(a.id, [k.t for k in a.keys]) for a in clip.automations]
     d0 = clip.duration

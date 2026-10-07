@@ -221,6 +221,11 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
 6. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
    Pavé tactile : glisser à deux doigts vers le haut / le bas = pistes, sur le côté = temps.
 7. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle.
+8. **Copier / coller des clips** (la timeline doit avoir le focus : cliquer dedans) : `Ctrl` (`Cmd`) + glisser
+   dans les pistes sélectionne une **zone de temps** (clips + vide, aimantée à la grille). `Ctrl+C` copie la
+   zone (sans zone : le clip sélectionné), `Ctrl+V` colle à la **tête de lecture**, sur les mêmes pistes, avec
+   les automations, puis **avance la tête de la longueur copiée** : `Ctrl+V` répété enchaîne les copies avec le
+   même écart. `Ctrl+X` coupe, `Suppr` supprime les clips de la zone, `Échap` annule la zone.
 
 En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
 

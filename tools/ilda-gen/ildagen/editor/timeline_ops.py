@@ -53,6 +53,59 @@ class TimelineOpsMixin:
         self.timeline_mutate("Ajouter un clip", lambda: tr.clips.append(clip))
         return clip
 
+    # ── Copier / coller des clips (avec leurs automations et l'espace vide copié) ──
+    def copy_clips(self, clips, start, length):
+        """clips : [(piste, clip)] ; start / length : zone de temps copiée (le vide compris)."""
+        tl = self.doc.timeline
+        self.clip_clipboard = {
+            "length": float(length),
+            "items": [(tl.tracks.index(tr), c.start - start, c.to_dict()) for tr, c in clips],
+        }
+        n = len(clips)
+        self.statusMessage.emit(f"{n} clip(s) copié(s) · {length:.3f} s" if n else "Zone vide copiée")
+
+    def paste_clips(self, t):
+        """Colle à l'instant t (sur les mêmes pistes) puis avance la tête de lecture de la longueur copiée.
+        Renvoie (début, fin, clips collés) ou None."""
+        cb = self.clip_clipboard
+        if not cb:
+            return None
+        from ..core.automation import Automation
+        from ..core.nodes import new_id
+        tl = self.doc.timeline
+        new = []
+        for ti, off, d in cb["items"]:
+            if self.doc.library.get(d.get("def_id")) is None:
+                continue
+            c = Clip.from_dict(d)
+            c.id = new_id()
+            c.start = max(0.0, t + off)
+            c.automations = [Automation.from_dict(dict(a.to_dict(), id=new_id())) for a in c.automations]
+            new.append((ti, c))
+
+        def do():
+            for ti, c in new:
+                while len(tl.tracks) <= ti:
+                    tl.tracks.append(Track(f"Piste {len(tl.tracks) + 1}"))
+                tl.tracks[ti].clips.append(c)
+        self.timeline_mutate("Coller", do)
+        end = t + cb["length"]
+        self.set_playhead(end)
+        return t, end, [c for _, c in new]
+
+    def delete_clips(self, clips, label="Supprimer les clips"):
+        ids = {c.id for _, c in clips}
+        if not ids:
+            return
+        if self.context[0] == "clip" and self.context[1] in ids:
+            self.enter_def()
+            self.set_view_source("timeline")
+
+        def do():
+            for tr in self.doc.timeline.tracks:
+                tr.clips = [c for c in tr.clips if c.id not in ids]
+        self.timeline_mutate(label, do)
+
     def delete_clip(self, clip_id):
         tl = self.doc.timeline
         tr, clip = tl.find_clip(clip_id)

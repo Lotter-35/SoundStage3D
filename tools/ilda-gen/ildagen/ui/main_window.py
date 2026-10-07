@@ -137,6 +137,22 @@ class MainWindow(QMainWindow):
         else:
             self.editor.delete_selected()
 
+    # Copier / couper / coller : la timeline (clips) si elle a le focus, sinon les calques
+    def _timeline_focused(self):
+        return QApplication.focusWidget() is self.timeline.canvas
+
+    def copy_pressed(self):
+        if not (self._timeline_focused() and self.timeline.canvas.copy_clips()):
+            self.editor.copy_selection()
+
+    def cut_pressed(self):
+        if not (self._timeline_focused() and self.timeline.canvas.cut_clips()):
+            self.editor.cut_selection()
+
+    def paste_pressed(self):
+        if not (self._timeline_focused() and self.timeline.canvas.paste_clips()):
+            self.editor.paste()
+
     def export_ilda(self):
         ExportDialog(self.editor, self).exec()
 

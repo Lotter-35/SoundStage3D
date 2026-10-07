@@ -56,9 +56,9 @@ def build_actions(win):
     # Édition
     act("undo", "Annuler", ed.undo, SK.Undo)
     act("redo", "Rétablir", ed.redo, [QKeySequence(SK.Redo), QKeySequence("Ctrl+Y")])
-    act("cut", "Couper", ed.cut_selection, SK.Cut)
-    act("copy", "Copier", ed.copy_selection, SK.Copy)
-    act("paste", "Coller", ed.paste, SK.Paste)
+    act("cut", "Couper", win.cut_pressed, SK.Cut)
+    act("copy", "Copier", win.copy_pressed, SK.Copy)
+    act("paste", "Coller", win.paste_pressed, SK.Paste)
     act("duplicate", "Dupliquer", ed.duplicate_selection, "Ctrl+D")
     act("delete", "Supprimer", win.delete_pressed, [QKeySequence("Delete"), QKeySequence("Backspace")])
     act("select_all", "Tout sélectionner", ed.select_all, SK.SelectAll)

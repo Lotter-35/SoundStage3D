@@ -53,6 +53,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.preview_clip = None   # clip de cette clé : reste visible même sur sa toute dernière image
         self.playing = False
         self.clipboard = []
+        self.clip_clipboard = None   # clips copiés dans la timeline (avec la longueur de la zone copiée)
         self.dirty = False
         self.selected_clip = None
         self.last_touched = None   # dernier calque créé / sélectionné / colorié (repris par l'outil Sélection)
