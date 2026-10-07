@@ -111,15 +111,17 @@ def smart_snap(box, others, grid, threshold):
     tx = list(gx)
     ty = list(gy)
     for b in others:
-        tx += [b[0], (b[0] + b[2]) / 2, b[2]]
-        ty += [b[1], (b[1] + b[3]) / 2, b[3]]
+        bw, bh = b[2] - b[0], b[3] - b[1]
+        # Autre trait : dans son épaisseur, seul son milieu sert de repère
+        tx += [(b[0] + b[2]) / 2] if bw < 0.05 * bh else [b[0], (b[0] + b[2]) / 2, b[2]]
+        ty += [(b[1] + b[3]) / 2] if bh < 0.05 * bw else [b[1], (b[1] + b[3]) / 2, b[3]]
     w, h = box[2] - box[0], box[3] - box[1]
     mx = [box[0], (box[0] + box[2]) / 2, box[2]]
     my = [box[1], (box[1] + box[3]) / 2, box[3]]
-    # Ligne (forme très fine) : dans le sens de sa longueur, seul son centre s'aligne
-    if h < 0.05 * w:
+    # Ligne (forme très fine) : seul son milieu s'aligne, dans sa longueur comme dans son épaisseur
+    # (le cadre d'un trait a une petite épaisseur pour pouvoir l'attraper : ses bords ne comptent pas)
+    if h < 0.05 * w or w < 0.05 * h:
         mx = [mx[1]]
-    if w < 0.05 * h:
         my = [my[1]]
 
     def best(ms, ts):

@@ -187,7 +187,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TRF-17 | **Déplacement en 3 dimensions** = **incliner la forme autour de X et Y avec effet de perspective** | Décidé |
 | TRF-18 | Lignes simples : poignées dédiées (2 extrémités + rotation) | Déduit (existe déjà dans l'outil actuel) |
 | TRF-19 | Une **ligne n'a pas d'épaisseur** : pas de cadre ni de poignées de largeur, seulement ses deux extrémités (`Maj` = aimant de grille, ou pas de 15° sans grille) et la rotation | Retour |
-| TRF-20 | **Aligner une ligne dans sa largeur** : le magnétisme l'accroche par son **centre**, pas par ses côtés | Retour |
+| TRF-20 | **Aligner une ligne** (Maj + déplacer, aimant de grille) : elle s'accroche **toujours par le milieu du trait**, dans sa longueur comme dans son épaisseur (jamais par le dessus / dessous de son cadre) ; un autre trait ne sert de repère que par son milieu | Retour |
 | TRF-21 | Clic droit → **Symétrie horizontale / verticale** (TRF-16 retenu) | Retour |
 
 ### 8.3 Création des formes de base

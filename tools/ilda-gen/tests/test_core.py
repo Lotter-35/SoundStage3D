@@ -221,6 +221,15 @@ def test_int_param_progressive():
     assert resolve_params(m, c)["seed"] == 48
 
 
+def test_line_snaps_center_in_thickness():
+    from ildagen.core.document import GridSettings
+    from ildagen.core.grid import smart_snap
+    g = GridSettings()
+    # Trait horizontal (cadre d'épaisseur 0,02) dont le bord du haut est tout près de y = 0,25 : seul le milieu compte
+    dx, dy, _ = smart_snap((-0.3, 0.232, 0.3, 0.252), [], g, 0.03)
+    assert abs((0.232 + 0.252) / 2 + dy - 0.25) < 1e-9, dy
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):
