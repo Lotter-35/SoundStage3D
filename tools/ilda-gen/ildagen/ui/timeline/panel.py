@@ -1,7 +1,7 @@
 """Panneau de la timeline : transport + zone des pistes + barres de défilement."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QGridLayout, QScrollBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QGridLayout, QScrollArea, QScrollBar, QVBoxLayout, QWidget
 
 from .canvas import TimelineCanvas
 from .geometry import HEADER_W
@@ -17,7 +17,16 @@ class TimelinePanel(QWidget):
         lay.setSpacing(0)
         self.canvas = TimelineCanvas(editor, playback)
         self.transport = TransportBar(editor, playback, self.canvas)
-        lay.addWidget(self.transport)
+        # La barre de transport défile si la place manque : elle ne doit pas bloquer la largeur des panneaux
+        self.transport_scroll = QScrollArea()
+        self.transport_scroll.setWidget(self.transport)
+        self.transport_scroll.setWidgetResizable(True)
+        self.transport_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.transport_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.transport_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.transport_scroll.setFixedHeight(self.transport.sizeHint().height())
+        self.transport_scroll.horizontalScrollBar().setFixedHeight(4)
+        lay.addWidget(self.transport_scroll)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(0)

@@ -45,6 +45,7 @@ Légende :
 | WIN-03 | **Tous les panneaux internes sont redimensionnables** (séparateurs déplaçables : colonnes, sous-fenêtres). | Demandé |
 | WIN-04 | Disposition : barre de menus (haut) → barre de connexion (haut) → barre d'outils (gauche) → mire (centre) → calques (droite, collés au bord droit de la fenêtre) → timeline (bas). | Demandé (timeline en bas : Déduit) |
 | WIN-06 | Le panneau **Calques + Propriétés prend toute la hauteur** (sous la barre de connexion) ; la **timeline** est en bas, sous les outils et la mire, et **s'arrête contre ce panneau** (elle ne prend plus toute la largeur). | Retour |
+| WIN-07 | Le panneau Calques / Propriétés peut être **beaucoup élargi** (la barre de transport de la timeline défile au lieu de bloquer la largeur) ; les réglages sous un calque utilisent **toute la largeur** (noms complets, champs étirés), en respectant le retrait. | Retour |
 | WIN-05 | Toutes les actions secondaires passent par le **clic droit** (menus contextuels), pas de boutons partout. | Demandé |
 
 ---

@@ -90,9 +90,9 @@ class ParamForm(QWidget):
         self._editing = False
         node = editor.find(node_id)
         grid = QGridLayout(self)
-        m = (26, 2, 8, 4) if compact else (10, 6, 10, 8)
+        m = (8, 2, 6, 4) if compact else (10, 6, 10, 8)
         grid.setContentsMargins(*m)
-        grid.setHorizontalSpacing(8)
+        grid.setHorizontalSpacing(4 if compact else 8)
         grid.setVerticalSpacing(3 if compact else 4)
         grid.setColumnStretch(1, 1)
         if node is None:
@@ -134,6 +134,7 @@ class ParamForm(QWidget):
                 grid.addWidget(field, row, 0, 1, 2)
             else:
                 grid.addWidget(label, row, 0)
+                # Les champs prennent toute la largeur disponible (sauf case à cocher / couleur)
                 grid.addWidget(field, row, 1, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color") else Qt.AlignmentFlag(0))
                 grid.addWidget(reset, row, 2)
                 if auto is not None:

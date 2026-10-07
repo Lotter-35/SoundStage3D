@@ -49,6 +49,7 @@ class LayerTreeView(QTreeView):
         self.setStyle(self._style)
         self.setHeaderHidden(True)
         self.setIndentation(IND)
+        self.setRootIsDecorated(False)      # pas de marge perdue au premier niveau (flèches dessinées dans la ligne)
         self.setUniformRowHeights(False)
         self.setMouseTracking(True)
         self.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)

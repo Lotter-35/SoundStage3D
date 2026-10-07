@@ -2,7 +2,7 @@
 
 from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QLinearGradient, QPainter, QPen, QPolygonF
-from PySide6.QtWidgets import QCheckBox, QColorDialog, QComboBox, QLineEdit, QToolButton, QWidget
+from PySide6.QtWidgets import QCheckBox, QColorDialog, QComboBox, QLineEdit, QSizePolicy, QToolButton, QWidget
 
 from .. import theme
 
@@ -36,7 +36,7 @@ class ScrubField(QLineEdit):
         self._acc = 0.0
         self.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         self.setCursor(Qt.CursorShape.SizeHorCursor)
-        self.setMinimumWidth(56)
+        self.setMinimumWidth(48)
         self.setFont(theme.mono_font(11))
         self.unit_text = unit.strip()
         if self.unit_text:
@@ -327,6 +327,10 @@ class EnumField(QComboBox):
         super().__init__(parent)
         self.addItems(options)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        # Prend la largeur disponible sans exiger la place du plus long choix
+        self.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.setMinimumContentsLength(4)
+        self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         self.activated.connect(self._chosen)
 
     def set_value(self, v):
