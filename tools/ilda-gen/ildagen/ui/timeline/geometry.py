@@ -71,6 +71,24 @@ def clip_rows(clip, library, editor):
     return out
 
 
+def track_blocks(rows):
+    """{id de piste: (haut, bas)} : la piste et toutes les lignes de ses clips dépliés forment un bloc."""
+    out = {}
+    for r in rows:
+        a, b = out.get(r.track.id, (r.y, r.y + r.h))
+        out[r.track.id] = (min(a, r.y), max(b, r.y + r.h))
+    return out
+
+
+def clip_bottoms(rows):
+    """{id de clip déplié: bas de sa dernière ligne}."""
+    out = {}
+    for r in rows:
+        if r.kind != "track":
+            out[r.clip.id] = max(out.get(r.clip.id, 0), r.y + r.h)
+    return out
+
+
 LABEL_H = 14   # bande du nom d'un réglage, en haut de sa ligne (dans le clip)
 
 

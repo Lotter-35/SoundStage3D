@@ -304,9 +304,18 @@ def draw_headers(p, geo, rows, ed):
     """Colonne de gauche : seulement les pistes. Les modifieurs et réglages sont écrits dans leur clip."""
     w = HEADER_W
     p.fillRect(QRectF(0, geo.top, w, geo.height - geo.top), theme.qc(theme.BG_PANEL))
+    from .geometry import track_blocks
+    blocks = track_blocks(rows)
     for r in rows:
-        if r.kind != "track" or r.y + r.h < geo.top or r.y > geo.height:
+        if r.kind != "track":
             continue
+        top, bottom = blocks[r.track.id]
+        if bottom < geo.top or top > geo.height:
+            continue
+        if bottom - top > r.h:
+            # Clips dépliés : l'en-tête de la piste s'étend sur toutes leurs lignes
+            p.fillRect(QRectF(0, top, w, bottom - top), theme.qc("#ffffff", 0.02))
+            p.fillRect(QRectF(3, top + 6, 2, bottom - top - 12), theme.qc(theme.ACCENT, 0.45))
         p.setPen(theme.qc(theme.TEXT_OFF if r.track.muted else theme.TEXT))
         p.setFont(theme.ui_font(12))
         p.drawText(QRectF(10, r.y, w - 70, r.h), Qt.AlignmentFlag.AlignVCenter, r.track.name)
@@ -320,7 +329,7 @@ def draw_headers(p, geo, rows, ed):
             p.drawText(br, Qt.AlignmentFlag.AlignCenter, label)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(theme.qc(theme.BORDER), 1))
-        p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))
+        p.drawLine(QPointF(0, bottom - 0.5), QPointF(geo.width, bottom - 0.5))    # fin du bloc de la piste
     p.setPen(QPen(theme.qc(theme.BORDER), 1))
     p.drawLine(QPointF(w - 0.5, 0), QPointF(w - 0.5, geo.height))
 

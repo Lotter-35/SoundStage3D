@@ -1,7 +1,7 @@
 """Zone de la timeline : affichage et interactions (tête de lecture, boucle, clips, automations)."""
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import QColorDialog, QInputDialog, QWidget
 
 from ...core.timeline import Track
@@ -10,7 +10,7 @@ from .. import theme
 from ..canvas.view import DEF_MIME
 from . import draw as D
 from . import lanes as L
-from .geometry import CHEVRON_W, CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry
+from .geometry import CHEVRON_W, CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry, clip_bottoms, track_blocks
 from .edit import TimelineEditing
 from .clipboard import TimelineClipboard, range_modifier
 from .menus import TimelineMenus
@@ -99,15 +99,16 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         rows = g.rows(self.editor)
         self.thumbs.begin_paint()
         p.setClipRect(QRectF(HEADER_W, g.top, g.width - HEADER_W, g.height - g.top))
-        for i, r in enumerate(rows):
-            if r.kind == "track":
-                p.fillRect(QRectF(HEADER_W, r.y, g.width - HEADER_W, r.h),
-                           theme.qc("#ffffff", 0.012 if i % 2 else 0.0))
+        blocks = track_blocks(rows)
+        for i, tr in enumerate(self.tl.tracks):
+            if i % 2 and tr.id in blocks:
+                a, b = blocks[tr.id]
+                p.fillRect(QRectF(HEADER_W, a, g.width - HEADER_W, b - a), theme.qc("#ffffff", 0.012))
         D.draw_grid(p, g, self.tl, g.top, g.height)
         sel_clip = self.editor.context[1] if self.editor.context[0] == "clip" else None
         for r in rows:
             if r.kind != "track" and r is r.slot[0]:
-                p.fillRect(QRectF(HEADER_W, r.y, g.width - HEADER_W, r.h), theme.qc(theme.BG_APP))
+                p.fillRect(QRectF(HEADER_W, r.y, g.width - HEADER_W, r.h), theme.qc(theme.BG_APP, 0.6))
             if r.kind == "lane":
                 D.draw_lane(p, g, r, self.editor, self.sel_key)
             elif r.kind == "group":
@@ -116,6 +117,10 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
                 for c in r.track.clips:
                     D.draw_clip(p, g, r, c, self.editor, c.id == sel_clip or c.id in self.sel_clips,
                                 r.track.muted, self.thumb)
+        self._draw_clip_frames(p, rows, sel_clip)
+        p.setPen(QPen(theme.qc(theme.BORDER), 1))
+        for _, b in blocks.values():
+            p.drawLine(QPointF(HEADER_W, b - 0.5), QPointF(g.width, b - 0.5))     # fin du bloc d'une piste
         self.draw_range(p)
         self.draw_rect(p)
         p.setClipping(False)
@@ -133,6 +138,22 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         if self.thumbs.pending:
             # Vignettes pas encore calculées : on continue juste après (l'interface reste fluide)
             QTimer.singleShot(0, self.update)
+
+    def _draw_clip_frames(self, p, rows, sel_clip):
+        """Clip déplié : un cadre relie la forme à ses modifieurs et réglages (tout appartient au clip)."""
+        g = self.geo
+        bottoms = clip_bottoms(rows)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        for r in rows:
+            if r.kind != "track":
+                continue
+            for c in r.track.clips:
+                if c.id not in bottoms:
+                    continue
+                sel = c.id == sel_clip or c.id in self.sel_clips
+                x0, x1 = g.x(c.start), g.x(c.end)
+                p.setPen(QPen(theme.qc(theme.ACCENT, 0.75) if sel else theme.qc("#ffffff", 0.16), 1))
+                p.drawRoundedRect(QRectF(x0 + 0.5, r.y + 3.5, x1 - x0 - 1, bottoms[c.id] - r.y - 5), 3, 3)
 
     def thumb(self, clip, t_local, size):
         return self.thumbs.get(clip, t_local, size)
