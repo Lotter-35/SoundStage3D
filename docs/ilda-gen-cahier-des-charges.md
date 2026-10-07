@@ -1,7 +1,8 @@
 # Générateur ILDA (ilda-gen) — cahier des charges
 
-Reformulation complète de la note de projet. **Rien n'est codé à ce stade** : ce document liste tout ce qui
-devra l'être. Chaque exigence a un identifiant (ex. `CAL-07`) pour pouvoir la suivre pendant le développement.
+Reformulation complète de la note de projet, complétée au fil des retours pendant le développement. Chaque
+exigence a un identifiant (ex. `CAL-07`) pour pouvoir la suivre. Les exigences ajoutées après la première
+version sont marquées **[Retour]**.
 
 > Note : dans la dictée d'origine, « Hilda » = **ILDA** (format et protocole des lasers de spectacle).
 
@@ -10,6 +11,7 @@ Légende :
 - **[Déduit]** : pas écrit mais nécessaire pour que le demandé fonctionne.
 - **[Proposé]** : amélioration suggérée, pas encore validée.
 - **[Décidé]** : tranché lors des questions/réponses.
+- **[Retour]** : demandé pendant les essais de l'application (après la première version).
 
 ---
 
@@ -27,6 +29,10 @@ Légende :
 | GEN-10 | Code découpé en **nombreux petits fichiers** (objectif : moins de ~400 lignes par fichier). | Décidé |
 | GEN-04 | Workflow en 3 étages : **dessin** (calques/formes) → **modifieurs** (statiques) → **timeline** (modifieurs animés dans le temps, calée sur la musique). | Demandé |
 | GEN-05 | Tout doit être **fluide** (dessin, déplacement des calques, timeline). | Demandé |
+| GEN-11 | **Raccourcis Mac** : `Cmd` remplace `Ctrl` (la touche `Ctrl` physique marche aussi), `Option` = `Alt`, `⌫` = Suppr. | Retour |
+| GEN-12 | Au démarrage : **envoi live activé** par défaut et **réouverture du dernier projet**. | Retour |
+| GEN-13 | **Enregistrement automatique à chaque modification** (un projet sans nom est gardé dans la sauvegarde automatique et rouvert la fois suivante). Ces trois comportements se désactivent dans Paramètres → Général. | Retour |
+| GEN-14 | **Réinitialisation partout** : chaque réglage peut revenir à sa valeur par défaut (voir RST-01 à RST-07). | Retour |
 
 ---
 
@@ -54,7 +60,7 @@ Légende :
 | MEN-04 | **Exporter en ILDA** (fichier `.ild`) : **l'animation de la timeline s'il y en a une, sinon l'image fixe**. | Décidé |
 | MEN-08 | À l'export : choix du **nombre d'images par seconde** et du format ILDA (par défaut **format 5**, 2D couleurs réelles ; 4 = 3D couleurs réelles, 0/1 = anciens formats à palette). | Décidé |
 | MEN-05 | **Ouvrir un projet** existant. | Déduit |
-| MEN-06 | **Enregistrer sous…**, fichiers récents. | Proposé |
+| MEN-06 | **Enregistrer sous…**, fichiers récents. | Décidé |
 | MEN-07 | **Importer une musique** (peut aussi être dans la timeline). | Demandé (emplacement à définir) |
 
 ### 3.2 Menu « Paramètres »
@@ -62,6 +68,7 @@ Légende :
 | ID | Exigence | Statut |
 |---|---|---|
 | MEN-10 | Menu **Paramètres** pour modifier des réglages. **Vide pour l'instant**, mais la structure doit exister. | Demandé |
+| MEN-11 | Onglets : Général (couleur par défaut, lissage, enregistrement automatique, réouverture, live au démarrage), **Grille** (densités, aimant), Sortie laser, Zone de sécurité, Trapèze, Taille / position. | Retour |
 
 ---
 
@@ -89,7 +96,14 @@ Légende :
 | TLB-04 | Forme de base **Mire ILDA de test** (pour les réglages du laser). | Demandé |
 | TLB-05 | Autres formes de base possibles : étoile, polygone à N côtés, arc… | Proposé (l'étoile est citée plus loin dans la note) |
 | TLB-06 | Section **Formes personnalisées** : reçoit les formes créées depuis les calques (voir § 10). | Demandé |
-| TLB-07 | Raccourcis clavier pour les outils (ex. `V` sélection, `B` crayon). | Proposé |
+| TLB-07 | Raccourcis clavier pour les outils : `V` sélection, `B` crayon, `G` seau, formes `L` `R` `E` `T` `S` `P` `M`. | Retour |
+| TLB-08 | La **lettre du raccourci** est écrite en petit dans le coin de chaque bouton d'outil. | Retour |
+| TLB-09 | Outil **Seau** (`G`) : clic sur une forme = lui applique la couleur active ; sur une forme sélectionnée = colorie toute la sélection (groupes compris) ; `Alt` + clic = tout le groupe qui contient la forme. | Retour |
+| TLB-10 | Section **Couleur** comme Photoshop : **grand carré** = couleur active (clic pour la changer), **petit carré** derrière = seconde couleur ; `X` inverse les deux, `D` remet les couleurs par défaut. | Retour |
+| TLB-11 | Changer la couleur active **recolore en direct** les formes sélectionnées (annulable). | Retour |
+| TLB-12 | **Pas de dégradé ni de bouton « appliquer à la sélection »** dans la section Couleur : le seau applique la couleur, les dégradés se font avec le modifieur Dégradé. | Retour |
+| TLB-13 | Les nouvelles formes et le seau prennent la couleur active ; un modifieur de couleur placé au-dessus reste prioritaire sur la couleur propre de la forme. | Retour |
+| TLB-14 | Liste des formes personnalisées : `Suppr` supprime la forme sélectionnée **et toutes ses occurrences** (annulable). | Retour |
 
 ---
 
@@ -105,6 +119,9 @@ Légende :
 | MIR-06 | Zoom / déplacement de la vue de la mire, **jusqu'à voir les points laser un par un**. | Décidé |
 | MIR-07 | Rendu fidèle de ce que fait le laser (couleurs, points, trajets éteints optionnels). | Proposé |
 | MIR-08 | **Petit compteur** de points / risque de scintillement dans un coin de la mire. | Décidé |
+| MIR-09 | Bouton **aimant** au-dessus de la mire (et `Ctrl+;`) : les poignées s'accrochent à la grille. | Retour |
+| MIR-10 | Raccourcis grille : `Ctrl+1` sans grille, `Ctrl+2` orthogonale, `Ctrl+3` polaire ; `Ctrl+0` ajuste la vue. | Retour |
+| MIR-11 | Pendant qu'on règle un paramètre dans le panneau de droite, le **cadre bleu de sélection est masqué** dans la mire pour bien voir le résultat. | Retour |
 
 ---
 
@@ -121,6 +138,9 @@ Légende :
 | CRA-07 | **Shift + glisser** en grille polaire : le long d'un cercle → **arc de cercle** (arc, demi-cercle, cercle complet) ; le long d'un rayon de la croix → **trait radial**. | Demandé |
 | CRA-08 | Les points / segments / arcs posés avec Shift s'enchaînent **dans le même calque** (on termine la forme avec Entrée, Échap ou en changeant d'outil). | Décidé |
 | CRA-09 | Lissage / simplification du trait à main levée, **intensité réglable**. | Décidé |
+| CRA-10 | **Clic simple dans le vide** avec le crayon = désélectionne. | Retour |
+| CRA-11 | `Maj` maintenu affiche bien le point aimanté ; `Maj` + clic pose un point visible. | Retour |
+| CRA-12 | `Maj` + glisser trace **une seule ligne** (pas d'enchaînement en polygone). | Retour |
 
 ---
 
@@ -136,6 +156,7 @@ Légende :
 | SEL-04 | Sélection par **rectangle** (glisser dans le vide). | Décidé |
 | SEL-05 | Copier / couper / coller / supprimer **depuis la mire** comme depuis les calques. | Demandé |
 | SEL-06 | Glisser la forme = **déplacement**. | Demandé |
+| SEL-07 | Passer à l'outil Sélection (`V`) **sélectionne automatiquement la forme la plus logique** : les traits qu'on vient de dessiner au crayon (tous), sinon le dernier calque touché. | Retour |
 
 ### 8.2 Transformations type Photoshop (liste complète demandée)
 
@@ -161,6 +182,9 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TRF-16 | Clic droit → Symétrie horizontale / verticale (flip) | Retourne la forme | Proposé |
 | TRF-17 | **Déplacement en 3 dimensions** = **incliner la forme autour de X et Y avec effet de perspective** | Décidé |
 | TRF-18 | Lignes simples : poignées dédiées (2 extrémités + rotation) | Déduit (existe déjà dans l'outil actuel) |
+| TRF-19 | Une **ligne n'a pas d'épaisseur** : pas de cadre ni de poignées de largeur, seulement ses deux extrémités (`Maj` = aimant de grille, ou pas de 15° sans grille) et la rotation | Retour |
+| TRF-20 | **Aligner une ligne dans sa largeur** : le magnétisme l'accroche par son **centre**, pas par ses côtés | Retour |
+| TRF-21 | Clic droit → **Symétrie horizontale / verticale** (TRF-16 retenu) | Retour |
 
 ### 8.3 Création des formes de base
 
@@ -191,6 +215,11 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | CAL-11 | Toutes ces actions aussi au **clic droit** (copier, couper, coller, supprimer, sélectionner…). | Demandé |
 | CAL-12 | Renommer un calque (double-clic ou clic droit). | Proposé |
 | CAL-13 | Glisser-déposer **fluide**. | Demandé |
+| CAL-14 | Dans la scène, on travaille **obligatoirement dans un groupe racine « Forme principale »**, toujours en tête de liste : ni supprimable, ni dégroupable, ni déplaçable ; les nouveaux calques y vont automatiquement ; les anciens projets sont convertis à l'ouverture. | Retour |
+| CAL-15 | **Boutons sous les calques** : Modifieur (menu de tous les modifieurs), nouveau calque (vide, le prochain trait au crayon le remplit), nouveau groupe (groupe la sélection s'il y en a une), forme personnalisée, supprimer. | Retour |
+| CAL-16 | **Portée des modifieurs visible en permanence** (pas seulement au survol) : les calques modifiés sont **décalés vers la droite** sous le modifieur et une **barre verticale sombre**, alignée sur le centre de l'icône du modifieur, longe tous les calques qu'il modifie ; elle s'éclaircit quand le modifieur est sélectionné. | Retour |
+| CAL-17 | Modifieur sélectionné : ses formes sont entourées en pointillés dans la mire et Propriétés indique « Agit sur : … ». | Retour |
+| CAL-18 | Lignes de calques sobres : flèche de dépliage dans la ligne, alignée sur le contenu ; **pas d'effet de survol**. | Retour |
 
 ### 9.2 Groupes
 
@@ -226,6 +255,8 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | FPS-04 | Les formes personnalisées sont **sauvegardées dans le projet**. | Demandé |
 | FPS-05 | Une forme personnalisée peut être replacée dans la mire (dessin) **et dans la timeline**. | Demandé |
 | FPS-06 | Bibliothèque de formes partagée entre projets. | Proposé |
+| FPS-07 | Cliquer sur un clip de la timeline **met en évidence sa forme personnalisée** dans la liste de gauche. | Retour |
+| FPS-08 | Double-clic sur une occurrence (mire ou liste) = éditer la forme ; toutes les occurrences suivent. | Retour |
 
 ---
 
@@ -244,8 +275,11 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | MOD-07 | Ajout d'un modifieur via **clic droit** dans les calques. | Déduit (règle « tout au clic droit ») |
 | MOD-08 | Réglage des paramètres dans un panneau **Propriétés** situé **sous les calques**, **repliable**, et aussi **directement dans la ligne du calque** (réglages rapides). | Décidé |
 | MOD-11 | Couleur par défaut sans modifieur : **blanc**, configurable dans les Paramètres. | Décidé |
-| MOD-09 | Activer / désactiver un modifieur (œil ou bouton bypass). | Proposé |
+| MOD-09 | Activer / désactiver un modifieur (œil ou bouton bypass). | Décidé |
 | MOD-10 | Liste de modifieurs **extensible** facilement (architecture plug-in). | Demandé (« on verra pour en rajouter ») |
+| MOD-12 | Les réglages numériques se règlent par **cliquer-glisser gauche / droite** sur la valeur. | Retour |
+| MOD-13 | Double-clic pour saisir une valeur : **seul le nombre est sélectionné**, l'unité (°, %, s…) reste à part et ne se sélectionne pas. | Retour |
+| MOD-14 | Sous-modifieurs (Translation, Rotation, Échelle) via clic droit sur un modifieur → Ajouter un sous-modifieur, ou en glissant une Translation sur un modifieur. | Retour |
 
 ### 11.2 Liste des modifieurs demandés
 
@@ -271,6 +305,19 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | AUT-02 | On **modifie ensuite un réglage à la main** (dans les Propriétés, dans la ligne du calque, ou en manipulant la forme dans la mire) : l'automation **se lie automatiquement** à ce paramètre. | Décidé |
 | AUT-03 | Si on déplace / tourne / met à l'échelle la forme dans la mire, l'automation se lie directement à la **position / rotation / échelle de la forme** (réglages de transformation de chaque calque, automatables comme ceux d'un modifieur) : pas de modifieur caché ajouté dans la pile. | Décidé (implémentation) |
 | AUT-04 | La liaison reste modifiable (clic droit → Changer le paramètre lié / Délier). | Proposé |
+| AUT-05 | Autre méthode, plus directe : **cliquer dans la ligne d'un réglage** d'un clip déplié pose une clé, l'automation est créée directement. | Retour |
+
+### 11.4 Réinitialisation
+
+| ID | Exigence | Statut |
+|---|---|---|
+| RST-01 | **`Ctrl+Maj+R`** (ou clic droit, ou bouton ↺ dans l'en-tête de Propriétés) : réinitialise tous les réglages de la sélection. | Retour |
+| RST-02 | **Bouton ↺ à droite de chaque réglage**, dans Propriétés **et** dans les réglages affichés sous les calques / modifieurs. Estompé quand la valeur est déjà celle par défaut. | Retour |
+| RST-03 | **`Alt` + clic** sur une valeur, ou clic droit sur son nom / sa valeur → Réinitialiser : remet ce réglage seul. | Retour |
+| RST-04 | Timeline : **bouton ↺ à côté du nom de chaque ligne** de réglage : supprime son automation (le réglage reprend sa valeur fixe), ou remet la valeur fixe par défaut s'il n'est pas animé. | Retour |
+| RST-05 | Timeline : **clic droit sur un point de courbe** = le remettre à la valeur par défaut ; **`Maj` + clic droit** = menu type de courbe / supprimer. | Retour |
+| RST-06 | Couleurs de tracé : `D` remet les couleurs par défaut. | Retour |
+| RST-07 | Toutes les réinitialisations sont **annulables**. | Retour |
 
 ---
 
@@ -289,6 +336,10 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TML-07 | **Tout** paramètre de modifieur est animable (ex. direction de la translation de couleur). | Demandé |
 | TML-08 | **Plusieurs pistes** jouées en même temps (points additionnés, compteur de scintillement visible). | Décidé |
 | TML-09 | Les formes personnalisées placées dans la timeline sont **liées** : modifier la forme met à jour toutes ses occurrences. | Décidé |
+| TML-10 | **Aperçu de la forme le long du clip** (vignettes, automations comprises) ; rendu **optimisé, la vitesse passe avant la beauté**. | Retour |
+| TML-11 | Clip déplié : **chaque modifieur de la forme apparaît avec tous ses réglages animables** (accès direct, même sans automation existante) ; la valeur fixe d'un réglage non animé est en pointillés, un point bleu signale les réglages animés. | Retour |
+| TML-12 | Cliquer sur le nom d'un modifieur dans la timeline replie / déplie ses réglages ; **replié, aucun de ses réglages (même animés) n'est affiché**. | Retour |
+| TML-13 | Déplier le clip par le chevron à gauche du clip ou par double-clic. | Retour |
 
 ### 12.2 Navigation et lecture
 
@@ -299,6 +350,9 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TMN-03 | **Play / Pause**, raccourci **Espace**. | Demandé |
 | TMN-04 | **Lecture en boucle** (zone de boucle). | Demandé |
 | TMN-05 | Pendant la lecture, le rendu est affiché dans la mire et **envoyé au laser** si l'envoi live est actif. | Déduit |
+| TMN-06 | **Molette = défilement horizontal** ; `Maj` + molette = pistes de haut en bas ; `Ctrl` + molette = zoom. | Retour |
+| TMN-07 | Zone de boucle : se règle en glissant dans la bande en haut de la règle ; elle **ne peut pas passer avant 0**. | Retour |
+| TMN-08 | La timeline (clips, automations, BPM, boucle…) est **sauvegardée et restaurée** avec le projet. | Retour |
 
 ### 12.3 Grille musicale et magnétisme
 
@@ -312,7 +366,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | TMG-06 | Subdivisions : **demi-temps, quarts, triolets**… grille réglable. | Demandé |
 | TMG-07 | **Mode magnétique (snap) ON/OFF** : les débuts/fins de clips et points de courbe s'accrochent à la grille. | Demandé |
 | TMG-08 | Détection automatique du BPM. | Futur (pas maintenant) |
-| TMG-09 | Tap tempo. | Proposé |
+| TMG-09 | Tap tempo. | Décidé |
 
 ### 12.4 Musique
 
@@ -329,7 +383,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | ID | Exigence | Statut |
 |---|---|---|
 | SAV-01 | Deux formats : **projet** (état complet du logiciel) et **fichier ILDA** exporté. | Demandé |
-| SAV-02 | Sauvegarde auto / récupération après plantage. | Proposé (existe déjà dans l'outil actuel) |
+| SAV-02 | Sauvegarde auto / récupération après plantage (voir GEN-13 : à chaque modification). | Retour |
 | SAV-03 | **Annuler / Rétablir** (Ctrl + Z / Ctrl + Y, Cmd sur Mac) sur toutes les actions. | Décidé |
 | SAV-04 | Conversion forme → points laser : interpolation, points de coin, points éteints (blanking) pour les sauts. | Déduit |
 | SAV-05 | Protocole d'envoi au DAC (IDN UDP ou autre selon le DAC). | Déduit |
