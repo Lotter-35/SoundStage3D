@@ -223,6 +223,7 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | CAL-16 | **Portée des modifieurs visible en permanence** (pas seulement au survol) : les calques modifiés sont **décalés vers la droite** sous le modifieur et une **barre verticale sombre**, alignée sur le centre de l'icône du modifieur, longe tous les calques qu'il modifie ; elle s'éclaircit quand le modifieur est sélectionné. | Retour |
 | CAL-21 | Glisser-déposer : **jamais dans un modifieur** (pas de cadre bleu sur un modifieur) : on va au-dessus ou en dessous ; la **ligne d'insertion n'est jamais décalée** (alignée au niveau des modifieurs) ; dans un groupe : lâcher au milieu de sa ligne (cadre). | Retour |
 | CAL-20 | **Plusieurs modifieurs empilés ne se décalent pas entre eux** : ils restent alignés et partagent la même barre ; seules les formes (et groupes) qu'ils modifient sont décalées, d'un seul cran quel que soit le nombre de modifieurs. | Retour |
+| CAL-22 | Liste des calques **épurée** : plus de résumé à droite du nom (« X 0.00 · Y 0.00 », « #FF0000 », « x2 »…) ; seulement icône, nom, cadenas et œil. | Retour |
 | CAL-17 | Modifieur sélectionné : ses formes sont entourées en pointillés dans la mire et Propriétés indique « Agit sur : … ». | Retour |
 | CAL-19 | Le **cadenas est toujours affiché** à côté de l'œil : ouvert et discret quand le calque est libre, fermé quand il est verrouillé. | Retour |
 | CAL-18 | Lignes de calques sobres : flèche de dépliage dans la ligne, alignée sur le contenu ; **pas d'effet de survol**. | Retour |

@@ -158,14 +158,6 @@ class LayerDelegate(QStyledItemDelegate):
         p.setPen(theme.qc(theme.TEXT_OFF if dim else theme.TEXT))
         p.drawText(QRect(x, r.top(), name_w, r.height()), Qt.AlignmentFlag.AlignVCenter,
                    fm.elidedText(name, Qt.TextElideMode.ElideRight, name_w))
-        x += name_w + 8
-        if node.kind == "modifier" and node.modifier and x < right_limit:
-            summary = node.modifier.summary(self.view.editor.resolve_display_params(node))
-            p.setPen(theme.qc(theme.TEXT_OFF if dim else theme.TEXT_DIM))
-            p.setFont(theme.ui_font(11))
-            fm2 = p.fontMetrics()
-            p.drawText(QRect(x, r.top(), right_limit - x, r.height()), Qt.AlignmentFlag.AlignVCenter,
-                       fm2.elidedText(summary, Qt.TextElideMode.ElideRight, right_limit - x))
         # Cadenas toujours visible à côté de l'œil : ouvert (discret) ou fermé
         lr = lock_rect(r)
         lock = icons.pixmap("lock", theme.TEXT, 14) if node.locked else icons.pixmap("lock-open", theme.TEXT_OFF, 14)
