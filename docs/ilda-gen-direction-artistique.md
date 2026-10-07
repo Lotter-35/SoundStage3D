@@ -77,3 +77,8 @@ Emplacements retenus :
   modifieurs et réglages (gris, petits), 4) les aides (grille, ↺, flèches : très discrets).
 - Pas de compteur ni de résumé dans les clips ; la zone de boucle est une fine barre grise.
 - Les noms des réglages ont leur bande en haut de la ligne : la courbe passe toujours dessous.
+
+## Réglages oui / non
+
+Interrupteur (pastille qui glisse, bleu = oui, gris = non) suivi du mot **« Oui »** ou **« Non »** : jamais une
+simple case pleine sans coche, dont l'état est ambigu.
