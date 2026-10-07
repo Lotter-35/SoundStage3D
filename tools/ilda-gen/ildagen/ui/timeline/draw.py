@@ -158,6 +158,13 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
 
 
 def draw_lane(p, geo, row, ed, sel_key):
+    """Ligne d'un réglage dans un clip : courbe / valeur, clés, puis son nom en haut (dans le clip)."""
+    _draw_lane_content(p, geo, row, ed, sel_key)
+    if not row.auto.armed:
+        draw_lane_label(p, geo, row, ed)
+
+
+def _draw_lane_content(p, geo, row, ed, sel_key):
     clip, auto = row.clip, row.auto
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
     # Réglage pas utilisé : fond du clip grisé (plus sombre)
@@ -168,14 +175,14 @@ def draw_lane(p, geo, row, ed, sel_key):
         p.drawText(QRectF(max(HEADER_W, x0) + 8, row.y, max(10.0, x1 - max(HEADER_W, x0) - 16), row.h),
                    Qt.AlignmentFlag.AlignVCenter, "En attente : modifiez un réglage (Propriétés ou mire)")
         return
-    if row.mixed:
-        draw_inline_label(p, geo, row, row.label or auto.label)
     node, spec = L.target(ed, clip, auto)
     rng = L.value_range(spec, auto)
     a, b = max(HEADER_W, x0), min(geo.width, x1)
     if b <= a:
         return
     xs = np.arange(a, b + 1, 2.0)
+    if not auto.keys and row.small:
+        return      # ligne réduite sans clé : seulement son nom (pas de trait à travers le texte)
     if not auto.keys and node is not None:
         # Réglage pas encore animé : sa valeur fixe en pointillés (cliquer pour poser une clé)
         from ...core import nodes as N
@@ -246,111 +253,72 @@ def lane_resettable(ed, row):
 
 
 def draw_group(p, geo, row):
-    """Ligne d'un modifieur sous un clip déplié."""
+    """Ligne d'un modifieur sous un clip déplié : flèche, icône et nom dans le clip (clic = replier)."""
     clip = row.clip
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
-    p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.ACCENT, 0.06))
-    if row.mixed:
-        opened = row.node.id not in clip.closed_nodes
-        draw_inline_label(p, geo, row, ("▾ " if opened else "▸ ") + row.node.name, theme.ACCENT)
-
-
-def draw_inline_label(p, geo, row, text, color=None):
-    """Nom d'une ligne écrit dans le clip (quand les clips d'une même ligne n'ont pas les mêmes réglages)."""
-    x0, x1 = max(HEADER_W, geo.x(row.clip.start)) + 4, geo.x(row.clip.end) - 4
-    if x1 - x0 < 16:
+    p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.ACCENT, 0.08))
+    a, b = max(HEADER_W, x0) + 3, x1 - 3
+    if b - a < 14:
         return
-    p.setFont(theme.ui_font(9))
-    p.setPen(theme.qc(color or theme.TEXT_DIM, 0.9))
-    fm = p.fontMetrics()
-    p.drawText(QRectF(x0, row.y + 1, x1 - x0, min(row.h, 14)), Qt.AlignmentFlag.AlignVCenter,
-               fm.elidedText(text, Qt.TextElideMode.ElideRight, int(x1 - x0)))
+    opened = row.node.id not in clip.closed_nodes
+    cy = row.y + row.h / 2
+    p.drawPixmap(QPointF(a, cy - 5), icons.pixmap("chevron-down" if opened else "chevron-right", theme.TEXT_DIM, 10))
+    if b - a > 30:
+        p.drawPixmap(QPointF(a + 12, cy - 6), icons.pixmap(row.node.modifier.icon, theme.ACCENT, 12))
+    if b - a > 50:
+        p.setFont(theme.ui_font(10))
+        p.setPen(theme.qc(theme.TEXT))
+        fm = p.fontMetrics()
+        p.drawText(QRectF(a + 28, row.y, b - a - 28, row.h), Qt.AlignmentFlag.AlignVCenter,
+                   fm.elidedText(row.node.name, Qt.TextElideMode.ElideRight, int(b - a - 28)))
+
+
+def draw_lane_label(p, geo, row, ed):
+    """En haut de la ligne, dans le clip : flèche (réduire / agrandir), nom du réglage, ↺ à droite."""
+    clip, auto = row.clip, row.auto
+    a, b = max(HEADER_W, geo.x(clip.start)) + 3, geo.x(clip.end) - 3
+    if b - a < 14:
+        return
+    tx, ty, tw, th = lane_toggle_rect(geo, row)
+    p.drawPixmap(QPointF(tx + 1, ty + (th - 10) / 2),
+                 icons.pixmap("chevron-right" if row.small else "chevron-down", theme.TEXT_OFF, 10))
+    rx, ry, rw, rh = lane_reset_rect(geo, row)
+    room = b - a
+    if room > 60:
+        on = lane_resettable(ed, row)
+        p.drawPixmap(QPointF(rx + 1, ry + (rh - 11) / 2),
+                     icons.pixmap("rotate-ccw", theme.TEXT_DIM if on else theme.TEXT_OFF, 11))
+    if room > 30:
+        label = ("Automation en attente…" if auto.armed else auto.label) if row.node is None else row.label
+        animated = bool(auto.keys)
+        p.setFont(theme.ui_font(9))
+        p.setPen(theme.qc(theme.ACCENT if auto.armed else
+                          (theme.TEXT if animated else (theme.TEXT_DIM if row.used else theme.TEXT_OFF))))
+        fm = p.fontMetrics()
+        w = (rx - 4 if room > 60 else b) - (tx + tw + 2)
+        p.drawText(QRectF(tx + tw + 2, ty, max(0.0, w), th), Qt.AlignmentFlag.AlignVCenter,
+                   fm.elidedText(label, Qt.TextElideMode.ElideRight, int(max(0.0, w))))
 
 
 def draw_headers(p, geo, rows, ed):
+    """Colonne de gauche : seulement les pistes. Les modifieurs et réglages sont écrits dans leur clip."""
     w = HEADER_W
     p.fillRect(QRectF(0, geo.top, w, geo.height - geo.top), theme.qc(theme.BG_PANEL))
-    p.setFont(theme.ui_font(12))
     for r in rows:
-        if r.y + r.h < geo.top or r.y > geo.height or (r.kind != "track" and r is not r.slot[0]):
+        if r.kind != "track" or r.y + r.h < geo.top or r.y > geo.height:
             continue
-        if r.kind != "track" and r.mixed:
-            # Clips différents sur cette ligne : les noms sont aussi écrits dans chaque clip
-            names = []
-            for x in r.slot:
-                n = x.node.name if x.kind == "group" else (x.label or x.auto.label)
-                if n not in names:
-                    names.append(n)
-            lanes_ = [x for x in r.slot if x.kind == "lane"]
-            if lanes_:
-                tx, _, _, _ = lane_toggle_rect(lanes_[0])
-                p.drawPixmap(QPointF(tx + 2, r.y + (r.h - 10) / 2),
-                             icons.pixmap("chevron-right" if r.small else "chevron-down", theme.TEXT_OFF, 10))
-            else:
-                opened = any(x.node.id not in x.clip.closed_nodes for x in r.slot)
-                p.drawPixmap(QPointF(10, r.y + (r.h - 12) / 2),
-                             icons.pixmap("chevron-down" if opened else "chevron-right", theme.TEXT_DIM, 12))
-            p.setFont(theme.ui_font(10))
-            p.setPen(theme.qc(theme.TEXT_DIM))
-            fm = p.fontMetrics()
-            p.drawText(QRectF(44, r.y, w - 50, r.h), Qt.AlignmentFlag.AlignVCenter,
-                       fm.elidedText(" · ".join(names), Qt.TextElideMode.ElideRight, w - 50))
-            p.setPen(QPen(theme.qc(theme.BORDER), 1))
-            p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))
-            continue
-        if r.kind == "track":
-            p.setPen(theme.qc(theme.TEXT_OFF if r.track.muted else theme.TEXT))
-            p.setFont(theme.ui_font(12))
-            p.drawText(QRectF(10, r.y, w - 70, r.h), Qt.AlignmentFlag.AlignVCenter, r.track.name)
-            for i, (label, on, col) in enumerate((("M", r.track.muted, theme.WARNING), ("S", r.track.solo, theme.ACCENT))):
-                br = QRectF(w - 50 + i * 22, r.y + (r.h - 18) / 2, 18, 18)
-                p.setPen(QPen(theme.qc(col) if on else theme.qc(theme.BORDER), 1))
-                p.setBrush(theme.qc(col, 0.25) if on else Qt.BrushStyle.NoBrush)
-                p.drawRoundedRect(br, 3, 3)
-                p.setPen(theme.qc(theme.TEXT if on else theme.TEXT_DIM))
-                p.setFont(theme.ui_font(10, True))
-                p.drawText(br, Qt.AlignmentFlag.AlignCenter, label)
-            p.setBrush(Qt.BrushStyle.NoBrush)
-        elif r.kind == "group":
-            m = r.node
-            opened = m.id not in r.clip.closed_nodes
-            p.drawPixmap(QPointF(10, r.y + (r.h - 12) / 2),
-                         icons.pixmap("chevron-down" if opened else "chevron-right", theme.TEXT_DIM, 12))
-            p.drawPixmap(QPointF(24, r.y + (r.h - 14) / 2), icons.pixmap(m.modifier.icon, theme.ACCENT, 14))
-            p.setFont(theme.ui_font(11))
-            p.setPen(theme.qc(theme.TEXT))
-            fm = p.fontMetrics()
-            p.drawText(QRectF(44, r.y, w - 50, r.h), Qt.AlignmentFlag.AlignVCenter,
-                       fm.elidedText(m.name, Qt.TextElideMode.ElideRight, w - 50))
-        else:
-            p.setFont(theme.ui_font(11))
-            # Flèche : agrandir / réduire la ligne
-            tx, ty, tw, th = lane_toggle_rect(r)
-            p.drawPixmap(QPointF(tx + 2, r.y + (r.h - 10) / 2),
-                         icons.pixmap("chevron-right" if r.small else "chevron-down", theme.TEXT_OFF, 10))
-            if r.node is not None:
-                animated = any(bool(x.auto.keys) for x in r.slot)
-                label = r.label
-                x = 44
-                used = any(x.used for x in r.slot)
-                p.setPen(theme.qc(theme.TEXT if animated else (theme.TEXT_DIM if used else theme.TEXT_OFF)))
-                if animated:
-                    p.setBrush(theme.qc(theme.ACCENT))
-                    p.setPen(Qt.PenStyle.NoPen)
-                    p.drawEllipse(QPointF(34, r.y + r.h / 2), 3, 3)
-                    p.setBrush(Qt.BrushStyle.NoBrush)
-                    p.setPen(theme.qc(theme.TEXT))
-            else:
-                x = 22
-                p.setPen(theme.qc(theme.ACCENT if r.auto.armed else theme.TEXT_DIM))
-                label = "Automation en attente…" if r.auto.armed else r.auto.label
-            fm = p.fontMetrics()
-            p.drawText(QRectF(x, r.y, w - x - 30, r.h), Qt.AlignmentFlag.AlignVCenter,
-                       fm.elidedText(label, Qt.TextElideMode.ElideRight, w - x - 30))
-            # Bouton ↺ : allumé s'il y a quelque chose à réinitialiser
-            bx, by, bw, bh = lane_reset_rect(r)
-            on = any(lane_resettable(ed, x) for x in r.slot)
-            p.drawPixmap(QPointF(bx + 3, by + 3), icons.pixmap("rotate-ccw", theme.TEXT_DIM if on else theme.TEXT_OFF, 12))
+        p.setPen(theme.qc(theme.TEXT_OFF if r.track.muted else theme.TEXT))
+        p.setFont(theme.ui_font(12))
+        p.drawText(QRectF(10, r.y, w - 70, r.h), Qt.AlignmentFlag.AlignVCenter, r.track.name)
+        for i, (label, on, col) in enumerate((("M", r.track.muted, theme.WARNING), ("S", r.track.solo, theme.ACCENT))):
+            br = QRectF(w - 50 + i * 22, r.y + (r.h - 18) / 2, 18, 18)
+            p.setPen(QPen(theme.qc(col) if on else theme.qc(theme.BORDER), 1))
+            p.setBrush(theme.qc(col, 0.25) if on else Qt.BrushStyle.NoBrush)
+            p.drawRoundedRect(br, 3, 3)
+            p.setPen(theme.qc(theme.TEXT if on else theme.TEXT_DIM))
+            p.setFont(theme.ui_font(10, True))
+            p.drawText(br, Qt.AlignmentFlag.AlignCenter, label)
+        p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(theme.qc(theme.BORDER), 1))
         p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))
     p.setPen(QPen(theme.qc(theme.BORDER), 1))

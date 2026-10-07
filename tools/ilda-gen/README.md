@@ -210,14 +210,14 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    Chaque réglage touché ensuite écrit une clé à la tête de lecture.
 4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit sur un point = le supprimer,
    `Maj` + clic droit = menu (réinitialiser la valeur, type de courbe : linéaire, accélération, ralentissement,
-   en S, palier, Bézier personnalisé avec poignées). Le bouton ↺ à côté du nom d'une ligne supprime son automation
+   en S, palier, Bézier personnalisé avec poignées). Le bouton ↺ (en haut à droite de la ligne, dans le clip) supprime son automation
    (ou remet sa valeur fixe par défaut).
-   **Plusieurs clips dépliés sur une piste** : leurs lignes sont **côte à côte** (chaque clip dans sa plage de
-   temps, sur les mêmes lignes) au lieu de s'empiler. Si les clips d'une ligne n'ont pas les mêmes réglages,
-   le nom est écrit dans chaque clip (l'en-tête liste les noms) ; replier / réduire depuis l'en-tête agit sur
-   toute la ligne.
+   **Tout est dans le clip** : la colonne de gauche ne montre que les pistes. Sous un clip déplié, chaque
+   modifieur (flèche, icône, nom : clic = replier / déplier pour ce clip) et chaque réglage (flèche pour
+   réduire / agrandir, nom, ↺ à droite) sont écrits dans la largeur du clip. Plusieurs clips dépliés sur une
+   piste sont côte à côte, sur les mêmes lignes (pas d'empilement). Replié : seulement le carré de la forme.
    **Hauteur des lignes** : un réglage pas utilisé (pas animé, valeur par défaut) est grisé et sa ligne est
-   réduite automatiquement ; la flèche à gauche du nom réduit / agrandit n'importe quelle ligne, et un clic
+   réduite automatiquement ; la flèche devant son nom réduit / agrandit la ligne, et un clic
    dans une ligne réduite l'agrandit (le clic suivant pose une clé).
    Pendant qu'on **glisse un point**, la mire (et le laser en live) montre l'instant de ce point avec sa
    nouvelle valeur (trait pointillé dans la timeline) ; au relâchement, elle revient à la tête de lecture.

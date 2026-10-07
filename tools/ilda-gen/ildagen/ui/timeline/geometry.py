@@ -13,7 +13,7 @@ CHEVRON_W = 16
 
 
 class Row:
-    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "slot", "mixed")
+    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "slot")
 
     def __init__(self, kind, track, clip, auto, y, h, node=None, label="", small=False, used=True):
         self.kind = kind      # "track", "group" (un modifieur du clip) ou "lane" (un réglage animable)
@@ -27,7 +27,6 @@ class Row:
         self.small = small    # ligne de réglage réduite
         self.used = used      # réglage utilisé (sinon grisé)
         self.slot = [self]    # lignes des autres clips de la piste posées à la même hauteur
-        self.mixed = False    # ces lignes n'ont pas toutes le même nom (le nom est alors écrit dans le clip)
 
     def contains(self, y):
         return self.y <= y < self.y + self.h
@@ -72,14 +71,19 @@ def clip_rows(clip, library, editor):
     return out
 
 
-def lane_toggle_rect(row):
-    """Flèche à gauche du nom d'une ligne de réglage : agrandir / réduire la ligne."""
-    return (18 if row.node is not None else 4, row.y, 16, row.h)
+LABEL_H = 14   # bande du nom d'un réglage, en haut de sa ligne (dans le clip)
 
 
-def lane_reset_rect(row):
-    """Bouton ↺ à droite du nom d'une ligne de réglage (en-tête de gauche)."""
-    return (HEADER_W - 24, row.y + (row.h - 18) / 2, 18, 18)
+def lane_toggle_rect(geo, row):
+    """Flèche avant le nom d'un réglage (dans le clip) : réduire / agrandir la ligne."""
+    x = max(HEADER_W, geo.x(row.clip.start)) + 3
+    return (x, row.y + 1, 12, min(LABEL_H, row.h - 2))
+
+
+def lane_reset_rect(geo, row):
+    """Bouton ↺ en haut à droite de la ligne, dans le clip."""
+    x = geo.x(row.clip.end) - 3 - 13
+    return (x, row.y + 1, 13, min(LABEL_H, row.h - 2))
 
 
 class TimelineGeometry:
@@ -132,10 +136,8 @@ class TimelineGeometry:
                 lanes_ = [r for r in slot if r.kind == "lane"]
                 small = bool(lanes_) and len(lanes_) == len(slot) and all(r.small for r in lanes_)
                 h = LANE_SMALL_H if small else (LANE_H if lanes_ else GROUP_H)
-                mixed = len({(r.kind, r.node.id if r.node is not None else None, r.label, r.auto.key if r.auto else None)
-                             for r in slot}) > 1
                 for r in slot:
-                    r.h, r.slot, r.mixed = h, slot, mixed
+                    r.h, r.slot = h, slot
                     if r.kind == "lane":
                         r.small = small
                 out.extend(slot)

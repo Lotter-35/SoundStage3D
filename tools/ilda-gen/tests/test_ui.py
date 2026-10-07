@@ -490,6 +490,13 @@ def main():
     lanes2 = [r for r in canvas.rows() if r.kind == "lane" and r.clip is c2]
     check("clips dépliés côte à côte (pas d'empilement)", h1 == h2 and lanes2 and all(len(r.slot) == 2 for r in lanes2),
           f"{h1} / {h2}")
+    grp2 = next(r for r in canvas.rows() if r.kind == "group" and r.clip is c2)
+    click(canvas, QPoint(int(canvas.geo.x(c2.start + 0.3)), int(grp2.y + grp2.h / 2)))
+    check("clic sur un modifieur dans son clip : seul ce clip le replie", grp2.node.id in c2.closed_nodes
+          and grp2.node.id not in clip.closed_nodes)
+    click(canvas, QPoint(40, int(grp2.y + grp2.h / 2)))
+    check("colonne de gauche : rien pour les modifieurs", grp2.node.id in c2.closed_nodes)
+    c2.closed_nodes.clear()
     clip.expanded, c2.expanded = was
     tr_row = next(r for r in canvas.rows() if r.kind == "track")
     yy = int(tr_row.y + tr_row.h / 2)
@@ -553,11 +560,12 @@ def main():
     used = next(r for r in rows_now if r.kind == "lane" and r.auto.key == "tf.tx")
     check("réglage non utilisé : ligne grisée et réduite", unused is not None and unused.small and unused.h == LANE_SMALL_H
           and not used.small and used.h == LANE_H)
-    tx, _, tw, _ = lane_toggle_rect(used)
-    click(canvas, QPoint(int(tx + tw / 2), int(used.y + used.h / 2)))
+    tx, ty, tw, th = lane_toggle_rect(canvas.geo, used)
+    click(canvas, QPoint(int(tx + tw / 2), int(ty + th / 2)))
     used2 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     check("flèche : réduire une ligne à la main", used2.small and used2.h == LANE_SMALL_H)
-    click(canvas, QPoint(int(tx + tw / 2), int(used2.y + used2.h / 2)))
+    tx, ty, tw, th = lane_toggle_rect(canvas.geo, used2)
+    click(canvas, QPoint(int(tx + tw / 2), int(ty + th / 2)))
     used3 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     check("flèche : l'agrandir à nouveau", not used3.small and lane.clip.lane_sizes == {})
     un_key = (unused.auto.node_id, unused.auto.key)
@@ -619,7 +627,7 @@ def main():
     # ↺ d'une ligne : supprime l'automation
     lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     n_auto = len(lane.clip.automations)
-    bx, by, bw, bh = lane_reset_rect(lane)
+    bx, by, bw, bh = lane_reset_rect(canvas.geo, lane)
     click(canvas, QPoint(int(bx + bw / 2), int(by + bh / 2)))
     check("↺ de la ligne supprime l'automation", len(lane.clip.automations) == n_auto - 1)
     ed.undo()

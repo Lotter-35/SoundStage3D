@@ -225,7 +225,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             self._press_header(row, x, y)
             return
         if row.kind == "group":
-            self.toggle_slot_group(row)
+            self.toggle_group(row)          # clic sur un modifieur (dans son clip) : replier / déplier
             return
         if row.kind == "track":
             clip, part = self.clip_hit(row, x)
