@@ -9,6 +9,8 @@ import sys
 import tempfile
 import traceback
 
+import numpy as np  # noqa: E402
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ.setdefault("XDG_CONFIG_HOME", tempfile.mkdtemp())
 
@@ -120,7 +122,8 @@ def main():
     q = build_frame(ed, ed.eval_context()).quad
     x0, x1, y0, y1 = q[:, 0].min(), q[:, 0].max(), q[:, 1].min(), q[:, 1].max()
     check("Alt + Maj + coin + aimant : depuis le centre, proportionnel, sur la grille",
-          abs((x0 + x1) / 2 - c0) < 1e-6 and abs((x1 - x0) - (y1 - y0)) < 1e-6 and abs(x1) < 1e-6,
+          abs((x0 + x1) / 2 - c0) < 1e-6 and abs(x1) < 1e-6 and
+          abs((x1 - x0) / (y1 - y0) - np.ptp(q0[:, 0]) / np.ptp(q0[:, 1])) < 1e-6,
           f"x {x0:.3f}..{x1:.3f}  y {y0:.3f}..{y1:.3f}")
     ed.undo()
     rect = ed.find(rect.id)

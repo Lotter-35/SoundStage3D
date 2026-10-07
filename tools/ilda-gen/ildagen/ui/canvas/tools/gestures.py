@@ -37,10 +37,11 @@ def scale_matrix(frame, hid, mouse, shift, alt, snap=None):
                 (mt - a_t) / (ht - a_t) if abs(ht - a_t) > 1e-9 else 1.0)
 
     fx, fy = factors(mouse)
+    drive_x = abs(fx) >= abs(fy)       # axe qui pilote l'échelle proportionnelle
     if snap is not None:
         sx_, sy_ = snap(tuple(mouse))
         if shift and hid.startswith("c"):
-            mouse = (sx_, mouse[1]) if abs(fx) >= abs(fy) else (mouse[0], sy_)
+            mouse = (sx_, mouse[1]) if drive_x else (mouse[0], sy_)
         elif hid in ("e1", "e3"):
             mouse = (sx_, mouse[1])
         elif hid in ("e0", "e2"):
@@ -54,7 +55,8 @@ def scale_matrix(frame, hid, mouse, shift, alt, snap=None):
         else:
             fy = fx if shift else 1.0
     elif shift:
-        k = fx if abs(fx) > abs(fy) else fy
+        # Avec l'aimant, l'axe aimanté garde la main (sinon l'autre, pas aimanté, l'emporterait)
+        k = (fx if drive_x else fy) if snap is not None else (fx if abs(fx) > abs(fy) else fy)
         fx = math.copysign(abs(k), fx) if fx != 0 else k
         fy = math.copysign(abs(k), fy) if fy != 0 else k
     s = mu.about(mu.scaling(fx, fy), a_s, a_t)
