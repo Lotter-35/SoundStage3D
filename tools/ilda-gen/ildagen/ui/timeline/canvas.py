@@ -224,7 +224,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus):
             self.editor.enter_clip(clip.id)
             self.editor.begin("Déplacer le clip" if part == "body" else "Durée du clip")
             self.drag = {"kind": "clip_" + part, "clip": clip, "track": row.track, "x0": x,
-                         "start": clip.start, "end": clip.end}
+                         "start": clip.start, "end": clip.end,
+                         "keys": [(k, k.t) for a in clip.automations for k in a.keys]}
             self.update()
             return
         self._press_lane(row, x, y, e)

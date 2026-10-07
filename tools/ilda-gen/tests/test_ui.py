@@ -423,6 +423,20 @@ def main():
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     ed.enter_clip(clip.id)
+    # Raccourcir le clip : les automations s'étirent proportionnellement
+    times = [(a.id, [k.t for k in a.keys]) for a in clip.automations]
+    d0 = clip.duration
+    tr_row = next(r for r in canvas.rows() if r.kind == "track")
+    yy = int(tr_row.y + tr_row.h / 2)
+    drag(canvas, QPoint(int(canvas.geo.x(clip.end)) - 2, yy),
+         QPoint(int(canvas.geo.x(clip.start + d0 / 2)) - 2, yy), M.AltModifier)
+    f = clip.duration / d0
+    ok = abs(f - 0.5) < 0.05 and all(abs(k.t - t0 * f) < 1e-6 for a in clip.automations
+                                      for (aid, ts) in times if aid == a.id for k, t0 in zip(a.keys, ts))
+    check("raccourcir le clip étire les automations", ok, f"facteur {f:.3f}")
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    ed.enter_clip(clip.id)
     clip.expanded = True
     ed.notify(timeline=True)
     app.processEvents()

@@ -1,5 +1,7 @@
 """Gestes d'édition de la timeline : boucle, pistes, clips, clés et poignées de courbe."""
 
+from PySide6.QtCore import Qt
+
 from ...core import nodes as N
 from . import draw as D
 from . import lanes as L
@@ -123,7 +125,23 @@ class TimelineEditing:
         else:
             e_ = max(self.snap(d["end"] + dt, mods), d["start"] + min_d)
             clip.duration = e_ - clip.start
+        if d["kind"] != "clip_body":
+            self._stretch_keys(d, clip, mods)
         self.editor.notify(timeline=True)
+
+    @staticmethod
+    def _stretch_keys(d, clip, mods):
+        """Changer la durée d'un clip étire ses automations proportionnellement (une montée sur 10 s
+        ramenée à 5 s va toujours jusqu'au bout). Maj : les clés gardent leurs instants (on coupe)."""
+        old = d["end"] - d["start"]
+        keep = bool(mods & Qt.KeyboardModifier.ShiftModifier)
+        f = 1.0 if keep or old <= 1e-9 else clip.duration / old
+        for k, t0 in d["keys"]:
+            if keep and d["kind"] == "clip_left":
+                # Les clés restent à leur place dans le temps quand on rogne le début
+                k.t = t0 + d["start"] - clip.start
+            else:
+                k.t = t0 * f
 
     def _drag_key(self, d, x, y, mods):
         row, k, spec = d["row"], d["key"], d["spec"]
