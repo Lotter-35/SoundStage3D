@@ -106,6 +106,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         D.draw_grid(p, g, self.tl, g.top, g.height)
         sel_clip = self.editor.context[1] if self.editor.context[0] == "clip" else None
         for r in rows:
+            if r.kind != "track" and r is r.slot[0]:
+                p.fillRect(QRectF(HEADER_W, r.y, g.width - HEADER_W, r.h), theme.qc(theme.BG_APP))
             if r.kind == "lane":
                 D.draw_lane(p, g, r, self.editor, self.sel_key)
             elif r.kind == "group":
@@ -206,7 +208,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
                 self.playback.seek(max(0.0, self.snap(t, e.modifiers())))
             return
         rows = self.rows()
-        row = g.row_at(rows, y)
+        row = g.row_at(rows, y, x)
         if x >= HEADER_W and (row is None or row.kind == "track") and range_modifier(e.modifiers()):
             # Cmd/Ctrl + clic sur un clip : l'ajouter / le retirer ; Cmd/Ctrl + glisser : zone de temps à copier
             hit = self.clip_hit(row, x)[0] if row is not None else None
@@ -223,7 +225,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             self._press_header(row, x, y)
             return
         if row.kind == "group":
-            self.toggle_group(row)
+            self.toggle_slot_group(row)
             return
         if row.kind == "track":
             clip, part = self.clip_hit(row, x)
@@ -334,7 +336,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
 
     def mouseDoubleClickEvent(self, e):
         x, y = e.position().x(), e.position().y()
-        row = self.geo.row_at(self.rows(), y)
+        row = self.geo.row_at(self.rows(), y, x)
         if row is None:
             return
         if row.kind == "group":

@@ -481,6 +481,18 @@ def main():
     x_end = int(canvas.geo.x(c2.end)) + 20
     drag(canvas, QPoint(x_end, int(tr_row.y) + 2), QPoint(int(canvas.geo.x(clip.start + 1.0)), yy))
     check("rectangle de sélection : les deux clips", canvas.sel_clips == {clip.id, c2.id}, str(len(canvas.sel_clips)))
+    # Deux clips dépliés : leurs lignes sont côte à côte (même hauteur qu'un seul clip déplié)
+    was = (clip.expanded, c2.expanded)
+    clip.expanded, c2.expanded = True, False
+    h1 = canvas.geo.content_height(ed)
+    c2.expanded = True
+    h2 = canvas.geo.content_height(ed)
+    lanes2 = [r for r in canvas.rows() if r.kind == "lane" and r.clip is c2]
+    check("clips dépliés côte à côte (pas d'empilement)", h1 == h2 and lanes2 and all(len(r.slot) == 2 for r in lanes2),
+          f"{h1} / {h2}")
+    clip.expanded, c2.expanded = was
+    tr_row = next(r for r in canvas.rows() if r.kind == "track")
+    yy = int(tr_row.y + tr_row.h / 2)
     s1, s2 = clip.start, c2.start
     x1 = int(canvas.geo.x(c2.start + 0.5))
     drag(canvas, QPoint(x1, yy), QPoint(x1 + int(canvas.geo.pps), yy), M.AltModifier)

@@ -13,7 +13,7 @@ CHEVRON_W = 16
 
 
 class Row:
-    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used")
+    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "slot", "mixed")
 
     def __init__(self, kind, track, clip, auto, y, h, node=None, label="", small=False, used=True):
         self.kind = kind      # "track", "group" (un modifieur du clip) ou "lane" (un réglage animable)
@@ -26,6 +26,8 @@ class Row:
         self.label = label
         self.small = small    # ligne de réglage réduite
         self.used = used      # réglage utilisé (sinon grisé)
+        self.slot = [self]    # lignes des autres clips de la piste posées à la même hauteur
+        self.mixed = False    # ces lignes n'ont pas toutes le même nom (le nom est alors écrit dans le clip)
 
     def contains(self, y):
         return self.y <= y < self.y + self.h
@@ -110,29 +112,52 @@ class TimelineGeometry:
         for tr in tl.tracks:
             out.append(Row("track", tr, None, None, y, TRACK_H))
             y += TRACK_H
-            for clip in sorted(tr.clips, key=lambda c: c.start):
-                if not clip.expanded:
-                    continue
-                from . import lanes as L
-                for kind, auto, node, label in clip_rows(clip, editor.doc.library, editor):
+            # Clips dépliés de la piste : leurs lignes sont posées côte à côte (même hauteur pour la
+            # même position), chacune dans la plage de temps de son clip — pas d'empilement en escalier
+            from . import lanes as L
+            expanded = [(c, clip_rows(c, editor.doc.library, editor))
+                        for c in sorted(tr.clips, key=lambda c: c.start) if c.expanded]
+            n = max((len(e) for _, e in expanded), default=0)
+            for i in range(n):
+                slot = []
+                for clip, entries in expanded:
+                    if i >= len(entries):
+                        continue
+                    kind, auto, node, label = entries[i]
                     if kind == "group":
-                        row = Row(kind, tr, clip, auto, y, GROUP_H, node, label)
+                        slot.append(Row(kind, tr, clip, auto, y, GROUP_H, node, label))
                     else:
-                        small = L.is_small(editor, clip, auto)
-                        row = Row(kind, tr, clip, auto, y, LANE_SMALL_H if small else LANE_H, node, label,
-                                  small, L.assigned(editor, clip, auto))
-                    out.append(row)
-                    y += row.h
+                        slot.append(Row(kind, tr, clip, auto, y, LANE_H, node, label,
+                                        L.is_small(editor, clip, auto), L.assigned(editor, clip, auto)))
+                lanes_ = [r for r in slot if r.kind == "lane"]
+                small = bool(lanes_) and len(lanes_) == len(slot) and all(r.small for r in lanes_)
+                h = LANE_SMALL_H if small else (LANE_H if lanes_ else GROUP_H)
+                mixed = len({(r.kind, r.node.id if r.node is not None else None, r.label, r.auto.key if r.auto else None)
+                             for r in slot}) > 1
+                for r in slot:
+                    r.h, r.slot, r.mixed = h, slot, mixed
+                    if r.kind == "lane":
+                        r.small = small
+                out.extend(slot)
+                y += h
         return out
 
     def content_height(self, editor):
         rows = self.rows(editor, scroll=False)
         return (rows[-1].y + rows[-1].h - self.top) if rows else 0
 
-    def row_at(self, rows, y):
+    def row_at(self, rows, y, x=None):
+        """Ligne sous (x, y). Plusieurs clips à la même hauteur : celle du clip sous x (ou le plus proche)."""
         if y < self.top:
             return None
-        return next((r for r in rows if r.contains(y)), None)
+        hits = [r for r in rows if r.contains(y)]
+        if len(hits) <= 1 or x is None or x < HEADER_W:
+            return hits[0] if hits else None
+
+        def dist(r):
+            a, b = self.x(r.clip.start), self.x(r.clip.end)
+            return 0.0 if a - 6 <= x <= b + 6 else min(abs(x - a), abs(x - b))
+        return min(hits, key=dist)
 
     def clip_rect(self, row, clip):
         return (self.x(clip.start), row.y + 3, max(4.0, clip.duration * self.pps), row.h - 6)

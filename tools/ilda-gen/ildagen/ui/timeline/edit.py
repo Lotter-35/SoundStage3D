@@ -54,6 +54,17 @@ class TimelineEditing:
             row.clip.lane_sizes[lid] = "small" if small else "big"
         self._changed()
 
+    def toggle_slot_group(self, row):
+        """Même modifieur dans tous les clips de la ligne : on les replie / déplie ensemble (les lignes
+        restent alignées) ; sinon seulement celui du clip cliqué."""
+        if row.mixed:
+            self.toggle_group(row)
+            return
+        opened = row.node.id not in row.clip.closed_nodes
+        for r in row.slot:
+            if (r.node.id not in r.clip.closed_nodes) == opened:
+                self.toggle_group(r)
+
     def toggle_group(self, row):
         """Déplie / replie les réglages d'un modifieur sous le clip."""
         ids = row.clip.closed_nodes
@@ -64,16 +75,33 @@ class TimelineEditing:
         self._changed()
 
     def _press_header(self, row, x, y):
+        if row.mixed:
+            # Clips différents sur cette ligne : les flèches agissent sur toute la ligne (pas le ↺)
+            groups = [r for r in row.slot if r.kind == "group"]
+            lanes_ = [r for r in row.slot if r.kind == "lane"]
+            if lanes_:
+                if x <= lane_toggle_rect(lanes_[0])[0] + 18:
+                    for r in lanes_:
+                        self.set_lane_small(r, not row.small)
+            elif groups:
+                opened = any(r.node.id not in r.clip.closed_nodes for r in groups)
+                for r in groups:
+                    if (r.node.id not in r.clip.closed_nodes) == opened:
+                        self.toggle_group(r)
+            return
         if row.kind == "group":
-            self.toggle_group(row)
+            self.toggle_slot_group(row)
             return
         if row.kind == "lane":
             bx, by, bw, bh = lane_reset_rect(row)
             tx, _, tw, _ = lane_toggle_rect(row)
             if bx <= x <= bx + bw and by <= y <= by + bh:
-                self.reset_lane(row)
+                for r in row.slot:
+                    if L.assigned(self.editor, r.clip, r.auto):
+                        self.reset_lane(r)
             elif tx - 2 <= x <= tx + tw:
-                self.set_lane_small(row, not row.small)
+                for r in row.slot:
+                    self.set_lane_small(r, not row.small)
             return
         if row.kind != "track":
             return

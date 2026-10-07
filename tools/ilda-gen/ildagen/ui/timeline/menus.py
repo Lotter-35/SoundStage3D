@@ -30,7 +30,7 @@ class TimelineMenus:
                 lambda: ed.timeline_mutate("Mesure 1", lambda: setattr(tl, "bar_offset", g.t(x))))
             menu.exec(e.globalPos())
             return
-        row = g.row_at(self.rows(), y)
+        row = g.row_at(self.rows(), y, x)
         if row is None:
             menu.addAction("Ajouter une piste").triggered.connect(ed.add_track)
             menu.exec(e.globalPos())

@@ -212,6 +212,10 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    `Maj` + clic droit = menu (réinitialiser la valeur, type de courbe : linéaire, accélération, ralentissement,
    en S, palier, Bézier personnalisé avec poignées). Le bouton ↺ à côté du nom d'une ligne supprime son automation
    (ou remet sa valeur fixe par défaut).
+   **Plusieurs clips dépliés sur une piste** : leurs lignes sont **côte à côte** (chaque clip dans sa plage de
+   temps, sur les mêmes lignes) au lieu de s'empiler. Si les clips d'une ligne n'ont pas les mêmes réglages,
+   le nom est écrit dans chaque clip (l'en-tête liste les noms) ; replier / réduire depuis l'en-tête agit sur
+   toute la ligne.
    **Hauteur des lignes** : un réglage pas utilisé (pas animé, valeur par défaut) est grisé et sa ligne est
    réduite automatiquement ; la flèche à gauche du nom réduit / agrandit n'importe quelle ligne, et un clic
    dans une ligne réduite l'agrandit (le clic suivant pose une clé).

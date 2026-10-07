@@ -160,7 +160,6 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
 def draw_lane(p, geo, row, ed, sel_key):
     clip, auto = row.clip, row.auto
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
-    p.fillRect(QRectF(HEADER_W, row.y, geo.width - HEADER_W, row.h), theme.qc(theme.BG_APP))
     # Réglage pas utilisé : fond du clip grisé (plus sombre)
     p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.BG_PANEL, 1.0 if row.used else 0.45))
     if auto.armed:
@@ -169,6 +168,8 @@ def draw_lane(p, geo, row, ed, sel_key):
         p.drawText(QRectF(max(HEADER_W, x0) + 8, row.y, max(10.0, x1 - max(HEADER_W, x0) - 16), row.h),
                    Qt.AlignmentFlag.AlignVCenter, "En attente : modifiez un réglage (Propriétés ou mire)")
         return
+    if row.mixed:
+        draw_inline_label(p, geo, row, row.label or auto.label)
     node, spec = L.target(ed, clip, auto)
     rng = L.value_range(spec, auto)
     a, b = max(HEADER_W, x0), min(geo.width, x1)
@@ -248,8 +249,22 @@ def draw_group(p, geo, row):
     """Ligne d'un modifieur sous un clip déplié."""
     clip = row.clip
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
-    p.fillRect(QRectF(HEADER_W, row.y, geo.width - HEADER_W, row.h), theme.qc(theme.BG_APP))
     p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.ACCENT, 0.06))
+    if row.mixed:
+        opened = row.node.id not in clip.closed_nodes
+        draw_inline_label(p, geo, row, ("▾ " if opened else "▸ ") + row.node.name, theme.ACCENT)
+
+
+def draw_inline_label(p, geo, row, text, color=None):
+    """Nom d'une ligne écrit dans le clip (quand les clips d'une même ligne n'ont pas les mêmes réglages)."""
+    x0, x1 = max(HEADER_W, geo.x(row.clip.start)) + 4, geo.x(row.clip.end) - 4
+    if x1 - x0 < 16:
+        return
+    p.setFont(theme.ui_font(9))
+    p.setPen(theme.qc(color or theme.TEXT_DIM, 0.9))
+    fm = p.fontMetrics()
+    p.drawText(QRectF(x0, row.y + 1, x1 - x0, min(row.h, 14)), Qt.AlignmentFlag.AlignVCenter,
+               fm.elidedText(text, Qt.TextElideMode.ElideRight, int(x1 - x0)))
 
 
 def draw_headers(p, geo, rows, ed):
@@ -257,7 +272,31 @@ def draw_headers(p, geo, rows, ed):
     p.fillRect(QRectF(0, geo.top, w, geo.height - geo.top), theme.qc(theme.BG_PANEL))
     p.setFont(theme.ui_font(12))
     for r in rows:
-        if r.y + r.h < geo.top or r.y > geo.height:
+        if r.y + r.h < geo.top or r.y > geo.height or (r.kind != "track" and r is not r.slot[0]):
+            continue
+        if r.kind != "track" and r.mixed:
+            # Clips différents sur cette ligne : les noms sont aussi écrits dans chaque clip
+            names = []
+            for x in r.slot:
+                n = x.node.name if x.kind == "group" else (x.label or x.auto.label)
+                if n not in names:
+                    names.append(n)
+            lanes_ = [x for x in r.slot if x.kind == "lane"]
+            if lanes_:
+                tx, _, _, _ = lane_toggle_rect(lanes_[0])
+                p.drawPixmap(QPointF(tx + 2, r.y + (r.h - 10) / 2),
+                             icons.pixmap("chevron-right" if r.small else "chevron-down", theme.TEXT_OFF, 10))
+            else:
+                opened = any(x.node.id not in x.clip.closed_nodes for x in r.slot)
+                p.drawPixmap(QPointF(10, r.y + (r.h - 12) / 2),
+                             icons.pixmap("chevron-down" if opened else "chevron-right", theme.TEXT_DIM, 12))
+            p.setFont(theme.ui_font(10))
+            p.setPen(theme.qc(theme.TEXT_DIM))
+            fm = p.fontMetrics()
+            p.drawText(QRectF(44, r.y, w - 50, r.h), Qt.AlignmentFlag.AlignVCenter,
+                       fm.elidedText(" · ".join(names), Qt.TextElideMode.ElideRight, w - 50))
+            p.setPen(QPen(theme.qc(theme.BORDER), 1))
+            p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))
             continue
         if r.kind == "track":
             p.setPen(theme.qc(theme.TEXT_OFF if r.track.muted else theme.TEXT))
@@ -290,10 +329,11 @@ def draw_headers(p, geo, rows, ed):
             p.drawPixmap(QPointF(tx + 2, r.y + (r.h - 10) / 2),
                          icons.pixmap("chevron-right" if r.small else "chevron-down", theme.TEXT_OFF, 10))
             if r.node is not None:
-                animated = bool(r.auto.keys)
+                animated = any(bool(x.auto.keys) for x in r.slot)
                 label = r.label
                 x = 44
-                p.setPen(theme.qc(theme.TEXT if animated else (theme.TEXT_DIM if r.used else theme.TEXT_OFF)))
+                used = any(x.used for x in r.slot)
+                p.setPen(theme.qc(theme.TEXT if animated else (theme.TEXT_DIM if used else theme.TEXT_OFF)))
                 if animated:
                     p.setBrush(theme.qc(theme.ACCENT))
                     p.setPen(Qt.PenStyle.NoPen)
@@ -309,7 +349,7 @@ def draw_headers(p, geo, rows, ed):
                        fm.elidedText(label, Qt.TextElideMode.ElideRight, w - x - 30))
             # Bouton ↺ : allumé s'il y a quelque chose à réinitialiser
             bx, by, bw, bh = lane_reset_rect(r)
-            on = lane_resettable(ed, r)
+            on = any(lane_resettable(ed, x) for x in r.slot)
             p.drawPixmap(QPointF(bx + 3, by + 3), icons.pixmap("rotate-ccw", theme.TEXT_DIM if on else theme.TEXT_OFF, 12))
         p.setPen(QPen(theme.qc(theme.BORDER), 1))
         p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))
