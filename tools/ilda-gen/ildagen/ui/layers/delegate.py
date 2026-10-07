@@ -176,5 +176,11 @@ class LayerDelegate(QStyledItemDelegate):
 
     def updateEditorGeometry(self, editor, option, index):
         r = option.rect
+        if index.data(KIND_ROLE) == "params":
+            # Réglages en ligne : toute la largeur de la ligne (pas la place du nom d'un calque)
+            node = index.data(NODE_ROLE)
+            x = r.left() + content_offset(node, self.view.editor.current_root()) + CHEV   # aligné sur l'icône du modifieur
+            editor.setGeometry(QRect(x, r.top() + 2, r.right() - x + 1, r.height() - 4))
+            return
         off = content_offset(index.data(NODE_ROLE), self.view.editor.current_root()) + CHEV
         editor.setGeometry(QRect(r.left() + 18 + off, r.top() + 2, max(40, lock_rect(r).left() - r.left() - 26), r.height() - 4))
