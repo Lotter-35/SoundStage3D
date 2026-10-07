@@ -13,10 +13,11 @@ class TimelineOpsMixin:
             self.playheadChanged.emit(t)
             self.docChanged.emit()
 
-    def set_preview_time(self, t):
+    def set_preview_time(self, t, clip_id=None):
         """Pendant le déplacement d'une clé, la mire montre cet instant ; None = retour à la tête de lecture."""
         if t is not None:
             t = max(0.0, float(t))
+        self.preview_clip = clip_id if t is not None else None
         if t != self.preview_time:
             self.preview_time = t
             self._touch(content=False)

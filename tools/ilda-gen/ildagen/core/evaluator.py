@@ -127,11 +127,11 @@ def evaluate(root, ctx):
     return eval_children(root.children, ctx)
 
 
-def evaluate_timeline(timeline, library, t, default_color=(1.0, 1.0, 1.0)):
+def evaluate_timeline(timeline, library, t, default_color=(1.0, 1.0, 1.0), hold=None):
     """Tracés de tous les clips actifs à l'instant t. Renvoie (tracés, animé)."""
     out = []
     animated = False
-    for _, clip in timeline.active_clips(t):
+    for _, clip in timeline.active_clips(t, hold):
         d = library.get(clip.def_id)
         if d is None:
             continue

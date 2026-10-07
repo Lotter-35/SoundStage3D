@@ -148,13 +148,15 @@ class Timeline:
     def length(self):
         return max(self.audio_duration, self.content_end() + self.bar_len * 2, 60.0)
 
-    def active_clips(self, t):
+    def active_clips(self, t, hold=None):
+        """Clips joués à l'instant t. hold : id d'un clip gardé visible jusqu'à sa toute dernière image
+        incluse (aperçu d'une clé posée à la fin du clip)."""
         solo = any(tr.solo for tr in self.tracks)
         for tr in self.tracks:
             if tr.muted or (solo and not tr.solo):
                 continue
             for c in tr.clips:
-                if c.active_at(t):
+                if c.active_at(t) or (c.id == hold and c.start <= t <= c.end):
                     yield tr, c
 
     def remove_def(self, def_id):

@@ -50,6 +50,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.view_source = "scene"
         self.playhead = 0.0
         self.preview_time = None   # instant prévisualisé pendant le déplacement d'une clé (sinon la tête de lecture)
+        self.preview_clip = None   # clip de cette clé : reste visible même sur sa toute dernière image
         self.playing = False
         self.clipboard = []
         self.dirty = False
@@ -280,7 +281,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             return self._cache[1]
         if mode == "timeline":
             strokes, animated = evaluate_timeline(self.doc.timeline, self.doc.library, self.view_time(),
-                                                  self.default_color())
+                                                  self.default_color(),
+                                                  hold=self.preview_clip if self.preview_time is not None else None)
         else:
             ctx = self.eval_context()
             root = self.current_root()

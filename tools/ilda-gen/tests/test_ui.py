@@ -458,6 +458,11 @@ def main():
     check("glisser une clé : la mire montre l'instant de la clé", ed.preview_time is not None
           and abs(ed.view_time() - (lane.clip.start + k.t)) < 1e-9 and inst_v is not None and abs(inst_v - k.v) < 1e-6,
           f"{ed.preview_time} / {inst_v} vs {k.v}")
+    # Tout au bout du clip : la clé est bloquée sur la fin et la mire montre toujours l'image
+    far = QPoint(int(canvas.geo.x(lane.clip.end)) + 80, int(lane.y + 3))
+    send(canvas, QEvent.Type.MouseMove, far, Nb, Lb, M.NoModifier)
+    check("clé tirée au-delà de la fin : bloquée sur la dernière image, la forme reste visible",
+          abs(k.t - lane.clip.duration) < 1e-9 and len(ed.display_strokes()) > 0, f"t {k.t:.3f}")
     send(canvas, QEvent.Type.MouseButtonRelease, QPoint(kp0.x() + 20, int(lane.y + 3)), Lb, Nb, M.NoModifier)
     check("relâcher : retour à la tête de lecture", ed.preview_time is None and ed.view_time() == ed.playhead)
     ed.undo()
