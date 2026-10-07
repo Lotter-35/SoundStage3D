@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt
 from ...core import nodes as N
 from . import draw as D
 from . import lanes as L
-from .geometry import HEADER_W, lane_reset_rect
+from .geometry import HEADER_W, lane_reset_rect, lane_toggle_rect
 
 
 class TimelineEditing:
@@ -44,6 +44,16 @@ class TimelineEditing:
         self.editor.mutate("Réinitialiser", lambda: N.set_param(node, auto.key, spec.default_value()),
                            structure=False, timeline=True)
 
+    def set_lane_small(self, row, small):
+        """Réduire / agrandir une ligne de réglage (choix gardé avec le clip)."""
+        lid = L.lane_id(row.auto)
+        auto_small = not L.assigned(self.editor, row.clip, row.auto)
+        if small == auto_small:
+            row.clip.lane_sizes.pop(lid, None)    # retour au comportement automatique
+        else:
+            row.clip.lane_sizes[lid] = "small" if small else "big"
+        self._changed()
+
     def toggle_group(self, row):
         """Déplie / replie les réglages d'un modifieur sous le clip."""
         ids = row.clip.closed_nodes
@@ -59,8 +69,11 @@ class TimelineEditing:
             return
         if row.kind == "lane":
             bx, by, bw, bh = lane_reset_rect(row)
+            tx, _, tw, _ = lane_toggle_rect(row)
             if bx <= x <= bx + bw and by <= y <= by + bh:
                 self.reset_lane(row)
+            elif tx - 2 <= x <= tx + tw:
+                self.set_lane_small(row, not row.small)
             return
         if row.kind != "track":
             return
@@ -76,6 +89,10 @@ class TimelineEditing:
         if self.editor.context != ("clip", clip.id):
             self.editor.enter_clip(clip.id)
         if auto.armed or not (self.geo.x(clip.start) - 6 <= x <= self.geo.x(clip.end) + 6):
+            return
+        if row.small and self.key_hit(row, x, y) is None:
+            # Ligne réduite : un clic l'agrandit d'abord (pour poser les clés avec précision)
+            self.set_lane_small(row, False)
             return
         hidx = self.handle_hit(row, x, y)
         if hidx is not None:

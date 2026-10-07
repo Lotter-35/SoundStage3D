@@ -7,14 +7,15 @@ WAVE_H = 46
 TRACK_H = 58
 GROUP_H = 24
 LANE_H = 48
+LANE_SMALL_H = 20     # ligne réduite (réglage pas utilisé, ou repliée à la main)
 CLIP_EDGE = 6
 CHEVRON_W = 16
 
 
 class Row:
-    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label")
+    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used")
 
-    def __init__(self, kind, track, clip, auto, y, h, node=None, label=""):
+    def __init__(self, kind, track, clip, auto, y, h, node=None, label="", small=False, used=True):
         self.kind = kind      # "track", "group" (un modifieur du clip) ou "lane" (un réglage animable)
         self.track = track
         self.clip = clip
@@ -23,6 +24,8 @@ class Row:
         self.h = h
         self.node = node
         self.label = label
+        self.small = small    # ligne de réglage réduite
+        self.used = used      # réglage utilisé (sinon grisé)
 
     def contains(self, y):
         return self.y <= y < self.y + self.h
@@ -67,6 +70,11 @@ def clip_rows(clip, library, editor):
     return out
 
 
+def lane_toggle_rect(row):
+    """Flèche à gauche du nom d'une ligne de réglage : agrandir / réduire la ligne."""
+    return (18 if row.node is not None else 4, row.y, 16, row.h)
+
+
 def lane_reset_rect(row):
     """Bouton ↺ à droite du nom d'une ligne de réglage (en-tête de gauche)."""
     return (HEADER_W - 24, row.y + (row.h - 18) / 2, 18, 18)
@@ -105,10 +113,16 @@ class TimelineGeometry:
             for clip in sorted(tr.clips, key=lambda c: c.start):
                 if not clip.expanded:
                     continue
+                from . import lanes as L
                 for kind, auto, node, label in clip_rows(clip, editor.doc.library, editor):
-                    h = GROUP_H if kind == "group" else LANE_H
-                    out.append(Row(kind, tr, clip, auto, y, h, node, label))
-                    y += h
+                    if kind == "group":
+                        row = Row(kind, tr, clip, auto, y, GROUP_H, node, label)
+                    else:
+                        small = L.is_small(editor, clip, auto)
+                        row = Row(kind, tr, clip, auto, y, LANE_SMALL_H if small else LANE_H, node, label,
+                                  small, L.assigned(editor, clip, auto))
+                    out.append(row)
+                    y += row.h
         return out
 
     def content_height(self, editor):

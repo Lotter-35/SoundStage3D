@@ -448,6 +448,31 @@ def main():
     n_keys = len(lane.auto.keys)
     click(canvas, QPoint(int(canvas.geo.x(clip.start + 3.0)), int(lane.y + lane.h * 0.3)))
     check("clic dans une automation = nouvelle clé", len(lane.auto.keys) == n_keys + 1)
+    # Lignes de réglage : réduites automatiquement quand le réglage n'est pas utilisé, repliables à la main
+    from ildagen.ui.timeline.geometry import LANE_H, LANE_SMALL_H, lane_toggle_rect
+    rows_now = canvas.rows()
+    unused = next((r for r in rows_now if r.kind == "lane" and r.virtual and not r.used), None)
+    used = next(r for r in rows_now if r.kind == "lane" and r.auto.key == "tf.tx")
+    check("réglage non utilisé : ligne grisée et réduite", unused is not None and unused.small and unused.h == LANE_SMALL_H
+          and not used.small and used.h == LANE_H)
+    tx, _, tw, _ = lane_toggle_rect(used)
+    click(canvas, QPoint(int(tx + tw / 2), int(used.y + used.h / 2)))
+    used2 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    check("flèche : réduire une ligne à la main", used2.small and used2.h == LANE_SMALL_H)
+    click(canvas, QPoint(int(tx + tw / 2), int(used2.y + used2.h / 2)))
+    used3 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
+    check("flèche : l'agrandir à nouveau", not used3.small and lane.clip.lane_sizes == {})
+    un_key = (unused.auto.node_id, unused.auto.key)
+    n_auto = len(lane.clip.automations)
+    click(canvas, QPoint(int(canvas.geo.x(lane.clip.start + 1.0)), int(unused.y + unused.h / 2)))
+    unused2 = next(r for r in canvas.rows() if r.kind == "lane" and (r.auto.node_id, r.auto.key) == un_key)
+    check("clic dans une ligne réduite : elle s'agrandit (sans poser de clé)", not unused2.small
+          and len(lane.clip.automations) == n_auto)
+    lane.clip.lane_sizes.clear()
+    canvas.update()
+    app.processEvents()
+    shot(win, "05_lignes")
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     # Glisser une clé : la mire montre l'instant et la valeur de la clé, puis revient à la tête de lecture
     lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
     ed.set_playhead(clip.start)

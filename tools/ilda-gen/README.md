@@ -210,6 +210,9 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
    `Maj` + clic droit = menu (réinitialiser la valeur, type de courbe : linéaire, accélération, ralentissement,
    en S, palier, Bézier personnalisé avec poignées). Le bouton ↺ à côté du nom d'une ligne supprime son automation
    (ou remet sa valeur fixe par défaut).
+   **Hauteur des lignes** : un réglage pas utilisé (pas animé, valeur par défaut) est grisé et sa ligne est
+   réduite automatiquement ; la flèche à gauche du nom réduit / agrandit n'importe quelle ligne, et un clic
+   dans une ligne réduite l'agrandit (le clic suivant pose une clé).
    Pendant qu'on **glisse un point**, la mire (et le laser en live) montre l'instant de ce point avec sa
    nouvelle valeur (trait pointillé dans la timeline) ; au relâchement, elle revient à la tête de lecture.
 5. Réglage **Actif** d'un modifieur (Propriétés) : automatisé, il n'active le modifieur que sur une partie du clip.

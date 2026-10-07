@@ -92,6 +92,7 @@ class ThumbCache:
         d = clip.to_dict()
         d.pop("expanded", None)
         d.pop("closed_nodes", None)
+        d.pop("lane_sizes", None)
         sig = str(hash((self.lib_sig[1], json.dumps(d, sort_keys=True), tuple(self.editor.default_color()))))
         self.sigs[clip.id] = (rev, sig)
         return sig

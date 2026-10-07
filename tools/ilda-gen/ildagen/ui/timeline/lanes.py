@@ -5,6 +5,33 @@ from ..properties.forms import TRANSFORM_SPECS
 PAD = 8
 
 
+def lane_id(auto):
+    """Identifiant stable d'une ligne de réglage (même pour une automation pas encore créée)."""
+    return f"{auto.node_id}|{auto.key}" if auto.node_id else f"auto:{auto.id}"
+
+
+def assigned(editor, clip, auto):
+    """Le réglage est-il utilisé : animé, en attente, ou valeur fixe différente du défaut ?"""
+    from ...core import nodes as N
+    from ..properties.forms import same_value
+    if auto.armed:
+        return True
+    if auto in clip.automations and auto.keys:
+        return True
+    node, spec = target(editor, clip, auto)
+    if node is None or spec is None:
+        return False
+    return not same_value(N.get_param(node, auto.key), spec.default_value())
+
+
+def is_small(editor, clip, auto):
+    """Ligne réduite : choix manuel, sinon automatiquement quand le réglage n'est pas utilisé."""
+    size = clip.lane_sizes.get(lane_id(auto))
+    if size is not None:
+        return size == "small"
+    return not assigned(editor, clip, auto)
+
+
 def target(editor, clip, auto):
     """(nœud, spec) visés par l'automation, ou (None, None)."""
     d = editor.doc.library.get(clip.def_id)

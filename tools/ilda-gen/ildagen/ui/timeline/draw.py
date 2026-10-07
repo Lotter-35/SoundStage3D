@@ -9,7 +9,7 @@ from PySide6.QtGui import QColor, QPen, QPolygonF
 from ...core.timeline import SUBDIVISIONS
 from .. import icons, theme
 from . import lanes as L
-from .geometry import CHEVRON_W, HEADER_W, LOOP_H, RULER_H, WAVE_H, lane_reset_rect
+from .geometry import CHEVRON_W, HEADER_W, LOOP_H, RULER_H, WAVE_H, lane_reset_rect, lane_toggle_rect
 
 MIN_BAR_PX = 36
 
@@ -161,7 +161,8 @@ def draw_lane(p, geo, row, ed, sel_key):
     clip, auto = row.clip, row.auto
     x0, x1 = geo.x(clip.start), geo.x(clip.end)
     p.fillRect(QRectF(HEADER_W, row.y, geo.width - HEADER_W, row.h), theme.qc(theme.BG_APP))
-    p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.BG_PANEL))
+    # Réglage pas utilisé : fond du clip grisé (plus sombre)
+    p.fillRect(QRectF(x0, row.y + 1, x1 - x0, row.h - 2), theme.qc(theme.BG_PANEL, 1.0 if row.used else 0.45))
     if auto.armed:
         p.setPen(theme.qc(theme.ACCENT))
         p.setFont(theme.ui_font(11))
@@ -208,7 +209,7 @@ def draw_lane(p, geo, row, ed, sel_key):
         else:
             p.setBrush(theme.qc(theme.ACCENT) if is_sel else theme.qc(theme.BG_MIRE))
         p.drawPolygon(QPolygonF([QPointF(kx, ky - 5), QPointF(kx + 5, ky), QPointF(kx, ky + 5), QPointF(kx - 5, ky)]))
-        if is_sel:
+        if is_sel and not row.small:
             p.setPen(theme.qc(theme.TEXT))
             p.setFont(theme.mono_font(10))
             p.drawText(QPointF(kx + 8, max(row.y + 11, ky - 6)), L.format_value(k.v, spec))
@@ -240,16 +241,7 @@ def bezier_handles(geo, row, clip, auto, key, rng):
 
 def lane_resettable(ed, row):
     """Une ligne peut être réinitialisée : réglage animé, ou valeur fixe différente du défaut."""
-    from ...core import nodes as N
-    from ..properties.forms import same_value
-    if row.auto.armed:
-        return True
-    if row.auto in row.clip.automations and row.auto.keys:
-        return True
-    node, spec = L.target(ed, row.clip, row.auto)
-    if node is None or spec is None:
-        return False
-    return not same_value(N.get_param(node, row.auto.key), spec.default_value())
+    return L.assigned(ed, row.clip, row.auto)
 
 
 def draw_group(p, geo, row):
@@ -293,11 +285,15 @@ def draw_headers(p, geo, rows, ed):
                        fm.elidedText(m.name, Qt.TextElideMode.ElideRight, w - 50))
         else:
             p.setFont(theme.ui_font(11))
+            # Flèche : agrandir / réduire la ligne
+            tx, ty, tw, th = lane_toggle_rect(r)
+            p.drawPixmap(QPointF(tx + 2, r.y + (r.h - 10) / 2),
+                         icons.pixmap("chevron-right" if r.small else "chevron-down", theme.TEXT_OFF, 10))
             if r.node is not None:
                 animated = bool(r.auto.keys)
                 label = r.label
                 x = 44
-                p.setPen(theme.qc(theme.TEXT if animated else theme.TEXT_DIM))
+                p.setPen(theme.qc(theme.TEXT if animated else (theme.TEXT_DIM if r.used else theme.TEXT_OFF)))
                 if animated:
                     p.setBrush(theme.qc(theme.ACCENT))
                     p.setPen(Qt.PenStyle.NoPen)
