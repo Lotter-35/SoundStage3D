@@ -2,10 +2,11 @@
 
 from PySide6.QtCore import QSize, Qt
 from PySide6.QtGui import QPainter
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QSpinBox, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QSpinBox, QWidget
 
 from .spin import SpinBox
-from . import icons, theme
+from . import theme
+from .widgets import TopBarButton
 
 
 class StatusDot(QWidget):
@@ -22,7 +23,7 @@ class StatusDot(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(theme.qc(theme.SUCCESS if self.on else theme.TEXT_OFF))
+        p.setBrush(theme.qc(theme.LIVE if self.on else theme.TEXT_OFF))
         p.drawEllipse(1, 1, 8, 8)
 
 
@@ -83,20 +84,13 @@ class ConnectionBar(QWidget):
         lay.addWidget(self.state)
         lay.addStretch(1)
 
-        self.btn_live = QPushButton(" Envoi live")
-        self.btn_live.setObjectName("live")
-        self.btn_live.setIcon(icons.icon("radio", 14, color=theme.TEXT, active_color="#ffffff"))
-        self.btn_live.setCheckable(True)
-        self.btn_live.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        # Live enfoncé : fond de sélection, icône verte ; BLACKOUT engagé : rouge plein
+        self.btn_live = TopBarButton("Live", "radio", "live", checkable=True)
         self.btn_live.setToolTip("Envoyer en direct au laser ce qui est affiché dans la mire")
         self.btn_live.toggled.connect(live.set_live)
         lay.addWidget(self.btn_live)
 
-        self.btn_black = QPushButton(" BLACKOUT")
-        self.btn_black.setObjectName("danger")
-        self.btn_black.setIcon(icons.icon("octagon-x", 14, color=theme.DANGER, active_color="#ffffff"))
-        self.btn_black.setCheckable(True)
-        self.btn_black.setFocusPolicy(Qt.FocusPolicy.NoFocus)
+        self.btn_black = TopBarButton("BLACKOUT", None, "danger", checkable=True)
         self.btn_black.setToolTip("Arrêt d'urgence : coupe immédiatement la sortie laser (cliquer à nouveau pour réarmer)")
         self.btn_black.toggled.connect(live.set_blackout)
         lay.addWidget(self.btn_black)

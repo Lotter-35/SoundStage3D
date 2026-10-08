@@ -33,7 +33,15 @@ DEFAULTS = {
     # Couleur de tracé (barre de gauche) : appliquée aux nouvelles formes et par le seau
     "brush": {"v": 2, "mode": 1, "color": [1.0, 1.0, 1.0], "bg": [1.0, 0.0, 0.0], "stops": [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
               "type": 0, "angle": 0.0},
-    "ui": {"recent": [], "last_project": ""},
+    # theme : identifiant d'un thème de ui/theme.py (Paramètres → Apparence)
+    "ui": {"recent": [], "last_project": "", "theme": "graphite-orange"},
+}
+
+# Réglages à choix fermé (une valeur inconnue est remplacée par la valeur par défaut)
+CHOICES = {
+    ("ui", "theme"): ("graphite-orange", "graphite-jaune", "graphite-citron", "graphite-framboise",
+                      "graphite-magenta", "noir-violet", "noir-ambre", "noir-menthe", "ardoise-corail",
+                      "monochrome"),
 }
 
 
@@ -109,7 +117,7 @@ def valid_value(section, key, v):
     if default is None:
         return v                                  # réglage libre (disposition des panneaux…)
     out = coerce(default, v)
-    if out is None:
+    if out is None or ((section, key) in CHOICES and out not in CHOICES[(section, key)]):
         log.warning("Réglage %s.%s invalide (%r) : valeur par défaut", section, key, v)
         return copy.deepcopy(default)
     lo, hi = RANGES.get((section, key), (None, None))

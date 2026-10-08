@@ -47,8 +47,8 @@ def draw_symmetry_axes(p, vt, grid):
 def draw_grid(p, vt, grid):
     if grid.mode == 0:
         return
-    weak = QPen(theme.qc("#ffffff", 0.06), 1)
-    strong = QPen(theme.qc("#ffffff", 0.13), 1)
+    weak = QPen(theme.qc(theme.WHITE, 0.06), 1)
+    strong = QPen(theme.qc(theme.WHITE, 0.13), 1)
     p.setBrush(Qt.BrushStyle.NoBrush)
     if grid.mode == 1:
         n = max(1, grid.divisions)

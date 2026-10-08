@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QToolButton, QVB
 
 from ...core.shapes import SHAPE_LABELS
 from ...core.timeline import MAX_DURATION, MAX_START, MIN_DURATION
-from .. import icons
+from .. import icons, theme
 from .forms import ParamForm
 from .widgets import ScrubField
 
@@ -66,6 +66,7 @@ class PropertiesPanel(QWidget):
         editor.contextChanged.connect(self.rebuild)
         editor.timelineChanged.connect(self._timeline_changed)
         editor.restored.connect(self._abort)
+        theme.notifier.changed.connect(self.rebuild)      # textes colorés : nouvelles couleurs du thème
         self._clip_fields = None
         self.set_collapsed(False)
         self.rebuild()
@@ -95,7 +96,7 @@ class PropertiesPanel(QWidget):
             kind = KIND_LABELS.get(n.kind) or SHAPE_LABELS.get(getattr(n, "shape", ""), "Forme")
             if n.kind == "modifier":
                 kind = f"Modifieur · {n.modifier.category}"
-            title = QLabel(f"{n.name}   <span style='color:#8a8d96'>{kind}</span>")
+            title = QLabel(f"{n.name}   <span style='color:{theme.TEXT_DIM}'>{kind}</span>")
             title.setTextFormat(Qt.TextFormat.RichText)
             title.setContentsMargins(10, 8, 10, 0)
             lay.addWidget(title)
@@ -111,7 +112,8 @@ class PropertiesPanel(QWidget):
                     names = ", ".join(t.name for t in targets[:4]) + (f" (+{len(targets) - 4})" if len(targets) > 4 else "")
                     text = f"Agit sur : <b>{names}</b>"
                 else:
-                    text = "<span style='color:#d29922'>N'agit sur rien : placez-le au-dessus des calques à modifier</span>"
+                    text = (f"<span style='color:{theme.WARNING}'>N'agit sur rien : placez-le au-dessus des calques "
+                            "à modifier</span>")
                 a = QLabel(text)
                 a.setTextFormat(Qt.TextFormat.RichText)
                 a.setWordWrap(True)
@@ -150,7 +152,7 @@ class PropertiesPanel(QWidget):
         g = QGridLayout(w)
         g.setContentsMargins(10, 8, 10, 8)
         g.setColumnStretch(1, 1)
-        g.addWidget(QLabel(f"Clip  <span style='color:#8a8d96'>{d.name if d else '?'}</span>"), 0, 0, 1, 2)
+        g.addWidget(QLabel(f"Clip  <span style='color:{theme.TEXT_DIM}'>{d.name if d else '?'}</span>"), 0, 0, 1, 2)
         self._clip_fields = {}
         for row, (key, label) in enumerate((("start", "Début"), ("duration", "Durée")), start=1):
             lab = QLabel(label)

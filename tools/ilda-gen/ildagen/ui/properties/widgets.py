@@ -7,11 +7,12 @@ abort() : le geste en cours est oublié (annulé ailleurs : Échap, Ctrl+Z…).
 
 import math
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
-from PySide6.QtGui import QPainter, QPen
-from PySide6.QtWidgets import QAbstractButton, QComboBox, QLineEdit, QSizePolicy
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QPainter
+from PySide6.QtWidgets import QComboBox, QLineEdit, QSizePolicy
 
 from .. import theme
+from ..widgets.switch import Switch
 from .color_widgets import ColorSwatch, GradientBar, PaletteField  # noqa: F401 (réexportés)
 
 
@@ -216,52 +217,16 @@ class EnumField(QComboBox):
         e.ignore()   # ne change pas la valeur en faisant défiler le panneau
 
 
-class BoolField(QAbstractButton):
-    """Réglage oui / non : interrupteur (bleu = oui) suivi du mot « Oui » ou « Non »."""
+class BoolField(Switch):
+    """Réglage oui / non : interrupteur (accent = oui) suivi du mot « Oui » ou « Non »."""
 
     editStarted = Signal()
     valueEdited = Signal(bool)
     editFinished = Signal()
-    TW, TH = 28, 16
 
     def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setCheckable(True)
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-        self.setFont(theme.ui_font(11))
+        super().__init__(parent=parent)
         self.clicked.connect(self._clicked)
-
-    def sizeHint(self):
-        return QSize(self.TW + 8 + self.fontMetrics().horizontalAdvance("Non") + 2, max(self.TH, 18))
-
-    def minimumSizeHint(self):
-        return self.sizeHint()
-
-    def set_value(self, v):
-        if v is not None:
-            self.blockSignals(True)
-            self.setChecked(bool(v))
-            self.blockSignals(False)
-            self.update()
-
-    def paintEvent(self, _e):
-        p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
-        on = self.isChecked()
-        y = (self.height() - self.TH) / 2
-        track = QRectF(0.5, y + 0.5, self.TW - 1, self.TH - 1)
-        p.setPen(QPen(theme.qc(theme.ACCENT if on else theme.BORDER), 1))
-        p.setBrush(theme.qc(theme.ACCENT) if on else theme.qc(theme.BG_FIELD))
-        p.drawRoundedRect(track, self.TH / 2, self.TH / 2)
-        d = self.TH - 4
-        kx = self.TW - 2 - d if on else 2
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(theme.qc("#ffffff") if on else theme.qc(theme.TEXT_DIM))
-        p.drawEllipse(QRectF(kx, y + 2, d, d))
-        p.setPen(theme.qc(theme.TEXT if on else theme.TEXT_DIM))
-        p.drawText(QRectF(self.TW + 8, 0, self.width() - self.TW - 8, self.height()),
-                   Qt.AlignmentFlag.AlignVCenter, "Oui" if on else "Non")
 
     def _clicked(self, on):
         self.editStarted.emit()

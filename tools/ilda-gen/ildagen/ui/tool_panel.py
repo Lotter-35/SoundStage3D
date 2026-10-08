@@ -192,7 +192,7 @@ class ToolPanel(QWidget):
         g.setSpacing(2)
         for i, (tool, tip, ic, key) in enumerate(items):
             b = ToolButton(key)
-            b.setIcon(icons.icon(ic, 18, active_color=theme.TEXT))
+            b.setIcon(icons.icon(ic, 18))          # outil actif : icône couleur accent
             b.setIconSize(QSize(18, 18))
             b.setFixedSize(34, 30)
             b.setCheckable(True)

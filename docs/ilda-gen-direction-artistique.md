@@ -37,19 +37,33 @@ accent franc** marque ce qui est actif ou sélectionné. Le thème se choisit da
 | Danger | `#e03b3b` | BLACKOUT, suppression |
 | Live / connecté | `#22b14c` | Pastille de connexion, icône du bouton Live |
 
-Thèmes fournis (un fond + un accent) :
+Thèmes fournis (un fond + un accent), dans `tools/ilda-gen/ildagen/ui/theme.py` (`THEMES`) :
 
 | Thème | Fond | Accent |
 |---|---|---|
 | Graphite · Orange (par défaut) | Graphite | `#ff7a00` |
 | Graphite · Jaune | Graphite | `#ffc800` |
-| Noir · Violet | Noir (`#0a0a0a` / `#111111`) | `#c04dff` |
+| Graphite · Citron vert | Graphite | `#9bff00` |
+| Graphite · Framboise | Graphite | `#ff2d78` |
+| Graphite · Magenta | Graphite | `#ff2bd6` |
+| Noir · Violet | Noir | `#c04dff` |
+| Noir · Ambre | Noir | `#ffb000` |
+| Noir · Menthe | Noir | `#00e5a8` |
+| Ardoise · Corail | Ardoise | `#ff6b4a` |
 | Monochrome | Graphite | `#e8e8e8` (blanc) |
+
+Fonds : **Graphite** (tableau ci-dessus) ; **Noir** : application `#0a0a0a`, panneau `#111111`, champ `#1c1c1c`,
+sélection `#2a2a2a`, bordure `#222222` ; **Ardoise** (gris chauds) : application `#171615`, panneau `#1f1e1c`,
+champ `#2a2826`, sélection `#3a3734`, bordure `#2e2c29`. Le rouge (danger), le vert (live) et les couleurs de
+piste ne changent pas avec le thème. Le texte posé sur un fond accent (cue en cours, effet rapide actif) est
+presque noir (`#111111`), lisible sur tous les accents.
 
 Couleurs **franches** autorisées pour l'identification : pistes de la timeline (bande à gauche de l'en-tête,
 liseré en haut des clips) et marqueurs de parties (étiquette pleine, texte noir).
 
-Les couleurs sont centralisées dans le fichier de thème (aucune couleur écrite en dur ailleurs).
+Les couleurs sont centralisées dans le fichier de thème (aucune couleur écrite en dur ailleurs). Le thème change
+à chaud : le code qui peint lit `theme.ACCENT`, `theme.BG_PANEL`… au moment de peindre, jamais une copie prise
+au chargement.
 
 ## 3. Typographie et densité
 

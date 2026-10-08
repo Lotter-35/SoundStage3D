@@ -18,8 +18,8 @@ def main(argv=None):
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("IldaGen")
     app.setStyle("Fusion")
-    theme.apply_palette(app)
     settings = Settings()
+    theme.set_theme(settings.get("ui", "theme"), app)     # thème choisi dans Paramètres → Apparence
     win = MainWindow(settings)
     win.show()
     try:

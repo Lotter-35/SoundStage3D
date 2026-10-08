@@ -75,7 +75,7 @@ def draw_scope_lines(p, view, node, rect, start_depth=0):
     mid = rect.top() + rect.height() // 2
 
     def color(mods):
-        return theme.qc("#ffffff", 0.30 if any(m.id in selected for m in mods) else 0.11)
+        return theme.qc(theme.WHITE, 0.30 if any(m.id in selected for m in mods) else 0.11)
 
     while L is not None and L is not root and L.parent is not None:
         x = rect.left() - dd * indent + level_shift(L, root) + ICON_C
@@ -135,15 +135,17 @@ class LayerDelegate(QStyledItemDelegate):
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
         p.save()
         if selected:
-            p.fillRect(r, theme.accent_soft())
+            # Ligne sélectionnée : fond de sélection + liseré accent à gauche, icône accent
+            p.fillRect(r, theme.qc(theme.SEL))
+            p.fillRect(QRect(r.left(), r.top(), 2, r.height()), theme.qc(theme.ACCENT))
         draw_scope_lines(p, self.view, node, r)
         dim = not node.effectively_visible()
         cx = r.left() + content_offset(node, self.view.editor.current_root())
         # Flèche de dépliage (dans la ligne, alignée sur le contenu)
         if self.view.model().rowCount(index) > 0:
             name = "chevron-down" if self.view.isExpanded(index) else "chevron-right"
-            p.drawPixmap(cx + 1, r.top() + (r.height() - 12) // 2, icons.pixmap(name, theme.TEXT_DIM, 12))
-        ic_color = theme.TEXT_OFF if dim else (theme.ACCENT if node.kind == "modifier" else theme.TEXT_DIM)
+            p.drawPixmap(cx + 1, r.top() + (r.height() - 12) // 2, icons.pixmap(name, theme.TEXT_OFF, 12))
+        ic_color = theme.TEXT_OFF if dim else (theme.ACCENT if selected else theme.TEXT_DIM)
         p.drawPixmap(cx + CHEV, r.top() + (r.height() - 14) // 2, icons.pixmap(node_icon(node), ic_color, 14))
         x = cx + CHEV + 20
         right_limit = lock_rect(r).left() - 4
