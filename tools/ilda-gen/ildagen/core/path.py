@@ -2,6 +2,8 @@
 
 import numpy as np
 
+from .limits import MAX_RESAMPLE
+
 
 class Path:
     """Polyligne ouverte ou fermée, coordonnées normalisées."""
@@ -80,14 +82,20 @@ def sample_at(pts, cum, s):
     return out, idx, t
 
 
-def resample_stroke(s, step):
-    """Insère des points pour qu'aucun segment ne dépasse « step » (couleurs interpolées)."""
+def resample_stroke(s, step, max_points=MAX_RESAMPLE):
+    """Insère des points pour qu'aucun segment ne dépasse « step » (couleurs interpolées).
+    Tracé démesuré : le pas grandit pour ne pas dépasser max_points."""
     if s.kind != "line" or len(s.pts) < 2:
         return s.copy()
     pts = closed_pts(s.pts, s.closed)
     col = closed_pts(s.col, s.closed)
     seg = np.diff(pts, axis=0)
-    counts = np.maximum(1, np.ceil(np.hypot(seg[:, 0], seg[:, 1]) / step)).astype(int)
+    L = np.hypot(seg[:, 0], seg[:, 1])
+    L = np.where(np.isfinite(L), L, 0.0)
+    total = float(L.sum())
+    if total / step > max_points:
+        step = total / max_points
+    counts = np.maximum(1, np.ceil(L / step)).astype(int)
     idx = np.repeat(np.arange(len(seg)), counts)
     starts = np.cumsum(counts) - counts
     t = ((np.arange(counts.sum()) - np.repeat(starts, counts) + 1) / counts[idx])[:, None]
@@ -96,6 +104,12 @@ def resample_stroke(s, step):
     if s.closed:
         p, c = p[:-1], c[:-1]
     return Stroke(p, c, s.closed, s.kind, s.dwell)
+
+
+def resample_share(strokes):
+    """Points de rééchantillonnage permis par tracé : la limite vaut pour tous les tracés ensemble."""
+    n = sum(1 for s in strokes if s.kind == "line" and len(s.pts) > 1)
+    return max(64, MAX_RESAMPLE // max(1, n))
 
 
 def rdp(pts, eps):

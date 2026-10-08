@@ -4,6 +4,7 @@ import math
 
 import numpy as np
 
+from .. import limits as L
 from .. import mathutil as mu
 from ..params import F, I, B
 from ..path import strokes_bbox
@@ -17,10 +18,23 @@ def reflection(deg, cx, cy):
 
 
 def copies(strokes, matrices):
+    # Garde-fou : des duplications imbriquées (×64 de ×64…) ne doivent jamais bloquer l'évaluation
+    if strokes:
+        n_pts = max(1, sum(len(s.pts) for s in strokes))
+        keep = max(1, min(L.MAX_STROKES // len(strokes), L.MAX_COPY_POINTS // n_pts))
+        matrices = matrices[:keep]
     out = []
+    if not strokes:
+        return out
+    # Tous les points d'un coup pour chaque copie (beaucoup plus rapide que tracé par tracé)
+    allp = np.concatenate([s.pts for s in strokes])
+    ends = np.cumsum([len(s.pts) for s in strokes])
     for m in matrices:
-        for s in strokes:
-            out.append(s.with_pts(mu.apply(m, s.pts)) if len(s.pts) else s.copy())
+        q = mu.apply(m, allp)
+        a = 0
+        for s, z in zip(strokes, ends):
+            out.append(s.with_pts(q[a:z]) if z > a else s.copy())
+            a = z
     return out
 
 

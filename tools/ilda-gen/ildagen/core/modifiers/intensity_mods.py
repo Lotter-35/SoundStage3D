@@ -19,6 +19,12 @@ def period(p, ctx):
     return 1.0 / max(1e-3, p["rate"])
 
 
+def cycle(p, ctx):
+    """Position 0..1 dans le cycle ; calé sur le tempo, le cycle part du début de la mesure 1."""
+    t = ctx.time - (getattr(ctx, "bar_offset", 0.0) if p["sync"] == 1 else 0.0)
+    return (t / period(p, ctx)) % 1.0
+
+
 def scaled(strokes, k):
     return [s.with_col(s.col * k) for s in strokes]
 
@@ -73,8 +79,7 @@ class Strobe(Modifier):
         return True
 
     def apply(self, strokes, p, ctx):
-        per = period(p, ctx)
-        on = (ctx.time / per) % 1.0 < p["duty"] / 100.0
+        on = cycle(p, ctx) < p["duty"] / 100.0
         return strokes if on else scaled(strokes, 0.0)
 
     def summary(self, p):
@@ -97,7 +102,7 @@ class Pulse(Modifier):
         return True
 
     def apply(self, strokes, p, ctx):
-        x = (ctx.time / period(p, ctx)) % 1.0
+        x = cycle(p, ctx)
         if p["shape"] == 0:
             w = 0.5 + 0.5 * math.cos(2 * math.pi * x)
         elif p["shape"] == 1:

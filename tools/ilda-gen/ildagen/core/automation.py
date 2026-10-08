@@ -16,6 +16,11 @@ CLICK_CYCLE = [("linear", "Rampe"), ("hold", "Carré"), ("custom", "Sinusoïdale
 S_HANDLES = [0.42, 0.0, 0.58, 1.0]
 CURVE_HANDLES = {c[0]: c[2] for c in CURVES}
 CURVE_LABELS = {c[0]: c[1] for c in CURVES}
+# Deux clés plus proches que ceci n'en font qu'une (la nouvelle valeur remplace l'ancienne) :
+# 1 ms quand la durée du clip est connue, sinon un millionième de clip (instants en proportion de la durée,
+# arrondis à 6 décimales à l'enregistrement)
+KEY_MERGE_S = 1e-3
+KEY_MERGE_U = 1e-6
 
 
 def bezier_ease(x, x1, y1, x2, y2):
@@ -132,8 +137,13 @@ class Automation:
                 return _lerp(a.v, b.v, bezier_ease(x, *a.handles()))
         return ks[-1].v
 
-    def set_key(self, t, v, tolerance=1e-3):
-        """Ajoute ou remplace la clé à l'instant t ; renvoie la clé."""
+    def set_key(self, t, v, duration=None, tolerance=None):
+        """Ajoute ou remplace la clé à l'instant t (proportion du clip) ; renvoie la clé.
+        duration : durée du clip (s), pour une tolérance de fusion absolue dans le temps."""
+        if tolerance is None:
+            tolerance = KEY_MERGE_U
+            if duration is not None and duration > 1e-9:
+                tolerance = max(KEY_MERGE_U, KEY_MERGE_S / duration)
         for k in self.keys:
             if abs(k.t - t) <= tolerance:
                 k.v = v

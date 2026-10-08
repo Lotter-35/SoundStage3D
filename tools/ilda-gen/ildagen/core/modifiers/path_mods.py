@@ -2,8 +2,9 @@
 
 import numpy as np
 
+from ..limits import MAX_PIECES
 from ..params import F, I, B, E
-from ..path import Stroke, closed_pts, cumulative, sample_at, resample_stroke
+from ..path import Stroke, closed_pts, cumulative, sample_at, resample_share, resample_stroke
 from .base import Modifier
 
 SCOPES = ["Par tracé", "Global (tous les tracés)"]
@@ -38,6 +39,37 @@ def extract(pts, col, cum, a, b):
     return p, c
 
 
+def extract_many(pts, col, cum, a, b):
+    """Morceaux du tracé entre les abscisses a[k] < b[k], calculés d'un coup (tirets)."""
+    pa, ca = at(pts, col, cum, a)
+    pb, cb = at(pts, col, cum, b)
+    i0 = np.searchsorted(cum, a, side="right")
+    inner = np.maximum(0, np.searchsorted(cum, b, side="left") - i0)
+    sizes = inner + 2
+    ends = np.cumsum(sizes)
+    offs = ends - sizes
+    P = np.empty((int(ends[-1]), 2))
+    C = np.empty((int(ends[-1]), 3))
+    P[offs], C[offs] = pa, ca
+    P[ends - 1], C[ends - 1] = pb, cb
+    n_in = int(inner.sum())
+    if n_in:
+        k = np.repeat(np.arange(len(a)), inner)
+        j = np.arange(n_in) - np.repeat(np.cumsum(inner) - inner, inner)
+        P[offs[k] + 1 + j] = pts[i0[k] + j]
+        C[offs[k] + 1 + j] = col[i0[k] + j]
+    return [P[a:z] for a, z in zip(offs, ends)], [C[a:z] for a, z in zip(offs, ends)]
+
+
+def measured_lines(strokes):
+    """measure() des lignes mesurables (None pour les autres) et leur longueur totale."""
+    ms = []
+    for s in strokes:
+        m = measure(s) if s.kind == "line" and len(s.pts) >= 2 else None
+        ms.append(m if m is not None and np.isfinite(m[3]) else None)
+    return ms, sum(m[3] for m in ms if m is not None)
+
+
 class Dots(Modifier):
     type_id = "dots"
     label = "Dots"
@@ -53,12 +85,16 @@ class Dots(Modifier):
 
     def apply(self, strokes, p, ctx):
         sp = max(1e-3, p["spacing"])
+        ms, total = measured_lines(strokes)
+        if total / sp > MAX_PIECES:
+            sp = total / MAX_PIECES        # garde-fou : tracé démesuré, points plus espacés
         out = []
-        for s in strokes:
-            if s.kind != "line" or len(s.pts) < 2:
-                out.append(s.copy())
+        for s, m in zip(strokes, ms):
+            if m is None:
+                if s.kind != "line" or len(s.pts) < 2:
+                    out.append(s.copy())
                 continue
-            pts, col, cum, L = measure(s)
+            pts, col, cum, L = m
             first = p["phase"] % sp
             pos = np.arange(first, L + (0 if s.closed else 1e-9), sp)
             if s.closed:
@@ -90,20 +126,29 @@ class Dashes(Modifier):
 
     def apply(self, strokes, p, ctx):
         dash, gap = max(1e-3, p["dash"]), max(1e-3, p["gap"])
+        ms, total = measured_lines(strokes)
+        n = total / (dash + gap) + 2 * len(strokes)
+        if n > MAX_PIECES:
+            # Garde-fou : tracé démesuré, tirets agrandis (même proportion tiret / espace)
+            dash, gap = dash * n / MAX_PIECES, gap * n / MAX_PIECES
         period = dash + gap
         out = []
-        for s in strokes:
-            if s.kind != "line" or len(s.pts) < 2:
-                out.append(s.copy())
+        for s, m in zip(strokes, ms):
+            if m is None:
+                if s.kind != "line" or len(s.pts) < 2:
+                    out.append(s.copy())
                 continue
-            pts, col, cum, L = measure(s)
+            pts, col, cum, L = m
             start = (p["phase"] % period) - period
-            while start < L:
-                a, b = max(0.0, start), min(L, start + dash)
-                if b - a > 1e-6:
-                    dp, dc = extract(pts, col, cum, a, b)
-                    out.append(Stroke(dp, dc, False))
-                start += period
+            # +1 : à très grande échelle, la précision des nombres peut faire « perdre » le dernier tiret
+            starts = start + period * np.arange(int(np.ceil((L - start) / period)) + 1)
+            a = np.maximum(0.0, starts)
+            b = np.minimum(L, starts + dash)
+            keep = b - a > 1e-6
+            if not keep.any():
+                continue
+            for dp, dc in zip(*extract_many(pts, col, cum, a[keep], b[keep])):
+                out.append(Stroke(dp, dc, False))
         return out
 
 
@@ -137,7 +182,8 @@ class Trim(Modifier):
             total = sum(m[3] for m in ms)
             if total <= 0:
                 return others
-            A, B_ = (a + off) * total, (b + off) * total
+            # Le décalage boucle sur la longueur totale (sinon tout s'éteint au-delà de ±100 %)
+            A, B_ = (a + off % 1.0) * total, (b + off % 1.0) * total
             g0 = 0.0
             for s, m in zip(lines, ms):
                 L = m[3]
@@ -198,13 +244,14 @@ class Mask(Modifier):
 
     def apply(self, strokes, p, ctx):
         out = []
+        share = resample_share(strokes)
         for s in strokes:
             if s.kind != "line":
                 keep = self._inside(s.pts, p)
                 if keep.any():
                     out.append(Stroke(s.pts[keep], s.col[keep], False, s.kind, s.dwell))
                 continue
-            r = resample_stroke(s, 0.005)
+            r = resample_stroke(s, 0.005, share)
             pts = closed_pts(r.pts, r.closed)
             col = closed_pts(r.col, r.closed)
             keep = self._inside(pts, p)

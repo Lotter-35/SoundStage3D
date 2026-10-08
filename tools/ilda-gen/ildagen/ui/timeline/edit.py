@@ -117,7 +117,7 @@ class TimelineEditing:
             if auto not in clip.automations:
                 # Premier clic sur un réglage pas encore animé : l'automation est créée
                 clip.automations.append(auto)
-            k = auto.set_key(clip.u(t_local), v)
+            k = auto.set_key(clip.u(t_local), v, clip.duration)
             self.editor.notify(timeline=True)
         self.sel_key = k
         self.drag = {"kind": "key", "row": row, "key": k, "spec": spec, "x0": x, "y0": y,
