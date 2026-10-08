@@ -32,7 +32,7 @@ class CanvasView(QWidget):
         self.tool = self.tools["select"]
         self._panning = None
         self.last_world = None
-        self.stats = (0, 0.0)
+        self.stats = None
         editor.docChanged.connect(self.update)
         editor.selectionChanged.connect(self.update)
         editor.gridChanged.connect(self.update)
@@ -64,8 +64,8 @@ class CanvasView(QWidget):
         self.tools["shape"].start = None
         self.update()
 
-    def _on_stats(self, n, fps):
-        self.stats = (n, fps)
+    def _on_stats(self, stats):
+        self.stats = stats
         self.update()
 
     def _on_frame(self):
@@ -101,7 +101,7 @@ class CanvasView(QWidget):
             if self.tool is not self.tools["select"]:
                 self.tools["select"].draw(p)
             self.tool.draw(p)
-        P.draw_counter(p, self.rect(), self.stats[0], self.stats[1], self.vt.zoom)
+        P.draw_counter(p, self.rect(), self.stats, self.vt.zoom)
         p.end()
 
     def _draw_modifier_scope(self, p):

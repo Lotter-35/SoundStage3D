@@ -1,43 +1,57 @@
-"""Export ILDA : animation de la timeline (si elle a des clips) sinon image fixe de la forme en cours."""
+"""Export ILDA : animation de la timeline (si elle a des clips) sinon image fixe de la forme en cours.
 
-import numpy as np
+Par défaut le fichier contient le contenu seul, SANS les réglages de sortie (taille / position, trapèze,
+puissance, couleurs, zone de sécurité) : ce sont ceux d'un laser précis, le lecteur du fichier a les siens.
+Chaque image respecte le budget de points (vitesse de balayage / cadence) et la limite du format ILDA.
+"""
 
 from ..core.evaluator import EvalContext, evaluate, evaluate_timeline
-from ..laser.ilda_file import write_ilda
-from ..laser.optimizer import build_points
-from ..laser.output import apply_output
+from ..laser.ilda_file import MAX_FRAMES, write_ilda
+from ..laser.pipeline import MAX_ILDA_POINTS, render_frame
 
 
-def frame_from_strokes(strokes, settings):
-    pts, col = build_points(strokes, settings.section("laser"))
-    return apply_output(pts, col, settings)
+class ExportError(ValueError):
+    """Export impossible (message en français pour l'utilisateur)."""
 
 
-def export_frames(editor, start, end, fps, progress=None):
+def frame_count(start, end, fps):
+    return max(1, int(round((end - start) * fps)))
+
+
+def export_frames(editor, start, end, fps, progress=None, corrections=False):
     """Liste des images (x, y, r, g, b). progress(i, n) peut renvoyer False pour annuler."""
     doc = editor.doc
+    settings = editor.settings
     color = editor.default_color()
-    if not doc.timeline.has_clips() or end <= start:
-        ctx = EvalContext(doc.library, 0.0, doc.timeline.bpm, color)
+    tl = doc.timeline
+    if not tl.has_clips() or end <= start:
+        ctx = EvalContext(doc.library, 0.0, tl.bpm, color, None, tl.bar_offset)
         root = editor.current_form().root      # pas de timeline : la forme en cours
-        return [frame_from_strokes(evaluate(root, ctx), editor.settings)]
-    n = max(1, int(round((end - start) * fps)))
+        fr = render_frame(evaluate(root, ctx), settings, fps, corrections, MAX_ILDA_POINTS)
+        return [(fr.x, fr.y, fr.r, fr.g, fr.b)]
+    n = frame_count(start, end, fps)
+    if n > MAX_FRAMES:
+        raise ExportError(f"{n} images à {fps} images/s : le format ILDA en accepte au plus {MAX_FRAMES}. "
+                          "Réduisez la cadence ou exportez la zone de boucle.")
     frames = []
+    order = None
     for i in range(n):
         t = start + i / fps
-        strokes, _ = evaluate_timeline(doc.timeline, doc.library, t, color)
-        frames.append(frame_from_strokes(strokes, editor.settings))
+        strokes, _ = evaluate_timeline(tl, doc.library, t, color)
+        fr = render_frame(strokes, settings, fps, corrections, MAX_ILDA_POINTS, order)
+        order = fr.order                       # même ordre de tracé d'une image à l'autre (pas de scintillement)
+        frames.append((fr.x, fr.y, fr.r, fr.g, fr.b))
         if progress is not None and progress(i + 1, n) is False:
             return None
     return frames
 
 
-def export_ilda(editor, path, fmt, fps, start, end, progress=None):
-    frames = export_frames(editor, start, end, fps, progress)
+def export_ilda(editor, path, fmt, fps, start, end, progress=None, corrections=False):
+    frames = export_frames(editor, start, end, fps, progress, corrections)
     if frames is None:
         return 0
     write_ilda(path, frames, fmt)
     return len(frames)
 
 
-__all__ = ["export_ilda", "export_frames", "np"]
+__all__ = ["export_ilda", "export_frames", "frame_count", "ExportError"]

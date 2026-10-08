@@ -21,6 +21,7 @@ from ildagen.laser.optimizer import build_points  # noqa: E402
 from ildagen.laser.output import apply_output  # noqa: E402
 from ildagen.laser.idn import IdnPacketBuilder  # noqa: E402
 from ildagen.laser.ilda_file import write_ilda  # noqa: E402
+from output_tests import *  # noqa: E402,F401,F403  (sortie laser, corrections de l'audit)
 
 
 def ctx(lib=None, **kw):
