@@ -1,14 +1,17 @@
-"""Fenêtre Paramètres : général, sortie laser (H4), couleurs, zone de sécurité (H1), trapèze (H2),
-taille / position (H3).
+"""Fenêtre Paramètres : général, apparence (thème), grille, sortie laser (H4), couleurs, zone de sécurité (H1),
+trapèze (H2), taille / position (H3).
 
-Les changements s'appliquent immédiatement (laser compris) et sont enregistrés à la fermeture.
+Les changements s'appliquent immédiatement (laser et thème compris) et sont enregistrés à la fermeture.
+« Réinitialiser cet onglet » remet les valeurs par défaut de l'onglet affiché, quel qu'il soit.
 """
 
-from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLabel, QPushButton,
-                               QTabWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QDialog, QFormLayout, QHBoxLayout, QLabel, QPushButton, QTabWidget, QVBoxLayout,
+                               QWidget)
 
 from ..spin import DoubleSpinBox, SpinBox
 from ..properties.widgets import ColorSwatch
+from ..widgets import Switch
+from .appearance_tab import AppearanceTab
 from ...laser.output import MIN_SCALE, MIN_ZONE
 from ...laser.pipeline import budget_for
 
@@ -82,17 +85,27 @@ class SettingsDialog(QDialog):
         self.live = live
         self.settings = editor.settings
         self.setWindowTitle("Paramètres")
-        self.setMinimumWidth(640)
+        self.setMinimumWidth(780)          # tous les onglets visibles
         lay = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self.widgets = {}
+        self.resets = {}             # onglet → fonction de « Réinitialiser cet onglet »
+        self.grid_fields = {}
+        pages = {}
         for title, section, fields in TABS:
-            self.tabs.addTab(self._tab(section, fields), title)
-        self.tabs.insertTab(1, self._grid_tab(), "Grille")
+            pages[section] = self._tab(section, fields)
+            self.tabs.addTab(pages[section], title)
+            self.resets[pages[section]] = lambda s=section: self._reset_section(s)
+        self.appearance = AppearanceTab(self.settings)
+        self.tabs.insertTab(1, self.appearance, "Apparence")
+        self.resets[self.appearance] = self.appearance.reset
+        grid = self._grid_tab()
+        self.tabs.insertTab(2, grid, "Grille")
+        self.resets[grid] = self._reset_grid
         self.budget = QLabel()
         self.budget.setObjectName("dim")
         self.budget.setWordWrap(True)
-        self.tabs.widget(2).layout().addRow(self.budget)
+        pages["laser"].layout().addRow(self.budget)
         self._sync_budget()
         for lo, hi in (("xmin", "xmax"), ("ymin", "ymax")):
             self.widgets[("safety", lo)].valueChanged.connect(self._sync_zone)
@@ -118,8 +131,7 @@ class SettingsDialog(QDialog):
         for key, label, kind, lo, hi, dec, suffix, tip in fields:
             v = self.settings.get(section, key)
             if kind == "bool":
-                f = QCheckBox()
-                f.setChecked(bool(v))
+                f = Switch(bool(v), focusable=True)
                 f.toggled.connect(lambda on, s=section, k=key: self._set(s, k, on))
             elif kind == "color":
                 f = ColorSwatch()
@@ -166,7 +178,14 @@ class SettingsDialog(QDialog):
             lab = QLabel(label)
             lab.setObjectName("dim")
             form.addRow(lab, f)
+            self.grid_fields[attr] = f
         return w
+
+    def _reset_grid(self):
+        """Densités de grille par défaut (le mode, l'aimant et la symétrie ne changent pas)."""
+        defaults = type(self.editor.doc.grid)()
+        for attr, f in self.grid_fields.items():
+            f.setValue(int(getattr(defaults, attr)))      # applique et prévient la mire (_set_grid)
 
     def _set_grid(self, attr, value):
         setattr(self.editor.doc.grid, attr, int(value))
@@ -194,18 +213,23 @@ class SettingsDialog(QDialog):
             a.setMaximum(max(-1.0, b.value() - MIN_ZONE))
 
     def _reset_tab(self):
-        idx = self.tabs.currentIndex()
-        if self.tabs.tabText(idx) == "Grille":
-            return
-        section = next(s for t, s, _ in TABS if t == self.tabs.tabText(idx))
+        """« Réinitialiser cet onglet » : chaque onglet a sa remise à zéro (F5 : rien ne se passait sur Grille)."""
+        reset = self.resets.get(self.tabs.currentWidget())
+        if reset is not None:
+            reset()
+
+    def _reset_section(self, section):
+        keep = {k: self.settings.get("general", k) for k in ("live_last",)} if section == "general" else {}
         self.settings.reset_section(section)
+        for k, v in keep.items():
+            self.settings.set(section, k, v)     # état mémorisé, pas un réglage de l'onglet
         for (s, k), f in self.widgets.items():
             if s != section:
                 continue
             v = self.settings.get(s, k)
             f.blockSignals(True)
-            if isinstance(f, QCheckBox):
-                f.setChecked(bool(v))
+            if isinstance(f, Switch):
+                f.set_value(bool(v))
             elif isinstance(f, ColorSwatch):
                 f.set_value(tuple(v))
             else:
