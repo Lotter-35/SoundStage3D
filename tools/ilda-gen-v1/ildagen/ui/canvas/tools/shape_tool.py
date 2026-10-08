@@ -3,6 +3,7 @@
 Glisser pour tracer. Maj : proportions forcées + aimant de grille ; Alt : depuis le centre.
 Un simple clic pose la forme à une taille par défaut (la mire ILDA occupe toute la zone).
 Symétrie de dessin active : la forme est rangée sous un modifieur Symétrie (ajouté automatiquement).
+Une forme glissée mais quasi nulle au relâchement (on est revenu au point de départ) n'est pas créée.
 """
 
 import math
@@ -16,6 +17,7 @@ from ....core.nodes import ShapeNode
 from .base import Tool
 
 DEFAULT_HALF = 0.25
+MIN_SIZE_PX = 4      # en dessous (à l'écran), une forme glissée est jugée nulle
 
 
 class ShapeTool(Tool):
@@ -26,10 +28,19 @@ class ShapeTool(Tool):
         self.kind = "rect"
         self.node = None
         self.start = None
+        self.wrect = None       # rectangle tracé (repère de la mire)
         self.inv = np.eye(3)
 
     def cursor(self):
         return Qt.CursorShape.CrossCursor
+
+    def busy(self):
+        return self.start is not None
+
+    def abort(self):
+        self.node = None
+        self.start = None
+        self.wrect = None
 
     def _snap(self, p, ev):
         if ev.shift and self.editor.doc.grid.mode != 0:
@@ -42,6 +53,7 @@ class ShapeTool(Tool):
         self.start = self._snap(ev.world, ev)
         self.press_screen = ev.screen
         self.node = None
+        self.wrect = None
 
     def _rect(self, ev):
         a = np.array(self.start, dtype=float)
@@ -91,9 +103,18 @@ class ShapeTool(Tool):
             if math.hypot(ev.screen.x() - self.press_screen.x(), ev.screen.y() - self.press_screen.y()) < 3:
                 return
             self._create()
-        self.node.rect = self._local_rect(self._rect(ev))
+        self.wrect = self._rect(ev)
+        self.node.rect = self._local_rect(self.wrect)
         self.node.center_pivot()
         self.editor.notify()
+
+    def _degenerate(self):
+        """Forme glissée de taille quasi nulle (trait sans longueur, carré sans largeur ni hauteur)."""
+        if self.wrect is None:
+            return False
+        x0, y0, x1, y1 = self.wrect
+        size = math.hypot(x1 - x0, y1 - y0) if self.kind == "line" else max(abs(x1 - x0), abs(y1 - y0))
+        return size < self.vt.px(MIN_SIZE_PX)
 
     def release(self, ev):
         if self.start is None:
@@ -109,10 +130,15 @@ class ShapeTool(Tool):
             else:
                 r = (x - DEFAULT_HALF, y - DEFAULT_HALF, x + DEFAULT_HALF, y + DEFAULT_HALF)
             self.node.rect = self._local_rect(r)
+        elif self._degenerate():
+            # Revenu au point de départ : rien n'est créé (pas de forme invisible envoyée au laser)
+            self.abort()
+            ed.cancel_gesture()
+            ed.statusMessage.emit("Forme trop petite : elle n'a pas été créée")
+            return
         self.node.center_pivot()
         ed.commit()
         ed.notify(structure=True)
         ed.note_drawn(self.node)
         ed.set_selection([self.node.id])
-        self.node = None
-        self.start = None
+        self.abort()

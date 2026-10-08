@@ -1,9 +1,10 @@
 # ILDA Gen — v1 (sauvegarde avant la refonte)
 
-> Copie figée de `tools/ilda-gen/` avant la refonte en deux espaces (Forme / Show). Elle se lance avec
-> `python tools/ilda-gen-v1/ilda-gen.py` et garde ses réglages et sa sauvegarde automatique à part
-> (dossier `IldaGen-v1`), pour ne pas toucher à ceux de la nouvelle version. Les commandes ci-dessous
-> parlent de `tools/ilda-gen/` : remplacer par `tools/ilda-gen-v1/`.
+> Copie figée de `tools/ilda-gen/` juste avant la refonte en trois espaces (Forme / Show / Live), avec les
+> corrections S, A, Q et le nouveau moteur de sortie. Elle se lance avec `python tools/ilda-gen-v1/ilda-gen.py`
+> et garde ses réglages et sa sauvegarde automatique à part (dossier `IldaGen-v1`). Les commandes ci-dessous
+> parlent de `tools/ilda-gen/` : remplacer par `tools/ilda-gen-v1/`. (La copie d'avant les corrections reste
+> dans l'historique git, commit 52941e4.)
 
 Générateur ILDA en Python (PySide6) qui envoie en direct au serveur SoundStage3D (IDN / UDP) et exporte des
 fichiers `.ild`. Cahier des charges : `docs/ilda-gen-cahier-des-charges.md`.
@@ -37,9 +38,16 @@ python tools/ilda-gen/ilda-gen.py            # ou : python tools/ilda-gen/ilda-g
 Pour le direct, lancer aussi le serveur SoundStage3D (`node server/server.js`) : il écoute l'IDN sur UDP 7255.
 Dans le jeu, régler un laser sur « ILDA live » et le même canal (1 à 16) que dans la barre de connexion.
 
-Au démarrage, le générateur **rouvre le dernier projet** et passe **en envoi live**. Chaque modification est
-**enregistrée automatiquement** dans le fichier du projet (un projet sans nom est gardé dans la sauvegarde
-automatique et rouvert la fois suivante). Ces trois comportements se désactivent dans Paramètres → Général.
+Au démarrage, le générateur **rouvre le dernier projet** et **reprend l'envoi live s'il était actif** à la
+dernière fermeture (sinon il reste coupé). Chaque modification est **enregistrée automatiquement** dans le
+fichier du projet (un projet sans nom est gardé dans la sauvegarde automatique et rouvert la fois suivante).
+L'enregistrement automatique et la réouverture se désactivent dans Paramètres → Général.
+
+La sauvegarde automatique d'un projet sans nom n'est **jamais écrasée** par un autre travail : avant, elle est
+copiée dans des sauvegardes datées (les 10 dernières sont gardées), à rouvrir par **Fichier → Récupérer une
+sauvegarde automatique…**. Un projet ou un fichier de réglages abîmé n'empêche jamais de démarrer : un message
+explique le problème et l'on repart d'un projet vide (ou des réglages par défaut). Un projet créé par une
+version plus récente est ouvert avec un avertissement, sans être réenregistré automatiquement.
 
 ## Disposition
 
@@ -62,7 +70,8 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Sélection / Crayon / Seau | `V` / `B` / `G` |
 | Inverser les deux couleurs / couleurs par défaut | `X` / `D` |
 | Trait, Carré, Cercle, Triangle, Étoile, Polygone, Mire ILDA | `L` `R` `E` `T` `S` `P` `M` |
-| Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Maj+Z` ou `Ctrl+Y` |
+| Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Maj+Z` ou `Ctrl+Y` (pendant un glisser : annulent seulement ce glisser) |
+| Annuler le geste en cours (tracé, déplacement, poignée, réglage glissé, clip ou point glissé…) | `Échap` |
 | Couper / Copier / Coller / Dupliquer | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Ctrl+D` |
 | Supprimer | `Suppr` ou `Retour arrière` |
 | Tout sélectionner | `Ctrl+A` |
@@ -109,7 +118,18 @@ mode vont sous le même modifieur ; changer de mode crée un nouveau groupe.
 ### Formes
 
 `Maj` : proportions forcées et aimant de grille. `Alt` : tracé depuis le centre. Un simple clic pose la forme
-à une taille par défaut (la mire ILDA prend toute la zone).
+à une taille par défaut (la mire ILDA prend toute la zone). Une forme glissée puis ramenée à son point de
+départ (taille quasi nulle) n'est pas créée.
+
+### Gestes et annulation
+
+Un geste (tracer, déplacer, une poignée, glisser un réglage, un clip ou un point de courbe) compte pour **une
+seule étape** d'annulation. Il est **annulé** — tout revient comme avant le geste — par `Échap`, par `Ctrl+Z`
+pendant le geste, en changeant d'outil (`V`, `B`, `R`…) avant de relâcher, ou si l'application perd la main
+(autre application au premier plan). Les flèches maintenues ou répétées rapidement font une seule étape.
+
+L'annulation ne touche pas à l'**affichage** : grille, aimant, symétrie de dessin, clips et calques dépliés,
+hauteur des lignes de réglage restent comme ils sont (ils sont quand même enregistrés avec le projet).
 
 ### Sélection et transformations (comme Photoshop)
 
@@ -118,7 +138,8 @@ mode vont sous le même modifieur ; changer de mode crée un nouveau groupe.
 | Clic / `Ctrl` + clic / `Maj` + clic | Sélectionner / ajouter ou retirer / ajouter |
 | Glisser dans le vide | Sélection rectangle |
 | Glisser une forme | Déplacer ; `Maj` : magnétisme (centre, bords, autres formes, grille) ; `Alt` : copie |
-| Flèches / `Maj` + flèches | Déplacement fin / rapide |
+| Flèches / `Maj` + flèches | Déplacement fin / rapide (touche maintenue : une seule étape d'annulation) |
+| `Échap` | Pendant un geste : l'annule ; sinon : désélectionner |
 | Coin | Redimensionner ; `Maj` : proportionnel ; `Alt` : depuis le centre ; `Alt` + `Maj` : proportionnel depuis le centre |
 | Milieu d'un côté | Étirer ; `Alt` : symétrique |
 | `Ctrl` + coin | Distorsion libre |
@@ -257,10 +278,37 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
 
 En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
 
+## Sortie laser
+
+- **Envoi live dans un fil dédié** : les images partent au rythme choisi (images/s), calculées à l'instant exact
+  de l'envoi, même si l'interface est occupée ; une image lourde ne bloque plus l'interface. Les gros envois sont
+  étalés dans le temps (pas de rafale perdue) ; le serveur jette une image dont un fragment s'est perdu.
+- **BLACKOUT** coupe immédiatement ; couper l'envoi live envoie quelques images éteintes et la fermeture IDN.
+  Hors live, rien n'est envoyé ni calculé en continu (l'aperçu de la mire est recalculé seulement quand
+  l'affichage change).
+- **Budget de points** : une image compte au plus *vitesse de balayage (kpps) × 1000 / images par seconde*
+  points (1 000 à 30 kpps et 30 images/s ; jamais plus de 20 000, limite du serveur). Au-delà, l'image est
+  allégée : points espacés, temps d'arrêt raccourcis, tracés simplifiés, et en dernier recours éclaircis. Le
+  compteur sous la mire indique les points envoyés et « réduit » quand l'image a été allégée.
+- La géométrie est **découpée au champ** avant d'ajouter des points : une répétition géante ne coûte rien de ce
+  qui tombe hors de la mire. Toute combinaison de réglages reste rapide (plafonds de sécurité).
+- Coins : temps d'arrêt selon l'angle (coin de fermeture des formes fermées compris, coins arrondis détectés) ;
+  sauts laser éteint avec accélération / freinage ; points éteints avant / après chaque tracé réglables.
+- **Anti point fixe** (Paramètres → Zone de sécurité, actif par défaut) : une image dont tous les points allumés
+  tiennent en un point est éteinte (forme de taille nulle, sortie réduite à rien…).
+
 ## Paramètres
 
-Général (couleur par défaut, lissage, enregistrement automatique, réouverture, live au démarrage) · Grille · Sortie laser (vitesse, points,
-blanking, coins) · Zone de sécurité · Trapèze · Taille / position (et puissance max).
+Général (couleur par défaut, lissage, enregistrement automatique, réouverture) · Grille · Sortie laser (vitesse de
+balayage en kpps et budget de points, distance entre points, blanking, coins) · Couleurs (décalage couleur, gamma,
+gains rouge / vert / bleu, puissance minimale) · Zone de sécurité (et anti point fixe) · Trapèze · Taille / position
+(taille minimale 5 %, puissance max). Les nombres de points sont réglés pour 30 kpps et suivent la vitesse de
+balayage.
+
+Export ILDA : par défaut le fichier contient le **contenu seul**, sans les réglages de sortie de ce laser (case
+« Appliquer les réglages de sortie » pour les inclure). Limites du format : 65 535 points par image et
+65 535 images. Formats à palette (0 et 1) : teinte la plus proche, luminosité rendue par tramage (une partie
+des points éteints).
 
 ## Tests
 
@@ -275,7 +323,7 @@ QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_ui.py
 |---|---|
 | `ildagen/core/` | Modèle sans interface : calques, transformations, modifieurs (`modifiers/`), évaluation, timeline, automations, document |
 | `ildagen/laser/` | Optimisation des points, réglages de sortie, paquets IDN, fichiers ILDA |
-| `ildagen/editor/` | État de l'éditeur, opérations, annuler / rétablir, sortie live, lecture, forme d'onde, export |
+| `ildagen/editor/` | État de l'éditeur, opérations, annuler / rétablir et gestes (`history_ops.py`), sortie live, lecture, forme d'onde, export |
 | `ildagen/ui/` | Interface Qt : thème, icônes, mire et outils, calques, propriétés, timeline, fenêtres |
 
 Ajouter un modifieur : écrire une classe dans `ildagen/core/modifiers/` et l'ajouter à la liste `MODIFIERS` du module.

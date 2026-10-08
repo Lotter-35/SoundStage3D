@@ -5,6 +5,7 @@ Le formulaire garde l'identifiant du calque (et non l'objet) : il reste valable 
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QGridLayout, QLabel, QMenu, QToolButton, QWidget
+from shiboken6 import isValid
 
 from ...core import nodes as N
 from ...core import shape_color
@@ -68,7 +69,7 @@ def make_field(spec, factor):
     if spec.kind == "enum":
         return EnumField(spec.options)
     if spec.kind == "color":
-        return ColorSwatch()
+        return ColorSwatch(cancellable=True)
     if spec.kind == "gradient":
         return GradientBar()
     if spec.kind == "palette":
@@ -163,6 +164,8 @@ class ParamForm(QWidget):
             field.editStarted.connect(lambda s=spec: self._started(s))
             field.valueEdited.connect(lambda v, s=spec: self._edited(s, v))
             field.editFinished.connect(self._finished)
+            if hasattr(field, "editCancelled"):
+                field.editCancelled.connect(self._cancelled)
             self.fields[spec.key] = field
             self.specs[spec.key] = spec
             row += 1
@@ -186,6 +189,7 @@ class ParamForm(QWidget):
                 row += 1
         self.refresh()
         editor.docChanged.connect(self.refresh)
+        editor.restored.connect(self._abort)
 
     def node(self):
         return self.editor.find(self.node_id)
@@ -254,7 +258,8 @@ class ParamForm(QWidget):
         node = self.node()
         if node is not None:
             self.editor.automate_param(node, spec.key)
-        self.refresh()
+        if isValid(self):
+            self.refresh()      # le panneau a pu être reconstruit entre-temps (ce formulaire est alors remplacé)
 
     def _started(self, spec):
         self._editing = True
@@ -276,6 +281,21 @@ class ParamForm(QWidget):
         self.editor.param_editing = False
         self.editor.commit()
         self.editor.notify()
+
+    def _cancelled(self):
+        """Sélecteur de couleur annulé : rien n'est écrit, le réglage revient à l'état d'avant."""
+        self._editing = False
+        self.editor.cancel_gesture()
+
+    def _abort(self):
+        """Geste annulé ailleurs (Échap, Ctrl+Z…) : le réglage glissé en cours s'arrête là."""
+        if not isValid(self):
+            return
+        self._editing = False
+        for f in self.fields.values():
+            if hasattr(f, "abort"):
+                f.abort()
+        self.refresh()
 
     def _label_menu(self, spec, gpos):
         node = self.node()

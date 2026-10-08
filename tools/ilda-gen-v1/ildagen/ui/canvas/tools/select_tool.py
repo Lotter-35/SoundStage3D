@@ -31,6 +31,14 @@ class SelectTool(Tool):
     def cursor(self):
         return self._cursor
 
+    def busy(self):
+        return self.drag is not None or self.marquee is not None
+
+    def abort(self):
+        self.drag = None
+        self.marquee = None
+        self.guides = []
+
     # ── Utilitaires ──────────────────────────────────────────────────────
     def frame(self, ctx=None):
         if not self.editor.editing_visible():
@@ -299,16 +307,17 @@ class SelectTool(Tool):
         arrows = {Qt.Key.Key_Left: (-1, 0), Qt.Key.Key_Right: (1, 0), Qt.Key.Key_Up: (0, 1), Qt.Key.Key_Down: (0, -1)}
         if key in arrows:
             frame = self.frame()
-            if frame is None or self.transform_locked(frame):
-                return True
+            if frame is None or self.transform_locked(frame) or self.busy():
+                return True         # pas de petits pas pendant un glisser
             step = NUDGE_BIG if mods & Qt.KeyboardModifier.ShiftModifier else NUDGE
             dx, dy = arrows[key]
             ctx = self.editor.eval_context()
-            self.editor.begin("Déplacer")
+            self.editor.begin_action("Déplacer")
             w = mu.translation(dx * step, dy * step)
             for n in frame.nodes:
                 self.editor.apply_world_matrix(n, self.editor.effective_transform(n, ctx), w, ctx)
-            self.editor.commit()
+            # Touche maintenue (ou pressée plusieurs fois de suite) : une seule étape d'annulation
+            self.editor.commit(merge=("nudge", self.editor.context, tuple(self.editor.selection)))
             self.editor.notify()
             return True
         if key == Qt.Key.Key_Escape:

@@ -4,6 +4,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QToolButton, QVBoxLayout, QWidget
 
 from ...core.shapes import SHAPE_LABELS
+from ...core.timeline import MAX_DURATION, MAX_START, MIN_DURATION
 from .. import icons
 from .forms import ParamForm
 from .widgets import ScrubField
@@ -64,6 +65,7 @@ class PropertiesPanel(QWidget):
         editor.structureChanged.connect(self.rebuild)
         editor.contextChanged.connect(self.rebuild)
         editor.timelineChanged.connect(self._timeline_changed)
+        editor.restored.connect(self._abort)
         self._clip_fields = None
         self.set_collapsed(False)
         self.rebuild()
@@ -125,6 +127,11 @@ class PropertiesPanel(QWidget):
         else:
             lay.addWidget(self._hint("Sélectionnez un calque pour voir ses réglages."))
         lay.addStretch(1)
+        # L'ancien contenu est détruit plus tard : on peut être appelé depuis un de ses boutons
+        old = self.scroll.takeWidget()
+        if old is not None:
+            old.hide()
+            old.deleteLater()
         self.scroll.setWidget(w)
 
     def _hint(self, text):
@@ -148,7 +155,8 @@ class PropertiesPanel(QWidget):
         for row, (key, label) in enumerate((("start", "Début"), ("duration", "Durée")), start=1):
             lab = QLabel(label)
             lab.setObjectName("dim")
-            f = ScrubField(3, 0.0 if key == "start" else 0.01, None, (0.0, 30.0), " s")
+            f = ScrubField(3, 0.0 if key == "start" else MIN_DURATION, MAX_START if key == "start" else MAX_DURATION,
+                           (0.0, 30.0), " s")
             f.editStarted.connect(lambda: self.editor.begin("Clip"))
             f.valueEdited.connect(lambda v, k=key: self._set_clip(k, v))
             f.editFinished.connect(self._clip_done)
@@ -172,8 +180,13 @@ class PropertiesPanel(QWidget):
     def _set_clip(self, key, v):
         clip = self.editor.current_clip()
         if clip is not None:
-            setattr(clip, key, max(0.01 if key == "duration" else 0.0, v))
+            setattr(clip, key, v)       # le clip borne lui-même ses valeurs (jamais infinies)
             self.editor.notify(timeline=True)
+
+    def _abort(self):
+        """Geste annulé (Échap, Ctrl+Z…) : un glisser en cours sur Début / Durée s'arrête."""
+        for f in (self._clip_fields or {}).values():
+            f.abort()
 
     def _clip_done(self):
         self.editor.commit()

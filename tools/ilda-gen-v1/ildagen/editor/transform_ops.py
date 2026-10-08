@@ -102,7 +102,7 @@ class TransformOpsMixin:
         a = np.vstack(quads)
         cx, cy = (a[:, 0].min() + a[:, 0].max()) / 2, (a[:, 1].min() + a[:, 1].max()) / 2
         w = mu.about(mu.scaling(-1.0, 1.0) if horizontal else mu.scaling(1.0, -1.0), cx, cy)
-        self.begin("Retourner")
+        self.begin_action("Retourner")
         for n in nodes:
             self.apply_world_matrix(n, self.effective_transform(n, ctx), w, ctx)
         self.commit()

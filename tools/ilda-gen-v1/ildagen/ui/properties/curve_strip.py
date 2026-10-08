@@ -26,6 +26,12 @@ class CurveStrip(QWidget):
         self.setMouseTracking(True)
         self.setToolTip("Valeur au cours du clip (gauche = début, droite = fin) · clic : ajouter un point · "
                         "clic sur un point : rampe → carré → sinusoïdale · glisser : le déplacer · clic droit : le supprimer")
+        editor.restored.connect(self._abort)
+
+    def _abort(self):
+        """Geste annulé ailleurs (Échap, Ctrl+Z…) : le point glissé est lâché."""
+        self.drag = None
+        self._guide_y = None
 
     def sizeHint(self):
         return QSize(120, 68)
@@ -167,7 +173,7 @@ class CurveStrip(QWidget):
             t = self._snap(self._t(pos.x(), clip), clip, e.modifiers())
             v = auto.value_at(clip.u(t)) if self._is_color() else self._v(pos.y(), auto)
             if v is None:
-                self.editor.history.cancel()
+                self.editor.cancel_gesture()
                 return
             k = auto.set_key(clip.u(t), v)
             self.editor.notify(timeline=True)
@@ -178,6 +184,10 @@ class CurveStrip(QWidget):
     def mouseMoveEvent(self, e):
         d = self.drag
         if d is None:
+            return
+        if not (e.buttons() & Qt.MouseButton.LeftButton):
+            self._abort()
+            self.editor.cancel_gesture()        # relâchement jamais reçu : le point revient où il était
             return
         clip, auto, k = d["clip"], d["auto"], d["key"]
         pos = e.position()

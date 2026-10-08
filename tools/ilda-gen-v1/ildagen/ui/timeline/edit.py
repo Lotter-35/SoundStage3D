@@ -9,6 +9,18 @@ from .geometry import HEADER_W, lane_reset_rect, lane_toggle_rect
 
 
 class TimelineEditing:
+    def abandon_drag(self):
+        """Glisser interrompu (Échap, relâchement jamais reçu) : annulé, le document revient à l'état d'avant."""
+        if self.drag is None:
+            return False
+        kind = self.drag["kind"]
+        self.drag = None
+        self.default_guide = None
+        if kind not in ("scrub", "rect", "range"):
+            self.editor.cancel_gesture()
+        self.update()
+        return True
+
     def _press_loop(self, t, x):
         tl = self.tl
         g = self.geo
@@ -52,6 +64,7 @@ class TimelineEditing:
             row.clip.lane_sizes.pop(lid, None)    # retour au comportement automatique
         else:
             row.clip.lane_sizes[lid] = "small" if small else "big"
+        self.editor.view_changed()
         self._changed()
 
     def toggle_group(self, row):
@@ -61,6 +74,7 @@ class TimelineEditing:
             ids.remove(row.node.id)
         else:
             ids.append(row.node.id)
+        self.editor.view_changed()
         self._changed()
 
     def _press_header(self, row, x, y):
@@ -112,12 +126,12 @@ class TimelineEditing:
             else:
                 v = L.y_to_v(y, row, L.value_range(spec, auto), spec, auto)
             if v is None:
-                self.editor.history.cancel()
+                self.editor.cancel_gesture()
                 return
             if auto not in clip.automations:
                 # Premier clic sur un réglage pas encore animé : l'automation est créée
                 clip.automations.append(auto)
-            k = auto.set_key(clip.u(t_local), v)
+            k = auto.set_key(clip.u(t_local), v, clip.duration)
             self.editor.notify(timeline=True)
         self.sel_key = k
         self.drag = {"kind": "key", "row": row, "key": k, "spec": spec, "x0": x, "y0": y,

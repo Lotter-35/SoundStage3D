@@ -111,9 +111,7 @@ class PencilTool(Tool):
             self.free = None
             pts = np.array(self._free_pts)
             if len(pts) < 2 or np.ptp(pts, axis=0).max() < self.vt.px(2):
-                restore = ed.history.cancel()
-                if restore is not None:
-                    ed.restore(restore)
+                ed.cancel_gesture()        # simple clic : rien n'est dessiné
                 ed.notify(structure=True)
                 ed.clear_selection()
                 return
@@ -151,6 +149,13 @@ class PencilTool(Tool):
 
     def deactivate(self):
         self.hover_pt = None
+
+    def busy(self):
+        return self.free is not None or self.seg is not None
+
+    def abort(self):
+        self.free = None
+        self.seg = None
 
     # ── Dessin ───────────────────────────────────────────────────────────
     def draw(self, p):

@@ -1,4 +1,5 @@
-"""État de l'éditeur : document, contexte d'édition, sélection, annuler / rétablir, évaluation de l'affichage.
+"""État de l'éditeur : document, contexte d'édition, sélection, évaluation de l'affichage
+(annuler / rétablir, gestes et état d'affichage : history_ops.py).
 
 Contextes d'édition :
 - « def »  : la forme sélectionnée dans la liste de gauche (ses calques sont dans le panneau Calques ;
@@ -12,16 +13,18 @@ import time
 from PySide6.QtCore import QObject, Signal
 
 from ..core import nodes as N
+from ..core import view_state
 from ..core.document import Document
 from ..core.evaluator import EvalContext, evaluate, evaluate_timeline
 from ..core.history import History
 from ..core.transform import TRANSFORM_LABELS
+from .history_ops import HistoryOpsMixin
 from .layer_ops import LayerOpsMixin
 from .timeline_ops import TimelineOpsMixin
 from .transform_ops import TransformOpsMixin
 
 
-class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
+class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     docChanged = Signal()          # contenu modifié (rendu, panneaux)
     structureChanged = Signal()    # arbre des calques modifié
     selectionChanged = Signal()
@@ -35,7 +38,9 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
     projectChanged = Signal()
     statusMessage = Signal(str)
     clipSelected = Signal(str)
-    restored = Signal()            # état remplacé (annuler / rétablir) : abandonner les gestes en cours
+    restored = Signal()            # état remplacé ou geste annulé / terminé : abandonner les gestes en cours
+    gestureChanged = Signal(bool)  # un geste (étape d'annulation ouverte) commence / se termine
+    viewChanged = Signal()         # état d'affichage modifié (grille, dépliage…) : à enregistrer, hors historique
     audioChanged = Signal(str)
     brushChanged = Signal()
 
@@ -43,7 +48,7 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         super().__init__()
         self.settings = settings
         self.doc = Document()
-        self.history = History()
+        self.history = History(strip=view_state.strip)
         self.selection = []
         self.tool = "select"
         self.context = ("def", self.doc.library.visible()[0].id)
@@ -56,6 +61,9 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.open_strips = set()      # (calque, réglage) dont la mini-courbe est dépliée dans les réglages
         self.clip_clipboard = None   # clips copiés dans la timeline (avec la longueur de la zone copiée)
         self.dirty = False
+        self.view_dirty = False     # état d'affichage modifié depuis le dernier enregistrement
+        self.session = 0            # change à chaque projet ouvert / nouveau (sauvegarde automatique)
+        self._gesture_on = False
         self.selected_clip = None
         self.last_touched = None   # dernier calque créé / sélectionné / colorié (repris par l'outil Sélection)
         self.drawn = []            # calques créés depuis qu'on a pris un outil de dessin (crayon, formes)
@@ -71,6 +79,8 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.doc = doc
         self.refresh_discrete()
         self.history.clear()
+        self.param_editing = False
+        self.session += 1
         self.selection = []
         self.context = ("def", doc.library.visible()[0].id)
         self.view_source = "form"
@@ -78,7 +88,9 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.playhead = 0.0
         self.preview_time = None
         self.dirty = False
+        self.view_dirty = False
         self._touch()
+        self._gesture_state()
         self.projectChanged.emit()
         self.contextChanged.emit()
         self.structureChanged.emit()
@@ -88,63 +100,6 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         self.gridChanged.emit()
         self.historyChanged.emit()
         self.docChanged.emit()
-
-    def state_dict(self):
-        return self.doc.to_dict()
-
-    def restore(self, d):
-        path = self.doc.path
-        old_audio = self.doc.timeline.audio_path
-        doc = Document()
-        doc.load_dict(d)
-        doc.path = path
-        self.doc = doc
-        root = self.current_root()
-        if root is None:
-            self.context = ("def", self.doc.library.visible()[0].id)
-            root = self.current_root()
-        self.selection = [i for i in self.selection if root.find(i) is not None]
-        self.notify(structure=True, library=True, timeline=True)
-        self.selectionChanged.emit()
-        self.contextChanged.emit()
-        self.gridChanged.emit()
-        self.restored.emit()
-        if self.doc.timeline.audio_path != old_audio:
-            self.audioChanged.emit(self.doc.timeline.audio_path)
-
-    # ── Annuler / rétablir ───────────────────────────────────────────────
-    def begin(self, label):
-        self.history.begin(label, self.state_dict())
-
-    def commit(self):
-        if self.history.commit(self.state_dict()):
-            self.dirty = True
-            self.historyChanged.emit()
-            self.projectChanged.emit()
-
-    def mutate(self, label, fn, structure=True, library=False, timeline=False):
-        self.begin(label)
-        res = fn()
-        self.commit()
-        self.notify(structure=structure, library=library, timeline=timeline)
-        return res
-
-    def undo(self):
-        self.history.cancel()
-        d = self.history.undo(self.state_dict())
-        if d is not None:
-            self.restore(d)
-            self.dirty = True
-            self.historyChanged.emit()
-            self.statusMessage.emit("Annulé")
-
-    def redo(self):
-        d = self.history.redo(self.state_dict())
-        if d is not None:
-            self.restore(d)
-            self.dirty = True
-            self.historyChanged.emit()
-            self.statusMessage.emit("Rétabli")
 
     # ── Notifications ────────────────────────────────────────────────────
     def _touch(self, content=True):
@@ -201,11 +156,12 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
             name += " (délié)"
         return f"Clip : {name}" if self.context[0] == "clip" else name
 
-    def _set_context(self, ctx, view="form"):
-        self.history.cancel()
+    def _set_context(self, ctx, view="form", keep_selection=False):
+        self.end_gesture()
         self.context = ctx
         self.view_source = view
-        self.selection = []
+        root = self.current_root() if keep_selection else None
+        self.selection = [i for i in self.selection if root.find(i) is not None] if root is not None else []
         self.selected_clip = ctx[1] if ctx[0] == "clip" else None
         self._touch()
         self.contextChanged.emit()
@@ -221,10 +177,11 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         if self.context != ("def", def_id) or self.view_source != "form":
             self._set_context(("def", def_id), "form")
 
-    def enter_clip(self, clip_id):
+    def enter_clip(self, clip_id, keep_selection=False):
+        """keep_selection : garder les calques sélectionnés (même forme, vue dans le clip)."""
         if self.context == ("clip", clip_id):
             return
-        self._set_context(("clip", clip_id), "timeline")
+        self._set_context(("clip", clip_id), "timeline", keep_selection)
         self.clipSelected.emit(clip_id)
 
     def set_view_source(self, src):
@@ -367,34 +324,6 @@ class EditorState(QObject, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
         """Un outil de dessin vient de créer ce calque."""
         if node.id not in self.drawn:
             self.drawn.append(node.id)
-
-    def set_grid_mode(self, mode):
-        self.doc.grid.mode = mode
-        self.gridChanged.emit()
-
-    def set_symmetry(self, mode=None, count=None):
-        """Symétrie de dessin (aide au tracé, comme la grille)."""
-        from ..core import draw_symmetry as DS
-        g = self.doc.grid
-        if mode is not None:
-            g.sym = int(mode)
-            if g.sym:
-                g.sym_last = g.sym
-        if count is not None:
-            g.sym_count = int(count)
-            if g.sym not in (4, 5):
-                g.sym = g.sym_last = 4
-        self.gridChanged.emit()
-        self.statusMessage.emit("Symétrie de dessin : " + DS.describe(g) if g.sym else "Symétrie de dessin désactivée")
-
-    def toggle_symmetry(self):
-        g = self.doc.grid
-        self.set_symmetry(0 if g.sym else (g.sym_last or 1))
-
-    def set_snap(self, on):
-        self.doc.grid.snap = bool(on)
-        self.gridChanged.emit()
-        self.statusMessage.emit("Aimant activé" if on else "Aimant désactivé")
 
     # ── Paramètres (avec automations) ────────────────────────────────────
     def param_label(self, node, key):

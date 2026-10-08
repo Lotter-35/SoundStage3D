@@ -1,8 +1,10 @@
 """Document (projet) : formes, timeline, réglages enregistrés avec le projet."""
 
 import json
+import math
 import os
 
+from .atomic import write_json
 from .library import Library, ShapeDef, link_clips
 from .timeline import Timeline
 
@@ -23,13 +25,28 @@ class GridSettings:
         self.sym_count = 6     # nombre de branches (radiale / kaléidoscope)
         self.sym_last = 1      # dernier mode utilisé (bouton marche / arrêt)
 
+    # Bornes de chaque réglage (une valeur abîmée reprend la valeur par défaut)
+    LIMITS = {"mode": (0, 2), "divisions": (1, 64), "rings": (1, 64), "rays": (2, 360), "sym": (0, 5),
+              "sym_count": (2, 16), "sym_last": (0, 5)}
+
     def to_dict(self):
         return dict(self.__dict__)
 
     @classmethod
     def from_dict(cls, d):
         g = cls()
-        g.__dict__.update({k: v for k, v in (d or {}).items() if k in g.__dict__})
+        for k, v in (d if isinstance(d, dict) else {}).items():
+            default = g.__dict__.get(k)
+            if default is None or isinstance(v, bool) != isinstance(default, bool):
+                continue
+            if isinstance(default, (int, float)) and not isinstance(default, bool):
+                if not isinstance(v, (int, float)) or not math.isfinite(v):
+                    continue
+                lo, hi = cls.LIMITS.get(k, (-math.inf, math.inf))
+                v = type(default)(min(hi, max(lo, v)))
+            elif type(v) is not type(default):
+                continue
+            setattr(g, k, v)
         return g
 
 
@@ -62,20 +79,27 @@ class Document:
         self.grid = GridSettings()
         self.network = {}      # copie des réglages réseau au moment de l'enregistrement
         self.path = ""         # fichier du projet
+        self.version = FORMAT_VERSION   # version du format du fichier lu (plus récent : avertir)
 
     def to_dict(self):
         return {"version": FORMAT_VERSION, "library": self.library.to_dict(),
                 "timeline": self.timeline.to_dict(), "grid": self.grid.to_dict(), "network": dict(self.network)}
 
     def load_dict(self, d):
+        if not isinstance(d, dict) or not isinstance(d.get("library", []), list):
+            raise ValueError("ce fichier n'est pas un projet ILDA Gen")
+        self.version = d.get("version", 1)
+        if not isinstance(self.version, (int, float)) or isinstance(self.version, bool):
+            raise ValueError("version du format illisible")
         self.library = Library.from_dict(d.get("library"))
         ensure_form(self.library)
-        self.timeline = Timeline.from_dict(d.get("timeline", {}))
-        if d.get("version", 1) < 3:
+        self.timeline = Timeline.from_dict(d.get("timeline") or {})
+        if self.version < 3:
             self._keys_to_ratio()
         link_clips(self.library, self.timeline)
         self.grid = GridSettings.from_dict(d.get("grid"))
-        self.network = dict(d.get("network", {}))
+        net = d.get("network")
+        self.network = dict(net) if isinstance(net, dict) else {}
 
     def _keys_to_ratio(self):
         """Anciens projets : instants des clés en secondes → proportion de la durée du clip."""
@@ -100,10 +124,7 @@ class Document:
                 tl["audio_path"] = os.path.relpath(tl["audio_path"], os.path.dirname(os.path.abspath(path)))
             except ValueError:
                 pass
-        tmp = path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as f:
-            json.dump(data, f, ensure_ascii=False, separators=(",", ":"))
-        os.replace(tmp, path)
+        write_json(path, data, separators=(",", ":"))
         self.path = path
 
     @classmethod
@@ -112,6 +133,7 @@ class Document:
             d = json.load(f)
         doc = cls()
         doc.load_dict(d)
+        doc.to_dict()      # le projet lu doit pouvoir être réenregistré (sinon : fichier abîmé)
         ap = doc.timeline.audio_path
         if ap and not os.path.isabs(ap):
             doc.timeline.audio_path = os.path.normpath(os.path.join(os.path.dirname(os.path.abspath(path)), ap))

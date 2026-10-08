@@ -9,17 +9,53 @@ from .nodes import new_id
 SUBDIVISIONS = [("Temps", 1), ("1/2 temps", 2), ("1/4 temps", 4), ("1/8 temps", 8),
                 ("Triolets", 3), ("Triolets de 1/2", 6)]
 
+MAX_START = 4 * 3600.0       # un clip commence au plus tard à 4 h (aucun spectacle n'est plus long)
+MIN_DURATION = 0.01
+MAX_DURATION = 3600.0        # un clip dure au plus 1 h
+
+
+def finite(v, default, lo=None, hi=None):
+    """Nombre fini borné ; `default` si la valeur n'est pas un nombre utilisable (texte, infini, NaN…)."""
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    if lo is not None:
+        v = max(lo, v)
+    if hi is not None:
+        v = min(hi, v)
+    return v
+
 
 class Clip:
     def __init__(self, def_id, start=0.0, duration=2.0, clip_id=None):
         self.id = clip_id or new_id()
         self.def_id = def_id
-        self.start = float(start)
-        self.duration = float(duration)
+        self.start = start
+        self.duration = duration
         self.automations = []
         self.expanded = False
         self.closed_nodes = []    # modifieurs repliés dans la timeline (par défaut leurs réglages sont affichés)
         self.lane_sizes = {}      # hauteur choisie à la main pour une ligne de réglage : {clé: "big" | "small"}
+
+    # Début et durée toujours finis et bornés (une valeur infinie bloquerait l'affichage de la timeline)
+    @property
+    def start(self):
+        return self._start
+
+    @start.setter
+    def start(self, v):
+        self._start = finite(v, getattr(self, "_start", 0.0), 0.0, MAX_START)
+
+    @property
+    def duration(self):
+        return self._duration
+
+    @duration.setter
+    def duration(self, v):
+        self._duration = finite(v, getattr(self, "_duration", 2.0), MIN_DURATION, MAX_DURATION)
 
     @property
     def end(self):
@@ -68,9 +104,10 @@ class Clip:
     @classmethod
     def from_dict(cls, d):
         c = cls(d.get("def_id", ""), d.get("start", 0.0), d.get("duration", 2.0), d.get("id"))
-        c.expanded = d.get("expanded", False)
-        c.closed_nodes = list(d.get("closed_nodes", []))
-        c.lane_sizes = dict(d.get("lane_sizes", {}))
+        c.expanded = bool(d.get("expanded", False))
+        c.closed_nodes = [i for i in d.get("closed_nodes") or [] if isinstance(i, str)]
+        sizes = d.get("lane_sizes")
+        c.lane_sizes = dict(sizes) if isinstance(sizes, dict) else {}
         c.automations = [Automation.from_dict(a) for a in d.get("automations", [])]
         return c
 
@@ -89,9 +126,9 @@ class Track:
 
     @classmethod
     def from_dict(cls, d):
-        t = cls(d.get("name", "Piste"), d.get("id"))
-        t.muted = d.get("muted", False)
-        t.solo = d.get("solo", False)
+        t = cls(str(d.get("name", "Piste")), d.get("id"))
+        t.muted = bool(d.get("muted", False))
+        t.solo = bool(d.get("solo", False))
         t.clips = [Clip.from_dict(c) for c in d.get("clips", [])]
         return t
 
@@ -186,9 +223,18 @@ class Timeline:
     @classmethod
     def from_dict(cls, d):
         tl = cls()
-        for k in ("bpm", "bar_offset", "beats_per_bar", "subdivision", "snap", "loop_on",
-                  "loop_start", "loop_end", "audio_path", "audio_duration"):
-            if k in d:
+        # Chaque valeur est vérifiée : un fichier abîmé reprend les valeurs par défaut au lieu de planter
+        tl.bpm = finite(d.get("bpm"), tl.bpm, 1.0, 999.0)
+        tl.bar_offset = finite(d.get("bar_offset"), tl.bar_offset, -MAX_START, MAX_START)
+        tl.beats_per_bar = int(finite(d.get("beats_per_bar"), tl.beats_per_bar, 1, 32))
+        tl.subdivision = int(finite(d.get("subdivision"), tl.subdivision, 0, len(SUBDIVISIONS) - 1))
+        tl.loop_start = finite(d.get("loop_start"), tl.loop_start, 0.0, MAX_START)
+        tl.loop_end = finite(d.get("loop_end"), tl.loop_end, 0.0, MAX_START)
+        tl.audio_duration = finite(d.get("audio_duration"), tl.audio_duration, 0.0, MAX_START)
+        for k in ("snap", "loop_on"):
+            if isinstance(d.get(k), bool):
                 setattr(tl, k, d[k])
+        if isinstance(d.get("audio_path"), str):
+            tl.audio_path = d["audio_path"]
         tl.tracks = [Track.from_dict(t) for t in d.get("tracks", [])] or [Track("Piste 1")]
         return tl
