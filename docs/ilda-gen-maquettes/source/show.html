@@ -1,0 +1,268 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Espace Show</title>
+<link rel="stylesheet" href="mock.css"><script src="icons.js"></script><script src="laser.js"></script>
+<style>
+  .lib { width: 232px; }
+  .lib .tiles { grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .lib .tile .nm { font-size: 10px; padding: 10px 5px 3px; }
+  .cat { padding: 8px 12px 3px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em; color: var(--off); text-transform: uppercase; }
+  .fx { display: flex; align-items: center; gap: 8px; height: 25px; padding: 0 12px; }
+  .fx .ic { color: var(--dim); }
+  .fx .st { margin-left: auto; color: var(--off); }
+  .fx .st.on { color: var(--warning); }
+  .fx.drag { background: var(--bg-hover); border-radius: 5px; margin: 0 6px; padding: 0 6px; box-shadow: 0 6px 18px rgba(0,0,0,.5); }
+  .rp { width: 336px; }
+
+  .pv { height: 330px; flex: none; display: flex; background: var(--bg-app); border-bottom: 1px solid var(--border); }
+  .pv .area { flex: 1; display: flex; flex-direction: column; }
+  .pv .hd { height: 32px; display: flex; align-items: center; gap: 8px; padding: 0 10px; color: var(--dim); }
+  .pv .hd .r { margin-left: auto; display: flex; gap: 8px; align-items: center; }
+  .pv .scr { flex: 1; display: grid; place-items: center; }
+  .masters { width: 236px; border-left: 1px solid var(--border); background: var(--bg-panel); display: flex; flex-direction: column; }
+  .faders { display: flex; justify-content: space-around; padding: 6px 8px 0; flex: 1; }
+  .fd { display: flex; flex-direction: column; align-items: center; gap: 6px; width: 50px; }
+  .fd .tr { width: 6px; flex: 1; border-radius: 3px; background: var(--bg-field); position: relative; }
+  .fd .tr i { position: absolute; left: 0; right: 0; bottom: 0; border-radius: 3px; background: var(--fill); }
+  .fd .tr b { position: absolute; left: -7px; width: 20px; height: 9px; border-radius: 2px; background: #c9cbd1; box-shadow: 0 1px 3px rgba(0,0,0,.6); }
+  .fd .v { font-variant-numeric: tabular-nums; font-weight: 500; }
+  .fd .n { color: var(--dim); font-size: 10.5px; }
+  .xy { margin: 0 12px 10px; height: 54px; border-radius: 5px; background: var(--bg-field); position: relative; display: flex; align-items: flex-end; padding: 0 0 4px 8px; color: var(--off); font-size: 10.5px; }
+  .xy::after { content: ""; position: absolute; left: 55%; top: 45%; width: 9px; height: 9px; border-radius: 50%; background: #c9cbd1; transform: translate(-50%, -50%); }
+
+  /* Timeline */
+  .tl { flex: 1; display: flex; flex-direction: column; min-height: 0; background: var(--bg-app); }
+  .tp { height: 36px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+  .tp .grp { display: flex; gap: 2px; }
+  .tp .lcd { font: 12px "DejaVu Sans Mono", monospace; color: var(--text); }
+  .tp .lcd small { color: var(--dim); }
+  .tp .r { margin-left: auto; display: flex; gap: 6px; align-items: center; }
+  .body { flex: 1; display: flex; min-height: 0; position: relative; }
+  .heads { width: 128px; flex: none; background: var(--bg-panel); border-right: 1px solid var(--border); }
+  .lanes { flex: 1; position: relative; overflow: hidden; }
+  .th { display: flex; align-items: center; gap: 7px; padding: 0 8px 0 0; border-bottom: 1px solid var(--border); position: relative; }
+  .th .cs { width: 3px; align-self: stretch; }
+  .th .ms { margin-left: auto; display: flex; gap: 3px; }
+  .th .ms span { width: 18px; height: 17px; border-radius: 3px; border: 1px solid var(--border); font-size: 9.5px; display: grid; place-items: center; color: var(--dim); }
+  .ruler { height: 26px; border-bottom: 1px solid var(--border); position: relative; background: var(--bg-panel); }
+  .bar-n { position: absolute; top: 4px; font: 10.5px "DejaVu Sans Mono", monospace; color: var(--dim); }
+  .vl { position: absolute; top: 0; bottom: 0; width: 1px; background: rgba(255,255,255,.05); }
+  .vl.b { background: rgba(255,255,255,.10); }
+  .mk { position: absolute; top: 3px; height: 18px; display: flex; align-items: center; gap: 4px; padding: 0 6px; border-radius: 3px; font-size: 10.5px; font-weight: 600; color: #111; }
+  .loop { position: absolute; top: 22px; height: 4px; background: rgba(74,144,226,.55); border-radius: 2px; }
+  .trk { position: absolute; left: 0; right: 0; border-bottom: 1px solid var(--border); }
+  .clip { position: absolute; border-radius: 5px; overflow: hidden; border: 1px solid rgba(255,255,255,.10); background: #24262c; }
+  .clip .h { height: 20px; display: flex; align-items: center; gap: 5px; padding: 0 6px; font-weight: 600; font-size: 11px; background: rgba(255,255,255,.04); }
+  .clip .h .r { margin-left: auto; color: var(--dim); display: flex; gap: 5px; }
+  .clip .strip { display: flex; height: 36px; background: var(--bg-mire); }
+  .clip .strip .laser { width: 36px; height: 36px; flex: none; }
+  .clip.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+  .clip .fade { position: absolute; top: 20px; width: 0; height: 0; }
+  .ln { position: relative; border-top: 1px solid rgba(255,255,255,.06); background: #1f2025; }
+  .ln .lb { position: absolute; left: 6px; top: 3px; font-size: 10.5px; color: var(--dim); display: flex; gap: 5px; align-items: center; z-index: 2; }
+  .ln .cv { position: absolute; left: 0; right: 0; top: 14px; bottom: 2px; }
+  .ph-line { position: absolute; top: 0; bottom: 0; width: 1px; background: var(--accent); z-index: 5; }
+  .ph-line::before { content: ""; position: absolute; top: 0; left: -5px; border: 5px solid transparent; border-top: 7px solid var(--accent); }
+
+  /* Inspecteur */
+  .kv { display: grid; grid-template-columns: 92px 1fr; align-items: center; gap: 8px; height: 28px; padding: 0 12px; }
+  .kv .k { color: var(--dim); }
+  .kv .f { height: 24px; border-radius: 4px; background: var(--bg-field); display: flex; align-items: center; padding: 0 8px; justify-content: flex-end; font-variant-numeric: tabular-nums; }
+  .linkrow { margin: 6px 10px 8px; display: flex; align-items: center; gap: 8px; padding: 7px 10px; border-radius: 6px; background: var(--bg-app); color: var(--dim); }
+  .linkrow .btn { margin-left: auto; height: 22px; }
+  .tgt { display: inline-flex; align-items: center; gap: 4px; padding: 1px 7px; border-radius: 10px; background: var(--bg-hover); color: var(--dim); font-weight: 400; font-size: 10.5px; }
+  .prm { display: flex; align-items: center; gap: 8px; padding: 0 10px; height: 26px; }
+  .prm .lb { color: var(--dim); width: 60px; }
+  .prm .seg { margin-left: auto; }
+  .mini { margin: 2px 10px 8px; height: 40px; border-radius: 4px; background: var(--bg-field); }
+  .ttl { padding: 10px 12px 4px; display: flex; align-items: baseline; gap: 8px; }
+  .ttl b { font-size: 14px; font-weight: 600; }
+  .ttl span { color: var(--dim); }
+  .sec { padding: 8px 12px 5px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em; color: var(--off); text-transform: uppercase; display: flex; }
+  .sec .r { margin-left: auto; text-transform: none; letter-spacing: 0; font-weight: 500; color: var(--dim); display: flex; gap: 5px; align-items: center; }
+  .ro { margin: 0 10px; padding: 8px 10px; border-radius: 6px; background: var(--bg-app); display: flex; align-items: center; gap: 10px; }
+  .ro .laser { width: 42px; height: 42px; border-radius: 4px; background: var(--bg-mire); flex: none; }
+  .ro .t { display: flex; flex-direction: column; gap: 2px; }
+  .ro .t span { color: var(--dim); font-size: 11px; }
+  .ro .btn { margin-left: auto; white-space: nowrap; }
+  .ro .t { white-space: nowrap; }
+</style></head>
+<body>
+<div class="top">
+  <div class="brand"><div class="dot"></div>ILDA Gen <small>Mon show · enregistré</small></div>
+  <div class="spaces">
+    <div><i data-i="pen-line" class="s"></i>Forme<kbd>⌘1</kbd></div>
+    <div class="on"><i data-i="audio-waveform" class="s"></i>Show<kbd>⌘2</kbd></div>
+    <div><i data-i="grid-3x3" class="s"></i>Live<kbd>⌘3</kbd></div>
+  </div>
+  <div class="right">
+    <div class="pill"><span class="led"></span>SoundStage3D <span class="dim">· canal 1</span></div>
+    <div class="pill live"><i data-i="radio" class="s"></i>Live actif</div>
+    <div class="pill cut"><i data-i="octagon-x" class="s"></i>Coupure</div>
+  </div>
+</div>
+
+<div class="main">
+  <!-- Bibliothèque : formes + effets -->
+  <div class="col l lib">
+    <div class="ph">Formes<span class="r">glisser dans la timeline</span></div>
+    <div class="tiles">
+      <div class="tile"><div class="laser" data-laser="star"></div><div class="nm">Étoile</div></div>
+      <div class="tile"><div class="laser" data-laser="rings"></div><div class="nm">Anneaux</div></div>
+      <div class="tile"><div class="laser" data-laser="wave"></div><div class="nm">Vague</div></div>
+      <div class="tile"><div class="laser" data-laser="tunnel"></div><div class="nm">Tunnel</div></div>
+      <div class="tile"><div class="laser" data-laser="liss"></div><div class="nm">Lissajous</div></div>
+      <div class="tile"><div class="laser" data-laser="flower"></div><div class="nm">Fleur</div></div>
+    </div>
+    <div class="sep"></div>
+    <div class="ph">Effets</div>
+    <div class="search"><i data-i="search" class="s"></i>Rechercher un effet…</div>
+    <div class="cat">Mouvement</div>
+    <div class="fx"><i data-i="rotate-cw" class="ic s"></i>Rotation<i data-i="star-fav" class="st on s"></i></div>
+    <div class="fx"><i data-i="scaling" class="ic s"></i>Taille<i data-i="star-fav" class="st s"></i></div>
+    <div class="fx"><i data-i="move" class="ic s"></i>Position<i data-i="star-fav" class="st s"></i></div>
+    <div class="fx"><i data-i="rotate-3d" class="ic s"></i>Bascule 3D<i data-i="star-fav" class="st s"></i></div>
+    <div class="cat">Apparition</div>
+    <div class="fx"><i data-i="blend" class="ic s"></i>Fondu<i data-i="star-fav" class="st s"></i></div>
+    <div class="fx drag"><i data-i="pen-line" class="ic s"></i>Dessin progressif<i data-i="star-fav" class="st on s"></i></div>
+    <div class="fx"><i data-i="eye-off" class="ic s"></i>Masquer<i data-i="star-fav" class="st s"></i></div>
+    <div class="cat">Division</div>
+    <div class="fx"><i data-i="copy" class="ic s"></i>Répétition<i data-i="star-fav" class="st s"></i></div>
+    <div class="fx"><i data-i="square-split-horizontal" class="ic s"></i>Éclatement<i data-i="star-fav" class="st s"></i></div>
+    <div class="cat">Couleur · Rythme</div>
+    <div class="fx"><i data-i="palette" class="ic s"></i>Changement de couleur<i data-i="star-fav" class="st s"></i></div>
+    <div class="fx"><i data-i="zap" class="ic s"></i>Stroboscope<i data-i="star-fav" class="st on s"></i></div>
+  </div>
+
+  <div class="center">
+    <!-- Aperçu + maîtres -->
+    <div class="pv">
+      <div class="area">
+        <div class="hd"><span>Aperçu</span><span class="r"><span class="seg"><span class="on">Aperçu</span><span>Sortie corrigée</span></span></span></div>
+        <div class="scr"><div style="width:286px;height:286px;background:var(--bg-mire);border:1px solid #24252a" data-laser="show"></div></div>
+      </div>
+      <div class="masters">
+        <div class="ph">Maîtres<span class="r"><i data-i="rotate-ccw" class="s"></i></span></div>
+        <div class="faders">
+          <div class="fd"><div class="tr"><i style="height:100%"></i><b style="top:-4px"></b></div><span class="v">100 %</span><span class="n">Lumière</span></div>
+          <div class="fd"><div class="tr"><i style="height:80%"></i><b style="top:calc(20% - 4px)"></b></div><span class="v">80 %</span><span class="n">Taille</span></div>
+          <div class="fd"><div class="tr"><i style="height:50%"></i><b style="top:calc(50% - 4px)"></b></div><span class="v">1,0×</span><span class="n">Vitesse</span></div>
+        </div>
+        <div class="xy">Position</div>
+      </div>
+    </div>
+
+    <!-- Timeline -->
+    <div class="tl">
+      <div class="tp">
+        <div class="grp"><div class="ib"><i data-i="play"></i></div><div class="ib"><i data-i="square-stop"></i></div><div class="ib on"><i data-i="repeat"></i></div></div>
+        <span class="lcd">2.3.2 <small>· 00:03.281</small></span>
+        <div class="vsep"></div>
+        <span class="lcd">128 <small>BPM</small></span><div class="btn" style="height:22px">Tap</div>
+        <div class="r"><span style="color:var(--dim)">Grille</span><div class="seg"><span>1/2</span><span class="on">1/4</span><span>1/8</span></div><div class="ib on"><i data-i="magnet"></i></div><div class="ib"><i data-i="zoom-out"></i></div><div class="ib"><i data-i="zoom-in"></i></div></div>
+      </div>
+      <div class="body">
+        <div class="heads">
+          <div style="height:26px;border-bottom:1px solid var(--border)"></div>
+          <div class="th" style="height:34px;color:var(--dim)"><span class="cs"></span><i data-i="music" class="s"></i>Musique</div>
+          <div class="th" style="height:152px"><span class="cs" style="background:#2bb3a3"></span>Piste 1<span class="ms"><span>M</span><span>S</span></span></div>
+          <div class="th" style="height:66px"><span class="cs" style="background:#c08a2e"></span>Piste 2<span class="ms"><span>M</span><span>S</span></span></div>
+          <div class="th" style="height:66px"><span class="cs" style="background:#8a63d2"></span>Piste 3<span class="ms"><span>M</span><span>S</span></span></div>
+        </div>
+        <div class="lanes" id="lanes">
+          <div class="ruler" id="ruler"></div>
+          <div class="trk" style="top:26px;height:34px"><div data-wave="1" style="position:absolute;inset:3px 0"></div></div>
+          <!-- Piste 1 -->
+          <div class="trk" style="top:60px;height:152px">
+            <div class="clip sel" style="left:4px;top:5px;width:184px">
+              <div class="h">Étoile<span class="r"><i data-i="link" class="s"></i></span></div>
+              <div class="strip"><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div></div>
+              <div class="ln" style="height:42px"><span class="lb"><i data-i="rotate-cw" class="s"></i>Rotation</span><div class="cv" data-curve="0,.1 .45,.85 1,.3"></div></div>
+              <div class="ln" style="height:38px"><span class="lb"><i data-i="eye-off" class="s"></i>Masquer · Hexagone</span><div class="cv" data-step="1" data-curve="0,.1 .5,.9 .75,.1 1,.1"></div></div>
+            </div>
+            <div class="clip" style="left:236px;top:5px;width:140px">
+              <div class="h">Anneaux</div>
+              <div class="strip"><div class="laser" data-laser="rings"></div><div class="laser" data-laser="rings"></div><div class="laser" data-laser="rings"></div></div>
+            </div>
+            <div class="clip" style="left:470px;top:5px;width:184px">
+              <div class="h">Étoile<span class="r"><i data-i="link" class="s"></i></span></div>
+              <div class="strip"><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div><div class="laser" data-laser="star"></div></div>
+            </div>
+          </div>
+          <!-- Piste 2 -->
+          <div class="trk" style="top:212px;height:66px">
+            <div class="clip" style="left:4px;top:5px;width:372px">
+              <div class="h">Vague</div>
+              <div class="strip"><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div><div class="laser" data-laser="wave"></div></div>
+              <svg style="position:absolute;right:0;top:20px" width="46" height="36"><path d="M0 0 L46 0 L46 36 Z" fill="rgba(0,0,0,.5)"/><path d="M0 0 L46 36" stroke="#c9cbd1" stroke-width="1"/><circle cx="3" cy="3" r="3" fill="#c9cbd1"/></svg>
+            </div>
+            <div class="clip" style="left:378px;top:5px;width:276px">
+              <div class="h">Tunnel</div>
+              <div class="strip"><div class="laser" data-laser="tunnel"></div><div class="laser" data-laser="tunnel"></div><div class="laser" data-laser="tunnel"></div><div class="laser" data-laser="tunnel"></div><div class="laser" data-laser="tunnel"></div><div class="laser" data-laser="tunnel"></div><div class="laser" data-laser="tunnel"></div></div>
+              <svg style="position:absolute;left:0;top:20px" width="46" height="36"><path d="M0 0 L46 0 L0 36 Z" fill="rgba(0,0,0,.5)"/><path d="M0 36 L46 0" stroke="#c9cbd1" stroke-width="1"/><circle cx="43" cy="3" r="3" fill="#c9cbd1"/></svg>
+            </div>
+          </div>
+          <!-- Piste 3 -->
+          <div class="trk" style="top:278px;height:66px">
+            <div class="clip" style="left:96px;top:5px;width:184px">
+              <div class="h">Lissajous</div>
+              <div class="strip"><div class="laser" data-laser="liss"></div><div class="laser" data-laser="liss"></div><div class="laser" data-laser="liss"></div><div class="laser" data-laser="liss"></div><div class="laser" data-laser="liss"></div></div>
+            </div>
+          </div>
+          <div class="ph-line" style="left:118px"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Inspecteur du clip -->
+  <div class="col r rp">
+    <div class="ph">Clip</div>
+    <div class="ttl"><b>Étoile</b><span>Piste 1</span></div>
+    <div class="kv"><span class="k">Début</span><div class="f mono">1.1.1</div></div>
+    <div class="kv"><span class="k">Durée</span><div class="f mono">2 mesures</div></div>
+    <div class="kv"><span class="k">Fondus</span><div class="f mono">0 · 1/4 temps</div></div>
+    <div class="linkrow"><i data-i="link" class="s"></i>Animation partagée avec 1 clip<div class="btn ghost">Délier</div></div>
+    <div class="sep"></div>
+    <div class="sec">Effets d'animation<span class="r"><i data-i="plus" class="s"></i>Ajouter</span></div>
+    <div class="card">
+      <div class="hd"><span class="tg"></span>Rotation<span class="tgt">Toute la forme</span><span class="r"><i data-i="chevron-down" class="s"></i></span></div>
+      <div class="prm"><span class="lb">Angle</span><span class="seg"><span>Fixe</span><span class="on">Courbe</span><span>Oscillateur</span></span></div>
+      <div class="mini" data-curve="0,.1 .45,.85 1,.3"></div>
+    </div>
+    <div class="card">
+      <div class="hd"><span class="tg"></span>Masquer<span class="tgt"><i data-i="hexagon" class="s"></i>Hexagone</span><span class="r"><i data-i="chevron-down" class="s"></i></span></div>
+      <div class="mini" data-step="1" data-curve="0,.1 .5,.9 .75,.1 1,.1"></div>
+    </div>
+    <div class="card">
+      <div class="hd"><span class="tg"></span>Stroboscope<span class="tgt">Toute la forme</span><span class="r"><i data-i="chevron-right" class="s"></i></span></div>
+      <div class="prm"><span class="lb">Cadence</span><span class="seg"><span>Fixe</span><span>Courbe</span><span class="on">Oscillateur</span></span></div>
+      <div class="mini" data-sine="8,.38" data-col="#8a8d96" data-curve="0,0"></div>
+    </div>
+    <div class="sep" style="margin-top:4px"></div>
+    <div class="sec">Forme du clip</div>
+    <div class="ro"><div class="laser" data-laser="star"></div><div class="t">Étoile<span>6 calques</span></div><div class="btn"><i data-i="pen-line" class="s"></i>Ouvrir dans Forme</div></div>
+  </div>
+</div>
+
+<div class="status"><span>Mon show.ildaproj</span><span class="r"><span>684 points · 30 images/s</span><span>Sortie : SoundStage3D · canal 1</span></span></div>
+
+<div class="note" data-n="1" style="left:240px;top:230px;max-width:150px">Pas d'outils de dessin : on regarde, on ne dessine pas</div>
+<div class="note" data-n="2" style="left:14px;top:700px;max-width:200px">Effets à glisser sur un clip (recherche, favoris ★)</div>
+<div class="note" data-n="3" style="left:700px;top:290px;max-width:165px">Maîtres (à droite) : agissent sur toute la sortie</div>
+<div class="note" data-n="4" style="left:880px;top:740px;max-width:200px">Effets du clip : valeur fixe, courbe ou oscillateur ; visent la forme ou un calque</div>
+<div class="note" data-n="5" style="left:520px;top:760px;max-width:220px">Marqueurs de parties, fondus d'entrée / sortie, clips liés (chaîne)</div>
+</body>
+<script>
+  // Règle : 8 mesures, marqueurs, boucle
+  const R = document.getElementById('ruler'), L = document.getElementById('lanes');
+  const W = 94; let h = '';
+  for (let b = 0; b < 9; b++) {
+    h += `<span class="bar-n" style="left:${4 + b * W + 3}px">${b + 1}</span>`;
+    for (let q = 0; q < 4; q++) L.insertAdjacentHTML('afterbegin', `<div class="vl ${q ? '' : 'b'}" style="left:${4 + b * W + q * W / 4}px"></div>`);
+  }
+  h += `<div class="mk" style="left:${4 + 2 * W + 20}px;background:#e3b341"><i data-i="flag"></i>Couplet</div>`;
+  h += `<div class="mk" style="left:${4 + 5 * W + 20}px;background:#5cc8b8">Refrain</div>`;
+  h += `<div class="loop" style="left:${4 + 5 * W}px;width:${2 * W}px"></div>`;
+  R.innerHTML = h;
+</script>
+</html>

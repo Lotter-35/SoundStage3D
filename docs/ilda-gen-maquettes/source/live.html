@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="fr"><head><meta charset="utf-8"><title>Espace Live</title>
+<link rel="stylesheet" href="mock.css"><script src="icons.js"></script><script src="laser.js"></script>
+<style>
+  .gridarea { flex: 1; display: flex; flex-direction: column; min-width: 0; background: var(--bg-app); }
+  .pages { height: 40px; flex: none; display: flex; align-items: center; gap: 4px; padding: 0 12px; background: var(--bg-panel); border-bottom: 1px solid var(--border); }
+  .pages .pg { padding: 5px 12px; border-radius: 5px; color: var(--dim); font-weight: 500; }
+  .pages .pg.on { background: var(--bg-hover); color: var(--text); }
+  .pages .r { margin-left: auto; display: flex; gap: 8px; align-items: center; color: var(--dim); }
+  .cues { flex: 1; display: grid; grid-template-columns: repeat(8, 1fr); grid-template-rows: repeat(4, 1fr); gap: 10px; padding: 14px; }
+  .cue { position: relative; border-radius: 7px; background: var(--bg-mire); border: 1px solid var(--border); overflow: hidden; }
+  .cue .laser { position: absolute; inset: 8px 8px 22px; }
+  .cue .nm { position: absolute; left: 8px; bottom: 6px; font-size: 11px; }
+  .cue .key { position: absolute; right: 6px; top: 6px; font: 10px "DejaVu Sans Mono", monospace; color: var(--dim); background: var(--bg-panel); border: 1px solid var(--border); border-radius: 3px; padding: 0 4px; }
+  .cue.play { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), 0 0 18px rgba(74,144,226,.25); }
+  .cue .prog { position: absolute; left: 0; bottom: 0; height: 3px; background: var(--accent); }
+  .cue.wait { border-color: var(--warning); border-style: dashed; }
+  .cue.wait::after { content: "au prochain temps"; position: absolute; left: 8px; top: 6px; font-size: 9.5px; color: var(--warning); }
+  .cue.empty { background: transparent; border-style: dashed; border-color: #2a2c31; }
+  .side { width: 380px; }
+  .pvw { padding: 4px 12px 10px; }
+  .pvw > div { aspect-ratio: 1; background: var(--bg-mire); border: 1px solid #24252a; border-radius: 4px; }
+  .hsl { display: grid; grid-template-columns: 74px 1fr; align-items: center; gap: 10px; height: 28px; padding: 0 12px; }
+  .hsl .lb { color: var(--dim); }
+  .hsl .bar { position: relative; height: 22px; border-radius: 4px; background: var(--bg-field); overflow: hidden; }
+  .hsl .bar i { position: absolute; left: 0; top: 0; bottom: 0; background: var(--fill); }
+  .hsl .bar b { position: absolute; right: 8px; line-height: 22px; font-weight: 500; }
+  .qfx { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; padding: 4px 12px 10px; }
+  .qfx div { height: 44px; border-radius: 6px; background: var(--bg-field); border: 1px solid var(--border); display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 10.5px; color: var(--dim); }
+  .qfx div.on { background: var(--accent-soft); border-color: var(--accent); color: var(--text); }
+  .row2 { display: flex; align-items: center; gap: 8px; padding: 4px 12px 8px; color: var(--dim); }
+  .row2 .seg { margin-left: auto; }
+  .chips { padding: 2px 12px 10px 96px; }
+</style></head>
+<body>
+<div class="top">
+  <div class="brand"><div class="dot"></div>ILDA Gen <small>Mon show · enregistré</small></div>
+  <div class="spaces">
+    <div><i data-i="pen-line" class="s"></i>Forme<kbd>⌘1</kbd></div>
+    <div><i data-i="audio-waveform" class="s"></i>Show<kbd>⌘2</kbd></div>
+    <div class="on"><i data-i="grid-3x3" class="s"></i>Live<kbd>⌘3</kbd></div>
+  </div>
+  <div class="right">
+    <div class="pill"><span class="led"></span>SoundStage3D <span class="dim">· canal 1</span></div>
+    <div class="pill live"><i data-i="radio" class="s"></i>Live actif</div>
+    <div class="pill cut"><i data-i="octagon-x" class="s"></i>Coupure</div>
+  </div>
+</div>
+
+<div class="main">
+  <div class="gridarea">
+    <div class="pages">
+      <div class="pg on">Intro</div><div class="pg">Couplet</div><div class="pg">Refrain</div><div class="pg">Drop</div>
+      <div class="ib"><i data-i="plus" class="s"></i></div>
+      <div class="r"><span>Départ</span><span class="seg"><span>Immédiat</span><span class="on">Au temps</span><span>À la mesure</span></span>
+        <span style="margin-left:10px">Plusieurs cues</span><span class="tg"></span></div>
+    </div>
+    <div class="cues" id="cues"></div>
+  </div>
+
+  <div class="col r side">
+    <div class="ph">Sortie<span class="r"><span class="mono" style="color:var(--text)">128 BPM</span><div class="btn" style="height:22px">Tap</div></span></div>
+    <div class="pvw"><div data-laser="show"></div></div>
+    <div class="sep"></div>
+    <div class="ph">Maîtres<span class="r"><i data-i="rotate-ccw" class="s"></i></span></div>
+    <div class="hsl"><span class="lb">Lumière</span><div class="bar"><i style="width:100%"></i><b>100 %</b></div></div>
+    <div class="hsl"><span class="lb">Taille</span><div class="bar"><i style="width:80%"></i><b>80 %</b></div></div>
+    <div class="hsl"><span class="lb">Vitesse</span><div class="bar"><i style="width:50%"></i><b>1,0×</b></div></div>
+    <div class="hsl"><span class="lb">Couleur</span><div></div></div>
+    <div class="chips" style="margin-top:-26px"><span style="background:transparent;border:1px dashed #555"></span><span style="background:#36e6ff"></span><span style="background:#ff3bd8"></span><span style="background:#39ff6a"></span><span style="background:#ffe23b"></span><span style="background:#ff3b3b"></span><span style="background:#f4f4ff"></span></div>
+    <div class="sep"></div>
+    <div class="ph">Effets rapides<span class="r">maintenir pour activer</span></div>
+    <div class="qfx">
+      <div class="on"><i data-i="zap"></i>Strobo 1/8</div>
+      <div><i data-i="rotate-cw"></i>Rotation</div>
+      <div><i data-i="rainbow"></i>Arc-en-ciel</div>
+      <div><i data-i="blend"></i>Fondu noir</div>
+      <div><i data-i="scaling"></i>Pulsation</div>
+      <div><i data-i="waves"></i>Vague</div>
+      <div><i data-i="flip-horizontal-2"></i>Miroir</div>
+      <div><i data-i="ellipsis"></i>Points</div>
+    </div>
+  </div>
+</div>
+
+<div class="status"><span>Mon show.ildaproj</span><span class="r"><span>2 cues en cours · 912 points · 30 images/s</span><span>Sortie : SoundStage3D · canal 1</span></span></div>
+
+<div class="note" data-n="1" style="left:285px;top:700px;max-width:270px">Chaque case = une forme (ou un morceau de show) ; clic ou touche du clavier pour la lancer</div>
+<div class="note" data-n="2" style="left:600px;top:700px;max-width:230px">Départ calé sur le tempo : immédiat, au temps ou à la mesure</div>
+<div class="note" data-n="3" style="left:900px;top:520px;max-width:150px">Maîtres + effets rapides pour jouer en direct</div>
+<div class="note" data-n="4" style="left:300px;top:52px;max-width:300px">Une page par partie du morceau</div>
+</body>
+<script>
+  const sc = ['star', 'rings', 'wave', 'tunnel', 'liss', 'flower', 'tri', 'dots', 'hex', 'beams', 'spiral', 'text-bars', 'grid-sq', 'star', 'wave', 'rings'];
+  const nm = ['Étoile', 'Anneaux', 'Vague', 'Tunnel', 'Lissajous', 'Fleur', 'Triangles', 'Points', 'Hexagone', 'Rayons', 'Spirale', 'Barres', 'Mire', 'Étoile lente', 'Vague rouge', 'Anneaux bleus'];
+  const keys = 'AZERTYUIQSDFGHJKWXCVBN,;'.split('');
+  let h = '';
+  for (let i = 0; i < 32; i++) {
+    if (i >= 22 && i !== 25) { h += '<div class="cue empty"></div>'; continue; }
+    const k = i % sc.length, cls = i === 1 ? 'play' : i === 9 ? 'play' : i === 4 ? 'wait' : '';
+    h += `<div class="cue ${cls}"><div class="laser" data-laser="${sc[k]}"></div><span class="nm">${nm[k]}</span><span class="key">${keys[i] || ''}</span>${cls === 'play' ? `<div class="prog" style="width:${i === 1 ? 62 : 28}%"></div>` : ''}</div>`;
+  }
+  document.getElementById('cues').innerHTML = h;
+</script>
+</html>
