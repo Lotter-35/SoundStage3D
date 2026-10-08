@@ -375,121 +375,41 @@ def main():
     app.processEvents()
     check("forme listée à gauche", win.tools.defs.count() == 2)
 
-    # ── Timeline ─────────────────────────────────────────────────────────
-    clip = ed.add_clip(d.id, ed.doc.timeline.tracks[0].id, 0.0, 4.0)
-    ed.enter_clip(clip.id)
-    check("contexte clip", ed.context == ("clip", clip.id) and ed.display_mode() == "timeline")
-    win.tools.defs.setCurrentRow(-1)
-    ed.enter_def(F1)
-    ed.enter_clip(clip.id)
-    cur = win.tools.defs.currentItem()
-    check("clip sélectionné = forme surlignée à gauche", cur is not None and cur.data(Qt.ItemDataRole.UserRole) == d.id)
-    a = ed.new_automation(clip.id)
-    check("automation en attente", a.armed)
-    inner_shape = next(n for n in d.root.walk() if n.kind == "shape")
-    ed.set_playhead(2.0)
-    ed.set_param(inner_shape, "tf.tx", 0.4)
-    check("automation liée au réglage touché", not a.armed and a.key == "tf.tx" and a.node_id == inner_shape.id,
-          a.label)
-    check("clé écrite à la tête de lecture", any(abs(clip.secs(k.t) - 2.0) < 1e-6 for k in a.keys))
+    # ── Timeline (espace Show) ───────────────────────────────────────────
+    tl = ed.doc.timeline
+    clip = ed.add_clip(d.id, tl.tracks[0].id, 0.0, 4.0)
+    ed.set_workspace("show")
+    ed.select_clip(clip.id)
+    app.processEvents()
+    check("espace Show : la mire montre la timeline, les outils n'agissent plus",
+          ed.workspace == "show" and not ed.editing_visible() and win.canvas.header.btn_tl.isChecked())
+    check("clip actif : Propriétés montre ses réglages (début, durée, fondus)",
+          sorted(win.properties._clip_fields or {}) == ["duration", "fade_in", "fade_out", "start"])
+    tl_canvas = win.timeline.canvas
+    check("timeline : seulement les pistes (plus de lignes d'automation)",
+          all(r.kind == "track" for r in tl_canvas.rows()) and len(tl_canvas.rows()) == len(tl.tracks))
+    # Effet d'animation posé sur le clip : la mire le suit à la tête de lecture
+    eff = ed.add_effect(clip.id, "translate")
+    ed.set_track_mode(eff.id, "x", "courbe")
+    ed.set_curve_key(eff.id, "x", 1.0, 0.4)
+
+    def mean_x():
+        return float(np.vstack([s.pts for s in ed.display_strokes()])[:, 0].mean())
     ed.set_playhead(0.0)
-    v0 = ed.effective_param(inner_shape, "tf.tx")
+    x0 = mean_x()
     ed.set_playhead(2.0)
-    v1 = ed.effective_param(inner_shape, "tf.tx")
-    check("valeur animée dans le temps", abs(v1 - 0.4) < 1e-6 and abs(v0 - 0.4) > 1e-6, f"{v0} → {v1}")
-    mod_in_def = next(n for n in d.root.walk() if n.kind == "modifier")
-    a2 = ed.new_automation(clip.id)
-    ed.set_playhead(1.0)
-    ed.set_param(mod_in_def, "__active__", False)
-    check("automation « Actif » d'un modifieur", a2.key == "__active__" and a2.discrete)
-    ed.set_playhead(0.5)
-    check("modifieur actif avant la clé", ed.eval_context().is_visible(mod_in_def))
-    ed.set_playhead(1.5)
-    check("modifieur coupé après la clé", not ed.eval_context().is_visible(mod_in_def))
-    ed.set_selection([root().children[0].id] if False else [])
-    clip.expanded = True
-    ed.notify(timeline=True)
+    x1 = mean_x()
+    check("effet en courbe : la mire suit la tête de lecture", abs((x1 - x0) - 0.2) < 1e-6, f"{x1 - x0:.4f}")
+    win.properties._clip_fields["fade_in"].setText("1")
+    win.properties._clip_fields["fade_in"]._typed()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    check("fondu d'entrée tapé dans Propriétés", abs(clip.fade_in - 1.0) < 1e-9, f"{clip.fade_in}")
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
     tl = ed.doc.timeline
     tl.bpm = 128
     t = tl.snap_time(1.01)
     check("aimant BPM", abs(t - 60 / 128 * 2) < 1e-6 or abs(t - 60 / 128 * 2) < 0.5, f"{t:.3f}")
-    # Clip déplié : seulement les réglages envoyés dans la timeline (pas tous les modifieurs)
-    clip.expanded = True
-    ed.notify(timeline=True)
-    app.processEvents()
-    tl_canvas = win.timeline.canvas
-    rows_ = tl_canvas.rows()
-    lanes_ = [r for r in rows_ if r.kind == "lane" and r.clip is clip]
-    groups = [r for r in rows_ if r.kind == "group" and r.clip is clip]
-    check("clip déplié : seulement les réglages envoyés dans la timeline",
-          len(lanes_) == len(clip.automations) and not any(r.virtual for r in lanes_)
-          and len(groups) == len({a.node_id for a in clip.automations}), f"{len(lanes_)} lignes, {len(groups)} groupes")
-    # Bouton « envoyer dans la timeline » à côté d'un réglage
-    from ildagen.ui.properties.forms import ParamForm
-    sym_def = next(n for n in d.root.walk() if n.kind == "modifier" and n.mod_type == "mirror_sym")
-    form = ParamForm(ed, sym_def.id)
-    n_auto = len(clip.automations)
-    form.autos["angle"].click()
-    app.processEvents()
-    new_lane = [r for r in tl_canvas.rows() if r.kind == "lane" and r.clip is clip and r.auto.key == "angle"]
-    check("bouton : le réglage arrive dans la timeline (ligne + clé)", len(clip.automations) == n_auto + 1
-          and new_lane and len(new_lane[0].auto.keys) == 1 and form.autos["angle"].isChecked())
-    strip = form.strips["angle"]
-    form.resize(300, form.sizeHint().height())
-    app.processEvents()
-    check("réglage envoyé : flèche visible, mini-courbe fermée par défaut",
-          form.chevrons["angle"].isVisibleTo(form) and not strip.isVisibleTo(form))
-    form.chevrons["angle"].click()
-    check("flèche : la mini-courbe s'ouvre", strip.isVisibleTo(form))
-    auto_a = clip.automation_for(sym_def.id, "angle")
-    nk = len(auto_a.keys)
-    strip.resize(240, 34)
-    click(strip, QPoint(int(4 + 0.75 * 232), 4), M.AltModifier)     # aux 3/4 du clip, tout en haut
-    lo, hi = strip._range(auto_a)
-    k_new = max(auto_a.keys, key=lambda k: k.t)
-    check("mini-courbe : clic = clé (instant proportionnel à la durée du clip, valeur bornée)",
-          len(auto_a.keys) == nk + 1 and abs(k_new.t - 0.75) < 0.05
-          and abs(k_new.v - hi) < 1e-6, f"t {k_new.t:.2f} v {k_new.v}")
-    form.strip_resets["angle"].click()
-    auto_r = clip.automation_for(sym_def.id, "angle")
-    check("↺ à droite de la courbe : un seul point à la valeur par défaut", form.strip_resets["angle"].isVisibleTo(form)
-          and len(auto_r.keys) == 1 and auto_r.keys[0].v == sym_def.modifier.spec("angle").default_value())
-    ed.undo()
-    ed.undo()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    form.refresh()
-    clip.closed_nodes.append(sym_def.id)
-    hidden = [r for r in tl_canvas.rows() if r.kind == "lane" and r.auto.node_id == sym_def.id]
-    check("modifieur replié : ses réglages (même animés) sont cachés", hidden == [])
-    # Clic dans le vide à droite d'un clip, à la hauteur d'un groupe : ne replie rien, désélectionne
-    g_row = next(r for r in tl_canvas.rows() if r.kind == "group" and r.clip is clip)
-    closed_before = list(clip.closed_nodes)
-    ed.enter_clip(clip.id)
-    x_void = int(tl_canvas.geo.x(clip.end + 3.0)) if tl_canvas.geo.x(clip.end + 3.0) < tl_canvas.width() - 4 else tl_canvas.width() - 4
-    click(tl_canvas, QPoint(x_void, int(g_row.y + g_row.h / 2)))
-    app.processEvents()
-    check("clic dans le vide (hauteur d'un groupe) : aucun groupe replié/déplié",
-          clip.closed_nodes == closed_before, f"{closed_before} -> {clip.closed_nodes}")
-    check("vue Timeline sans clip : Calques et Propriétés vides",
-          ed.panels_empty() and not win.layers.tree.isVisibleTo(win.layers) and win.layers.empty.isVisibleTo(win.layers)
-          and not win.properties.findChildren(ParamForm))
-    ed.enter_clip(clip.id)
-    app.processEvents()
-    check("clip sélectionné : ses calques réapparaissent", not ed.panels_empty() and win.layers.tree.isVisibleTo(win.layers))
-    ed.enter_def()
-    app.processEvents()
-    check("mode Forme : calques visibles", win.layers.tree.isVisibleTo(win.layers))
-    ed.enter_clip(clip.id)
-    clip.closed_nodes.remove(sym_def.id)
-    form.autos["angle"].click()
-    check("re-cliquer : retiré de la timeline", len(clip.automations) == n_auto and not form.autos["angle"].isChecked())
-    check("retiré : la mini-courbe disparaît", not form.strips["angle"].isVisibleTo(form))
-    ed.undo()
-    ed.undo()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    check("annulable", len(clip.automations) == n_auto)
-    form.deleteLater()
-    ed.enter_clip(clip.id)
     # Gestes à la souris dans la timeline
     canvas = win.timeline.canvas
     app.processEvents()
@@ -498,10 +418,11 @@ def main():
     x = canvas.geo.x(clip.start + 1.0)
     y = int(tr_row.y + tr_row.h / 2)
     drag(canvas, QPoint(int(x), y), QPoint(int(x + canvas.geo.pps * 1.0), y))
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
     check("glisser un clip (aimanté)", abs(clip.start - tl.snap_time(1.0, force=True)) < 1e-6, f"début {clip.start:.3f}")
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
-    ed.enter_clip(clip.id)
+    ed.select_clip(clip.id)
     # Zone de temps (Ctrl + glisser) : copier le clip + le vide, coller à la tête de lecture, à la suite
     tl_ = ed.doc.timeline
     tr_row = next(r for r in canvas.rows() if r.kind == "track")
@@ -521,84 +442,62 @@ def main():
     ed.set_playhead(paste_at)
     win.paste_pressed()
     win.paste_pressed()
+    tl_ = ed.doc.timeline
     starts = sorted(c.start for _, c in tl_.all_clips())
     pasted = [c for _, c in tl_.all_clips() if c.id != clip.id]
     check("coller deux fois : à la tête de lecture puis à la suite, même écart",
           sum(1 for _ in tl_.all_clips()) == n_clips + 2 and any(abs(s - paste_at) < 1e-6 for s in starts)
           and any(abs(s - (paste_at + span)) < 1e-6 for s in starts) and abs(ed.playhead - (paste_at + 2 * span)) < 1e-6,
           f"{starts} tête {ed.playhead:.3f}")
-    check("clip collé lié à sa forme : mêmes automations (partagées)",
-          all(c.automations is clip.automations for c in pasted))
+    check("clip collé : même animation (liée)", all(c.anim_id == clip.anim_id for c in pasted))
     ed.undo()
     ed.undo()
     canvas.clear_range()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    ed.enter_clip(clip.id)
-    # Clips d'une même forme liés : une automation ajoutée à l'un apparaît dans l'autre ; délier / relier
+    tl_ = ed.doc.timeline
+    clip = tl_.find_clip(clip.id)[1]
+    # Clips d'une même forme : ils partagent leur animation (D5) ; délier / relier
     cl2 = ed.add_clip(clip.def_id, tl_.tracks[0].id, clip.end + 3.0, 1.0)
-    check("nouveau clip de la forme : lié (automations partagées)", cl2.automations is clip.automations)
+    check("nouveau clip de la forme : même animation", cl2.anim_id == clip.anim_id)
     linked, shared = ed.clip_is_linked(cl2)
-    check("icône de lien : clips liés partagés", linked and shared)
+    check("icône de lien : animation partagée", linked and shared)
     ed.unlink_clip(cl2.id)
     tl_ = ed.doc.timeline
-    clip = tl_.find_clip(clip.id)[1]
-    cl2 = tl_.find_clip(cl2.id)[1]
-    dd = ed.doc.library.get(cl2.def_id)
-    check("délier : copie de la forme cachée, automations à part", dd.hidden and cl2.def_id != clip.def_id
-          and cl2.automations is not clip.automations and len(cl2.automations) == len(clip.automations)
-          and dd not in ed.doc.library.visible())
+    clip, cl2 = tl_.find_clip(clip.id)[1], tl_.find_clip(cl2.id)[1]
+    a1, a2 = tl_.animations[clip.anim_id], tl_.animations[cl2.anim_id]
+    check("délier : copie de l'animation (la forme reste commune)", cl2.def_id == clip.def_id and a1 is not a2
+          and [e.type_id for e in a2.effects] == ["translate"] and a2.effects[0].id != a1.effects[0].id
+          and ed.clip_is_linked(cl2) == (False, False))
     ed.relink_clip(cl2.id)
     tl_ = ed.doc.timeline
-    clip = tl_.find_clip(clip.id)[1]
-    cl2 = tl_.find_clip(cl2.id)[1]
-    check("relier : la forme d'origine et ses automations", cl2.def_id == clip.def_id and cl2.automations is clip.automations)
+    clip, cl2 = tl_.find_clip(clip.id)[1], tl_.find_clip(cl2.id)[1]
+    check("relier : l'animation des autres clips de la forme", cl2.anim_id == clip.anim_id and len(tl_.animations) == 1)
     ed.undo()
     ed.undo()
     ed.undo()
     tl_ = ed.doc.timeline
     clip = tl_.find_clip(clip.id)[1]
-    ed.enter_clip(clip.id)
-    # Multi-sélection de clips : rectangle, Cmd/Ctrl + clic, déplacement en bloc, Ctrl+A, Ctrl+D, Suppr
+    # Pas de chevauchement : un clip glissé sur son voisin s'arrête contre lui
     c2 = ed.add_clip(clip.def_id, tl_.tracks[0].id, clip.end + 1.0, 1.0)
-    from ildagen.core.automation import Automation as _A
-    from ildagen.core.nodes import new_id as _nid
-    c2.automations = [_A.from_dict(dict(a.to_dict(), id=_nid())) for a in clip.automations]   # mêmes réglages envoyés
     app.processEvents()
     tr_row = next(r for r in canvas.rows() if r.kind == "track")
     yy = int(tr_row.y + tr_row.h / 2)
+    x2 = int(canvas.geo.x(c2.start + 0.5))
+    drag(canvas, QPoint(x2, yy), QPoint(x2 - int(canvas.geo.pps * 3.0), yy), M.AltModifier)
+    c2 = ed.doc.timeline.find_clip(c2.id)[1]
+    check("glisser un clip sur son voisin : il s'arrête contre lui", abs(c2.start - clip.end) < 1e-6,
+          f"{c2.start:.3f} / fin du voisin {clip.end:.3f}")
+    ed.undo()
+    tl_ = ed.doc.timeline
+    clip, c2 = tl_.find_clip(clip.id)[1], tl_.find_clip(c2.id)[1]
+    # Multi-sélection de clips : rectangle, Cmd/Ctrl + clic, déplacement en bloc, Ctrl+A, Ctrl+D, Suppr
     x_end = int(canvas.geo.x(c2.end)) + 20
     drag(canvas, QPoint(x_end, int(tr_row.y) + 2), QPoint(int(canvas.geo.x(clip.start + 1.0)), yy))
     check("rectangle de sélection : les deux clips", canvas.sel_clips == {clip.id, c2.id}, str(len(canvas.sel_clips)))
-    # Deux clips dépliés : leurs lignes sont côte à côte (même hauteur qu'un seul clip déplié)
-    was = (clip.expanded, c2.expanded)
-    clip.expanded, c2.expanded = True, False
-    h1 = canvas.geo.content_height(ed)
-    c2.expanded = True
-    h2 = canvas.geo.content_height(ed)
-    lanes2 = [r for r in canvas.rows() if r.kind == "lane" and r.clip is c2]
-    lanes1 = [r for r in canvas.rows() if r.kind == "lane" and r.clip is clip]
-    check("clips dépliés côte à côte (pas d'empilement)", h1 == h2 and lanes2
-          and [r.y for r in lanes1] == [r.y for r in lanes2], f"{h1} / {h2}")
-    # Chaque clip garde sa propre hauteur : agrandir une ligne de l'un n'agrandit pas l'autre
-    bottoms = lambda: {c: max(r.y + r.h for r in canvas.rows() if r.kind != "track" and r.clip is c) for c in (clip, c2)}
-    b0 = bottoms()
-    canvas.set_lane_small(lanes2[0], True)
-    b1 = bottoms()
-    check("chaque clip déplié a sa propre hauteur", b1[c2] < b0[c2] and b1[clip] == b0[clip], f"{b0} / {b1}")
-    canvas.set_lane_small(lanes2[0], False)
-    grp2 = next(r for r in canvas.rows() if r.kind == "group" and r.clip is c2)
-    click(canvas, QPoint(int(canvas.geo.x(c2.start + 0.3)), int(grp2.y + grp2.h / 2)))
-    check("clic sur un modifieur dans son clip : seul ce clip le replie", grp2.node.id in c2.closed_nodes
-          and grp2.node.id not in clip.closed_nodes)
-    click(canvas, QPoint(40, int(grp2.y + grp2.h / 2)))
-    check("colonne de gauche : rien pour les modifieurs", grp2.node.id in c2.closed_nodes)
-    c2.closed_nodes.clear()
-    clip.expanded, c2.expanded = was
-    tr_row = next(r for r in canvas.rows() if r.kind == "track")
-    yy = int(tr_row.y + tr_row.h / 2)
     s1, s2 = clip.start, c2.start
     x1 = int(canvas.geo.x(c2.start + 0.5))
     drag(canvas, QPoint(x1, yy), QPoint(x1 + int(canvas.geo.pps), yy), M.AltModifier)
+    tl_ = ed.doc.timeline
+    clip, c2 = tl_.find_clip(clip.id)[1], tl_.find_clip(c2.id)[1]
     check("glisser un clip sélectionné : tous bougent ensemble", abs((clip.start - s1) - 1.0) < 0.05
           and abs((c2.start - s2) - 1.0) < 0.05, f"{clip.start - s1:.3f} / {c2.start - s2:.3f}")
     ed.undo()
@@ -609,155 +508,51 @@ def main():
     click(canvas, QPoint(int(canvas.geo.x(c2.start + 0.5)), yy), M.ControlModifier)
     check("Cmd/Ctrl + clic : ajouter à la sélection", canvas.sel_clips == {clip.id, c2.id})
     click(canvas, QPoint(int(canvas.geo.x(c2.start + 0.5)), yy), M.ControlModifier)
-    check("Cmd/Ctrl + clic : retirer de la sélection", canvas.sel_clips == {clip.id})
+    check("Cmd/Ctrl + clic : retirer de la sélection", canvas.sel_clips == {clip.id} and ed.current_clip() is clip)
     canvas.setFocus()
     app.processEvents()
     win.select_all_pressed()
     check("Ctrl+A dans la timeline : tous les clips", canvas.sel_clips == {clip.id, c2.id})
     n = sum(1 for _ in tl_.all_clips())
     win.duplicate_pressed()
+    tl_ = ed.doc.timeline
     starts = sorted(c.start for _, c in tl_.all_clips())
     check("Ctrl+D : la sélection est recopiée juste après", sum(1 for _ in tl_.all_clips()) == n + 2
           and any(abs(s - c2.end) < 1e-6 for s in starts) and len(canvas.sel_clips) == 2)
     canvas.delete_selection()
-    check("Suppr : supprime les clips sélectionnés", sum(1 for _ in tl_.all_clips()) == n)
+    check("Suppr : supprime les clips sélectionnés", sum(1 for _ in ed.doc.timeline.all_clips()) == n)
     ed.undo()
     ed.undo()
     ed.undo()
     canvas.set_clip_selection(())
     tl_ = ed.doc.timeline
     clip = tl_.find_clip(clip.id)[1]
-    ed.enter_clip(clip.id)
-    # Raccourcir le clip : les automations s'étirent proportionnellement
-    times = [(a.id, [k.t for k in a.keys]) for a in clip.automations]
+    ed.select_clip(clip.id)
+    # Raccourcir le clip : la courbe de l'effet garde ses proportions (clés en proportion de la durée)
+    anim = tl_.animations[clip.anim_id]
+    keys0 = [(k.t, k.v) for e in anim.effects for t in e.params.values() for k in t.curve.keys]
     d0 = clip.duration
     tr_row = next(r for r in canvas.rows() if r.kind == "track")
     yy = int(tr_row.y + tr_row.h / 2)
     drag(canvas, QPoint(int(canvas.geo.x(clip.end)) - 2, yy),
          QPoint(int(canvas.geo.x(clip.start + d0 / 2)) - 2, yy), M.AltModifier)
+    tl_ = ed.doc.timeline
+    clip = tl_.find_clip(clip.id)[1]
     f = clip.duration / d0
-    ok = abs(f - 0.5) < 0.05 and all(abs(k.t - t0) < 1e-6 for a in clip.automations
-                                      for (aid, ts) in times if aid == a.id for k, t0 in zip(a.keys, ts))
-    check("raccourcir le clip étire les automations", ok, f"facteur {f:.3f}")
+    keys1 = [(k.t, k.v) for e in tl_.animations[clip.anim_id].effects for t in e.params.values() for k in t.curve.keys]
+    check("raccourcir le clip : la courbe garde ses proportions", abs(f - 0.5) < 0.05 and keys0 == keys1 and keys0,
+          f"facteur {f:.3f}")
     ed.undo()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
-    ed.enter_clip(clip.id)
-    clip.expanded = True
-    ed.notify(timeline=True)
+    # Double-clic sur un clip : sa forme s'ouvre dans l'espace Forme
+    tr_row = next(r for r in canvas.rows() if r.kind == "track")
+    pt = QPoint(int(canvas.geo.x(clip.start + 1.0)), int(tr_row.y + tr_row.h / 2))
+    send(canvas, QEvent.Type.MouseButtonDblClick, pt, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, M.NoModifier)
     app.processEvents()
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    n_keys = len(lane.auto.keys)
-    click(canvas, QPoint(int(canvas.geo.x(clip.start + 3.0)), int(lane.y + lane.h * 0.3)))
-    check("clic dans une automation = nouvelle clé", len(lane.auto.keys) == n_keys + 1)
-    # Simple clic sur un point existant : rampe → carré → sinusoïdale (la façon d'arriver sur lui)
-    from ildagen.ui.timeline import lanes as TLc
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    kc = min(lane.auto.keys, key=lambda kk: abs(lane.clip.secs(kk.t) - 3.0))
-    prev = lane.auto.keys[lane.auto.keys.index(kc) - 1]
-    _, spc = TLc.target(ed, lane.clip, lane.auto)
-    kpc = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(kc.t))), int(TLc.v_to_y(kc.v, lane, TLc.value_range(spc, lane.auto))))
-    c_before = prev.curve
-    t_before = kc.t
-    click(canvas, kpc)
-    check("clic sur un point : la courbe change (sans le déplacer)", prev.curve != c_before and kc.t == t_before,
-          f"{c_before} → {prev.curve}")
-    ed.undo()
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    # Lignes de réglage repliables à la main
-    from ildagen.ui.timeline.geometry import LANE_H, LANE_SMALL_H, lane_toggle_rect
-    rows_now = canvas.rows()
-    used = next(r for r in rows_now if r.kind == "lane" and r.auto.key == "tf.tx")
-    check("réglage animé : ligne de taille normale", not used.small and used.h == LANE_H)
-    tx, ty, tw, th = lane_toggle_rect(canvas.geo, used)
-    click(canvas, QPoint(int(tx + tw / 2), int(ty + th / 2)))
-    used2 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    check("flèche : réduire une ligne à la main", used2.small and used2.h == LANE_SMALL_H)
-    tx, ty, tw, th = lane_toggle_rect(canvas.geo, used2)
-    click(canvas, QPoint(int(tx + tw / 2), int(ty + th / 2)))
-    used3 = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    check("flèche : l'agrandir à nouveau", not used3.small and lane.clip.lane_sizes == {})
-    canvas.set_lane_small(used3, True)
-    small = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    n_keys = len(small.auto.keys)
-    click(canvas, QPoint(int(canvas.geo.x(lane.clip.start + 1.7)), int(small.y + small.h - 3)))
-    big = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    check("clic dans une ligne réduite : elle s'agrandit (sans poser de clé)", not big.small
-          and len(big.auto.keys) == n_keys)
-    lane.clip.lane_sizes.clear()
-    canvas.update()
-    app.processEvents()
-    shot(win, "05_lignes")
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    # Glisser une clé : la mire montre l'instant et la valeur de la clé, puis revient à la tête de lecture
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    ed.set_playhead(clip.start)
-    k = lane.auto.keys[-1]
-    from ildagen.ui.timeline import lanes as TL0
-    _, spec0 = TL0.target(ed, lane.clip, lane.auto)
-    kp0 = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(k.t))), int(TL0.v_to_y(k.v, lane, TL0.value_range(spec0, lane.auto))))
-    Lb, Nb = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
-    rng0 = TL0.value_range(spec0, lane.auto)
-    v_hi = TL0.y_to_v(lane.y - 500, lane, rng0, spec0, lane.auto)
-    check("plage d'une ligne fixe : un point tiré très haut reste au maximum", v_hi == rng0[1] and
-          TL0.value_range(spec0, lane.auto) == rng0, f"{v_hi} / {rng0}")
-    send(canvas, QEvent.Type.MouseButtonPress, kp0, Lb, Lb, M.NoModifier)
-    send(canvas, QEvent.Type.MouseMove, QPoint(kp0.x() + 20, int(lane.y + 3)), Nb, Lb, M.NoModifier)
-    inst_v = ed.eval_context().overrides.get((lane.auto.node_id, "tf.tx"))
-    check("glisser une clé : la mire montre l'instant de la clé", ed.preview_time is not None
-          and abs(ed.view_time() - (lane.clip.start + lane.clip.secs(k.t))) < 1e-9 and inst_v is not None and abs(inst_v - k.v) < 1e-6,
-          f"{ed.preview_time} / {inst_v} vs {k.v}")
-    # Tout au bout du clip : la clé est bloquée sur la fin et la mire montre toujours l'image
-    far = QPoint(int(canvas.geo.x(lane.clip.end)) + 80, int(lane.y + 3))
-    send(canvas, QEvent.Type.MouseMove, far, Nb, Lb, M.NoModifier)
-    check("clé tirée au-delà de la fin : bloquée sur la dernière image, la forme reste visible",
-          abs(k.t - 1.0) < 1e-9 and len(ed.display_strokes()) > 0, f"t {k.t:.3f}")
-    send(canvas, QEvent.Type.MouseButtonRelease, QPoint(kp0.x() + 20, int(lane.y + 3)), Lb, Nb, M.NoModifier)
-    check("relâcher : retour à la tête de lecture", ed.preview_time is None and ed.view_time() == ed.playhead)
-    ed.undo()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    ed.enter_clip(clip.id)
-    app.processEvents()
-    # Maj pendant le glisser d'un point : la valeur s'aimante sur la valeur par défaut (ici 0, au milieu)
-    from ildagen.ui.timeline import lanes as TLs
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    ks = max(lane.auto.keys, key=lambda kk: kk.t)
-    _, sps = TLs.target(ed, lane.clip, lane.auto)
-    rgs = TLs.value_range(sps, lane.auto)
-    p0 = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(ks.t))), int(TLs.v_to_y(ks.v, lane, rgs)))
-    p1 = QPoint(p0.x(), int(TLs.v_to_y(0.0, lane, rgs)) + 6)        # un peu à côté de 0
-    drag(canvas, p0, p1, M.ShiftModifier)
-    check("Maj : le point s'aimante sur la valeur par défaut", ks.v == 0.0, f"{ks.v}")
-    ed.undo()
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    # Clic droit sur un point : il est supprimé (annulable)
-    from PySide6.QtGui import QContextMenuEvent
-    from ildagen.ui.timeline import lanes as TL
-    from ildagen.ui.timeline.geometry import lane_reset_rect
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    k = min(lane.auto.keys, key=lambda kk: abs(lane.clip.secs(kk.t) - 3.0))
-    _, spec_tx = TL.target(ed, lane.clip, lane.auto)
-    ky = TL.v_to_y(k.v, lane, TL.value_range(spec_tx, lane.auto))
-    kp = QPoint(int(canvas.geo.x(lane.clip.start + lane.clip.secs(k.t))), int(ky))
-    n_k = len(lane.auto.keys)
-    QApplication.sendEvent(canvas, QContextMenuEvent(QContextMenuEvent.Reason.Mouse, kp, canvas.mapToGlobal(kp)))
-    QApplication.processEvents()
-    check("clic droit sur un point = supprimé", k not in lane.auto.keys and len(lane.auto.keys) == n_k - 1,
-          f"{len(lane.auto.keys)}/{n_k}")
-    ed.undo()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    ed.enter_clip(clip.id)
-    app.processEvents()
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    check("annulable (suppression de la clé)", len(lane.auto.keys) == n_k)
-    # ↺ d'une ligne : supprime l'automation
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.auto.key == "tf.tx")
-    n_auto = len(lane.clip.automations)
-    bx, by, bw, bh = lane_reset_rect(canvas.geo, lane)
-    click(canvas, QPoint(int(bx + bw / 2), int(by + bh / 2)))
-    check("↺ de la ligne supprime l'automation", len(lane.clip.automations) == n_auto - 1)
-    ed.undo()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    check("annulable (↺ timeline)", len(clip.automations) == n_auto)
+    check("double-clic sur un clip : sa forme s'ouvre dans Forme", ed.workspace == "forme"
+          and ed.current_form_id() == clip.def_id and win.layers.ctx.text() == d.name)
+    ed.set_current_form(F1)
+    ed.set_workspace("show")
     t_before = ed.playhead
     win.playback.play()
     import time as _t
@@ -768,6 +563,8 @@ def main():
     check("lecture : la tête avance", ed.playhead > t_before, f"{t_before:.3f} → {ed.playhead:.3f}")
     # Pavé tactile : deux doigts = défilement horizontal ET vertical
     from PySide6.QtGui import QWheelEvent
+    for _ in range(3):
+        ed.add_track()
     canvas.geo.t0, canvas.geo.scroll_y = 2.0, 0
     canvas.resize(canvas.width(), 140)
     pos = QPointF(400, 120)
@@ -776,6 +573,8 @@ def main():
     QApplication.sendEvent(canvas, ev)
     check("pavé tactile : défilement sur le côté et vers le bas", canvas.geo.t0 < 2.0 and canvas.geo.scroll_y > 0,
           f"t0 {canvas.geo.t0:.3f}, y {canvas.geo.scroll_y}")
+    for _ in range(3):
+        ed.undo()
     canvas.geo.t0, canvas.geo.scroll_y = 0.0, 0
     app.processEvents()
     shot(win, "03_timeline")
@@ -834,8 +633,9 @@ def main():
     check("symétrie de dessin annulable", len(root().children) == n_before)
     ed.set_tool("select")
 
-    # ── Dupliquer un groupe : ses automations sont dupliquées ; la timeline montre les groupes ──
+    # ── Dupliquer un groupe : ses oscillateurs sont dupliqués ──
     from ildagen.core.nodes import ShapeNode as _SN
+    from ildagen.core.oscillator import Osc
     fnew = ed.new_form("Groupes")
     sh = ed.add_node(_SN("line"))
     ed.set_selection([sh.id])
@@ -843,19 +643,14 @@ def main():
     grp = ed.top_selected()[0]
     ed.set_selection([sh.id])
     dm = ed.add_modifier("dots")
-    cg = ed.add_clip(fnew.id, ed.doc.timeline.tracks[0].id, 20.0, 2.0)
-    ed.automate_param(ed.find(dm.id), "phase")
-    ed.enter_def(fnew.id)
+    ed.set_osc(ed.find(dm.id), "phase", Osc("vitesse", speed=0.5, sync=False))
     ed.set_selection([grp.id])
-    ed.duplicate_selection()
-    cg = ed.doc.timeline.find_clip(cg.id)[1]
-    check("dupliquer un groupe : ses automations sont dupliquées", len(cg.automations) == 2
-          and len({a.node_id for a in cg.automations}) == 2)
-    cg.expanded = True
-    ed.notify(timeline=True)
-    gr = [(r.kind, r.label, r.depth) for r in win.timeline.canvas.rows() if r.clip is cg]
-    check("timeline : groupe → modifieur → réglage (avec retrait)",
-          gr[:3] == [("group", "Groupe", 0), ("group", "Dots", 1), ("lane", "Phase", 2)], str(gr[:3]))
+    copies = ed.duplicate_selection()
+    dots = [n for c in copies for n in c.walk() if n.kind == "modifier"]
+    check("dupliquer un groupe : ses oscillateurs sont dupliqués", len(dots) == 1 and dots[0].id != dm.id
+          and dots[0].osc["phase"].speed == 0.5 and ed.find(dm.id).osc["phase"] is not dots[0].osc["phase"])
+    ed.display_strokes()
+    check("forme avec un oscillateur : la mire tourne en boucle", ed.is_animated())
     ed.delete_def(fnew.id)
     ed.enter_def(F1)
 
@@ -866,7 +661,7 @@ def main():
     app.processEvents()
     new = ed.current_form()
     check("+ : nouvelle forme vide, sélectionnée", len(ed.doc.library.defs) == n_forms + 1 and not new.root.children
-          and ed.context == ("def", new.id) and lst.currentItem().data(Qt.ItemDataRole.UserRole) == new.id
+          and ed.current_form_id() == new.id and lst.currentItem().data(Qt.ItemDataRole.UserRole) == new.id
           and win.layers.ctx.text() == new.name, new.name)
     ed.set_tool("shape:ellipse")
     drag(view, sp(-0.2, -0.2), sp(0.2, 0.2))
@@ -875,11 +670,11 @@ def main():
     item = next(lst.item(i) for i in range(lst.count()) if lst.item(i).data(Qt.ItemDataRole.UserRole) == F1)
     r = lst.visualItemRect(item)
     click(lst.viewport(), r.center())
-    check("clic sur une forme de la liste : elle s'affiche et ses calques aussi", ed.context == ("def", F1)
-          and ed.display_mode() == "def" and win.layers.tree.model_.rowCount() == len(root().children))
+    check("clic sur une forme de la liste : elle s'affiche et ses calques aussi", ed.current_form_id() == F1
+          and ed.workspace == "forme" and win.layers.tree.model_.rowCount() == len(root().children))
     dup = ed.duplicate_form(new.id)
     check("dupliquer une forme", dup is not None and len(dup.root.children) == 1 and dup.root.children[0].id !=
-          new.root.children[0].id and ed.context == ("def", dup.id))
+          new.root.children[0].id and ed.current_form_id() == dup.id)
     ed.delete_def(dup.id)
     check("supprimer la forme en cours : on passe sur une autre", ed.doc.library.get(dup.id) is None
           and ed.current_root() is not None)
@@ -1186,7 +981,7 @@ def gestures_and_safety(app, win):
     ed.set_symmetry(1)
     ed.set_snap(False)
     clip = ed.doc.timeline.find_clip(clip.id)[1]
-    canvas._toggle(clip)                       # déplier le clip
+    ed.set_clip_expanded(clip.id, True)        # déplier le clip
     no_step = steps() == s0 + 1
     ed.undo()
     g = ed.doc.grid
@@ -1197,26 +992,22 @@ def gestures_and_safety(app, win):
     ed.set_snap(True)
     ed.set_grid_mode(1)
     ed.set_tool("select")
-    # Groupe replié dans la liste des calques, ligne de réglage réduite : gardés après annuler
+    # Groupe replié dans la liste des calques, maîtres, espace actif : gardés après annuler, sans étape
     ed.set_selection([rect_id])
     ed.group_selected()
     grp_id = ed.selection[0]
-    ed.automate_param(ed.find(rect_id), "tf.rot")
-    ed.enter_def(fid)
     s0 = steps()
     ed.set_expanded(ed.find(grp_id), False)
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    app.processEvents()
-    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.clip is clip and r.auto.key == "tf.rot")
-    canvas.set_lane_small(lane, not lane.small)
-    small = clip.lane_sizes.copy()
+    ed.set_master("brightness", 60.0)
+    ed.set_workspace("show")
+    ed.set_workspace("forme")
     no_step = steps() == s0 and ed.view_dirty
     ed.rename(ed.find(rect_id), "Renommé")
     ed.undo()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    check("annuler garde le dépliage des calques et la hauteur des lignes", no_step and small
-          and not ed.find(grp_id).expanded and clip.lane_sizes == small and ed.find(rect_id).name != "Renommé")
-    ed.undo()
+    check("annuler garde le dépliage des calques, les maîtres et l'espace actif", no_step
+          and not ed.find(grp_id).expanded and ed.doc.masters.brightness == 60.0 and ed.workspace == "forme"
+          and ed.find(rect_id).name != "Renommé")
+    ed.set_master("brightness", 100.0)
     ed.undo()
     path = os.path.join(tempfile.mkdtemp(), "vue.ildaproj")
     proj._write(path)
@@ -1289,8 +1080,6 @@ def gestures_and_safety(app, win):
     check("le réglage suivant est bien enregistré", steps() == s0 + 1
           and ed.history.undo_label() == "Réglage : Rotation" and not ed.param_editing)
     ed.undo()
-    ed.enter_clip(clip.id)
-    armed = ed.new_automation(clip.id)
     ed.set_selection([rect_id])
     s0 = steps()
     col0 = tuple(ed.find(rect_id).color)
@@ -1306,12 +1095,8 @@ def gestures_and_safety(app, win):
     finally:
         QColorDialog.exec = real_exec
     app.processEvents()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    auto = next((x for x in clip.automations if x.id == armed.id), None)
-    check("couleur annulée dans un clip : aucune clé, aucune automation liée", auto is not None and auto.armed
-          and not auto.keys and tuple(ed.find(rect_id).color) == col0 and steps() == s0 and not ed.gesture_active())
-    ed.undo()                                      # l'automation en attente
-    ed.enter_def(fid)
+    check("couleur annulée : rien n'est écrit, aucune étape", tuple(ed.find(rect_id).color) == col0
+          and steps() == s0 and not ed.gesture_active())
 
     # ── S1 : forme revenue au point de départ = pas de forme ────────────
     for kind in ("rect", "line"):
@@ -1341,7 +1126,8 @@ def gestures_and_safety(app, win):
     check("réglage tapé : inf / nan refusés, valeur énorme ramenée au maximum", ok_inf
           and ed.find(rect_id).transform.rot == 360.0, f"{ed.find(rect_id).transform.rot}")
     ed.undo()
-    ed.enter_clip(clip.id)
+    ed.set_workspace("show")
+    ed.select_clip(clip.id)
     ed.clear_selection()
     app.processEvents()
     dur = win.properties._clip_fields["duration"]
@@ -1357,19 +1143,17 @@ def gestures_and_safety(app, win):
     check("clip : durée infinie impossible", ed.current_clip().duration == MAX_DURATION)
     ed.undo()
 
-    # ── S10 : « envoyer dans la timeline » depuis la vue Forme ──────────
+    # ── S10 : oscillateur posé sur un réglage depuis l'espace Forme ──────
     ed.enter_def(fid)
     ed.set_selection([rect_id])
-    form = form_for(rect_id)
     n_err = len(errors)
-    form.autos["tf.rot"].click()
+    ed.set_osc(ed.find(rect_id), "tf.rot")
     app.processEvents()
-    clip = ed.doc.timeline.find_clip(clip.id)[1]
-    check("envoyer un réglage dans la timeline (vue Forme) : pas d'erreur, on reste sur le calque",
+    check("oscillateur sur un réglage (Forme) : pas d'erreur, on reste sur le calque, valeur de base intacte",
           len(errors) == n_err and ed.selection == [rect_id] and form_for(rect_id) is not None
-          and clip.automation_for(rect_id, "tf.rot") is not None)
+          and "tf.rot" in ed.find(rect_id).osc and ed.find(rect_id).transform.rot == r0)
     ed.undo()
-    ed.enter_def(fid)
+    check("oscillateur annulable", not ed.find(rect_id).osc)
 
     # ── S7 : projets / sauvegardes abîmés : message, jamais de plantage ─
     folder = tempfile.mkdtemp()
@@ -1396,6 +1180,18 @@ def gestures_and_safety(app, win):
     ok = proj.open(net)
     check("réglages réseau abîmés dans un projet : ouvert, valeurs sûres", ok and ed.settings.get("network", "port") == 7255
           and ed.settings.get("network", "channel") == 16)
+    from ildagen.core.document import LEGACY_MESSAGE
+    old = os.path.join(folder, "ancien.ildaproj")
+    with open(old, "w") as f:
+        json.dump({"version": 4, "library": [{"id": "A", "name": "A", "automations": [{"id": "x", "node_id": "r", "key": "tf.tx", "keys": []}],
+                                               "root": {"kind": "group", "id": "r", "name": "A", "children": []}}],
+                   "timeline": {"tracks": [{"name": "P", "clips": [{"def_id": "A", "start": 0, "duration": 2}]}]}}, f)
+    status = []
+    ed.statusMessage.connect(status.append)
+    ok = proj.open(old)
+    ed.statusMessage.disconnect(status.append)
+    check("ancien projet (v4) : ouvert, message « animations retirées »", ok and proj.last_notice == LEGACY_MESSAGE
+          and any(LEGACY_MESSAGE in m for m in status) and ed.doc.timeline.has_clips(), str(status))
     newer = os.path.join(folder, "futur.ildaproj")
     d = Document().to_dict()
     d["version"] = 99

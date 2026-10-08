@@ -80,8 +80,9 @@ def build_actions(win):
     act("fit", "Ajuster la vue", lambda: win.canvas.view.fit_view(), "Ctrl+0")
     act("zoom_in", "Zoomer", lambda: win.canvas.view.zoom_by(1.4), SK.ZoomIn)
     act("zoom_out", "Dézoomer", lambda: win.canvas.view.zoom_by(1 / 1.4), SK.ZoomOut)
-    act("view_scene", "Afficher la forme", lambda: ed.set_view_source("form"))
-    act("view_tl", "Afficher la timeline", lambda: ed.set_view_source("timeline"))
+    act("view_scene", "Espace Forme", lambda: ed.set_workspace("forme"))
+    act("view_tl", "Espace Show", lambda: ed.set_workspace("show"))
+    act("view_live", "Espace Live", lambda: ed.set_workspace("live"))
 
     # Lecture
     act("play", "Lecture / pause", lambda: None if _typing() else win.playback.toggle(), "Space")
@@ -132,7 +133,7 @@ def build_menus(win, A):
         m.addSeparator() if k is None else m.addAction(A[k])
     from .canvas.symmetry_menu import build_symmetry_menu
     m.addMenu(build_symmetry_menu(win.editor, m, "Mode de symétrie"))
-    for k in (None, "view_scene", "view_tl", None, "fit", "zoom_in", "zoom_out"):
+    for k in (None, "view_scene", "view_tl", "view_live", None, "fit", "zoom_in", "zoom_out"):
         m.addSeparator() if k is None else m.addAction(A[k])
 
     m = mb.addMenu("Lecture")

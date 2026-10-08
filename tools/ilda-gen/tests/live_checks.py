@@ -87,6 +87,14 @@ def live_checks(app, win, check):
             ok = ok and p[1] == (seq + 1) & 0xFFFF
             seq = p[1]
     check("fragments numérotés à la suite", ok)
+    # D11 : ce qui est envoyé suit l'espace actif ; les maîtres aussi (nouvel instantané)
+    ed.set_workspace("show")
+    ok = wait_for(app, lambda: live.worker._snap is not None and live.worker._snap.mode == "show", 1.0)
+    ed.set_master("size", 50.0)
+    ok = ok and wait_for(app, lambda: live.worker._snap.masters.size == 50.0, 1.0)
+    check("la sortie suit l'espace actif et les maîtres", ok)
+    ed.set_master("size", 100.0)
+    ed.set_workspace("forme")
     # Blackout : coupure immédiate, des images éteintes partent aussitôt, plus rien d'allumé ensuite
     n0 = len(rx.poll())
     t_black = time.monotonic()

@@ -1,15 +1,15 @@
-"""Dessin de la timeline : grille musicale, règle, forme d'onde, pistes, clips, automations, tête de lecture."""
+"""Dessin de la timeline : grille musicale, règle (boucle, repères), forme d'onde, pistes, clips (vignettes,
+fondus, chaîne de l'animation partagée), tête de lecture."""
 
 import math
 
 import numpy as np
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPen, QPolygonF
+from PySide6.QtGui import QPen, QPolygonF
 
 from ...core.timeline import SUBDIVISIONS
 from .. import icons, theme
-from . import lanes as L
-from .geometry import CHEVRON_W, HEADER_W, LOOP_H, RULER_H, WAVE_H, lane_reset_rect, lane_toggle_rect, link_icon_rect
+from .geometry import HEADER_W, LOOP_H, RULER_H, WAVE_H, link_icon_rect
 
 MIN_BAR_PX = 36
 
@@ -75,6 +75,7 @@ def draw_ruler(p, geo, tl):
         elif level == 1:
             p.setPen(QPen(theme.qc(theme.TEXT_OFF), 1))
             p.drawLine(QPointF(x, RULER_H - 6), QPointF(x, RULER_H))
+    draw_markers(p, geo, tl)
     p.setPen(QPen(theme.qc(theme.BORDER), 1))
     p.drawLine(QPointF(HEADER_W, RULER_H - 0.5), QPointF(w, RULER_H - 0.5))
 
@@ -108,6 +109,22 @@ def draw_waveform(p, geo, peaks, peaks_per_s):
 
 
 THUMB_LABEL_H = 16
+LABEL_PAD = 4
+
+
+def draw_markers(p, geo, tl):
+    """Repères (marqueurs) dans la règle : un petit drapeau de leur couleur avec leur nom."""
+    p.setFont(theme.ui_font(9, True))
+    fm = p.fontMetrics()
+    for m in tl.markers:
+        x = geo.x(m.t)
+        if x < HEADER_W - 2 or x > geo.width:
+            continue
+        w = fm.horizontalAdvance(m.name) + 8
+        r = QRectF(x, LOOP_H, w, 11)
+        p.fillRect(r, theme.qc(m.color))
+        p.setPen(theme.qc("#000000"))
+        p.drawText(r, Qt.AlignmentFlag.AlignCenter, m.name)
 
 
 def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
@@ -118,6 +135,8 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
     p.setBrush(fill)
     p.setPen(Qt.PenStyle.NoPen)
     p.drawRoundedRect(r, 3, 3)
+    # Barre de la couleur de la piste en haut du clip
+    p.fillRect(QRectF(x + 1, y, max(0.0, w - 2), 2), theme.qc(row.track.color, 0.45 if muted else 1.0))
     # Vignettes de la forme tout le long du clip (une par carré, à l'instant de son centre)
     size = int(h - THUMB_LABEL_H - 2)
     if thumb is not None and size >= 12:
@@ -125,8 +144,7 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
         p.setClipRect(r.adjusted(1, 1, -1, -1))
         ty = y + THUMB_LABEL_H
         left = max(x, HEADER_W - size)
-        k0 = int(max(0.0, (left - x) // size))
-        k = k0
+        k = int(max(0.0, (left - x) // size))
         while x + k * size < min(x + w, geo.width):
             tx = x + k * size
             t_local = min(clip.duration, max(0.0, (k * size + size / 2) / geo.pps))
@@ -136,192 +154,47 @@ def draw_clip(p, geo, row, clip, ed, selected, muted, thumb=None):
                 p.drawPixmap(QPointF(tx + 1, ty), pm)
             k += 1
         p.restore()
+    _draw_fades(p, geo, clip, x, y + THUMB_LABEL_H, h - THUMB_LABEL_H)
     p.setBrush(Qt.BrushStyle.NoBrush)
     p.setPen(QPen(theme.qc(theme.ACCENT, 0.9) if selected else theme.qc(theme.BORDER), 1))
     p.drawRoundedRect(r, 3, 3)
-    if w > CHEVRON_W + 4:
-        pm = icons.pixmap("chevron-down" if clip.expanded else "chevron-right", theme.TEXT_DIM, 12)
-        p.drawPixmap(QPointF(x + 3, y + (THUMB_LABEL_H - 12) / 2), pm)
-    # Lien avec la forme : chaîne = lié (les clips de cette forme partagent tout), chaîne brisée = délié
-    room = w - CHEVRON_W - 6
+    # Animation : chaîne = partagée avec d'autres clips de la forme, chaîne brisée = déliée (« Relier » possible)
+    room = w - 2 * LABEL_PAD
     linked, shared = ed.clip_is_linked(clip)
-    if w > CHEVRON_W + 40 and (shared or not linked):
+    if w > 40 and (shared or not linked):
         ix, iy, iw, ih = link_icon_rect(geo, row, clip)
         p.drawPixmap(QPointF(ix + 1, iy + 1), icons.pixmap("link" if linked else "unlink", theme.TEXT_DIM, 12))
         room -= iw + 2
-    if w > CHEVRON_W + 20:
+    if w > 20:
         p.setPen(theme.qc(theme.TEXT_OFF if muted else theme.TEXT))
         p.setFont(theme.ui_font(11))
         label = d.name if d else "?"
         fm = p.fontMetrics()
-        p.drawText(QRectF(x + CHEVRON_W + 2, y, room, THUMB_LABEL_H), Qt.AlignmentFlag.AlignVCenter,
+        p.drawText(QRectF(x + LABEL_PAD, y, room, THUMB_LABEL_H), Qt.AlignmentFlag.AlignVCenter,
                    fm.elidedText(label, Qt.TextElideMode.ElideRight, int(max(0, room))))
     p.setBrush(Qt.BrushStyle.NoBrush)
 
 
-def draw_lane(p, geo, row, ed, sel_key):
-    """Ligne d'un réglage dans un clip : courbe / valeur, clés, puis son nom en haut (dans le clip)."""
-    _draw_lane_content(p, geo, row, ed, sel_key)
-    if not row.auto.armed:
-        draw_lane_label(p, geo, row, ed)
-
-
-def _draw_lane_content(p, geo, row, ed, sel_key):
-    clip, auto = row.clip, row.auto
-    x0, x1 = geo.x(clip.start), geo.x(clip.end)
-    # Réglage pas utilisé : fond du clip grisé (plus sombre)
-    p.fillRect(QRectF(x0, row.y, x1 - x0, row.h), theme.qc(theme.BG_PANEL, 1.0 if row.used else 0.5))
-    p.fillRect(QRectF(x0, row.y + row.h - 1, x1 - x0, 1), theme.qc(theme.BORDER, 0.6))   # séparation discrète
-    if auto.armed:
-        p.setPen(theme.qc(theme.TEXT_DIM))
-        p.setFont(theme.ui_font(11))
-        p.drawText(QRectF(max(HEADER_W, x0) + 8, row.y, max(10.0, x1 - max(HEADER_W, x0) - 16), row.h),
-                   Qt.AlignmentFlag.AlignVCenter, "En attente : modifiez un réglage (Propriétés ou mire)")
+def _draw_fades(p, geo, clip, x, y, h):
+    """Fondus d'entrée / de sortie : une diagonale du bas vers le haut (et inversement)."""
+    if clip.fade_in <= 0 and clip.fade_out <= 0:
         return
-    node, spec = L.target(ed, clip, auto)
-    rng = L.value_range(spec, auto)
-    a, b = max(HEADER_W, x0), min(geo.width, x1)
-    if b <= a:
-        return
-    xs = np.arange(a, b + 1, 2.0)
-    if not auto.keys and row.small:
-        return      # ligne réduite sans clé : seulement son nom (pas de trait à travers le texte)
-    if not auto.keys and node is not None:
-        # Réglage pas encore animé : sa valeur fixe en pointillés (cliquer pour poser une clé)
-        from ...core import nodes as N
-        v = N.get_param(node, auto.key)
-        if L.is_color(spec) and v is not None:
-            p.fillRect(QRectF(a, row.y + row.h / 2 - 3, b - a, 6), QColor.fromRgbF(*v))
-        elif v is not None:
-            y = L.v_to_y(v, row, rng)
-            pen = QPen(theme.qc(theme.TEXT_OFF), 1, Qt.PenStyle.DashLine)
-            p.setPen(pen)
-            p.drawLine(QPointF(a, y), QPointF(b, y))
-        return
-    if L.is_color(spec):
-        for x in xs:
-            v = auto.value_at(clip.u(geo.t(x) - clip.start))
-            if v is not None:
-                p.fillRect(QRectF(x, row.y + row.h / 2 - 6, 2.0, 12), QColor.fromRgbF(*v))
-    elif auto.keys:
-        pts = [QPointF(x, L.v_to_y(auto.value_at(clip.u(geo.t(x) - clip.start)), row, rng)) for x in xs]
-        p.setPen(QPen(theme.qc(theme.TEXT, 0.8), 1.3))
-        p.drawPolyline(QPolygonF(pts))
-    # Clés
-    for k in auto.keys:
-        kx = geo.x(clip.start + clip.secs(k.t))
-        if kx < HEADER_W - 6 or kx > geo.width + 6:
-            continue
-        ky = row.y + row.h / 2 if L.is_color(spec) else L.v_to_y(k.v, row, rng)
-        is_sel = sel_key is k
-        r_ = 5 if is_sel else 4
-        p.setPen(QPen(theme.qc(theme.ACCENT) if is_sel else theme.qc(theme.TEXT, 0.85), 1.2))
-        if L.is_color(spec):
-            p.setBrush(QColor.fromRgbF(*k.v))
-        else:
-            p.setBrush(theme.qc(theme.ACCENT) if is_sel else theme.qc(theme.BG_PANEL))
-        p.drawPolygon(QPolygonF([QPointF(kx, ky - r_), QPointF(kx + r_, ky), QPointF(kx, ky + r_), QPointF(kx - r_, ky)]))
-        if is_sel and not row.small:
-            p.setPen(theme.qc(theme.TEXT_DIM))
-            p.setFont(theme.mono_font(9))
-            p.drawText(QPointF(kx + 8, max(row.y + 11, ky - 6)), L.format_value(k.v, spec))
-    p.setBrush(Qt.BrushStyle.NoBrush)
-    # Poignées de Bézier de la clé sélectionnée
-    if sel_key is not None and sel_key in auto.keys and sel_key.curve == "custom" and not L.is_color(spec):
-        h = bezier_handles(geo, row, clip, auto, sel_key, rng)
-        if h is not None:
-            (ax, ay), (bx, by), (h1x, h1y), (h2x, h2y) = h
-            p.setPen(QPen(theme.qc(theme.TEXT_DIM), 1))
-            p.drawLine(QPointF(ax, ay), QPointF(h1x, h1y))
-            p.drawLine(QPointF(bx, by), QPointF(h2x, h2y))
-            p.setBrush(theme.qc(theme.TEXT))
-            p.drawEllipse(QPointF(h1x, h1y), 3.5, 3.5)
-            p.drawEllipse(QPointF(h2x, h2y), 3.5, 3.5)
-            p.setBrush(Qt.BrushStyle.NoBrush)
-
-
-def bezier_handles(geo, row, clip, auto, key, rng):
-    i = auto.keys.index(key)
-    if i + 1 >= len(auto.keys):
-        return None
-    nxt = auto.keys[i + 1]
-    ax, bx = geo.x(clip.start + clip.secs(key.t)), geo.x(clip.start + clip.secs(nxt.t))
-    ay, by = L.v_to_y(key.v, row, rng), L.v_to_y(nxt.v, row, rng)
-    x1, y1, x2, y2 = key.h
-    return (ax, ay), (bx, by), (ax + x1 * (bx - ax), ay + y1 * (by - ay)), (ax + x2 * (bx - ax), ay + y2 * (by - ay))
-
-
-def lane_resettable(ed, row):
-    """Une ligne peut être réinitialisée : réglage animé, ou valeur fixe différente du défaut."""
-    return L.assigned(ed, row.clip, row.auto)
-
-
-def draw_group(p, geo, row):
-    """Ligne d'un modifieur sous un clip déplié : flèche, icône et nom dans le clip (clic = replier)."""
-    clip = row.clip
-    x0, x1 = geo.x(clip.start), geo.x(clip.end)
-    p.fillRect(QRectF(x0, row.y, x1 - x0, row.h), theme.qc(theme.BG_FIELD, 0.7))
-    from .geometry import DEPTH_W
-    a, b = max(HEADER_W, x0) + 3 + row.depth * DEPTH_W, x1 - 3
-    if b - a < 14:
-        return
-    opened = row.node.id not in clip.closed_nodes
-    cy = row.y + row.h / 2
-    p.drawPixmap(QPointF(a, cy - 5), icons.pixmap("chevron-down" if opened else "chevron-right", theme.TEXT_DIM, 10))
-    if b - a > 30:
-        from ..layers.delegate import node_icon
-        is_mod = row.node.kind == "modifier"
-        p.drawPixmap(QPointF(a + 12, cy - 6), icons.pixmap(node_icon(row.node), theme.TEXT_DIM if is_mod else theme.TEXT_OFF, 12))
-    if b - a > 50:
-        p.setFont(theme.ui_font(10))
-        p.setPen(theme.qc(theme.TEXT_DIM))
-        fm = p.fontMetrics()
-        p.drawText(QRectF(a + 28, row.y, b - a - 28, row.h), Qt.AlignmentFlag.AlignVCenter,
-                   fm.elidedText(row.node.name, Qt.TextElideMode.ElideRight, int(b - a - 28)))
-
-
-def draw_lane_label(p, geo, row, ed):
-    """En haut de la ligne, dans le clip : flèche (réduire / agrandir), nom du réglage, ↺ à droite."""
-    clip, auto = row.clip, row.auto
-    a, b = max(HEADER_W, geo.x(clip.start)) + 3, geo.x(clip.end) - 3
-    if b - a < 14:
-        return
-    tx, ty, tw, th = lane_toggle_rect(geo, row)
-    p.drawPixmap(QPointF(tx + 1, ty + (th - 10) / 2),
-                 icons.pixmap("chevron-right" if row.small else "chevron-down", theme.TEXT_OFF, 10))
-    rx, ry, rw, rh = lane_reset_rect(geo, row)
-    room = b - a
-    if room > 60:
-        on = lane_resettable(ed, row)
-        p.drawPixmap(QPointF(rx + 1, ry + (rh - 11) / 2),
-                     icons.pixmap("rotate-ccw", theme.TEXT_OFF if on else theme.BORDER, 11))
-    if room > 30:
-        label = ("Automation en attente…" if auto.armed else auto.label) if row.node is None else row.label
-        animated = bool(auto.keys)
-        p.setFont(theme.ui_font(9))
-        p.setPen(theme.qc(theme.TEXT_DIM if (animated or auto.armed) else theme.TEXT_OFF))
-        fm = p.fontMetrics()
-        w = (rx - 4 if room > 60 else b) - (tx + tw + 2)
-        p.drawText(QRectF(tx + tw + 2, ty, max(0.0, w), th), Qt.AlignmentFlag.AlignVCenter,
-                   fm.elidedText(label, Qt.TextElideMode.ElideRight, int(max(0.0, w))))
+    p.setPen(QPen(theme.qc(theme.TEXT, 0.8), 1))
+    if clip.fade_in > 0:
+        p.drawLine(QPointF(x, y + h), QPointF(x + clip.fade_in * geo.pps, y))
+    if clip.fade_out > 0:
+        xe = geo.x(clip.end)
+        p.drawLine(QPointF(xe - clip.fade_out * geo.pps, y), QPointF(xe, y + h))
 
 
 def draw_headers(p, geo, rows, ed):
-    """Colonne de gauche : seulement les pistes. Les modifieurs et réglages sont écrits dans leur clip."""
+    """Colonne de gauche : les pistes (couleur, nom, muet / solo)."""
     w = HEADER_W
     p.fillRect(QRectF(0, geo.top, w, geo.height - geo.top), theme.qc(theme.BG_PANEL))
-    from .geometry import track_blocks
-    blocks = track_blocks(rows)
     for r in rows:
-        if r.kind != "track":
+        if r.y + r.h < geo.top or r.y > geo.height:
             continue
-        top, bottom = blocks[r.track.id]
-        if bottom < geo.top or top > geo.height:
-            continue
-        if bottom - top > r.h:
-            # Clips dépliés : l'en-tête de la piste s'étend sur toutes leurs lignes
-            p.fillRect(QRectF(0, top, w, bottom - top), theme.qc("#ffffff", 0.02))
-            p.fillRect(QRectF(3, top + 6, 2, bottom - top - 12), theme.qc(theme.TEXT_OFF, 0.6))
+        p.fillRect(QRectF(0, r.y + 1, 3, r.h - 2), theme.qc(r.track.color))      # couleur de la piste
         p.setPen(theme.qc(theme.TEXT_OFF if r.track.muted else theme.TEXT))
         p.setFont(theme.ui_font(12))
         p.drawText(QRectF(10, r.y, w - 70, r.h), Qt.AlignmentFlag.AlignVCenter, r.track.name)
@@ -335,7 +208,7 @@ def draw_headers(p, geo, rows, ed):
             p.drawText(br, Qt.AlignmentFlag.AlignCenter, label)
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.setPen(QPen(theme.qc(theme.BORDER), 1))
-        p.drawLine(QPointF(0, bottom - 0.5), QPointF(geo.width, bottom - 0.5))    # fin du bloc de la piste
+        p.drawLine(QPointF(0, r.y + r.h - 0.5), QPointF(geo.width, r.y + r.h - 0.5))    # fin de la piste
     p.setPen(QPen(theme.qc(theme.BORDER), 1))
     p.drawLine(QPointF(w - 0.5, 0), QPointF(w - 0.5, geo.height))
 
@@ -354,15 +227,6 @@ def draw_corner(p, geo, tl):
                    fm.elidedText(name, Qt.TextElideMode.ElideMiddle, HEADER_W - 14))
     p.setPen(QPen(theme.qc(theme.BORDER), 1))
     p.drawLine(QPointF(0, geo.top - 0.5), QPointF(HEADER_W, geo.top - 0.5))
-
-
-def draw_preview_marker(p, geo, t):
-    """Instant montré dans la mire pendant le déplacement d'une clé (trait pointillé)."""
-    x = geo.x(t)
-    if x < HEADER_W or x > geo.width:
-        return
-    p.setPen(QPen(theme.qc(theme.ACCENT, 0.7), 1, Qt.PenStyle.DashLine))
-    p.drawLine(QPointF(x, LOOP_H), QPointF(x, geo.height))
 
 
 def draw_playhead(p, geo, t):

@@ -243,6 +243,14 @@ class TimelineOpsMixin:
         self.timeline_mutate("Dupliquer le clip", lambda: tr.clips.append(c))
         return c
 
+    def set_clip_expanded(self, clip_id, on):
+        """Clip déplié dans la timeline : état d'affichage (hors annulation, enregistré)."""
+        _, clip = self.doc.timeline.find_clip(clip_id)
+        if clip is not None and clip.expanded != bool(on):
+            clip.expanded = bool(on)
+            self.view_changed()
+            self.timelineChanged.emit()
+
     def set_clip_times(self, clip_id, start=None, duration=None):
         """Début / durée tapés (panneau du clip) : bornés contre les voisins."""
         _, clip = self.doc.timeline.find_clip(clip_id)
