@@ -10,18 +10,19 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
 from ildagen.core.nodes import ShapeNode, GroupNode, ModifierNode, InstanceNode, clone_node  # noqa: E402
 from ildagen.core.library import Library, ShapeDef  # noqa: E402
-from ildagen.core.evaluator import EvalContext, evaluate, evaluate_timeline, node_quad  # noqa: E402
+from ildagen.core.evaluator import EvalContext, evaluate, node_quad  # noqa: E402
 from ildagen.core.modifiers import registry  # noqa: E402
 from ildagen.core.document import Document  # noqa: E402
 from ildagen.core.history import History  # noqa: E402
 from ildagen.core.timeline import Clip  # noqa: E402
-from ildagen.core.automation import Automation  # noqa: E402
 from ildagen.core.settings import Settings  # noqa: E402
 from ildagen.laser.optimizer import build_points  # noqa: E402
 from ildagen.laser.output import apply_output  # noqa: E402
 from ildagen.laser.idn import IdnPacketBuilder  # noqa: E402
 from ildagen.laser.ilda_file import write_ilda  # noqa: E402
 from output_tests import *  # noqa: E402,F401,F403  (sortie laser, corrections de l'audit)
+from refonte_tests import *  # noqa: E402,F401,F403  (modèle v5 : oscillateurs, effets, live, maîtres)
+from editor_tests import *  # noqa: E402,F401,F403  (opérations de l'éditeur, annuler / rétablir)
 
 
 def ctx(lib=None, **kw):
@@ -111,25 +112,6 @@ def test_instances_and_quads():
     assert abs(out[0].pts[:, 0].mean() - 0.5) < 1e-6
     q = node_quad(inst, ctx(lib))
     assert abs(q[:, 0].min() - 0.3) < 1e-6
-
-
-def test_timeline_automation():
-    doc = Document()
-    g = GroupNode("Def")
-    shape = ShapeNode("rect", (-0.1, -0.1, 0.1, 0.1))
-    g.add(shape)
-    d = doc.library.add(ShapeDef("A", g))
-    clip = Clip(d.id, 1.0, 4.0)
-    a = Automation()
-    a.bind(shape.id, "tf.tx", "Position X")
-    a.set_key(0.0, 0.0)
-    a.set_key(1.0, 0.8)          # fin du clip (instants en proportion de la durée)
-    clip.automations.append(a)
-    doc.timeline.tracks[0].clips.append(clip)
-    out, _ = evaluate_timeline(doc.timeline, doc.library, 3.0)
-    assert abs(out[0].pts[:, 0].mean() - 0.4) < 1e-6
-    out, _ = evaluate_timeline(doc.timeline, doc.library, 0.5)
-    assert out == []
 
 
 def test_save_load_and_history():
@@ -254,61 +236,6 @@ def test_dots_keep_ends():
     assert not np.allclose(off[0], [0, 0]) and np.diff(on[:, 0]).min() >= 0.15 - 1e-9
 
 
-def test_linked_clips_share_automations():
-    from ildagen.core.automation import Automation
-    from ildagen.core.timeline import Clip
-    doc = Document()
-    d = doc.library.visible()[0]
-    m = ModifierNode("rotate")
-    d.root.add(m)
-    tr = doc.timeline.tracks[0]
-    c1, c2 = Clip(d.id, 0, 2), Clip(d.id, 3, 2)
-    a1 = Automation()
-    a1.bind(m.id, "angle", "Angle")
-    a1.set_key(0.0, 90.0)
-    a2 = Automation()
-    a2.bind(m.id, "angle", "Angle")
-    a2.set_key(0.0, 180.0)
-    c1.automations, c2.automations = [a1], [a2]
-    tr.clips += [c1, c2]
-    data = doc.to_dict()
-    for x in data["library"]:
-        x.pop("automations", None)          # ancien format : automations rangées dans les clips
-    old = Document()
-    old.load_dict(data)
-    k1, k2 = old.timeline.tracks[0].clips
-    assert k1.def_id == d.id and k2.def_id != d.id and old.library.get(k2.def_id).hidden
-    assert k1.automations[0].keys[0].v == 90.0 and k2.automations[0].keys[0].v == 180.0
-    # Nouveau format : les clips liés partagent la même liste après réouverture
-    k2.def_id = d.id
-    data2 = old.to_dict()
-    new = Document()
-    new.load_dict(data2)
-    n1, n2 = new.timeline.tracks[0].clips
-    assert n1.automations is n2.automations and not any(x.hidden for x in new.library.defs)
-
-
-def test_linked_clips_different_durations():
-    """Clips liés de durées différentes : la même courbe, jouée sur la durée de chacun."""
-    from ildagen.core.automation import Automation
-    from ildagen.core.timeline import Clip
-    doc = Document()
-    d = doc.library.visible()[0]
-    shape = ShapeNode("rect", (-0.1, -0.1, 0.1, 0.1))
-    d.root.add(shape)
-    a = Automation()
-    a.bind(shape.id, "tf.tx", "X")
-    a.set_key(0.0, 0.0)
-    a.set_key(1.0, 0.8)
-    d.automations.append(a)
-    c1, c2 = Clip(d.id, 0.0, 4.0), Clip(d.id, 5.0, 2.0)
-    c1.automations = c2.automations = d.automations
-    doc.timeline.tracks[0].clips += [c1, c2]
-    x1 = evaluate_timeline(doc.timeline, doc.library, 2.0)[0][0].pts[:, 0].mean()     # milieu du clip 1
-    x2 = evaluate_timeline(doc.timeline, doc.library, 6.0)[0][0].pts[:, 0].mean()     # milieu du clip 2
-    assert abs(x1 - 0.4) < 1e-6 and abs(x2 - 0.4) < 1e-6, (x1, x2)
-
-
 def test_history_stale_step_never_merged():
     """Une étape restée ouverte n'est jamais fusionnée avec l'action suivante : elle est enregistrée à part."""
     doc = Document()
@@ -346,29 +273,6 @@ def test_history_merge_and_abort():
     h.begin("Geste", doc.to_dict())
     form.children[0].transform.ty = 0.5
     assert h.abort(doc.to_dict())["library"][0]["root"]["children"][0]["transform"]["ty"] == 0.0
-
-
-def test_view_state_outside_history():
-    """Grille, symétrie, dépliage : hors de la comparaison d'historique, gardés après un rechargement."""
-    from ildagen.core import view_state as VS
-    doc = Document()
-    d = doc.library.defs[0]
-    g = GroupNode("G")
-    d.root.add(g)
-    clip = Clip(d.id, 0.0, 2.0)
-    doc.timeline.tracks[0].clips.append(clip)
-    h = History(strip=VS.strip)
-    h.begin("x", doc.to_dict())
-    doc.grid.mode, doc.grid.sym, doc.grid.snap = 2, 1, False
-    clip.expanded, clip.lane_sizes, g.expanded = True, {"a": "small"}, False
-    assert not h.commit(doc.to_dict())          # seul l'affichage a changé : pas d'étape
-    view = VS.capture(doc)
-    doc2 = Document()
-    doc2.load_dict(Document().to_dict() | {"library": doc.library.to_dict(), "timeline": doc.timeline.to_dict()})
-    VS.apply(doc2, view)
-    c2 = doc2.timeline.tracks[0].clips[0]
-    assert doc2.grid.mode == 2 and doc2.grid.sym == 1 and not doc2.grid.snap
-    assert c2.expanded and c2.lane_sizes == {"a": "small"} and not doc2.library.defs[0].root.children[0].expanded
 
 
 def test_settings_robust_load():

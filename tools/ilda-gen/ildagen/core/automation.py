@@ -1,4 +1,5 @@
-"""Automations : courbes de valeurs dans le temps, liées à un paramètre d'un calque."""
+"""Courbes : clés de valeurs dans le temps (types de courbe, Bézier). Servent aux réglages d'effets en mode « courbe »
+(clés en proportion 0..1 de la durée du clip, voir core/animation.py)."""
 
 from .nodes import new_id
 

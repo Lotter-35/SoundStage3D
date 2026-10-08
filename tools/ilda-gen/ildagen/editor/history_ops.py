@@ -4,8 +4,8 @@ Un geste (glisser dans la mire ou la timeline, réglage glissé, couleur choisie
 et l'enregistre à la fin. Échap, Ctrl+Z, un changement d'outil ou l'application qui perd la main pendant
 le geste l'ANNULENT : le document revient exactement à l'état d'avant le geste.
 
-L'état d'affichage (grille, aimant, symétrie de dessin, dépliage des clips et des calques…) n'entre pas
-dans l'historique : annuler ne le change pas, et le modifier ne crée pas d'étape (il est quand même
+L'état d'affichage (grille, aimant, symétrie de dessin, maîtres, espace actif, dépliage des clips et des
+calques…) n'entre pas dans l'historique : annuler ne le change pas, et le modifier ne crée pas d'étape (il est quand même
 enregistré avec le projet).
 """
 
@@ -68,8 +68,6 @@ class HistoryOpsMixin:
 
     def _drop_gesture_flags(self):
         self.param_editing = False
-        self.preview_time = None
-        self.preview_clip = None
 
     def cancel_gesture(self):
         """Annule le geste en cours : rien n'est enregistré, le document revient à l'état d'avant.
@@ -109,13 +107,19 @@ class HistoryOpsMixin:
         self.doc = doc
         root = self.current_root()
         if root is None:
-            self.context = ("def", self.doc.library.visible()[0].id)
+            self.form_id = self.doc.library.visible()[0].id
             root = self.current_root()
         self.selection = [i for i in self.selection if root.find(i) is not None]
+        clips = {c.id for _, c in self.doc.timeline.all_clips()}
+        self.clip_selection = [i for i in self.clip_selection if i in clips]
+        if self.selected_clip not in clips:
+            self.selected_clip = self.clip_selection[-1] if self.clip_selection else None
         self.notify(structure=True, library=True, timeline=True)
         self.selectionChanged.emit()
+        self.clipSelectionChanged.emit()
         self.contextChanged.emit()
         self.gridChanged.emit()
+        self.liveChanged.emit()
         self.restored.emit()
         if self.doc.timeline.audio_path != old_audio:
             self.audioChanged.emit(self.doc.timeline.audio_path)

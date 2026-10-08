@@ -2,6 +2,9 @@
 
 Ordre : children[0] est en HAUT de la liste (comme dans Photoshop). Un modifieur agit sur
 ce qui est en dessous de lui dans le même groupe.
+
+Chaque calque peut porter des oscillateurs sur ses réglages numériques : `node.osc = {clé: Osc}`
+(voir core/oscillator.py), enregistrés et copiés avec lui.
 """
 
 import uuid
@@ -28,6 +31,7 @@ class Node:
         self.locked = False
         self.parent = None
         self.children = []
+        self.osc = {}          # oscillateurs : {clé de réglage: Osc}
 
     # ── Arbre ────────────────────────────────────────────────────────────
     def add(self, child, index=None):
@@ -80,7 +84,11 @@ class Node:
 
     # ── Sérialisation ───────────────────────────────────────────────────
     def base_dict(self):
-        return {"kind": self.kind, "id": self.id, "name": self.name, "visible": self.visible, "locked": self.locked}
+        d = {"kind": self.kind, "id": self.id, "name": self.name, "visible": self.visible, "locked": self.locked}
+        if self.osc:
+            from .oscillator import osc_dict_to
+            d["osc"] = osc_dict_to(self.osc)
+        return d
 
     def to_dict(self):
         return self.base_dict()
@@ -90,6 +98,9 @@ class Node:
         self.name = d.get("name", self.name)
         self.visible = d.get("visible", True)
         self.locked = d.get("locked", False)
+        if d.get("osc"):
+            from .oscillator import osc_dict_from
+            self.osc = osc_dict_from(d["osc"])
 
 
 class ShapeNode(Node):
@@ -281,7 +292,7 @@ def clone_node(node):
     return node_from_dict(d)
 
 
-# ── Accès générique aux paramètres (automations, panneau Propriétés) ─────────
+# ── Accès générique aux paramètres (oscillateurs, effets, panneau Réglages) ──
 
 def get_param(node, key):
     if key.startswith("tf.") and node.has_transform:

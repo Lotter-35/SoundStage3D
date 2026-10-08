@@ -1,11 +1,12 @@
-"""État de l'éditeur : document, contexte d'édition, sélection, évaluation de l'affichage
+"""État de l'éditeur : document, espace actif, forme en cours, sélections, évaluation de l'affichage
 (annuler / rétablir, gestes et état d'affichage : history_ops.py).
 
-Contextes d'édition :
-- « def »  : la forme sélectionnée dans la liste de gauche (ses calques sont dans le panneau Calques ;
-             toutes ses occurrences suivent) ;
-- « clip » : un clip de la timeline ; la mire montre la timeline à la tête de lecture et les réglages
-             touchés alimentent les automations du clip.
+Espaces de travail (D1) :
+- « forme » : la forme en cours (`current_form_id`), sans notion de temps ; ses oscillateurs tournent en
+  boucle (temps de boucle × maître Vitesse) ; on la dessine et on la règle ;
+- « show »  : la timeline (clips, effets d'animation), à la tête de lecture ; aperçu non modifiable ;
+- « live »  : les cues en cours et les effets rapides (editor/live_runtime.py).
+Ce qui part au laser suit l'espace actif (D11, live_snapshot.py).
 """
 
 import time
@@ -14,30 +15,41 @@ from PySide6.QtCore import QObject, Signal
 
 from ..core import nodes as N
 from ..core import view_state
-from ..core.document import Document
-from ..core.evaluator import EvalContext, evaluate, evaluate_timeline
+from ..core.document import WORKSPACES, Document
+from ..core.evaluator import EvalContext, evaluate_form, evaluate_timeline
 from ..core.history import History
+from ..core.masters import SpeedClock
+from ..core.oscillator import Osc, can_oscillate
+from ..core.param_specs import param_spec
 from ..core.transform import TRANSFORM_LABELS
+from .effect_ops import EffectOpsMixin
 from .history_ops import HistoryOpsMixin
 from .layer_ops import LayerOpsMixin
+from .live_ops import LiveOpsMixin
+from .live_runtime import LiveRuntime, evaluate_live
 from .timeline_ops import TimelineOpsMixin
 from .transform_ops import TransformOpsMixin
 
 
-class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, TransformOpsMixin):
+class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, EffectOpsMixin, LiveOpsMixin,
+                  TransformOpsMixin):
     docChanged = Signal()          # contenu modifié (rendu, panneaux)
     structureChanged = Signal()    # arbre des calques modifié
     selectionChanged = Signal()
     toolChanged = Signal(str)
-    contextChanged = Signal()
+    contextChanged = Signal()      # forme en cours ou espace actif changés
+    workspaceChanged = Signal(str)
     libraryChanged = Signal()
-    timelineChanged = Signal()
+    timelineChanged = Signal()     # pistes, clips, animations, marqueurs
+    clipSelectionChanged = Signal()
+    clipSelected = Signal(str)     # clip actif (Show)
     playheadChanged = Signal(float)
     gridChanged = Signal()
+    mastersChanged = Signal()
+    liveChanged = Signal()         # pages / cues, ou état d'exécution du live (cues lancés, effets rapides)
     historyChanged = Signal()
     projectChanged = Signal()
     statusMessage = Signal(str)
-    clipSelected = Signal(str)
     restored = Signal()            # état remplacé ou geste annulé / terminé : abandonner les gestes en cours
     gestureChanged = Signal(bool)  # un geste (étape d'annulation ouverte) commence / se termine
     viewChanged = Signal()         # état d'affichage modifié (grille, dépliage…) : à enregistrer, hors historique
@@ -51,20 +63,18 @@ class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, Tra
         self.history = History(strip=view_state.strip)
         self.selection = []
         self.tool = "select"
-        self.context = ("def", self.doc.library.visible()[0].id)
-        self.view_source = "form"
+        self.workspace = "forme"
+        self.form_id = self.doc.library.visible()[0].id
+        self.clip_selection = []    # clips sélectionnés (Show) ; le clip actif en fait toujours partie
+        self.selected_clip = None   # clip actif
         self.playhead = 0.0
-        self.preview_time = None   # instant prévisualisé pendant le déplacement d'une clé (sinon la tête de lecture)
-        self.preview_clip = None   # clip de cette clé : reste visible même sur sa toute dernière image
         self.playing = False
         self.clipboard = []
-        self.open_strips = set()      # (calque, réglage) dont la mini-courbe est dépliée dans les réglages
         self.clip_clipboard = None   # clips copiés dans la timeline (avec la longueur de la zone copiée)
         self.dirty = False
         self.view_dirty = False     # état d'affichage modifié depuis le dernier enregistrement
         self.session = 0            # change à chaque projet ouvert / nouveau (sauvegarde automatique)
         self._gesture_on = False
-        self.selected_clip = None
         self.last_touched = None   # dernier calque créé / sélectionné / colorié (repris par l'outil Sélection)
         self.drawn = []            # calques créés depuis qu'on a pris un outil de dessin (crayon, formes)
         self.param_editing = False  # réglage en cours dans un panneau : la mire masque la sélection
@@ -73,31 +83,40 @@ class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, Tra
         self._cache = None
         self._animated = False
         self._t0 = time.perf_counter()
+        # Horloge du maître Vitesse : temps de boucle de la forme, temps des cues et des effets rapides
+        self.clock = SpeedClock(self.doc.masters.speed, self._t0)
+        self.runtime = LiveRuntime(self.clock, self._t0)
 
     # ── Document ─────────────────────────────────────────────────────────
     def set_document(self, doc):
         self.doc = doc
-        self.refresh_discrete()
         self.history.clear()
         self.param_editing = False
         self.session += 1
         self.selection = []
-        self.context = ("def", doc.library.visible()[0].id)
-        self.view_source = "form"
+        self.workspace = doc.view.get("workspace", "forme")
+        self.form_id = doc.library.visible()[0].id
+        self.clip_selection = []
         self.selected_clip = None
         self.playhead = 0.0
-        self.preview_time = None
         self.dirty = False
         self.view_dirty = False
+        now = time.perf_counter()
+        self.clock = SpeedClock(doc.masters.speed, now)
+        self.runtime = LiveRuntime(self.clock, now)
         self._touch()
         self._gesture_state()
         self.projectChanged.emit()
+        self.workspaceChanged.emit(self.workspace)
         self.contextChanged.emit()
         self.structureChanged.emit()
         self.selectionChanged.emit()
+        self.clipSelectionChanged.emit()
         self.libraryChanged.emit()
         self.timelineChanged.emit()
         self.gridChanged.emit()
+        self.mastersChanged.emit()
+        self.liveChanged.emit()
         self.historyChanged.emit()
         self.docChanged.emit()
 
@@ -118,51 +137,52 @@ class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, Tra
             self.timelineChanged.emit()
         self.docChanged.emit()
 
-    # ── Contexte ─────────────────────────────────────────────────────────
+    # ── Espace actif ─────────────────────────────────────────────────────
+    def set_workspace(self, ws):
+        """Forme / Show / Live (état d'affichage : aucune étape d'annulation)."""
+        if ws not in WORKSPACES or ws == self.workspace:
+            return
+        self.end_gesture()
+        self.workspace = ws
+        self.doc.view["workspace"] = ws
+        self._touch(content=False)
+        self.view_changed()
+        self.workspaceChanged.emit(ws)
+        self.contextChanged.emit()
+        self.docChanged.emit()
+
+    def editing_visible(self):
+        """La sélection et les outils agissent-ils sur ce que montre la mire ? (espace Forme seulement)"""
+        return self.workspace == "forme"
+
+    # ── Forme en cours ───────────────────────────────────────────────────
+    def current_form_id(self):
+        return self.form_id
+
+    def current_form(self):
+        return self.doc.library.get(self.form_id)
+
     def current_root(self):
-        kind, ref = self.context
-        if kind == "def":
-            d = self.doc.library.get(ref)
-            return d.root if d else None
-        if kind == "clip":
-            _, clip = self.doc.timeline.find_clip(ref)
-            d = self.doc.library.get(clip.def_id) if clip else None
-            return d.root if d else None
-        return None
+        d = self.current_form()
+        return d.root if d else None
 
     def work_root(self):
         """Où vont les nouveaux calques : la racine de la forme en cours."""
         return self.current_root()
 
-    def current_clip(self):
-        if self.context[0] != "clip":
-            return None
-        return self.doc.timeline.find_clip(self.context[1])[1]
-
-    def current_form_id(self):
-        """Forme en cours : celle choisie à gauche, ou celle du clip sélectionné."""
-        if self.context[0] == "clip":
-            clip = self.current_clip()
-            return clip.def_id if clip else None
-        return self.context[1]
-
-    def current_form(self):
-        return self.doc.library.get(self.current_form_id())
-
     def context_label(self):
         d = self.current_form()
-        name = d.name if d else "?"
-        if d is not None and d.hidden:
-            name += " (délié)"
-        return f"Clip : {name}" if self.context[0] == "clip" else name
+        return d.name if d else "?"
 
-    def _set_context(self, ctx, view="form", keep_selection=False):
+    def set_current_form(self, def_id):
+        """Choisit la forme en cours (calques, réglages, mire de l'espace Forme)."""
+        if self.doc.library.get(def_id) is None:
+            def_id = self.doc.library.visible()[0].id
+        if def_id == self.form_id:
+            return
         self.end_gesture()
-        self.context = ctx
-        self.view_source = view
-        root = self.current_root() if keep_selection else None
-        self.selection = [i for i in self.selection if root.find(i) is not None] if root is not None else []
-        self.selected_clip = ctx[1] if ctx[0] == "clip" else None
+        self.form_id = def_id
+        self.selection = []
         self._touch()
         self.contextChanged.emit()
         self.structureChanged.emit()
@@ -170,96 +190,69 @@ class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, Tra
         self.docChanged.emit()
 
     def enter_def(self, def_id=None):
-        """Choisir une forme (liste de gauche) : la mire et les calques la montrent, on l'édite sur place."""
-        def_id = def_id or self.current_form_id()
-        if self.doc.library.get(def_id) is None:
-            def_id = self.doc.library.visible()[0].id
-        if self.context != ("def", def_id) or self.view_source != "form":
-            self._set_context(("def", def_id), "form")
-
-    def enter_clip(self, clip_id, keep_selection=False):
-        """keep_selection : garder les calques sélectionnés (même forme, vue dans le clip)."""
-        if self.context == ("clip", clip_id):
-            return
-        self._set_context(("clip", clip_id), "timeline", keep_selection)
-        self.clipSelected.emit(clip_id)
-
-    def set_view_source(self, src):
-        if self.context[0] == "clip" and src == "form":
-            self.enter_def()
-            return
-        if src != self.view_source:
-            self.view_source = src
-            self._touch()
-            self.contextChanged.emit()
-            self.docChanged.emit()
-
-    def display_mode(self):
-        """« def » : la forme en cours ; « timeline » : la sortie de la timeline (lecture, clip, bouton Timeline)."""
-        if self.context[0] == "clip" or self.view_source == "timeline" or self.playing:
-            return "timeline"
-        return "def"
-
-    def panels_empty(self):
-        """Vue Timeline sans clip sélectionné : Calques et Propriétés n'affichent rien."""
-        return self.view_source == "timeline" and self.context[0] != "clip"
-
-    def editing_visible(self):
-        """La sélection et les outils agissent-ils sur ce que montre la mire ?"""
-        mode = self.display_mode()
-        return mode == "def" or self.context[0] == "clip"
+        """« Ouvrir dans Forme » : la forme devient la forme en cours et l'espace Forme s'affiche."""
+        self.set_current_form(def_id or self.form_id)
+        self.set_workspace("forme")
 
     # ── Évaluation ───────────────────────────────────────────────────────
     def wall_time(self):
         return time.perf_counter() - self._t0
 
-    def view_time(self):
-        """Instant montré dans la mire : la tête de lecture, ou le point de courbe en cours de déplacement."""
-        return self.playhead if self.preview_time is None else self.preview_time
+    def loop_time(self, now=None):
+        """Temps de boucle de la forme (heure murale × maître Vitesse, sans saut quand la vitesse change)."""
+        return self.clock.at(time.perf_counter() if now is None else now)
 
-    def display_time(self):
-        return self.view_time() if self.display_mode() == "timeline" else self.wall_time()
+    def restart_loop(self):
+        self.clock.restart(time.perf_counter())
+        self._touch(content=False)
+        self.docChanged.emit()
+
+    def view_time(self):
+        """Instant de la timeline montré dans l'espace Show : la tête de lecture."""
+        return self.playhead
 
     def default_color(self):
         return tuple(self.settings.get("general", "default_color"))
 
-    def clip_local_time(self, clip):
-        return min(max(self.view_time() - clip.start, 0.0), clip.duration)
-
     def eval_context(self):
-        overrides = {}
-        clip = self.current_clip()
-        if clip is not None:
-            overrides = clip.overrides_at(self.clip_local_time(clip))
-        return EvalContext(self.doc.library, self.display_time(), self.doc.timeline.bpm,
-                           self.default_color(), overrides)
-
-    def resolve_display_params(self, mnode):
-        """Réglages effectifs d'un modifieur à l'instant affiché (automations comprises)."""
-        from ..core.evaluator import resolve_params
-        return resolve_params(mnode, self.eval_context())
+        """Contexte des outils de la mire : la forme en cours, réglages de base (sans oscillateurs : on règle
+        et on déplace les valeurs de base, jamais une valeur oscillante)."""
+        return EvalContext(self.doc.library, self.loop_time(), self.doc.timeline.bpm, self.default_color())
 
     def display_strokes(self):
-        mode = self.display_mode()
-        t = self.display_time()
-        key = (self._rev, mode, round(t, 4) if (mode == "timeline" or self._animated) else None)
+        """Tracés de la mire : la forme en cours (Forme), la timeline à la tête de lecture (Show), la sortie
+        Live (Live)."""
+        ws = self.workspace
+        if ws == "show":
+            t = self.playhead
+        elif ws == "live":
+            t = time.perf_counter()
+        else:
+            t = self.loop_time()
+        timed = ws != "forme" or self._animated
+        key = (self._rev, ws, self.form_id, round(t, 4) if timed else None)
         if self._cache is not None and self._cache[0] == key:
             return self._cache[1]
-        if mode == "timeline":
-            strokes, animated = evaluate_timeline(self.doc.timeline, self.doc.library, self.view_time(),
-                                                  self.default_color(),
-                                                  hold=self.preview_clip if self.preview_time is not None else None)
+        if ws == "show":
+            strokes, animated = evaluate_timeline(self.doc.timeline, self.doc.library, t, self.default_color(),
+                                                  speed=self.doc.masters.speed)
+        elif ws == "live":
+            strokes, animated = evaluate_live(self.doc, self.runtime, t, self.default_color())
         else:
-            ctx = self.eval_context()
-            root = self.current_root()
-            strokes = evaluate(root, ctx) if root is not None else []
-            animated = ctx.animated
+            d = self.current_form()
+            strokes, animated = evaluate_form(d, self.doc.library, t, self.doc.timeline.bpm,
+                                              self.default_color()) if d is not None else ([], False)
         self._animated = animated
         self._cache = (key, strokes)
         return strokes
 
     def is_animated(self):
-        return self._animated or self.playing
+        """L'affichage change-t-il tout seul avec le temps ?"""
+        if self.workspace == "show":
+            return self.playing
+        if self.workspace == "live":
+            return bool(self.runtime.cues or self.runtime.held)
+        return self._animated
 
     # ── Sélection ────────────────────────────────────────────────────────
     def find(self, node_id):
@@ -302,7 +295,7 @@ class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, Tra
     def clear_selection(self):
         self.set_selection([])
 
-    # ── Outils / grille ──────────────────────────────────────────────────
+    # ── Outils ───────────────────────────────────────────────────────────
     def set_tool(self, tool):
         previous = self.tool
         if tool != self.tool:
@@ -325,76 +318,47 @@ class EditorState(QObject, HistoryOpsMixin, LayerOpsMixin, TimelineOpsMixin, Tra
         if node.id not in self.drawn:
             self.drawn.append(node.id)
 
-    # ── Paramètres (avec automations) ────────────────────────────────────
+    # ── Réglages ─────────────────────────────────────────────────────────
     def param_label(self, node, key):
         if key.startswith("tf."):
             return TRANSFORM_LABELS.get(key[3:], key)
-        if key == "__active__":
-            return "Actif"
-        if key.startswith("col."):
-            from ..core import shape_color
-            s = shape_color.spec(key)
-            return s.label if s else key
-        if key.startswith("sp."):
-            from ..core.shapes import SHAPE_PARAMS
-            spec = SHAPE_PARAMS.get(getattr(node, "shape", ""), {}).get(key[3:])
-            return spec[0] if spec else key
-        if node.kind == "modifier":
-            spec = node.modifier.spec(key)
-            return spec.label if spec else key
-        return key
-
-    def param_is_discrete(self, node, key):
-        if key == "__active__":
-            return True
-        if node.kind == "modifier":
-            spec = node.modifier.spec(key)
-            # Les entiers (graine, copies…) varient progressivement (arrondis) ; booléens et listes : paliers
-            return spec is not None and spec.kind in ("bool", "enum")
-        return key in ("col.mode", "col.type")
-
-    def refresh_discrete(self):
-        """Met à jour le mode palier / progressif des automations (anciens projets : entiers en paliers)."""
-        for _, clip in self.doc.timeline.all_clips():
-            d = self.doc.library.get(clip.def_id)
-            if d is None:
-                continue
-            for a in clip.automations:
-                node = d.root.find(a.node_id) if a.node_id else None
-                if node is not None:
-                    a.discrete = self.param_is_discrete(node, a.key)
+        spec = param_spec(node, key)
+        return spec.label if spec is not None else key
 
     def effective_param(self, node, key):
-        clip = self.current_clip()
-        if clip is not None:
-            a = clip.automation_for(node.id, key)
-            if a is not None and a.keys:
-                return a.value_at(clip.u(self.clip_local_time(clip)))
+        """Valeur réglée (de base) d'un réglage : les oscillateurs n'y touchent pas."""
         return N.get_param(node, key)
 
     def set_param(self, node, key, value):
-        """Change un réglage. Dans un clip : écrit une clé d'automation si le réglage est automatisé
-        (ou si une automation attend son paramètre), sinon modifie la valeur fixe."""
-        clip = self.current_clip()
-        if clip is not None:
-            auto = clip.automation_for(node.id, key)
-            if auto is None:
-                armed = clip.armed_automation()
-                if armed is not None:
-                    current = N.get_param(node, key)
-                    armed.bind(node.id, key, f"{node.name} › {self.param_label(node, key)}",
-                               self.param_is_discrete(node, key))
-                    t = self.clip_local_time(clip)
-                    if t > 1e-6 and current is not None:
-                        armed.set_key(0.0, current)
-                    auto = armed
-                    self.statusMessage.emit(f"Automation liée à « {armed.label} »")
-            if auto is not None:
-                auto.set_key(clip.u(self.clip_local_time(clip)), value)
-                self._touch()
-                self.timelineChanged.emit()
-                self.docChanged.emit()
-                return
+        """Change un réglage (dans un geste ouvert par l'appelant : begin / commit)."""
         N.set_param(node, key, value)
         self._touch()
         self.docChanged.emit()
+
+    def _edit(self, label, fn, structure=False, timeline=False, library=False):
+        """Modification annulable : dans un geste ouvert (glisser un réglage…), sans nouvelle étape ;
+        sinon une étape à elle seule."""
+        if self.gesture_active():
+            res = fn()
+            self.notify(structure=structure, library=library, timeline=timeline)
+            return res
+        return self.mutate(label, fn, structure=structure, library=library, timeline=timeline)
+
+    # ── Oscillateurs (espace Forme) ──────────────────────────────────────
+    def set_osc(self, node, key, osc=None):
+        """Pose (ou remplace) l'oscillateur d'un réglage numérique ; osc None : un oscillateur par défaut.
+        Renvoie l'oscillateur, ou None si le réglage ne peut pas en porter."""
+        spec = param_spec(node, key)
+        if not can_oscillate(spec):
+            self.statusMessage.emit("Seuls les réglages numériques peuvent osciller")
+            return None
+        osc = osc.copy() if osc is not None else Osc.default_for(spec)
+        self._edit("Oscillateur", lambda: node.osc.__setitem__(key, osc))
+        return osc
+
+    def clear_osc(self, node, key):
+        if key in node.osc:
+            self._edit("Retirer l'oscillateur", lambda: node.osc.pop(key, None))
+
+    def osc_of(self, node, key):
+        return node.osc.get(key)

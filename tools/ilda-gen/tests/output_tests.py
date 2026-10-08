@@ -310,21 +310,34 @@ def test_export_without_output_settings_by_default():
     assert x[0] == 32767 and r[0] == 0                        # hors champ : éteint
 
 
+
 def test_snapshot_transport_time():
+    """Instant envoyé selon l'espace actif : timeline (lecture, boucle), forme (horloge du maître Vitesse),
+    live (heure murale)."""
+    from ildagen.core.masters import SpeedClock
     from ildagen.editor.live_snapshot import Snapshot
-    snap = Snapshot(mode="timeline", playing=True, preview=False, anchor_pos=3.0, anchor_wall=100.0,
+    snap = Snapshot(mode="show", playing=True, anchor_pos=3.0, anchor_wall=100.0,
                     loop=(2.0, 4.0), length=60.0, view_time=1.0, t0=0.0)
     assert abs(snap.frame_time(100.5) - 3.5) < 1e-9 and abs(snap.frame_time(101.5) - 2.5) < 1e-9
-    stop = Snapshot(mode="timeline", playing=False, preview=False, view_time=7.0, t0=0.0)
+    stop = Snapshot(mode="show", playing=False, view_time=7.0, t0=0.0)
     assert stop.frame_time(1e6) == 7.0
-    form = Snapshot(mode="def", t0=10.0)
-    assert form.frame_time(12.5) == 2.5
+    form = Snapshot(mode="forme", t0=10.0, clock=SpeedClock(2.0, 10.0))
+    assert form.frame_time(12.5) == 5.0
+    assert Snapshot(mode="live").frame_time(42.0) == 42.0
+
+
+def _snap(doc, d, rev, sc, **kw):
+    from ildagen.core.masters import Masters, SpeedClock
+    from ildagen.editor.live_snapshot import Snapshot, copy_document
+    base = dict(doc_rev=rev, doc=copy_document(doc), mode="forme", def_id=d.id, t0=0.0, clock=SpeedClock(),
+                masters=Masters(), default_color=(1.0, 1.0, 1.0), settings=sc, fps=30)
+    base.update(kw)
+    return Snapshot(**base)
 
 
 def test_worker_cache_uses_revisions():
     """Image mise en cache sur la révision du document (plus sur id() d'une liste réutilisée)."""
     from ildagen.core.document import Document
-    from ildagen.editor.live_snapshot import Snapshot, copy_document
     from ildagen.editor.live_worker import OutputWorker
     from ildagen.laser.pipeline import SettingsCopy
     doc = Document()
@@ -332,12 +345,40 @@ def test_worker_cache_uses_revisions():
     d.root.add(ShapeNode("rect"))
     w = OutputWorker(lambda info: None)
     sc = SettingsCopy(Settings(path=os.devnull))
-
-    def snap(rev):
-        return Snapshot(doc_rev=rev, doc=copy_document(doc), mode="def", def_id=d.id, t0=0.0,
-                        default_color=(1.0, 1.0, 1.0), settings=sc, fps=30, hold=None)
-    f1, _, new1 = w._render(snap(1), 0.0)
-    f2, _, new2 = w._render(snap(1), 0.5)
+    f1, _, new1 = w._render(_snap(doc, d, 1, sc), 0.0)
+    f2, _, new2 = w._render(_snap(doc, d, 1, sc), 0.5)
     d.root.children[0].transform.tx = 0.3
-    f3, _, new3 = w._render(snap(2), 0.5)
+    f3, _, new3 = w._render(_snap(doc, d, 2, sc), 0.5)
     assert new1 and not new2 and new3 and f3.pts[:, 0].mean() > f1.pts[:, 0].mean() + 0.2
+
+
+def test_worker_follows_workspace_and_masters():
+    """D11 : la sortie suit l'espace actif (forme en cours, timeline, live) ; les maîtres s'appliquent avant
+    les réglages de sortie."""
+    from ildagen.core.document import Document
+    from ildagen.core.library import ShapeDef
+    from ildagen.core.masters import Masters, SpeedClock
+    from ildagen.core.timeline import Clip
+    from ildagen.editor.live_runtime import LiveRuntime
+    from ildagen.editor.live_worker import OutputWorker
+    from ildagen.laser.pipeline import SettingsCopy
+    doc = Document()
+    a = doc.library.defs[0]
+    a.root.add(ShapeNode("rect", (-0.6, -0.1, -0.4, 0.1)))
+    b = doc.library.add(ShapeDef("B"))
+    b.root.add(ShapeNode("rect", (0.4, -0.1, 0.6, 0.1)))
+    c = Clip(b.id, 0.0, 4.0)
+    doc.timeline.tracks[0].clips.append(c)
+    doc.timeline.attach(c)
+    w = OutputWorker(lambda info: None)
+    sc = SettingsCopy(Settings(path=os.devnull))
+    x_form = w._render(_snap(doc, a, 1, sc), 0.0)[0].pts[:, 0].mean()
+    x_show = w._render(_snap(doc, a, 1, sc, mode="show", view_time=1.0), 1.0)[0].pts[:, 0].mean()
+    rt = LiveRuntime(SpeedClock(), 0.0)
+    rt.trigger("cue", b.id, 0.0, 0, False, 120.0)
+    x_live = w._render(_snap(doc, a, 1, sc, mode="live", runtime=rt), 0.5)[0].pts[:, 0].mean()
+    assert x_form < -0.3 and x_show > 0.3 and x_live > 0.3, (x_form, x_show, x_live)
+    m = Masters()
+    m.set("x", 0.2)
+    moved = w._render(_snap(doc, a, 1, sc, masters=m), 0.0)[0].pts[:, 0].mean()
+    assert abs(moved - (x_form + 0.2)) < 0.02, (moved, x_form)

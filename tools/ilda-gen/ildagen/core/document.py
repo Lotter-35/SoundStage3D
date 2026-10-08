@@ -1,15 +1,23 @@
-"""Document (projet) : formes, timeline, réglages enregistrés avec le projet."""
+"""Document (projet) : formes, timeline (Show), live, maîtres, réglages enregistrés avec le projet."""
 
 import json
 import math
 import os
 
 from .atomic import write_json
-from .library import Library, ShapeDef, link_clips
+from .legacy import legacy_library
+from .library import Library, ShapeDef
+from .live import LiveSet
+from .masters import Masters
+from .placement import resolve_overlaps
 from .timeline import Timeline
 
 PROJECT_EXT = ".ildaproj"
-FORMAT_VERSION = 3   # 3 : clés d'automation en proportion de la durée du clip
+# 5 : refonte Forme / Show / Live (oscillateurs, animations des clips, live, maîtres) ;
+# 3 : clés d'automation en proportion de la durée du clip (anciennes automations, abandonnées en 5)
+FORMAT_VERSION = 5
+LEGACY_MESSAGE = "Projet d'une ancienne version : les animations ont été retirées"
+WORKSPACES = ("forme", "show", "live")
 
 
 class GridSettings:
@@ -69,21 +77,48 @@ def ensure_form(library):
     return library.visible()[0]
 
 
+def default_view():
+    """État d'affichage du projet (hors annulation) : espace actif, page du live, dispositions des espaces."""
+    return {"workspace": "forme", "live_page": "", "layouts": {}}
+
+
+def load_view(d):
+    v = default_view()
+    if isinstance(d, dict):
+        if d.get("workspace") in WORKSPACES:
+            v["workspace"] = d["workspace"]
+        if isinstance(d.get("live_page"), str):
+            v["live_page"] = d["live_page"]
+        if isinstance(d.get("layouts"), dict):
+            v["layouts"] = dict(d["layouts"])
+    return v
+
+
 class Document:
-    """Un projet = des formes (la liste de gauche) + la timeline qui les joue."""
+    """Un projet = des formes + la timeline qui les joue (Show) + les pages de cues (Live)."""
 
     def __init__(self):
         self.library = Library()
         ensure_form(self.library)
         self.timeline = Timeline()
-        self.grid = GridSettings()
+        self.live = LiveSet()
+        self.masters = Masters()       # état d'affichage (hors annulation), enregistré
+        self.grid = GridSettings()     # état d'affichage (hors annulation), enregistré
+        self.view = default_view()     # état d'affichage (hors annulation), enregistré
         self.network = {}      # copie des réglages réseau au moment de l'enregistrement
         self.path = ""         # fichier du projet
         self.version = FORMAT_VERSION   # version du format du fichier lu (plus récent : avertir)
+        self.animations_dropped = False  # ancien projet (v1–v4) dont les automations ont été abandonnées
+
+    def load_notice(self):
+        """Message à montrer après l'ouverture (ancien projet dont les animations ont été retirées), ou ""."""
+        return LEGACY_MESSAGE if self.animations_dropped else ""
 
     def to_dict(self):
         return {"version": FORMAT_VERSION, "library": self.library.to_dict(),
-                "timeline": self.timeline.to_dict(), "grid": self.grid.to_dict(), "network": dict(self.network)}
+                "timeline": self.timeline.to_dict(), "live": self.live.to_dict(),
+                "masters": self.masters.to_dict(), "grid": self.grid.to_dict(), "view": dict(self.view),
+                "network": dict(self.network)}
 
     def load_dict(self, d):
         if not isinstance(d, dict) or not isinstance(d.get("library", []), list):
@@ -91,29 +126,25 @@ class Document:
         self.version = d.get("version", 1)
         if not isinstance(self.version, (int, float)) or isinstance(self.version, bool):
             raise ValueError("version du format illisible")
-        self.library = Library.from_dict(d.get("library"))
+        raw_lib = [x for x in d.get("library") or [] if isinstance(x, dict)]
+        tl_d = d.get("timeline") if isinstance(d.get("timeline"), dict) else {}
+        remap = {}
+        self.animations_dropped = False
+        if self.version < 5:
+            raw_lib, remap, self.animations_dropped = legacy_library(raw_lib, tl_d)
+        self.library = Library.from_dict(raw_lib)
         ensure_form(self.library)
-        self.timeline = Timeline.from_dict(d.get("timeline") or {})
-        if self.version < 3:
-            self._keys_to_ratio()
-        link_clips(self.library, self.timeline)
+        self.timeline = Timeline.from_dict(tl_d)
+        for _, c in self.timeline.all_clips():
+            c.def_id = remap.get(c.def_id, c.def_id)
+        resolve_overlaps(self.timeline)        # jamais de chevauchement sur une piste
+        self.timeline.link_animations()        # chaque clip a son animation, liée par forme (D5)
+        self.live = LiveSet.from_dict(d.get("live"))
+        self.masters = Masters.from_dict(d.get("masters"))
         self.grid = GridSettings.from_dict(d.get("grid"))
+        self.view = load_view(d.get("view"))
         net = d.get("network")
         self.network = dict(net) if isinstance(net, dict) else {}
-
-    def _keys_to_ratio(self):
-        """Anciens projets : instants des clés en secondes → proportion de la durée du clip."""
-        first = {}
-        for _, c in self.timeline.all_clips():
-            first.setdefault(c.def_id, c)
-            for a in c.automations:
-                for k in a.keys:
-                    k.t = c.u(k.t)
-        for dfn in self.library.defs:
-            c = first.get(dfn.id)
-            for a in dfn.automations:
-                for k in a.keys:
-                    k.t = c.u(k.t) if c is not None else k.t
 
     def save(self, path):
         data = self.to_dict()

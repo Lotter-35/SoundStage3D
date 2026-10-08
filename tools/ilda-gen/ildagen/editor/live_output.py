@@ -2,7 +2,7 @@
 
 Le calcul et l'envoi des images se font dans un fil dédié (live_worker.py) : une interface lente ne fait plus
 saccader le laser, et une image lourde ne bloque plus l'interface. L'interface publie des instantanés figés
-(document copié quand son contenu change, ce qu'il faut montrer, état de la lecture, réglages).
+(document copié quand son contenu change, espace actif (D11), état de la lecture et du live, maîtres, réglages).
 
 Hors live : rien n'est calculé en continu. L'aperçu de la mire (points laser, compteur) est recalculé dans
 le fil seulement quand l'affichage change (au plus APERCU_HZ fois par seconde).
@@ -67,6 +67,10 @@ class LiveOutput(QObject):
         self.ping_timer.timeout.connect(self.ping)
         self.ping_timer.start(PING_INTERVAL_MS)
         editor.docChanged.connect(self._changed)
+        # Ce qui est envoyé suit l'espace actif (D11), les maîtres et l'état du live
+        editor.workspaceChanged.connect(self._changed)
+        editor.mastersChanged.connect(self._changed)
+        editor.liveChanged.connect(self._changed)
         if playback is not None:
             self.attach_playback(playback)
         self.apply_fps()
