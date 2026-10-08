@@ -1,10 +1,10 @@
-"""Fenêtre d'export ILDA : format, images / s, plage (timeline entière, boucle ou image fixe)."""
+"""Fenêtre d'export ILDA : format, images / s, plage (timeline entière, boucle ou image fixe), réglages de sortie."""
 
 import os
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout, QLabel,
-                               QMessageBox, QProgressDialog, QVBoxLayout)
+from PySide6.QtWidgets import (QApplication, QCheckBox, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFormLayout,
+                               QLabel, QMessageBox, QProgressDialog, QVBoxLayout)
 
 from ..spin import SpinBox
 from ...editor.export import export_ilda
@@ -42,6 +42,11 @@ class ExportDialog(QDialog):
         self.fps.setValue(int(s.get("export", "fps")))
         self.fps.setSuffix(" images/s")
         form.addRow("Cadence", self.fps)
+        self.corrections = QCheckBox("Appliquer les réglages de sortie")
+        self.corrections.setChecked(bool(s.get("export", "corrections")))
+        self.corrections.setToolTip("Taille / position, trapèze, puissance, couleurs et zone de sécurité de CE laser.\n"
+                                    "Décoché : le fichier contient le contenu seul (le lecteur applique ses réglages).")
+        form.addRow("", self.corrections)
         lay.addLayout(form)
         info = QLabel("La timeline contient des clips : l'animation est exportée." if self.has_anim else
                       "La timeline est vide : l'image fixe de la forme en cours est exportée.")
@@ -54,7 +59,12 @@ class ExportDialog(QDialog):
         bb.accepted.connect(self.run)
         bb.rejected.connect(self.reject)
         lay.addWidget(bb)
-        self.range.currentIndexChanged.connect(lambda: self.fps.setEnabled(self.range.currentData() != "still"))
+        self.range.currentIndexChanged.connect(self._range_changed)
+        self._range_changed()
+
+    def _range_changed(self):
+        # Image fixe : la cadence ne sert pas (une seule image)
+        self.fps.setEnabled(self.range.currentData() != "still")
 
     def run(self):
         ed = self.editor
@@ -70,6 +80,8 @@ class ExportDialog(QDialog):
         fps = self.fps.value()
         ed.settings.set("export", "format", fmt)
         ed.settings.set("export", "fps", fps)
+        corrections = self.corrections.isChecked()
+        ed.settings.set("export", "corrections", corrections)
         ed.settings.save()
         tl = ed.doc.timeline
         mode = self.range.currentData()
@@ -90,9 +102,18 @@ class ExportDialog(QDialog):
             return not prog.wasCanceled()
 
         try:
-            n = export_ilda(ed, path, fmt, fps, start, end, progress)
+            n = export_ilda(ed, path, fmt, fps, start, end, progress, corrections)
         except OSError as e:
+            prog.close()
             QMessageBox.critical(self, "Export", f"Impossible d'écrire le fichier :\n{e}")
+            return
+        except ValueError as e:              # limites du format ILDA (images, points)
+            prog.close()
+            QMessageBox.critical(self, "Export", str(e))
+            return
+        except Exception as e:               # erreur imprévue : la fenêtre de progression ne reste jamais ouverte
+            prog.close()
+            QMessageBox.critical(self, "Export", f"L'export a échoué :\n{type(e).__name__} : {e}")
             return
         prog.close()
         if n:

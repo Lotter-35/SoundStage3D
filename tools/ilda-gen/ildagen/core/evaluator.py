@@ -17,10 +17,11 @@ MAX_DEPTH = 12
 
 
 class EvalContext:
-    def __init__(self, library, time=0.0, bpm=120.0, default_color=(1.0, 1.0, 1.0), overrides=None):
+    def __init__(self, library, time=0.0, bpm=120.0, default_color=(1.0, 1.0, 1.0), overrides=None, bar_offset=0.0):
         self.library = library
         self.time = time
         self.bpm = bpm
+        self.bar_offset = bar_offset         # début de la mesure 1 (s) : les effets calés sur le tempo en partent
         self.default_color = tuple(default_color)
         self.overrides = overrides or {}    # {(node_id, clé): valeur}
         self.pivot = None
@@ -148,7 +149,8 @@ def evaluate_timeline(timeline, library, t, default_color=(1.0, 1.0, 1.0), hold=
         d = library.get(clip.def_id)
         if d is None:
             continue
-        ctx = EvalContext(library, t, timeline.bpm, default_color, clip.overrides_at(t - clip.start))
+        ctx = EvalContext(library, t, timeline.bpm, default_color, clip.overrides_at(t - clip.start),
+                          timeline.bar_offset)
         out.extend(evaluate(d.root, ctx))
         animated = animated or ctx.animated
     return out, animated

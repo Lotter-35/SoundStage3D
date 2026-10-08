@@ -30,7 +30,7 @@ Légende :
 | GEN-04 | Workflow en 3 étages : **dessin** (calques/formes) → **modifieurs** (statiques) → **timeline** (modifieurs animés dans le temps, calée sur la musique). | Demandé |
 | GEN-05 | Tout doit être **fluide** (dessin, déplacement des calques, timeline). | Demandé |
 | GEN-11 | **Raccourcis Mac** : `Cmd` remplace `Ctrl` (la touche `Ctrl` physique marche aussi), `Option` = `Alt`, `⌫` = Suppr. | Retour |
-| GEN-12 | Au démarrage : **envoi live activé** par défaut et **réouverture du dernier projet**. | Retour |
+| GEN-12 | Au démarrage : **réouverture du dernier projet** ; l'envoi live **reprend s'il était actif à la fermeture** (il n'est plus forcé). | Retour |
 | GEN-13 | **Enregistrement automatique à chaque modification** (un projet sans nom est gardé dans la sauvegarde automatique et rouvert la fois suivante). Ces trois comportements se désactivent dans Paramètres → Général. | Retour |
 | GEN-14 | **Réinitialisation partout** : chaque réglage peut revenir à sa valeur par défaut (voir RST-01 à RST-07). | Retour |
 
@@ -71,7 +71,7 @@ Légende :
 | ID | Exigence | Statut |
 |---|---|---|
 | MEN-10 | Menu **Paramètres** pour modifier des réglages. **Vide pour l'instant**, mais la structure doit exister. | Demandé |
-| MEN-11 | Onglets : Général (couleur par défaut, lissage, enregistrement automatique, réouverture, live au démarrage), **Grille** (densités, aimant), Sortie laser, Zone de sécurité, Trapèze, Taille / position. | Retour |
+| MEN-11 | Onglets : Général (couleur par défaut, lissage, enregistrement automatique, réouverture), **Grille** (densités, aimant), Sortie laser (vitesse de balayage en kpps, budget de points), Couleurs (décalage couleur, gamma, gains, puissance minimale), Zone de sécurité (et anti point fixe), Trapèze, Taille / position. | Retour |
 
 ---
 
@@ -424,6 +424,10 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | SAV-09 | La sauvegarde automatique d'un projet sans nom n'est **jamais écrasée** par un autre travail : copiée d'abord dans des sauvegardes datées (10 dernières), à rouvrir par **Fichier → Récupérer une sauvegarde automatique…**. | Retour |
 | SAV-04 | Conversion forme → points laser : interpolation, points de coin, points éteints (blanking) pour les sauts. | Déduit |
 | SAV-05 | Protocole d'envoi au DAC (IDN UDP ou autre selon le DAC). | Déduit |
+| SAV-06 | **Envoi live dans un fil dédié**, à cadence exacte, image évaluée à l'instant d'envoi ; fragments étalés ; BLACKOUT immédiat ; arrêt = images éteintes + fermeture IDN. | Décidé |
+| SAV-07 | **Budget de points** par image (kpps × 1000 / images par seconde, 20 000 au plus) ; géométrie découpée au champ avant d'ajouter des points ; plafonds : jamais de blocage. | Décidé |
+| SAV-08 | Sécurité **anti point fixe** (active par défaut) ; taille de sortie ≥ 5 %, zone de sécurité jamais retournée. | Décidé |
+| SAV-09 | Export ILDA : contenu seul par défaut (réglages de sortie en option), limites du format respectées, écriture sans fichier tronqué, palette avec luminosité tramée. | Décidé |
 
 ---
 

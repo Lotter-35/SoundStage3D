@@ -11,20 +11,25 @@ from .atomic import write_json
 
 DEFAULTS = {
     "network": {"host": "127.0.0.1", "port": 7255, "channel": 1, "fps": 30},
+    # live_last : l'envoi live était actif à la fermeture (il le redevient au lancement suivant)
     "general": {"default_color": [1.0, 1.0, 1.0], "smoothing": 40, "autosave": True,
-                "live_at_start": True, "reopen_last": True,
+                "live_last": False, "reopen_last": True,
                 "show_blanking": False, "show_safety": True},
-    # H4 — Optimisation des points
-    "laser": {"kpps": 30000, "max_step": 0.03, "blank_base": 4, "blank_per_unit": 8,
+    # H4 — Optimisation des points (nombres de points réglés à 30 kpps, ajustés à la vitesse de balayage)
+    "laser": {"scan_kpps": 30.0, "max_step": 0.03, "blank_base": 4, "blank_per_unit": 8,
+              "blank_pre": 0, "blank_post": 0,
               "corner_dwell": 3, "corner_angle": 30, "end_dwell": 3, "reorder": True},
-    # H1 — Zone de sécurité
-    "safety": {"enabled": False, "xmin": -1.0, "xmax": 1.0, "ymin": -1.0, "ymax": 1.0},
+    # Couleurs de sortie : décalage couleur (points à 30 kpps), gamma, gains, seuil de puissance (%)
+    "color": {"shift": 0, "gamma": 1.0, "gain_r": 100.0, "gain_g": 100.0, "gain_b": 100.0, "min_power": 0.0},
+    # H1 — Zone de sécurité ; anti point fixe : une image dont tout tient en un point est coupée
+    "safety": {"enabled": False, "xmin": -1.0, "xmax": 1.0, "ymin": -1.0, "ymax": 1.0, "static_guard": True},
     # H2 — Correction trapèze (en % de la demi-largeur)
     "keystone": {"top": 0.0, "bottom": 0.0, "left": 0.0, "right": 0.0},
     # H3 — Taille / position de sortie
     "output": {"scale_x": 100.0, "scale_y": 100.0, "offset_x": 0.0, "offset_y": 0.0,
                "rotation": 0.0, "flip_x": False, "flip_y": False, "power": 100.0},
-    "export": {"format": 5, "fps": 30},
+    # corrections : appliquer les réglages de sortie (taille, trapèze, puissance, couleurs, zone) au fichier
+    "export": {"format": 5, "fps": 30, "corrections": False},
     # Couleur de tracé (barre de gauche) : appliquée aux nouvelles formes et par le seau
     "brush": {"v": 2, "mode": 1, "color": [1.0, 1.0, 1.0], "bg": [1.0, 0.0, 0.0], "stops": [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]],
               "type": 0, "angle": 0.0},
@@ -38,7 +43,17 @@ RANGES = {
     ("network", "channel"): (1, 16),
     ("network", "fps"): (1, 240),
     ("export", "fps"): (1, 240),
-    ("laser", "kpps"): (1, None),
+    ("laser", "scan_kpps"): (1.0, 100.0),
+    ("laser", "blank_pre"): (0, 50),
+    ("laser", "blank_post"): (0, 50),
+    ("color", "shift"): (0, 20),
+    ("color", "gamma"): (0.2, 5.0),
+    ("color", "gain_r"): (0.0, 100.0),
+    ("color", "gain_g"): (0.0, 100.0),
+    ("color", "gain_b"): (0.0, 100.0),
+    ("color", "min_power"): (0.0, 50.0),
+    ("output", "scale_x"): (5.0, None),
+    ("output", "scale_y"): (5.0, None),
     ("general", "smoothing"): (0, 100),
 }
 

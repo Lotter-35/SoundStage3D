@@ -30,6 +30,7 @@ class MainWindow(QMainWindow):
         self.editor = EditorState(settings)
         self.live = LiveOutput(self.editor)
         self.playback = Playback(self.editor)
+        self.live.attach_playback(self.playback)
         self.waveform = WaveformLoader()
         self.resize(1440, 900)
         self.setMinimumSize(900, 600)
@@ -228,6 +229,8 @@ class MainWindow(QMainWindow):
             e.ignore()
             return
         self.playback.pause()
+        # Le live reprendra au prochain lancement s'il était actif à la fermeture
+        self.settings.set("general", "live_last", bool(self.live.live))
         self.live.shutdown()
         self.save_layout()
         self.settings.save()

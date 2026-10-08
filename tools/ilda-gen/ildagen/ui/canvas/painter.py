@@ -164,10 +164,16 @@ def draw_safety(p, vt, rect):
     p.drawRect(QRectF(vt.to_screen(x0, y1), vt.to_screen(x1, y0)))
 
 
-def draw_counter(p, area, n_points, fps, zoom):
-    """Petit compteur dans le coin bas droit : points et cadence que le laser peut tenir."""
-    warn = fps < 20 and n_points > 0
-    txt = f"{n_points:,} pts · {fps:.0f} img/s".replace(",", " ") if n_points else "Aucun tracé"
+def draw_counter(p, area, stats, zoom):
+    """Petit compteur dans le coin bas droit : points envoyés (ou prévus hors live), image réduite pour tenir
+    le budget de points, image coupée par la sécurité anti point fixe."""
+    n = stats.count if stats is not None else 0
+    warn = stats is not None and (stats.reduced or stats.static)
+    txt = (f"{n:,} pts".replace(",", " ") + (" envoyés" if stats.sent else "")) if n else "Aucun tracé"
+    if stats is not None and stats.reduced:
+        txt += " · réduit"
+    if stats is not None and stats.static:
+        txt += " · point fixe coupé"
     if abs(zoom - 1.0) > 1e-3:
         txt += f" · {zoom * 100:.0f} %"
     p.setFont(theme.mono_font(10))

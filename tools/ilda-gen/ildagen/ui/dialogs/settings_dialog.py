@@ -1,4 +1,5 @@
-"""Fenêtre Paramètres : général, sortie laser (H4), zone de sécurité (H1), trapèze (H2), taille / position (H3).
+"""Fenêtre Paramètres : général, sortie laser (H4), couleurs, zone de sécurité (H1), trapèze (H2),
+taille / position (H3).
 
 Les changements s'appliquent immédiatement (laser compris) et sont enregistrés à la fermeture.
 """
@@ -8,6 +9,8 @@ from PySide6.QtWidgets import (QCheckBox, QDialog, QFormLayout, QHBoxLayout, QLa
 
 from ..spin import DoubleSpinBox, SpinBox
 from ..properties.widgets import ColorSwatch
+from ...laser.output import MIN_SCALE, MIN_ZONE
+from ...laser.pipeline import budget_for
 
 # (section, clé, libellé, type, min, max, décimales, suffixe, aide)
 TABS = [
@@ -17,19 +20,32 @@ TABS = [
         ("autosave", "Enregistrer à chaque modification", "bool", None, None, 0, "",
          "Projet sans nom : gardé dans la sauvegarde automatique"),
         ("reopen_last", "Rouvrir le dernier projet au démarrage", "bool", None, None, 0, "", ""),
-        ("live_at_start", "Envoi live au démarrage", "bool", None, None, 0, "", ""),
         ("show_blanking", "Afficher les trajets éteints", "bool", None, None, 0, "", "Déplacements laser éteint (pointillés)"),
         ("show_safety", "Afficher la zone de sécurité", "bool", None, None, 0, "", ""),
     ]),
     ("Sortie laser", "laser", [
-        ("kpps", "Vitesse du scanner", "int", 1000, 100000, 0, " pts/s", "Points par seconde du laser (kpps × 1000)"),
+        ("scan_kpps", "Vitesse de balayage", "float", 1.0, 100.0, 1, " kpps",
+         "Points par seconde du laser, en milliers. Une image compte au plus kpps × 1000 / images par seconde "
+         "points : au-delà, elle est allégée (points espacés, simplifiée)"),
         ("max_step", "Distance max entre points", "float", 0.002, 0.5, 3, "", "Plus petit = lignes plus régulières, plus de points"),
-        ("blank_base", "Points éteints (saut)", "int", 0, 100, 0, "", "Points éteints ajoutés à chaque saut"),
+        ("blank_base", "Points éteints (saut)", "int", 0, 100, 0, "", "Points éteints ajoutés à chaque saut (accélération, freinage)"),
         ("blank_per_unit", "Points éteints par distance", "int", 0, 200, 0, "", "Points éteints en plus selon la longueur du saut"),
-        ("corner_dwell", "Points sur les angles", "int", 0, 50, 0, "", "Répétitions sur un angle vif (coins nets)"),
+        ("blank_pre", "Points éteints avant un tracé", "int", 0, 50, 0, "", "Arrêt laser éteint au début de chaque tracé (les miroirs se posent)"),
+        ("blank_post", "Points éteints après un tracé", "int", 0, 50, 0, "", "Arrêt laser éteint à la fin de chaque tracé, avant le saut"),
+        ("corner_dwell", "Points sur les angles", "int", 0, 50, 0, "", "Répétitions sur un angle droit (moins sur un angle doux, plus sur un angle aigu)"),
         ("corner_angle", "Angle d'un coin", "int", 1, 179, 0, " °", "À partir de cet angle, un sommet est un coin"),
         ("end_dwell", "Points aux extrémités", "int", 0, 50, 0, "", "Répétitions au début et à la fin des lignes ouvertes"),
         ("reorder", "Optimiser l'ordre des tracés", "bool", None, None, 0, "", "Réduit les sauts entre les tracés"),
+    ]),
+    ("Couleurs", "color", [
+        ("shift", "Décalage couleur", "int", 0, 20, 0, " pts",
+         "Retarde les couleurs de quelques points (réglés à 30 kpps) pour compenser le retard des miroirs. "
+         "Le laser du jeu compense déjà le sien : laisser à 0"),
+        ("gamma", "Gamma", "float", 0.2, 5.0, 2, "", "Courbe de luminosité : au-dessus de 1, les couleurs faibles sont plus sombres"),
+        ("gain_r", "Gain rouge", "float", 0.0, 100.0, 0, " %", "Équilibre des couleurs du laser"),
+        ("gain_g", "Gain vert", "float", 0.0, 100.0, 0, " %", ""),
+        ("gain_b", "Gain bleu", "float", 0.0, 100.0, 0, " %", ""),
+        ("min_power", "Puissance minimale", "float", 0.0, 50.0, 1, " %", "En dessous, le point est éteint (diodes qui s'allument mal)"),
     ]),
     ("Zone de sécurité", "safety", [
         ("enabled", "Activer", "bool", None, None, 0, "", "Rien n'est projeté hors de la zone"),
@@ -37,6 +53,8 @@ TABS = [
         ("xmax", "Droite", "float", -1.0, 1.0, 3, "", ""),
         ("ymin", "Bas", "float", -1.0, 1.0, 3, "", ""),
         ("ymax", "Haut", "float", -1.0, 1.0, 3, "", ""),
+        ("static_guard", "Anti point fixe", "bool", None, None, 0, "",
+         "Coupe une image dont tous les points allumés tiennent en un point (faisceau immobile : dangereux)"),
     ]),
     ("Trapèze", "keystone", [
         ("top", "Haut", "float", -50.0, 50.0, 1, " %", "Resserre (+) ou élargit (−) le bord haut"),
@@ -45,8 +63,8 @@ TABS = [
         ("right", "Droite", "float", -50.0, 50.0, 1, " %", ""),
     ]),
     ("Taille / position", "output", [
-        ("scale_x", "Largeur", "float", 0.0, 200.0, 1, " %", ""),
-        ("scale_y", "Hauteur", "float", 0.0, 200.0, 1, " %", ""),
+        ("scale_x", "Largeur", "float", MIN_SCALE, 200.0, 1, " %", ""),
+        ("scale_y", "Hauteur", "float", MIN_SCALE, 200.0, 1, " %", ""),
         ("offset_x", "Décalage X", "float", -1.0, 1.0, 3, "", ""),
         ("offset_y", "Décalage Y", "float", -1.0, 1.0, 3, "", ""),
         ("rotation", "Rotation", "float", -180.0, 180.0, 1, " °", ""),
@@ -64,13 +82,22 @@ class SettingsDialog(QDialog):
         self.live = live
         self.settings = editor.settings
         self.setWindowTitle("Paramètres")
-        self.setMinimumWidth(580)
+        self.setMinimumWidth(640)
         lay = QVBoxLayout(self)
         self.tabs = QTabWidget()
         self.widgets = {}
         for title, section, fields in TABS:
             self.tabs.addTab(self._tab(section, fields), title)
         self.tabs.insertTab(1, self._grid_tab(), "Grille")
+        self.budget = QLabel()
+        self.budget.setObjectName("dim")
+        self.budget.setWordWrap(True)
+        self.tabs.widget(2).layout().addRow(self.budget)
+        self._sync_budget()
+        for lo, hi in (("xmin", "xmax"), ("ymin", "ymax")):
+            self.widgets[("safety", lo)].valueChanged.connect(self._sync_zone)
+            self.widgets[("safety", hi)].valueChanged.connect(self._sync_zone)
+        self._sync_zone()
         lay.addWidget(self.tabs)
         row = QHBoxLayout()
         reset = QPushButton("Réinitialiser cet onglet")
@@ -148,7 +175,23 @@ class SettingsDialog(QDialog):
 
     def _set(self, section, key, value):
         self.settings.set(section, key, value)
+        if section == "laser":
+            self._sync_budget()
         self.editor.notify()
+
+    def _sync_budget(self):
+        fps = max(1, int(self.settings.get("network", "fps")))
+        kpps = float(self.settings.get("laser", "scan_kpps"))
+        n = budget_for(self.settings, fps)
+        self.budget.setText(f"Budget : {n:,} points par image ({kpps:g} kpps à {fps} images/s). ".replace(",", " ")
+                            + "Les nombres de points sont réglés pour 30 kpps et suivent la vitesse de balayage.")
+
+    def _sync_zone(self, *_):
+        """Zone de sécurité jamais retournée : la gauche reste à gauche de la droite, le bas sous le haut."""
+        for lo, hi in (("xmin", "xmax"), ("ymin", "ymax")):
+            a, b = self.widgets[("safety", lo)], self.widgets[("safety", hi)]
+            b.setMinimum(min(1.0, a.value() + MIN_ZONE))
+            a.setMaximum(max(-1.0, b.value() - MIN_ZONE))
 
     def _reset_tab(self):
         idx = self.tabs.currentIndex()
@@ -168,6 +211,8 @@ class SettingsDialog(QDialog):
             else:
                 f.setValue(v)
             f.blockSignals(False)
+        self._sync_zone()
+        self._sync_budget()
         self.editor.notify()
 
     def done(self, r):

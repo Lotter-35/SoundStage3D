@@ -116,7 +116,8 @@ class ThumbCache:
         pm.fill(theme.qc(theme.BG_MIRE))
         d = ed.doc.library.get(clip.def_id)
         if d is not None:
-            ctx = EvalContext(ed.doc.library, clip.start + t_local, ed.doc.timeline.bpm, ed.default_color(), ov)
+            ctx = EvalContext(ed.doc.library, clip.start + t_local, ed.doc.timeline.bpm, ed.default_color(), ov,
+                              ed.doc.timeline.bar_offset)
             strokes = evaluate(d.root, ctx)
             if ctx.animated and not self.animated.get(sig):
                 self.animated[sig] = True

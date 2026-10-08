@@ -6,7 +6,7 @@ import numpy as np
 
 from .. import colorutil as cu
 from ..params import F, I, E, C, G, P
-from ..path import Stroke, closed_pts, cumulative, resample_stroke
+from ..path import Stroke, closed_pts, cumulative, resample_share, resample_stroke
 from .base import Modifier, stroke_rng
 
 COLOR_STEP = 0.02
@@ -16,7 +16,8 @@ GRAD_MODES = ["Le long du tracé", "Linéaire", "Radial", "Angulaire"]
 
 def prepared(strokes):
     """Tracés rééchantillonnés pour que la couleur puisse varier finement."""
-    return [resample_stroke(s, COLOR_STEP) if s.kind == "line" else s.copy() for s in strokes]
+    share = resample_share(strokes)
+    return [resample_stroke(s, COLOR_STEP, share) if s.kind == "line" else s.copy() for s in strokes]
 
 
 def mix_into(src, new_cols, mix):
@@ -240,6 +241,7 @@ class AlternateColors(Modifier):
         pal = np.array([p["c1"], p["c2"], p["c3"], p["c4"]][:n], dtype=float)
         out = []
         off = int(round(p["offset"]))
+        share = resample_share(strokes)
         for i, s in enumerate(strokes):
             if p["mode"] == 1:
                 out.append(s.with_col(np.tile(pal[(i + off) % n], (len(s.pts), 1))))
@@ -254,7 +256,7 @@ class AlternateColors(Modifier):
                 k = (np.repeat(np.arange(segs), 2) + off) % n
                 out.append(Stroke(np_, pal[k], False))
             else:
-                r = resample_stroke(s, min(COLOR_STEP, p["length"] / 4))
+                r = resample_stroke(s, min(COLOR_STEP, p["length"] / 4), share)
                 pts = closed_pts(r.pts, r.closed)
                 cum = cumulative(pts)
                 k = np.floor((cum + p["offset"]) / max(1e-6, p["length"])).astype(int) % n

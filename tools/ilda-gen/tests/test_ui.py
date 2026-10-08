@@ -22,6 +22,7 @@ from ildagen.core.settings import Settings  # noqa: E402
 from ildagen.ui import theme  # noqa: E402
 from ildagen.ui.canvas.tools.selection_frame import build_frame, handle_positions  # noqa: E402
 from ildagen.ui.main_window import MainWindow  # noqa: E402
+from live_checks import live_checks  # noqa: E402
 
 SHOTS = sys.argv[1] if len(sys.argv) > 1 else None
 M = Qt.KeyboardModifier
@@ -800,12 +801,7 @@ def main():
     ed.flip_selection(True)
     check("retourner horizontalement", ed.find(inst.id).transform.sx * before < 0 or
           abs(abs(ed.find(inst.id).transform.rot) - 180) < 1e-6)
-    win.live.set_live(True)
-    win.live.tick()
-    check("envoi live actif", win.live.live)
-    win.live.set_blackout(True)
-    check("blackout coupe l'envoi", not win.live.live and win.live.blackout)
-    win.live.set_blackout(False)
+    live_checks(app, win, check)
 
     # ── Symétrie de dessin : modifieur ajouté automatiquement, le trait reste simple ──
     from ildagen.core import draw_symmetry as DS
@@ -912,10 +908,14 @@ def main():
     ed.dirty = False
     gestures_and_safety(app, win)
     ed.dirty = False
-    print("\n" + ("TOUT EST OK" if not errors else f"{len(errors)} problème(s) : {', '.join(errors)}"))
-    # Fermeture comme dans l'application (vérifie aussi qu'elle ne plante pas)
+    # Fermeture comme dans l'application (vérifie aussi qu'elle ne plante pas) ; le live actif à la fermeture
+    # est mémorisé pour le prochain lancement
     from ildagen.app import shutdown
+    settings = win.settings
+    win.live.set_live(True)
     win.close()
+    check("live actif à la fermeture : mémorisé", settings.get("general", "live_last") is True)
+    print("\n" + ("TOUT EST OK" if not errors else f"{len(errors)} problème(s) : {', '.join(errors)}"))
     shutdown(win, app)
     return 1 if errors else 0
 

@@ -5,7 +5,7 @@ import math
 import numpy as np
 
 from ..params import F, E
-from ..path import resample_stroke, rdp
+from ..path import resample_share, resample_stroke, rdp
 from .base import Modifier
 
 WAVE_STEP = 0.01
@@ -39,8 +39,9 @@ class Wave(Modifier):
         ph = math.radians(p["phase"])
         k = math.pi * freq   # freq cycles sur la largeur de la mire (2 unités)
         out = []
+        share = resample_share(strokes)
         for s in strokes:
-            r = resample_stroke(s, WAVE_STEP) if s.kind == "line" else s.copy()
+            r = resample_stroke(s, WAVE_STEP, share) if s.kind == "line" else s.copy()
             x, y = r.pts[:, 0], r.pts[:, 1]
             if p["direction"] == 0:
                 r.pts = np.column_stack((x, y + amp * np.sin(k * x + ph)))

@@ -1,5 +1,7 @@
 """Lecture de la timeline : horloge, musique (QMediaPlayer), boucle."""
 
+import time
+
 from PySide6.QtCore import QElapsedTimer, QObject, QTimer, QUrl, Signal
 from PySide6.QtMultimedia import QAudioOutput, QMediaPlayer
 
@@ -9,6 +11,7 @@ RESYNC_S = 0.06
 
 class Playback(QObject):
     playingChanged = Signal(bool)
+    transportChanged = Signal()     # lecture, pause, saut, recalage sur la musique (pour l'envoi live)
 
     def __init__(self, editor):
         super().__init__()
@@ -38,6 +41,12 @@ class Playback(QObject):
     def toggle(self):
         self.pause() if self.playing else self.play()
 
+    def transport(self):
+        """(lecture en cours, position (s), heure time.perf_counter de cette position)."""
+        if not self.playing:
+            return False, self.editor.playhead, time.perf_counter()
+        return True, self.anchor + self.clock.nsecsElapsed() / 1e9, time.perf_counter()
+
     def play(self):
         if self.playing:
             return
@@ -49,6 +58,7 @@ class Playback(QObject):
         self.timer.start(TICK_MS)
         self.editor.notify()
         self.playingChanged.emit(True)
+        self.transportChanged.emit()
 
     def pause(self):
         if not self.playing:
@@ -58,6 +68,7 @@ class Playback(QObject):
         self.player.pause()
         self.editor.notify()
         self.playingChanged.emit(False)
+        self.transportChanged.emit()
 
     def stop(self):
         self.pause()
@@ -72,6 +83,7 @@ class Playback(QObject):
     def _anchor_at(self, t):
         self.anchor = t
         self.clock.restart()
+        self.transportChanged.emit()
         if self.has_audio:
             self.player.setPosition(int(t * 1000))
             if self.player.playbackState() != QMediaPlayer.PlaybackState.PlayingState:
@@ -86,6 +98,7 @@ class Playback(QObject):
                 self.anchor = audio_t
                 self.clock.restart()
                 t = audio_t
+                self.transportChanged.emit()
         if tl.loop_on and tl.loop_end > tl.loop_start and t >= tl.loop_end:
             t = tl.loop_start
             self._anchor_at(t)

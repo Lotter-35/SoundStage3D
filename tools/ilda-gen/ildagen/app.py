@@ -29,8 +29,8 @@ def main(argv=None):
             win.project.restore_session()
     except Exception:   # noqa: BLE001 — un projet abîmé n'empêche jamais de démarrer (projet vide)
         logging.getLogger(__name__).exception("Ouverture du projet impossible au démarrage")
-    if settings.get("general", "live_at_start"):
-        win.connection.btn_live.setChecked(True)
+    if settings.get("general", "live_last"):
+        win.connection.btn_live.setChecked(True)     # le live était actif à la dernière fermeture
     code = app.exec()
     shutdown(win, app)
     return code
@@ -41,8 +41,7 @@ def shutdown(win, app):
     import gc
     win.playback.player.stop()
     win.waveform.decoder.stop()
-    win.live.frame_timer.stop()
-    win.live.ping_timer.stop()
+    win.live.shutdown()
     for obj in (win.live, win.playback, win.waveform, win.editor):
         try:
             obj.blockSignals(True)
