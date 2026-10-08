@@ -99,6 +99,29 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms));
     const liveFrames = sent.slice(before).map(decode);
     check('flux continu (0x01)', liveFrames.length > 0 && liveFrames.every(f => f.ch === 2), `${liveFrames.length} image(s) sur le canal ${liveFrames[0] && liveFrames[0].ch}`);
 
+    // 5. Fragment du milieu perdu (numéros de séquence IDN) : l'image est jetée, pas de trait en travers
+    await wait(40);
+    const e = shape(1000, 5);
+    const rawE = samples(e);
+    const cutsE = [0, 1400, 2800, 4200, 5600, rawE.length];
+    const fragments = (seq0, skip) => {
+        let seq = seq0;
+        handleIdnMessage(channelMessage({ cnl: 4, chunk: 0x03, config: { mode: 2 }, data: rawE.subarray(cutsE[0], cutsE[1]) }), 4, seq++ & 0xffff);
+        for (let i = 1; i < cutsE.length - 1; i++) {
+            const pkt = channelMessage({ cnl: 4, chunk: 0xC0, chunkHeader: false, last: i === cutsE.length - 2, data: rawE.subarray(cutsE[i], cutsE[i + 1]) });
+            if (i !== skip) handleIdnMessage(pkt, 4, seq & 0xffff);
+            seq++;
+        }
+    };
+    const beforeLoss = sent.length;
+    fragments(100, 2);
+    check('fragment perdu : image jetée', sent.length === beforeLoss, `${sent.length - beforeLoss} image(s) émise(s)`);
+    await wait(40);
+    fragments(65534, -1);                                    // séquence qui repasse par 0 : image complète
+    got = sent.length > beforeLoss ? decode(sent[sent.length - 1]) : null;
+    check('fragments consécutifs (séquence qui reboucle) : image reçue', got && got.ch === 5 && same(got.pts, e),
+        got ? `${got.pts.length} points` : 'rien reçu');
+
     check('paquets 0x03 vers les joueurs', sent.every(s => s[0] === ILDA_LIVE_PACKET));
     process.exit(ok ? 0 : 1);
 })();

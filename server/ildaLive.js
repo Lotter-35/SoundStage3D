@@ -238,7 +238,13 @@ function describeLayout(layout) {
     return layout ? layout.fields.map(f => f.kind + (f.bytes === 2 ? '16' : '')).join(' ') + ` (${layout.size} octets/point)` : 'aucune';
 }
 
-function handleChannelMessage(msg, o) {
+/**
+ * @param {Buffer} msg paquet IDN-Hello
+ * @param {number} o début du message de canal
+ * @param {number} [seq] numéro de séquence IDN du paquet : les fragments d'une image doivent se suivre,
+ *        sinon l'image est jetée (un fragment perdu tracerait un trait allumé en travers de l'image)
+ */
+function handleChannelMessage(msg, o, seq) {
     if (o + 8 > msg.length) return;
     const total = msg.readUInt16BE(o);
     const content = msg.readUInt16BE(o + 2);
@@ -293,10 +299,16 @@ function handleChannelMessage(msg, o) {
     if (sequel) {
         // Fragment suivant : données seules (pas d'en-tête de bloc), un point peut être coupé entre deux fragments
         if (!c.frag) return;
+        if (seq !== undefined && c.fragSeq !== undefined && seq !== ((c.fragSeq + 1) & 0xffff)) {
+            c.frag = null;                                   // fragment perdu ou dans le désordre : image jetée
+            return;
+        }
+        c.fragSeq = seq;
         c.frag.push(msg.subarray(p, end));
         if (lastFragment) {
             const data = Buffer.concat(c.frag);
             c.frag = null;
+            if (data.length % c.layout.size !== 0) return;   // image incomplète : jetée
             const pts = [];
             decodeSamples(data, 0, data.length, c.layout, pts);
             emit(pts);
@@ -306,11 +318,13 @@ function handleChannelMessage(msg, o) {
     if (p + 4 > end) return;
     p += 4;                                                  // en-tête du bloc : drapeaux + durée
     if (chunkType === CHUNK_FRAME) {
+        c.frag = null;                                       // une image fragmentée en cours ne sera pas finie
         const pts = [];
         decodeSamples(msg, p, end, c.layout, pts);
         emit(pts);
     } else if (chunkType === CHUNK_FRAME_FIRST) {
         c.frag = [Buffer.from(msg.subarray(p, end))];
+        c.fragSeq = seq;
     } else if (chunkType === CHUNK_WAVE) {
         // Flux continu : points regroupés en images d'environ 1/30 s
         decodeSamples(msg, p, end, c.layout, c.wave);
@@ -354,7 +368,7 @@ function initIdn() {
             }
             reply(b);
         } else if (cmd === CMD_RT_CNLMSG || cmd === CMD_RT_CNLMSG_ACKREQ || cmd === CMD_RT_CNLMSG_CLOSE || cmd === CMD_RT_CNLMSG_CLOSE_ACKREQ) {
-            try { handleChannelMessage(msg, 4); } catch (_) { /* paquet mal formé : ignoré */ }
+            try { handleChannelMessage(msg, 4, seq); } catch (_) { /* paquet mal formé : ignoré */ }
             if (cmd === CMD_RT_CNLMSG_ACKREQ || cmd === CMD_RT_CNLMSG_CLOSE_ACKREQ) {
                 const b = idnHeader(CMD_RT_ACKNOWLEDGE, seq, 4);
                 b[4] = 4; b[5] = 0;
