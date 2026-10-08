@@ -83,7 +83,7 @@ def _lerp(a, b, k):
 
 
 class Automation:
-    """Courbe d'un paramètre. node_id vide = automation « en attente » (liée au prochain réglage touché)."""
+    """Courbe de valeurs (clés triées par instant). node_id / key / label : repères facultatifs du réglage."""
 
     def __init__(self, node_id="", key="", label="", auto_id=None):
         self.id = auto_id or new_id()

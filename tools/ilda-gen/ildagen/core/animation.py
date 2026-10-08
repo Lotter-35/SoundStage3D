@@ -50,7 +50,7 @@ class ParamTrack:
         return v
 
     def copy(self):
-        return ParamTrack.from_dict(self.to_dict(), new_ids=True)
+        return ParamTrack.from_dict(self.to_dict())
 
     def to_dict(self):
         d = {"mode": self.mode, "value": _value_to_json(self.value)}
@@ -61,7 +61,7 @@ class ParamTrack:
         return d
 
     @classmethod
-    def from_dict(cls, d, new_ids=False):
+    def from_dict(cls, d):
         d = d if isinstance(d, dict) else {}
         curve = Automation()
         c = d.get("curve")
