@@ -62,18 +62,6 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         self.default_guide = None
         self._changed()
 
-    def abandon_drag(self):
-        """Glisser interrompu (Échap, relâchement jamais reçu) : annulé, le document revient à l'état d'avant."""
-        if self.drag is None:
-            return False
-        kind = self.drag["kind"]
-        self.drag = None
-        self.default_guide = None
-        if kind not in ("scrub", "rect", "range"):
-            self.editor.cancel_gesture()
-        self.update()
-        return True
-
     def set_peaks(self, peaks):
         self.peaks = peaks
         self._wave_cache = None

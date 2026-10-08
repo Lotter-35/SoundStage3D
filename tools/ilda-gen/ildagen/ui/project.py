@@ -214,9 +214,11 @@ class ProjectController(QObject):
     def _open_untitled(self, path, title, dirty=True):
         """Ouvre un fichier comme projet sans nom (sauvegarde automatique ou copie datée)."""
         doc = self._load(path, title)
-        if doc is None or not self._show(doc):
+        if doc is None:
             return False
         doc.path = ""
+        if not self._show(doc):
+            return False
         self._no_autosave = False
         self.editor.dirty = dirty
         self._load_audio(doc.timeline.audio_path)

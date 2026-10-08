@@ -9,6 +9,18 @@ from .geometry import HEADER_W, lane_reset_rect, lane_toggle_rect
 
 
 class TimelineEditing:
+    def abandon_drag(self):
+        """Glisser interrompu (Échap, relâchement jamais reçu) : annulé, le document revient à l'état d'avant."""
+        if self.drag is None:
+            return False
+        kind = self.drag["kind"]
+        self.drag = None
+        self.default_guide = None
+        if kind not in ("scrub", "rect", "range"):
+            self.editor.cancel_gesture()
+        self.update()
+        return True
+
     def _press_loop(self, t, x):
         tl = self.tl
         g = self.geo
