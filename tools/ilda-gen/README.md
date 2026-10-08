@@ -36,6 +36,12 @@ Au démarrage, le générateur **rouvre le dernier projet** et passe **en envoi 
 **enregistrée automatiquement** dans le fichier du projet (un projet sans nom est gardé dans la sauvegarde
 automatique et rouvert la fois suivante). Ces trois comportements se désactivent dans Paramètres → Général.
 
+La sauvegarde automatique d'un projet sans nom n'est **jamais écrasée** par un autre travail : avant, elle est
+copiée dans des sauvegardes datées (les 10 dernières sont gardées), à rouvrir par **Fichier → Récupérer une
+sauvegarde automatique…**. Un projet ou un fichier de réglages abîmé n'empêche jamais de démarrer : un message
+explique le problème et l'on repart d'un projet vide (ou des réglages par défaut). Un projet créé par une
+version plus récente est ouvert avec un avertissement, sans être réenregistré automatiquement.
+
 ## Disposition
 
 | Zone | Contenu |
@@ -57,7 +63,8 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Sélection / Crayon / Seau | `V` / `B` / `G` |
 | Inverser les deux couleurs / couleurs par défaut | `X` / `D` |
 | Trait, Carré, Cercle, Triangle, Étoile, Polygone, Mire ILDA | `L` `R` `E` `T` `S` `P` `M` |
-| Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Maj+Z` ou `Ctrl+Y` |
+| Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Maj+Z` ou `Ctrl+Y` (pendant un glisser : annulent seulement ce glisser) |
+| Annuler le geste en cours (tracé, déplacement, poignée, réglage glissé, clip ou point glissé…) | `Échap` |
 | Couper / Copier / Coller / Dupliquer | `Ctrl+X` / `Ctrl+C` / `Ctrl+V` / `Ctrl+D` |
 | Supprimer | `Suppr` ou `Retour arrière` |
 | Tout sélectionner | `Ctrl+A` |
@@ -104,7 +111,18 @@ mode vont sous le même modifieur ; changer de mode crée un nouveau groupe.
 ### Formes
 
 `Maj` : proportions forcées et aimant de grille. `Alt` : tracé depuis le centre. Un simple clic pose la forme
-à une taille par défaut (la mire ILDA prend toute la zone).
+à une taille par défaut (la mire ILDA prend toute la zone). Une forme glissée puis ramenée à son point de
+départ (taille quasi nulle) n'est pas créée.
+
+### Gestes et annulation
+
+Un geste (tracer, déplacer, une poignée, glisser un réglage, un clip ou un point de courbe) compte pour **une
+seule étape** d'annulation. Il est **annulé** — tout revient comme avant le geste — par `Échap`, par `Ctrl+Z`
+pendant le geste, en changeant d'outil (`V`, `B`, `R`…) avant de relâcher, ou si l'application perd la main
+(autre application au premier plan). Les flèches maintenues ou répétées rapidement font une seule étape.
+
+L'annulation ne touche pas à l'**affichage** : grille, aimant, symétrie de dessin, clips et calques dépliés,
+hauteur des lignes de réglage restent comme ils sont (ils sont quand même enregistrés avec le projet).
 
 ### Sélection et transformations (comme Photoshop)
 
@@ -113,7 +131,8 @@ mode vont sous le même modifieur ; changer de mode crée un nouveau groupe.
 | Clic / `Ctrl` + clic / `Maj` + clic | Sélectionner / ajouter ou retirer / ajouter |
 | Glisser dans le vide | Sélection rectangle |
 | Glisser une forme | Déplacer ; `Maj` : magnétisme (centre, bords, autres formes, grille) ; `Alt` : copie |
-| Flèches / `Maj` + flèches | Déplacement fin / rapide |
+| Flèches / `Maj` + flèches | Déplacement fin / rapide (touche maintenue : une seule étape d'annulation) |
+| `Échap` | Pendant un geste : l'annule ; sinon : désélectionner |
 | Coin | Redimensionner ; `Maj` : proportionnel ; `Alt` : depuis le centre ; `Alt` + `Maj` : proportionnel depuis le centre |
 | Milieu d'un côté | Étirer ; `Alt` : symétrique |
 | `Ctrl` + coin | Distorsion libre |
@@ -270,7 +289,7 @@ QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_ui.py
 |---|---|
 | `ildagen/core/` | Modèle sans interface : calques, transformations, modifieurs (`modifiers/`), évaluation, timeline, automations, document |
 | `ildagen/laser/` | Optimisation des points, réglages de sortie, paquets IDN, fichiers ILDA |
-| `ildagen/editor/` | État de l'éditeur, opérations, annuler / rétablir, sortie live, lecture, forme d'onde, export |
+| `ildagen/editor/` | État de l'éditeur, opérations, annuler / rétablir et gestes (`history_ops.py`), sortie live, lecture, forme d'onde, export |
 | `ildagen/ui/` | Interface Qt : thème, icônes, mire et outils, calques, propriétés, timeline, fenêtres |
 
 Ajouter un modifieur : écrire une classe dans `ildagen/core/modifiers/` et l'ajouter à la liste `MODIFIERS` du module.

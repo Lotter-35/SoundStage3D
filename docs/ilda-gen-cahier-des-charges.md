@@ -418,6 +418,10 @@ Poignées : 4 coins, 4 milieux de côtés, 1 poignée de **rotation au-dessus** 
 | SAV-01 | Deux formats : **projet** (état complet du logiciel) et **fichier ILDA** exporté. | Demandé |
 | SAV-02 | Sauvegarde auto / récupération après plantage (voir GEN-13 : à chaque modification). | Retour |
 | SAV-03 | **Annuler / Rétablir** (Ctrl + Z / Ctrl + Y, Cmd sur Mac) sur toutes les actions. | Décidé |
+| SAV-06 | Un **geste** (tracé, déplacement, poignée, réglage glissé, clip ou point glissé) = une étape d'annulation. `Échap`, `Ctrl+Z` / `Ctrl+Y` pendant le geste, un changement d'outil avant de relâcher ou l'application qui perd la main l'**annulent** : tout revient à l'état d'avant le geste, rien n'est enregistré à moitié. Flèches maintenues = une seule étape. Une opération qui échoue est annulée. | Retour |
+| SAV-07 | L'**affichage** (grille, aimant, symétrie de dessin, clips / calques dépliés, hauteur des lignes) n'est **pas** dans l'annulation, mais il est enregistré avec le projet (sauvegarde automatique comprise). | Retour |
+| SAV-08 | **Robustesse** : un projet ou un `settings.json` abîmé n'empêche jamais de démarrer (message en français, projet vide / réglages par défaut) ; un projet d'une version plus récente est ouvert avec un avertissement et n'est pas réenregistré automatiquement ; projets et réglages sont écrits de façon atomique (fichier temporaire puis renommage). Valeurs tapées infinies / NaN refusées ; clips bornés (début ≤ 4 h, durée ≤ 1 h) ; une forme tracée de taille nulle n'est pas créée. | Retour |
+| SAV-09 | La sauvegarde automatique d'un projet sans nom n'est **jamais écrasée** par un autre travail : copiée d'abord dans des sauvegardes datées (10 dernières), à rouvrir par **Fichier → Récupérer une sauvegarde automatique…**. | Retour |
 | SAV-04 | Conversion forme → points laser : interpolation, points de coin, points éteints (blanking) pour les sauts. | Déduit |
 | SAV-05 | Protocole d'envoi au DAC (IDN UDP ou autre selon le DAC). | Déduit |
 
