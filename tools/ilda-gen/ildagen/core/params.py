@@ -1,5 +1,24 @@
 """Description des paramètres réglables (modifieurs, formes) : type, bornes, unité."""
 
+import math
+
+
+def finite(v, default, lo=None, hi=None):
+    """Nombre fini borné ; `default` si la valeur n'est pas un nombre utilisable (texte, infini, NaN…)."""
+    if isinstance(v, bool):
+        v = float(v)
+    try:
+        v = float(v)
+    except (TypeError, ValueError):
+        return default
+    if not math.isfinite(v):
+        return default
+    if lo is not None:
+        v = max(lo, v)
+    if hi is not None:
+        v = min(hi, v)
+    return v
+
 
 class ParamSpec:
     """kind : float, int, bool, enum, color, gradient."""

@@ -10,15 +10,19 @@ DRAG_START = 4    # pixels avant qu'un clic dans le vide devienne un rectangle d
 
 
 class TimelineSelection:
-    sel_clips = frozenset()    # identifiants des clips sélectionnés
+    """La sélection de clips est celle de l'éditeur (un seul modèle : le clip actif en fait partie)."""
+
+    @property
+    def sel_clips(self):
+        """Identifiants des clips sélectionnés."""
+        return frozenset(self.editor.clip_selection)
 
     def selected_clips(self):
         """[(piste, clip)] sélectionnés (dans l'ordre du temps)."""
-        out = [(tr, c) for tr, c in self.tl.all_clips() if c.id in self.sel_clips]
-        return sorted(out, key=lambda tc: tc[1].start)
+        return self.editor.selected_clip_items()
 
     def set_clip_selection(self, ids):
-        self.sel_clips = frozenset(ids)
+        self.editor.select_clips(list(ids))
         self.update()
 
     def toggle_clip(self, clip):

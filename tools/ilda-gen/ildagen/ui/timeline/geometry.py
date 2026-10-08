@@ -1,131 +1,36 @@
-"""Géométrie de la timeline : lignes (pistes, modifieurs, automations), correspondance temps ↔ pixels."""
+"""Géométrie de la timeline : lignes des pistes, correspondance temps ↔ pixels."""
 
 HEADER_W = 190
 RULER_H = 28
 LOOP_H = 8
 WAVE_H = 46
 TRACK_H = 58
-GROUP_H = 24
-LANE_H = 56
-LANE_SMALL_H = 20     # ligne réduite (réglage pas utilisé, ou repliée à la main)
 CLIP_EDGE = 6
-CHEVRON_W = 16
 
 
 class Row:
-    __slots__ = ("kind", "track", "clip", "auto", "y", "h", "node", "label", "small", "used", "depth")
+    __slots__ = ("kind", "track", "clip", "y", "h")
 
-    def __init__(self, kind, track, clip, auto, y, h, node=None, label="", small=False, used=True):
-        self.kind = kind      # "track", "group" (un modifieur du clip) ou "lane" (un réglage animable)
+    def __init__(self, kind, track, clip, y, h):
+        self.kind = kind      # "track" (une piste et ses clips)
         self.track = track
         self.clip = clip
-        self.auto = auto      # automation (éventuellement « virtuelle » : pas encore dans le clip)
         self.y = y
         self.h = h
-        self.node = node
-        self.label = label
-        self.small = small    # ligne de réglage réduite
-        self.used = used      # réglage utilisé (sinon grisé)
-        self.depth = 0        # niveau dans la hiérarchie des calques (groupes → modifieurs → réglages)
 
     def contains(self, y):
         return self.y <= y < self.y + self.h
 
-    @property
-    def virtual(self):
-        return self.kind == "lane" and self.auto not in self.clip.automations
-
-
-def modifier_specs(node):
-    """Réglages animables d'un modifieur (avec « Actif » en premier)."""
-    from ..properties.forms import ACTIVE_SPEC
-    return [ACTIVE_SPEC] + [s for s in node.modifier.all_params() if s.animatable]
-
-
-DEPTH_W = 12   # retrait par niveau (groupe de calques, modifieur, réglage)
-
-
-def clip_rows(clip, library, editor):
-    """Lignes sous un clip déplié : seulement les réglages envoyés dans la timeline (ses automations),
-    rangés comme dans les calques : groupes → calque / modifieur → réglages ; puis l'automation en attente.
-    Renvoie [(kind, automation, nœud, libellé, profondeur)]."""
-    out = []
-    d = library.get(clip.def_id)
-    by_node = {}
-    for a in clip.automations:
-        if not a.armed:
-            by_node.setdefault(a.node_id, []).append(a)
-    placed = set()
-
-    def has_autos(n):
-        return any(x.id in by_node for x in n.walk())
-
-    def visit(n, depth):
-        if not has_autos(n):
-            return
-        autos = by_node.get(n.id, [])
-        child_depth = depth
-        if n.kind == "group" or autos:
-            out.append(("group", None, n, n.name, depth))
-            if n.id in clip.closed_nodes:
-                placed.update(a.id for x in n.walk() for a in by_node.get(x.id, []))
-                return
-            if n.kind == "modifier" and n.modifier is not None:
-                order = [sp.key for sp in modifier_specs(n)]
-                autos = sorted(autos, key=lambda a: order.index(a.key) if a.key in order else len(order))
-            for a in autos:
-                placed.add(a.id)
-                out.append(("lane", a, n, editor.param_label(n, a.key), depth + 1))
-            child_depth = depth + 1
-        for c in n.children:
-            visit(c, child_depth)
-
-    if d is not None:
-        for c in d.root.children:
-            visit(c, 0)
-    for a in clip.automations:
-        if a.id not in placed:
-            out.append(("lane", a, None, "", 0))       # en attente, ou calque disparu
-    return out
-
 
 def track_blocks(rows):
-    """{id de piste: (haut, bas)} : la piste et toutes les lignes de ses clips dépliés forment un bloc."""
-    out = {}
-    for r in rows:
-        a, b = out.get(r.track.id, (r.y, r.y + r.h))
-        out[r.track.id] = (min(a, r.y), max(b, r.y + r.h))
-    return out
-
-
-def clip_bottoms(rows):
-    """{id de clip déplié: bas de sa dernière ligne}."""
-    out = {}
-    for r in rows:
-        if r.kind != "track":
-            out[r.clip.id] = max(out.get(r.clip.id, 0), r.y + r.h)
-    return out
+    """{id de piste: (haut, bas)}."""
+    return {r.track.id: (r.y, r.y + r.h) for r in rows}
 
 
 def link_icon_rect(geo, row, clip):
     """Icône de lien (chaîne) en haut à droite d'un clip."""
     x, y, w, _ = geo.clip_rect(row, clip)
     return (x + w - 18, y + 1, 14, 14)
-
-
-LABEL_H = 14   # bande du nom d'un réglage, en haut de sa ligne (dans le clip)
-
-
-def lane_toggle_rect(geo, row):
-    """Flèche avant le nom d'un réglage (dans le clip) : réduire / agrandir la ligne."""
-    x = max(HEADER_W, geo.x(row.clip.start)) + 3 + row.depth * DEPTH_W
-    return (x, row.y + 1, 12, min(LABEL_H, row.h - 2))
-
-
-def lane_reset_rect(geo, row):
-    """Bouton ↺ en haut à droite de la ligne, dans le clip."""
-    x = geo.x(row.clip.end) - 3 - 13
-    return (x, row.y + 1, 13, min(LABEL_H, row.h - 2))
 
 
 class TimelineGeometry:
@@ -152,50 +57,21 @@ class TimelineGeometry:
         return self.t0, self.t(self.width)
 
     def rows(self, editor, scroll=True):
-        tl = editor.doc.timeline
-        out = []
         y = self.top - (self.scroll_y if scroll else 0)
-        for tr in tl.tracks:
-            out.append(Row("track", tr, None, None, y, TRACK_H))
+        out = []
+        for tr in editor.doc.timeline.tracks:
+            out.append(Row("track", tr, None, y, TRACK_H))
             y += TRACK_H
-            # Clips dépliés de la piste : chacun empile ses propres lignes sous la piste, à sa hauteur
-            # (pas d'alignement forcé avec les autres clips) ; la piste prend la hauteur du plus haut
-            from . import lanes as L
-            bottom = y
-            for clip in sorted(tr.clips, key=lambda c: c.start):
-                if not clip.expanded:
-                    continue
-                cy = y
-                for kind, auto, node, label, depth in clip_rows(clip, editor.doc.library, editor):
-                    if kind == "group":
-                        r = Row(kind, tr, clip, auto, cy, GROUP_H, node, label)
-                    else:
-                        small = L.is_small(editor, clip, auto)
-                        r = Row(kind, tr, clip, auto, cy, LANE_SMALL_H if small else LANE_H, node, label,
-                                small, L.assigned(editor, clip, auto))
-                    r.depth = depth
-                    out.append(r)
-                    cy += r.h
-                bottom = max(bottom, cy)
-            y = bottom
         return out
 
     def content_height(self, editor):
-        rows = self.rows(editor, scroll=False)
-        return (rows[-1].y + rows[-1].h - self.top) if rows else 0
+        return len(editor.doc.timeline.tracks) * TRACK_H
 
     def row_at(self, rows, y, x=None):
-        """Ligne sous (x, y). Plusieurs clips à la même hauteur : celle du clip sous x (ou le plus proche)."""
+        """Ligne (piste) sous y."""
         if y < self.top:
             return None
-        hits = [r for r in rows if r.contains(y)]
-        if len(hits) <= 1 or x is None or x < HEADER_W:
-            return hits[0] if hits else None
-
-        def dist(r):
-            a, b = self.x(r.clip.start), self.x(r.clip.end)
-            return 0.0 if a - 6 <= x <= b + 6 else min(abs(x - a), abs(x - b))
-        return min(hits, key=dist)
+        return next((r for r in rows if r.contains(y)), None)
 
     def clip_rect(self, row, clip):
         return (self.x(clip.start), row.y + 3, max(4.0, clip.duration * self.pps), row.h - 6)

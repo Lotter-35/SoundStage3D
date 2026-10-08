@@ -64,6 +64,7 @@ class PropertiesPanel(QWidget):
         editor.selectionChanged.connect(self.rebuild)
         editor.structureChanged.connect(self.rebuild)
         editor.contextChanged.connect(self.rebuild)
+        editor.clipSelectionChanged.connect(self.rebuild)
         editor.timelineChanged.connect(self._timeline_changed)
         editor.restored.connect(self._abort)
         theme.notifier.changed.connect(self.rebuild)      # textes colorés : nouvelles couleurs du thème
@@ -89,7 +90,9 @@ class PropertiesPanel(QWidget):
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
-        nodes = [] if self.editor.panels_empty() else self.editor.selected_nodes()
+        ed = self.editor
+        clip = ed.current_clip() if ed.workspace == "show" else None
+        nodes = [] if clip is not None else ed.selected_nodes()
         self.reset_btn.setVisible(bool(nodes))
         if len(nodes) == 1:
             n = nodes[0]
@@ -122,10 +125,10 @@ class PropertiesPanel(QWidget):
             lay.addWidget(ParamForm(self.editor, n.id))
         elif len(nodes) > 1:
             lay.addWidget(self._hint(f"{len(nodes)} calques sélectionnés"))
-        elif self.editor.panels_empty():
-            lay.addWidget(self._hint("Sélectionnez un clip dans la timeline pour voir ses réglages."))
-        elif self.editor.current_clip() is not None:
+        elif clip is not None:
             lay.addWidget(self._clip_form())
+        elif ed.workspace == "show":
+            lay.addWidget(self._hint("Sélectionnez un clip dans la timeline pour voir ses réglages."))
         else:
             lay.addWidget(self._hint("Sélectionnez un calque pour voir ses réglages."))
         lay.addStretch(1)
@@ -144,6 +147,9 @@ class PropertiesPanel(QWidget):
         return h
 
     # ── Réglages du clip sélectionné dans la timeline ────────────────────
+    CLIP_FIELDS = (("start", "Début"), ("duration", "Durée"), ("fade_in", "Fondu d'entrée"),
+                   ("fade_out", "Fondu de sortie"))
+
     def _clip_form(self):
         from PySide6.QtWidgets import QGridLayout
         clip = self.editor.current_clip()
@@ -154,21 +160,22 @@ class PropertiesPanel(QWidget):
         g.setColumnStretch(1, 1)
         g.addWidget(QLabel(f"Clip  <span style='color:{theme.TEXT_DIM}'>{d.name if d else '?'}</span>"), 0, 0, 1, 2)
         self._clip_fields = {}
-        for row, (key, label) in enumerate((("start", "Début"), ("duration", "Durée")), start=1):
+        for row, (key, label) in enumerate(self.CLIP_FIELDS, start=1):
             lab = QLabel(label)
             lab.setObjectName("dim")
-            f = ScrubField(3, 0.0 if key == "start" else MIN_DURATION, MAX_START if key == "start" else MAX_DURATION,
-                           (0.0, 30.0), " s")
+            lo, hi = {"start": (0.0, MAX_START), "duration": (MIN_DURATION, MAX_DURATION)}.get(key, (0.0, MAX_DURATION))
+            f = ScrubField(3, lo, hi, (0.0, 30.0 if key in ("start", "duration") else 4.0), " s")
             f.editStarted.connect(lambda: self.editor.begin("Clip"))
             f.valueEdited.connect(lambda v, k=key: self._set_clip(k, v))
             f.editFinished.connect(self._clip_done)
             g.addWidget(lab, row, 0)
             g.addWidget(f, row, 1)
             self._clip_fields[key] = f
-        hint = QLabel("Clic droit sur le clip → Nouvelle automation, puis touchez un réglage pour la lier.")
+        hint = QLabel("Les effets d'animation du clip se règlent dans l'espace Show. "
+                      "Double-clic sur le clip : ouvrir sa forme.")
         hint.setObjectName("dim")
         hint.setWordWrap(True)
-        g.addWidget(hint, 3, 0, 1, 2)
+        g.addWidget(hint, len(self.CLIP_FIELDS) + 1, 0, 1, 2)
         self._refresh_clip()
         return w
 
@@ -176,17 +183,25 @@ class PropertiesPanel(QWidget):
         clip = self.editor.current_clip()
         if clip is None or not self._clip_fields:
             return
-        self._clip_fields["start"].set_value(clip.start)
-        self._clip_fields["duration"].set_value(clip.duration)
+        for key, f in self._clip_fields.items():
+            f.set_value(getattr(clip, key))
 
     def _set_clip(self, key, v):
+        """Valeur glissée / tapée, bornée (pas de chevauchement, fondus dans le clip), dans le geste en cours."""
         clip = self.editor.current_clip()
-        if clip is not None:
-            setattr(clip, key, v)       # le clip borne lui-même ses valeurs (jamais infinies)
-            self.editor.notify(timeline=True)
+        if clip is None:
+            return
+        if key == "start":
+            self.editor.set_clip_times(clip.id, start=v)
+        elif key == "duration":
+            self.editor.set_clip_times(clip.id, duration=v)
+        elif key == "fade_in":
+            self.editor.set_clip_fades(clip.id, fade_in=v)
+        else:
+            self.editor.set_clip_fades(clip.id, fade_out=v)
 
     def _abort(self):
-        """Geste annulé (Échap, Ctrl+Z…) : un glisser en cours sur Début / Durée s'arrête."""
+        """Geste annulé (Échap, Ctrl+Z…) : un glisser en cours sur un réglage du clip s'arrête."""
         for f in (self._clip_fields or {}).values():
             f.abort()
 

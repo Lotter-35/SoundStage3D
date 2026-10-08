@@ -51,7 +51,7 @@ version plus récente est ouvert avec un avertissement, sans être réenregistr�
 | Gauche | Outils (sélection, crayon, seau), formes de base, couleur de tracé, **liste des formes** du projet |
 | Centre | La mire (zone de projection), grille orthogonale ou polaire, compteur de points |
 | Droite | Calques, puis Propriétés (repliable) — **sur toute la hauteur** (sous la barre de connexion) |
-| Bas (à gauche du panneau de droite) | Timeline : transport, BPM, grille musicale, musique, pistes, automations ; elle s'arrête contre le panneau Calques / Propriétés |
+| Bas (à gauche du panneau de droite) | Timeline : transport, BPM, grille musicale, musique, pistes, clips ; elle s'arrête contre le panneau Calques / Propriétés |
 
 Tous les séparateurs se déplacent ; la disposition est mémorisée.
 
@@ -117,13 +117,13 @@ départ (taille quasi nulle) n'est pas créée.
 
 ### Gestes et annulation
 
-Un geste (tracer, déplacer, une poignée, glisser un réglage, un clip ou un point de courbe) compte pour **une
+Un geste (tracer, déplacer, une poignée, glisser un réglage ou un clip) compte pour **une
 seule étape** d'annulation. Il est **annulé** — tout revient comme avant le geste — par `Échap`, par `Ctrl+Z`
 pendant le geste, en changeant d'outil (`V`, `B`, `R`…) avant de relâcher, ou si l'application perd la main
 (autre application au premier plan). Les flèches maintenues ou répétées rapidement font une seule étape.
 
 L'annulation ne touche pas à l'**affichage** : grille, aimant, symétrie de dessin, clips et calques dépliés,
-hauteur des lignes de réglage restent comme ils sont (ils sont quand même enregistrés avec le projet).
+maîtres, espace actif restent comme ils sont (ils sont quand même enregistrés avec le projet).
 
 ### Sélection et transformations (comme Photoshop)
 
@@ -208,67 +208,43 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
 - Une forme peut aussi naître d'une sélection : clic droit → **Créer une forme personnalisée** (les calques
   sont remplacés par une occurrence de la nouvelle forme).
 - Les **groupes** servent seulement à ranger les calques d'une forme.
-- Au-dessus de la mire, **Forme / Timeline** : la forme choisie (modifiable) ou la sortie de la timeline à la
-  tête de lecture (aussi pendant la lecture). Cliquer sur un clip affiche sa forme telle qu'elle est à la tête
-  de lecture (automations comprises).
+- Au-dessus de la mire, **Forme / Show / Live** : l'espace actif (en attendant les onglets de la refonte, voir
+  `docs/ilda-gen-refonte.md`). Forme : la forme choisie (modifiable), ses oscillateurs tournent en boucle ;
+  Show : la sortie de la timeline à la tête de lecture (non modifiable) ; Live : les cues en cours. **L'envoi
+  live suit l'espace actif.**
 
-## Timeline
+## Timeline (espace Show)
+
+Refonte en cours : les anciennes automations sont remplacées par des **effets d'animation posés sur les clips**
+(valeur fixe, courbe ou oscillateur ; modèle prêt, leur interface arrive avec l'espace Show). Un projet d'une
+ancienne version s'ouvre avec ses formes et ses clips, sans ses animations (message à l'ouverture).
 
 1. **Musique…** pour importer un morceau (forme d'onde affichée), régler le **BPM** (ou **Tap**), le nombre de
    temps par mesure, la **grille** (temps, 1/2, 1/4, 1/8, triolets) et le départ de la **mesure 1** (« Ici » =
    tête de lecture).
 2. Glisser une forme (liste de gauche) sur une piste : un clip est créé (des vignettes montrent la forme tout le
-   long du clip, automations comprises). Glisser le clip pour le déplacer, ses bords
-   pour changer sa durée : les **automations s'étirent proportionnellement** (une montée sur 10 s ramenée à
-   5 s va toujours jusqu'au bout) ; `Maj` pendant le glisser = les clés gardent leurs instants (on coupe). L'**aimant** accroche tout à la grille (`Alt` pendant un glisser = libre).
-   **Clips liés** : tous les clips d'une même forme sont liés — ils partagent la forme **et ses automations**
-   (une modification dans l'un se voit dans tous). Une chaîne 🔗 en haut à droite des clips le rappelle.
-   Clic sur la chaîne (ou clic droit → **Délier**) : ce clip reçoit sa propre copie de la forme, modifiable
-   seule et absente de la liste des formes (chaîne brisée). Clic sur la chaîne brisée (ou clic droit →
-   **Relier**) : il reprend la forme d'origine et ses automations.
-3. **Envoyer un réglage dans la timeline** : à côté de chaque réglage (dans Calques et dans Propriétés), le
-   bouton **〰 (courbe)** l'envoie dans la timeline : une ligne apparaît sous le clip de la forme, avec une clé
-   à la tête de lecture. Le bouton devient bleu ; re-cliquer retire le réglage de la timeline (annulable).
-   Le clip visé : le clip sélectionné, sinon le seul clip de cette forme (ou celui sous la tête de lecture).
-   **Mini-courbe** : un réglage envoyé a une petite **flèche** devant son nom (fermée par défaut) ; elle ouvre,
-   sous le réglage (Calques et Propriétés), un petit rectangle qui montre sa courbe sur **toute la durée du
-   clip**, avec les traits de la grille choisie (mesures, temps, subdivisions) en fond, sans numéros (gauche = début de la forme, droite = fin), quel que soit le zoom de
-   la timeline : clic = ajouter un point, glisser = le déplacer (la mire montre cet instant), clic droit =
-   le supprimer, `Alt` = sans aimant, `Maj` = aimant sur la valeur par défaut ; ↺ à sa droite = réinitialiser la courbe (un seul point, valeur par défaut).
-   **Déplier le clip** (chevron à gauche du clip, ou double-clic) : on ne voit **que les réglages envoyés**,
-   regroupés sous leur calque / modifieur (cliquer sur son nom pour les replier). Rien au départ.
-   Autre méthode : clic droit sur le clip → **Nouvelle automation** : elle attend son réglage. Toucher ensuite n'importe quel
-   réglage (Propriétés, ligne du modifieur, ou déplacer / tourner la forme dans la mire) : l'automation s'y lie.
-   Chaque réglage touché ensuite écrit une clé à la tête de lecture.
-4. Dans la ligne d'automation : clic = ajouter une clé, glisser = déplacer, clic droit sur un point = le supprimer,
-   `Maj` + clic droit = menu (réinitialiser la valeur, type de courbe : linéaire, accélération, ralentissement,
-   en S, palier, Bézier personnalisé avec poignées). Le bouton ↺ (en haut à droite de la ligne, dans le clip) supprime son automation
-   (retire le réglage de la timeline).
-   **Tout est dans le clip** : la colonne de gauche ne montre que les pistes. Sous un clip déplié, chaque
-   modifieur (flèche, icône, nom : clic = replier / déplier pour ce clip) et chaque réglage (flèche pour
-   réduire / agrandir, nom, ↺ à droite) sont écrits dans la largeur du clip. Plusieurs clips dépliés sur une
-   piste sont côte à côte (pas d'empilement), chacun à sa propre hauteur : ouvrir une courbe dans un
-   clip n'agrandit pas les autres. Replié : seulement le carré de la forme.
-   La piste forme un seul bloc avec les lignes de ses clips dépliés (en-tête étendu, barre à gauche, trait de
-   fin de bloc) et chaque clip déplié est encadré, de la forme jusqu'à son dernier réglage.
-   **Hauteur des lignes** : un réglage pas utilisé (pas animé, valeur par défaut) est grisé et sa ligne est
-   réduite automatiquement ; la flèche devant son nom réduit / agrandit la ligne, et un clic
-   dans une ligne réduite l'agrandit (le clic suivant pose une clé).
-   Pendant qu'on **glisse un point**, la mire (et le laser en live) montre l'instant de ce point avec sa
-   nouvelle valeur (trait pointillé dans la timeline) ; au relâchement, elle revient à la tête de lecture.
-5. Réglage **Actif** d'un modifieur (Propriétés) : automatisé, il n'active le modifieur que sur une partie du clip.
-6. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
+   long du clip, effets compris ; une place occupée : juste après). Glisser le clip pour le déplacer, ses bords
+   pour changer sa durée : **jamais de chevauchement** sur une piste (le clip s'arrête contre son voisin). Les
+   courbes des effets sont en proportion de la durée du clip. L'**aimant** accroche tout à la grille (`Alt`
+   pendant un glisser = libre). Double-clic sur un clip : sa forme s'ouvre dans l'espace Forme.
+   **Clips liés** : les clips d'une même forme **partagent leur animation** (chaîne 🔗 en haut à droite).
+   Clic sur la chaîne (ou clic droit → **Délier**) : ce clip reçoit sa propre copie de l'animation (la forme
+   reste commune ; chaîne brisée). Clic sur la chaîne brisée (ou **Relier**) : il reprend celle des autres clips.
+3. Propriétés du clip sélectionné : début, durée, **fondus** d'entrée et de sortie (dessinés en diagonale).
+4. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
    Pavé tactile : glisser à deux doigts vers le haut / le bas = pistes, sur le côté = temps.
-7. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle.
-8. **Sélection de clips** (comme une vraie timeline) : glisser dans le vide = **rectangle de sélection** ;
+5. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle. Clic droit dans la règle :
+   ajouter un **repère**.
+6. **Sélection de clips** (comme une vraie timeline) : glisser dans le vide = **rectangle de sélection** ;
    `Ctrl` (`Cmd`) + clic ou `Maj` + clic sur un clip = l'ajouter / le retirer ; `Ctrl+A` = tous les clips ;
    glisser un clip sélectionné déplace toute la sélection ; un simple clic dans le vide désélectionne et place
    la tête de lecture.
-9. **Copier / coller des clips** (la timeline doit avoir le focus : cliquer dedans) : `Ctrl` (`Cmd`) + glisser
+7. **Copier / coller des clips** (la timeline doit avoir le focus : cliquer dedans) : `Ctrl` (`Cmd`) + glisser
    dans les pistes sélectionne une **zone de temps** (clips + vide, aimantée à la grille). `Ctrl+C` copie la
-   zone (sans zone : les clips sélectionnés), `Ctrl+D` les recopie juste après eux-mêmes, `Ctrl+V` colle à la **tête de lecture**, sur les mêmes pistes, avec
-   les automations, puis **avance la tête de la longueur copiée** : `Ctrl+V` répété enchaîne les copies avec le
-   même écart. `Ctrl+X` coupe, `Suppr` supprime les clips de la zone (ou sélectionnés), `Échap` annule la zone.
+   zone (sans zone : les clips sélectionnés), `Ctrl+D` les recopie juste après eux-mêmes, `Ctrl+V` colle à la
+   **tête de lecture**, sur les mêmes pistes (place occupée : piste suivante), avec leur animation (liée), puis
+   **avance la tête de la longueur copiée** : `Ctrl+V` répété enchaîne les copies avec le même écart.
+   `Ctrl+X` coupe, `Suppr` supprime les clips de la zone (ou sélectionnés), `Échap` annule la zone.
 
 En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
 
@@ -315,9 +291,9 @@ QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_ui.py
 
 | Dossier | Rôle |
 |---|---|
-| `ildagen/core/` | Modèle sans interface : calques, transformations, modifieurs (`modifiers/`), évaluation, timeline, automations, document |
+| `ildagen/core/` | Modèle sans interface : calques, transformations, modifieurs (`modifiers/`), oscillateurs, évaluation, timeline, animations et effets (`effects/`), live, maîtres, document |
 | `ildagen/laser/` | Optimisation des points, réglages de sortie, paquets IDN, fichiers ILDA |
-| `ildagen/editor/` | État de l'éditeur, opérations, annuler / rétablir et gestes (`history_ops.py`), sortie live, lecture, forme d'onde, export |
+| `ildagen/editor/` | État de l'éditeur (espaces Forme / Show / Live), opérations, annuler / rétablir et gestes (`history_ops.py`), état d'exécution du live, sortie live, lecture, forme d'onde, export |
 | `ildagen/ui/` | Interface Qt : thème, icônes, mire et outils, calques, propriétés, timeline, fenêtres |
 
 Ajouter un modifieur : écrire une classe dans `ildagen/core/modifiers/` et l'ajouter à la liste `MODIFIERS` du module.

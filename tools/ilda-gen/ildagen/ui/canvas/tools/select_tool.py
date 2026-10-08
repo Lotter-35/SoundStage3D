@@ -317,7 +317,7 @@ class SelectTool(Tool):
             for n in frame.nodes:
                 self.editor.apply_world_matrix(n, self.editor.effective_transform(n, ctx), w, ctx)
             # Touche maintenue (ou pressée plusieurs fois de suite) : une seule étape d'annulation
-            self.editor.commit(merge=("nudge", self.editor.context, tuple(self.editor.selection)))
+            self.editor.commit(merge=("nudge", self.editor.current_form_id(), tuple(self.editor.selection)))
             self.editor.notify()
             return True
         if key == Qt.Key.Key_Escape:

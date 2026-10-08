@@ -5,7 +5,7 @@ puissance, couleurs, zone de sécurité) : ce sont ceux d'un laser précis, le l
 Chaque image respecte le budget de points (vitesse de balayage / cadence) et la limite du format ILDA.
 """
 
-from ..core.evaluator import EvalContext, evaluate, evaluate_timeline
+from ..core.evaluator import evaluate_form, evaluate_timeline
 from ..laser.ilda_file import MAX_FRAMES, write_ilda
 from ..laser.pipeline import MAX_ILDA_POINTS, render_frame
 
@@ -25,9 +25,8 @@ def export_frames(editor, start, end, fps, progress=None, corrections=False):
     color = editor.default_color()
     tl = doc.timeline
     if not tl.has_clips() or end <= start:
-        ctx = EvalContext(doc.library, 0.0, tl.bpm, color, None, tl.bar_offset)
-        root = editor.current_form().root      # pas de timeline : la forme en cours
-        fr = render_frame(evaluate(root, ctx), settings, fps, corrections, MAX_ILDA_POINTS)
+        strokes, _ = evaluate_form(editor.current_form(), doc.library, 0.0, tl.bpm, color)   # pas de timeline : la forme en cours
+        fr = render_frame(strokes, settings, fps, corrections, MAX_ILDA_POINTS)
         return [(fr.x, fr.y, fr.r, fr.g, fr.b)]
     n = frame_count(start, end, fps)
     if n > MAX_FRAMES:

@@ -32,7 +32,7 @@ class TransformOpsMixin:
         return node_transform(node, ctx).copy()
 
     def write_transform(self, node, tf):
-        """Écrit une transformation : seules les valeurs qui changent passent par set_param (automations)."""
+        """Écrit une transformation : seules les valeurs qui changent passent par set_param."""
         cur = self.effective_transform(node)
         changed = False
         diffs = []
@@ -40,7 +40,6 @@ class TransformOpsMixin:
             d = abs(getattr(tf, k) - getattr(cur, k))
             if d > 1e-9:
                 diffs.append((d / KEY_SCALE.get(k, 1.0), k))
-        # Le réglage qui change le plus passe en premier : c'est lui qu'une automation en attente prendra
         for _, k in sorted(diffs, reverse=True):
             self._set_param_quiet(node, "tf." + k, getattr(tf, k))
             changed = True
@@ -58,8 +57,6 @@ class TransformOpsMixin:
             self.set_param(node, key, value)
         finally:
             self.blockSignals(blocker)
-        if self.current_clip() is not None:
-            self.timelineChanged.emit()
 
     def apply_world_matrix(self, node, base_tf, world_m, ctx):
         """Nouvelle transformation de node = (monde) world_m appliquée à son état de départ base_tf."""

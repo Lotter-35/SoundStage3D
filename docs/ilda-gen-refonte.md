@@ -203,3 +203,38 @@ rangées par espace :
 
 Pendant la refonte, `tools/ilda-gen/` peut avoir des fonctions temporairement absentes : la version
 `tools/ilda-gen-v1/` reste utilisable.
+
+## 9. Mise en œuvre du modèle v5 : précisions et écarts
+
+Ce qui a été fait différemment du plan (ou précisé) en écrivant le socle (a), et pourquoi :
+
+- **Temps des oscillateurs** : forme en boucle, clip (temps local du clip) et cue (temps depuis son départ)
+  comptent leurs cycles à partir de 0, pas de `timeline.bar_offset` (qui est une heure de la timeline) ; les
+  départs des clips et des cues étant calés sur la grille, les cycles le sont aussi. Les modifieurs calés sur
+  le tempo (stroboscope…) gardent l'heure de la timeline dans Show.
+- **Maître Vitesse** : une horloge accélérée continue (`core/masters.py`, `SpeedClock`) au lieu de « heure
+  murale × vitesse », pour que changer la vitesse ne fasse pas sauter les animations (laser en direct). Dans
+  Show, la vitesse multiplie le temps local des oscillateurs (forme et effets) ; elle n'agit pas sur l'image.
+- **Grille des départs du Live** : `LiveRuntime.origin` (heure murale d'un début de mesure, remise à zéro par
+  `set_live_origin`, pour Tap) avec `timeline.bpm` ; `bar_offset` ne s'applique pas à l'heure murale.
+  Relancer un cue en cours l'arrête (au prochain départ calé) ; relancer un cue en attente l'annule.
+- **Effets** : `Effect.key` en plus (réglage animé par « Réglage de la forme », dont l'unique réglage s'appelle
+  `value`). Les effets d'une liste s'appliquent dans l'ordre (le premier d'abord). Un effet qui vise un
+  calque supprimé ne fait rien. Le registre contient aussi un effet interne « Points » (`dots`, absent de la
+  bibliothèque de Show) : l'effet rapide « Points » en a besoin. « Miroir » = Symétrie radiale ×2 en
+  kaléidoscope. Les effets rapides partent au moment de l'appui ; « Fondu noir » descend en 0,5 s (`attack`).
+- **Maîtres et aperçus** : `display_strokes()` (mire) rend le contenu sans les maîtres (on dessine dans le
+  repère de la forme) ; les aperçus qui doivent les montrer appellent `apply_masters(strokes, masters)`.
+  La sortie laser les applique toujours (avant les réglages de sortie).
+- **Outils de la mire** : `eval_context()` ignore les oscillateurs (on déplace les valeurs de base, jamais
+  une valeur qui oscille) ; seul l'affichage les montre.
+- **Anciens projets** : des clips qui se chevauchaient passent sur une autre piste (même instant) ; une copie
+  cachée dont la forme d'origine n'existe plus est gardée comme forme normale. Le message n'est montré que si
+  des animations ont réellement été retirées (`Document.load_notice()`).
+- **Live dans le fichier** : pages, cues, mode de départ et « plusieurs cues » sont du contenu (annulables) ;
+  la page affichée est de l'état d'affichage (`doc.view["live_page"]`, avec `workspace` et `layouts` pour les
+  dispositions des espaces). Touches par défaut de la 4e ligne : `12345678` (`normalize_key` accepte aussi
+  la rangée des chiffres d'un clavier AZERTY sans Maj). Une touche déjà prise sur la page n'est pas donnée deux
+  fois.
+- **Compatibilité** : `Library.visible()` (toutes les formes) et `EditorState.contextChanged` (forme en cours ou
+  espace changés) sont gardés pour l'interface actuelle ; `enter_def()` = « Ouvrir dans Forme ».

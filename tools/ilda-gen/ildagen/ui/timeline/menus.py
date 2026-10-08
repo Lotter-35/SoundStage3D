@@ -1,11 +1,8 @@
-"""Menus clic droit de la timeline (règle, pistes, clips, automations, clés)."""
+"""Menus clic droit de la timeline (règle, pistes, clips)."""
 
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import QInputDialog, QMenu
 
-from ...core.automation import CURVES
-from . import lanes as L
 from .geometry import HEADER_W
 
 
@@ -26,93 +23,45 @@ class TimelineMenus:
             a.triggered.connect(lambda on: ed.timeline_mutate("Boucle", lambda: setattr(tl, "loop_on", on)))
             menu.addAction(a)
             menu.addSeparator()
-            menu.addAction("La mesure 1 commence ici").triggered.connect(
+            menu.addAction("Ajouter un repère ici").triggered.connect(lambda: ed.add_marker(t))
+            menu.addAction("Début de la mesure 1 ici").triggered.connect(
                 lambda: ed.timeline_mutate("Mesure 1", lambda: setattr(tl, "bar_offset", g.t(x))))
             menu.exec(e.globalPos())
             return
         row = g.row_at(self.rows(), y, x)
-        if row is not None and row.kind != "track" and x >= HEADER_W and \
-                not (g.x(row.clip.start) - 6 <= x <= g.x(row.clip.end) + 6):
-            row = None      # à côté des clips : vide
         if row is None:
             menu.addAction("Ajouter une piste").triggered.connect(ed.add_track)
             menu.exec(e.globalPos())
             return
-        if row.kind == "group" or (row.kind == "lane" and row.virtual and
-                                     self.key_hit(row, x, y) is None):
-            return
-        if row.kind == "track":
-            clip, _ = self.clip_hit(row, x) if x >= HEADER_W else (None, None)
-            if clip is not None:
-                ed.enter_clip(clip.id)
-                self._clip_menu(menu, clip)
-            else:
-                tr = row.track
-                menu.addAction("Renommer la piste…").triggered.connect(lambda: self._rename_track(tr))
-                menu.addAction("Ajouter une piste").triggered.connect(ed.add_track)
-                a = menu.addAction("Supprimer la piste")
-                a.triggered.connect(lambda: ed.remove_track(tr.id))
+        clip, _ = self.clip_hit(row, x) if x >= HEADER_W else (None, None)
+        if clip is not None:
+            if clip.id not in self.sel_clips:
+                self.set_clip_selection([clip.id])
+            ed.select_clips(ed.clip_selection, clip.id)
+            self._clip_menu(menu, clip)
         else:
-            k = self.key_hit(row, x, y) if x >= HEADER_W else None
-            if k is not None and not (e.modifiers() & Qt.KeyboardModifier.ShiftModifier):
-                # Clic droit sur un point : il est supprimé
-                auto = row.auto
-                self.sel_key = None
-                ed.timeline_mutate("Supprimer la clé", lambda: auto.keys.remove(k) if k in auto.keys else None)
-                ed.statusMessage.emit("Clé supprimée (Maj + clic droit : courbe, réinitialiser)")
-                return
-            if k is not None:
-                self.sel_key = k
-                self.update()
-                node, spec = L.target(ed, row.clip, row.auto)
-                if spec is not None and not L.is_color(spec):
-                    menu.addAction("Réinitialiser la valeur").triggered.connect(
-                        lambda: ed.timeline_mutate("Réinitialiser la clé", lambda: setattr(k, "v", spec.default_value())))
-                    menu.addSeparator()
-                for cid, label, _ in CURVES:
-                    a = QAction(label, menu, checkable=True, checked=k.curve == cid)
-                    a.triggered.connect(lambda _=False, c=cid: ed.timeline_mutate("Courbe", lambda: setattr(k, "curve", c)))
-                    menu.addAction(a)
-                menu.addSeparator()
-                menu.addAction("Supprimer la clé").triggered.connect(
-                    lambda: ed.timeline_mutate("Supprimer la clé", lambda: row.auto.keys.remove(k)))
-            else:
-                auto, clip = row.auto, row.clip
-                menu.addAction("Relier à un autre réglage").triggered.connect(lambda: self._rearm(clip, auto))
-                menu.addAction("Supprimer l'automation").triggered.connect(lambda: ed.delete_automation(clip.id, auto.id))
+            tr = row.track
+            menu.addAction("Renommer la piste…").triggered.connect(lambda: self._rename_track(tr))
+            menu.addAction("Ajouter une piste").triggered.connect(ed.add_track)
+            a = menu.addAction("Supprimer la piste")
+            a.triggered.connect(lambda: ed.remove_track(tr.id))
         menu.exec(e.globalPos())
 
     def _clip_menu(self, menu, clip):
         ed = self.editor
         linked, shared = ed.clip_is_linked(clip)
         if not linked:
-            menu.addAction("Relier à la forme d'origine").triggered.connect(lambda: ed.relink_clip(clip.id))
+            menu.addAction("Relier (reprendre l'animation des autres clips de la forme)").triggered.connect(
+                lambda: ed.relink_clip(clip.id))
             menu.addSeparator()
         elif shared:
-            menu.addAction("Délier (modifier ce clip seul)").triggered.connect(lambda: ed.unlink_clip(clip.id))
+            menu.addAction("Délier (animation propre à ce clip)").triggered.connect(lambda: ed.unlink_clip(clip.id))
             menu.addSeparator()
-        menu.addAction("Nouvelle automation").triggered.connect(lambda: ed.new_automation(clip.id))
-        menu.addAction("Replier" if clip.expanded else "Déplier").triggered.connect(lambda: self._toggle(clip))
-        menu.addSeparator()
-        menu.addAction("Afficher cette forme").triggered.connect(lambda: ed.enter_def(clip.def_id))
+        menu.addAction("Ouvrir dans Forme").triggered.connect(lambda: ed.enter_def(clip.def_id))
         menu.addAction("Dupliquer").triggered.connect(lambda: ed.duplicate_clip(clip.id))
         menu.addAction("Supprimer").triggered.connect(lambda: ed.delete_clip(clip.id))
-
-    def _toggle(self, clip):
-        clip.expanded = not clip.expanded
-        self.editor.view_changed()
-        self._changed()
 
     def _rename_track(self, tr):
         name, ok = QInputDialog.getText(self, "Renommer la piste", "Nom :", text=tr.name)
         if ok and name.strip():
-            self.editor.timeline_mutate("Renommer la piste", lambda: setattr(tr, "name", name.strip()))
-
-    def _rearm(self, clip, auto):
-        def do():
-            clip.automations[:] = [a for a in clip.automations if not a.armed or a is auto]
-            auto.node_id = ""
-            auto.key = ""
-            auto.label = "En attente : touchez un réglage"
-        self.editor.timeline_mutate("Relier l'automation", do)
-        self.editor.enter_clip(clip.id)
+            self.editor.rename_track(tr.id, name)

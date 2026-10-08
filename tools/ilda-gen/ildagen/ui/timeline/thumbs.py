@@ -1,8 +1,8 @@
 """Vignettes des clips (aperçu rapide, pas fidèle) : cache, réutilisation, budget de temps.
 
-- une vignette n'est recalculée que si le clip ou les formes personnalisées changent ;
-- deux instants où les automations donnent les mêmes valeurs partagent la même vignette
-  (un clip sans automation = une seule vignette répétée), sauf si un modifieur dépend du temps ;
+- une vignette n'est recalculée que si le clip, son animation ou les formes personnalisées changent ;
+- un clip qui ne dépend pas du temps (pas d'effet animé, d'oscillateur, de fondu…) n'a qu'une seule vignette,
+  répétée tout le long ;
 - dessin simplifié : une couleur par tracé, peu de points, sans anticrénelage ;
 - au plus BUDGET_S de calcul par affichage : le reste arrive à l'affichage suivant.
 """
@@ -14,26 +14,12 @@ import numpy as np
 from PySide6.QtCore import QPointF
 from PySide6.QtGui import QColor, QPainter, QPen, QPixmap, QPolygonF
 
-from ...core.evaluator import EvalContext, evaluate
+from ...core.effects.apply import clip_strokes
 from .. import theme
 
 BUDGET_S = 0.012
 MAX_POINTS = 48
 MAX_ENTRIES = 4000
-
-
-def _ov_key(ov):
-    out = []
-    for k in sorted(ov):
-        v = ov[k]
-        if isinstance(v, (tuple, list)):
-            v = tuple(round(float(x), 3) for x in v)
-        elif isinstance(v, bool):
-            v = int(v)
-        elif isinstance(v, (int, float)):
-            v = round(float(v), 4)
-        out.append((k, v))
-    return tuple(out)
 
 
 def draw_fast(pm, strokes, size):
@@ -66,12 +52,14 @@ def draw_fast(pm, strokes, size):
     p.end()
 
 
+
+
 class ThumbCache:
     def __init__(self, editor):
         self.editor = editor
         self.items = {}
         self.sigs = {}            # clip_id → (content_rev, signature)
-        self.animated = {}        # signature → la forme dépend du temps (stroboscope, défilement…)
+        self.animated = {}        # signature → le clip dépend du temps (effets, oscillateurs, fondus…)
         self.lib_sig = (None, "")
         self.deadline = 0.0
         self.pending = False
@@ -89,22 +77,22 @@ class ThumbCache:
             return cached[1]
         if self.lib_sig[0] != rev:
             self.lib_sig = (rev, json.dumps(self.editor.doc.library.to_dict(), sort_keys=True))
+        tl = self.editor.doc.timeline
         d = clip.to_dict()
         d.pop("expanded", None)
-        d.pop("closed_nodes", None)
-        d.pop("lane_sizes", None)
-        sig = str(hash((self.lib_sig[1], json.dumps(d, sort_keys=True), tuple(self.editor.default_color()))))
+        d.pop("id", None)
+        anim = tl.animations.get(clip.anim_id)
+        sig = str(hash((self.lib_sig[1], json.dumps(d, sort_keys=True),
+                        json.dumps(anim.to_dict() if anim else None, sort_keys=True),
+                        tl.bpm, tl.bar_offset, tuple(self.editor.default_color()))))
         self.sigs[clip.id] = (rev, sig)
         return sig
 
     def get(self, clip, t_local, size):
         """Vignette, ou None si le budget de temps est dépassé (elle sera calculée plus tard)."""
         sig = self._signature(clip)
-        ov = clip.overrides_at(t_local)
-        if self.animated.get(sig):
-            key = (sig, size, round(t_local, 2))
-        else:
-            key = (sig, size, _ov_key(ov))
+        timed = self.animated.get(sig, True)
+        key = (sig, size, round(t_local, 2) if timed else None)
         pm = self.items.get(key)
         if pm is not None:
             return pm
@@ -114,14 +102,11 @@ class ThumbCache:
         ed = self.editor
         pm = QPixmap(size, size)
         pm.fill(theme.qc(theme.BG_MIRE))
-        d = ed.doc.library.get(clip.def_id)
-        if d is not None:
-            ctx = EvalContext(ed.doc.library, clip.start + t_local, ed.doc.timeline.bpm, ed.default_color(), ov,
-                              ed.doc.timeline.bar_offset)
-            strokes = evaluate(d.root, ctx)
-            if ctx.animated and not self.animated.get(sig):
-                self.animated[sig] = True
-                key = (sig, size, round(t_local, 2))
-            draw_fast(pm, strokes, size)
+        strokes, animated = clip_strokes(ed.doc.timeline, ed.doc.library, clip, clip.start + t_local,
+                                         ed.default_color())
+        self.animated[sig] = animated
+        if not animated:
+            key = (sig, size, None)
+        draw_fast(pm, strokes, size)
         self.items[key] = pm
         return pm

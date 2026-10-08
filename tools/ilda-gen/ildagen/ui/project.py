@@ -46,6 +46,7 @@ class ProjectController(QObject):
         self.backup_dir = AS.backup_dir(config_dir())
         self._autosave_owner = None    # session de l'éditeur dont le travail est dans la sauvegarde automatique
         self._no_autosave = False      # projet d'une version plus récente : jamais écrasé automatiquement
+        self.last_notice = ""          # message du dernier projet ouvert (ancien format : animations retirées)
         # Sauvegarde à chaque modification (regroupée : 0,4 s après la dernière)
         self.timer = QTimer(self)
         self.timer.setSingleShot(True)
@@ -103,7 +104,10 @@ class ProjectController(QObject):
         self._load_audio(doc.timeline.audio_path)
         self.editor.settings.add_recent(path)
         self._remember(path)
-        self.editor.statusMessage.emit(f"Projet ouvert : {os.path.basename(path)}")
+        # Ancien projet (v1–v4) : ses animations ont été retirées (D12), on le dit
+        notice = doc.load_notice()
+        self.last_notice = notice
+        self.editor.statusMessage.emit(f"Projet ouvert : {os.path.basename(path)}" + (f" — {notice}" if notice else ""))
         return True
 
     def _load(self, path, title):
@@ -223,6 +227,9 @@ class ProjectController(QObject):
         self.editor.dirty = dirty
         self._load_audio(doc.timeline.audio_path)
         self.editor.projectChanged.emit()
+        self.last_notice = doc.load_notice()
+        if self.last_notice:
+            self.editor.statusMessage.emit(self.last_notice)
         return True
 
     # ── Musique ──────────────────────────────────────────────────────────

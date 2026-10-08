@@ -1,6 +1,7 @@
 """Fil d'envoi live : calcule et envoie les images au rythme exact (horloge monotone), hors de l'interface.
 
-- l'image est évaluée à l'heure réelle d'envoi (la lecture est extrapolée depuis l'instantané publié) ;
+- l'image est évaluée à l'heure réelle d'envoi (la lecture est extrapolée depuis l'instantané publié) ; ce qui
+  est envoyé suit l'espace actif (forme en cours, timeline ou live), puis les maîtres et les réglages de sortie ;
 - une image inchangée est renvoyée telle quelle (cache sur la révision du document et l'instant montré) ;
 - les fragments d'une grosse image sont espacés dans l'intervalle entre deux images (pas de rafale perdue) ;
 - BLACKOUT : l'envoi s'arrête au fragment près et des images éteintes partent aussitôt ;
@@ -13,6 +14,7 @@ import sys
 import threading
 import time
 
+from ..core.masters import apply_masters
 from ..laser.idn import IdnPacketBuilder, frame_data
 from ..laser.pipeline import MAX_LIVE_POINTS, render_frame
 from .live_snapshot import evaluate_at
@@ -153,18 +155,22 @@ class OutputWorker(threading.Thread):
 
     # ── Images ───────────────────────────────────────────────────────────
     def _render(self, snap, t):
-        """(image, octets, nouvelle ?) à l'instant t ; une image déjà calculée est réutilisée."""
+        """(image, octets, nouvelle ?) à l'instant t ; une image déjà calculée est réutilisée.
+        Les maîtres s'appliquent avant les réglages de sortie."""
         akey = (snap.doc_rev, snap.mode, snap.def_id)
-        base = (snap.doc_rev, snap.mode, snap.def_id, snap.hold, snap.default_color, snap.settings.signature, snap.fps)
-        timed = snap.mode == "timeline" or self._animated.get(akey, True)
+        base = (snap.doc_rev, snap.mode, snap.def_id, snap.masters_signature(), snap.default_color,
+                snap.settings.signature, snap.fps)
+        always = snap.mode in ("show", "live")
+        timed = always or self._animated.get(akey, True)
         key = base + (round(t, 4) if timed else None,)
         if key == self._cache[0]:
             return self._cache[1], self._cache[2], False
         strokes, animated = evaluate_at(snap.doc, snap, t)
+        strokes = apply_masters(strokes, snap.masters)
         if len(self._animated) > 64:
             self._animated.clear()                      # anciennes révisions du document
         self._animated[akey] = animated
-        key = base + (round(t, 4) if (snap.mode == "timeline" or animated) else None,)
+        key = base + (round(t, 4) if (always or animated) else None,)
         frame = render_frame(strokes, snap.settings, snap.fps, True, MAX_LIVE_POINTS, self._order)
         self._order = frame.order
         data = frame_data(frame.x, frame.y, frame.r, frame.g, frame.b)

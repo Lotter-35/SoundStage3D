@@ -26,12 +26,6 @@ class LayersPanel(QWidget):
         lay.addWidget(self.header)
         self.tree = LayerTreeView(editor)
         lay.addWidget(self.tree, 1)
-        self.empty = QLabel("Sélectionnez un clip dans la timeline pour voir ses calques.")
-        self.empty.setObjectName("dim")
-        self.empty.setWordWrap(True)
-        self.empty.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
-        self.empty.setContentsMargins(10, 10, 10, 10)
-        lay.addWidget(self.empty, 1)
         self.footer = self._footer()
         lay.addWidget(self.footer)
         editor.contextChanged.connect(self.refresh)
@@ -104,9 +98,5 @@ class LayersPanel(QWidget):
             self.editor.create_custom_shape(name)
 
     def refresh(self):
-        """En-tête : la forme dont on voit les calques (ou le clip sélectionné)."""
-        empty = self.editor.panels_empty()
-        self.ctx.setText("" if empty else self.editor.context_label())
-        self.tree.setVisible(not empty)
-        self.footer.setVisible(not empty)
-        self.empty.setVisible(empty)
+        """En-tête : la forme en cours, dont on voit les calques."""
+        self.ctx.setText(self.editor.context_label())

@@ -1,18 +1,21 @@
-"""Zone de la timeline : affichage et interactions (tête de lecture, boucle, clips, automations)."""
+"""Zone de la timeline : affichage et interactions (tête de lecture, boucle, pistes, clips).
+
+Les clips se déplacent et se redimensionnent sans jamais en chevaucher un autre sur leur piste ; leurs effets
+d'animation se règlent dans l'espace Show (inspecteur du clip). Double-clic sur un clip : sa forme s'ouvre
+dans l'espace Forme.
+"""
 
 from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QColorDialog, QInputDialog, QWidget
+from PySide6.QtGui import QPainter, QPen, QPixmap
+from PySide6.QtWidgets import QInputDialog, QWidget
 
-from ...core.timeline import Track
 from ...editor.waveform import PEAKS_PER_S
 from .. import theme
 from ..canvas.view import DEF_MIME
 from . import draw as D
-from . import lanes as L
-from .geometry import CHEVRON_W, CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry, clip_bottoms, link_icon_rect, track_blocks
-from .edit import TimelineEditing
 from .clipboard import TimelineClipboard, range_modifier
+from .edit import TimelineEditing
+from .geometry import CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry, link_icon_rect
 from .menus import TimelineMenus
 from .selection import TimelineSelection
 from .thumbs import ThumbCache
@@ -34,15 +37,13 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         self.peaks = None
         self._wave_cache = None
         self.drag = None
-        self.sel_key = None
-        self.default_guide = None     # (ligne, y) de la valeur par défaut (Maj pendant le glisser d'un point)
         self.thumbs = ThumbCache(editor)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAcceptDrops(True)
         self.setMinimumHeight(120)
         editor.timelineChanged.connect(self._changed)
-        editor.contextChanged.connect(self.update)
+        editor.clipSelectionChanged.connect(self.update)
         editor.docChanged.connect(self.update)
         editor.projectChanged.connect(self._changed)
         editor.playheadChanged.connect(self._playhead)
@@ -58,8 +59,6 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
 
     def _restored(self):
         self.drag = None
-        self.sel_key = None
-        self.default_guide = None
         self._changed()
 
     def set_peaks(self, peaks):
@@ -101,39 +100,16 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         rows = g.rows(self.editor)
         self.thumbs.begin_paint()
         p.setClipRect(QRectF(HEADER_W, g.top, g.width - HEADER_W, g.height - g.top))
-        blocks = track_blocks(rows)
-        for i, tr in enumerate(self.tl.tracks):
-            if i % 2 and tr.id in blocks:
-                a, b = blocks[tr.id]
-                p.fillRect(QRectF(HEADER_W, a, g.width - HEADER_W, b - a), theme.qc("#ffffff", 0.012))
+        for i, r in enumerate(rows):
+            if i % 2:
+                p.fillRect(QRectF(HEADER_W, r.y, g.width - HEADER_W, r.h), theme.qc("#ffffff", 0.012))
         D.draw_grid(p, g, self.tl, g.top, g.height)
-        sel_clip = self.editor.context[1] if self.editor.context[0] == "clip" else None
-        def tr_id(r):
-            return r.track.id
+        sel = set(self.editor.clip_selection)
         for r in rows:
-            if r.kind == "track" and blocks[tr_id(r)][1] > r.y + r.h:
-                # Zone des lignes dépliées sous la piste
-                p.fillRect(QRectF(HEADER_W, r.y + r.h, g.width - HEADER_W, blocks[tr_id(r)][1] - r.y - r.h),
-                           theme.qc(theme.BG_APP, 0.6))
-            if r.kind == "lane":
-                D.draw_lane(p, g, r, self.editor, self.sel_key)
-            elif r.kind == "group":
-                D.draw_group(p, g, r)
-            else:
-                for c in r.track.clips:
-                    D.draw_clip(p, g, r, c, self.editor, c.id == sel_clip or c.id in self.sel_clips,
-                                r.track.muted, self.thumb)
-        self._draw_clip_frames(p, rows, sel_clip)
-        p.setPen(QPen(theme.qc(theme.BORDER), 1))
-        for _, b in blocks.values():
-            p.drawLine(QPointF(HEADER_W, b - 0.5), QPointF(g.width, b - 0.5))     # fin du bloc d'une piste
+            for c in r.track.clips:
+                D.draw_clip(p, g, r, c, self.editor, c.id in sel, r.track.muted, self.thumb)
         self.draw_range(p)
         self.draw_rect(p)
-        if self.default_guide is not None:
-            # Maj pendant le glisser d'un point : la valeur par défaut, où il s'aimante
-            gr, gy = self.default_guide
-            p.setPen(QPen(theme.qc(theme.TEXT_DIM, 0.8), 1, Qt.PenStyle.DashLine))
-            p.drawLine(QPointF(max(HEADER_W, g.x(gr.clip.start)), gy), QPointF(g.x(gr.clip.end), gy))
         p.setClipping(False)
         if self.peaks is not None:
             p.drawPixmap(0, 0, self._waveform_pixmap())
@@ -142,29 +118,11 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         D.draw_headers(p, g, rows, self.editor)
         p.setClipping(False)
         D.draw_corner(p, g, self.tl)
-        if self.editor.preview_time is not None:
-            D.draw_preview_marker(p, g, self.editor.preview_time)
         D.draw_playhead(p, g, self.editor.playhead)
         p.end()
         if self.thumbs.pending:
             # Vignettes pas encore calculées : on continue juste après (l'interface reste fluide)
             QTimer.singleShot(0, self.update)
-
-    def _draw_clip_frames(self, p, rows, sel_clip):
-        """Clip déplié : un cadre relie la forme à ses modifieurs et réglages (tout appartient au clip)."""
-        g = self.geo
-        bottoms = clip_bottoms(rows)
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        for r in rows:
-            if r.kind != "track":
-                continue
-            for c in r.track.clips:
-                if c.id not in bottoms:
-                    continue
-                sel = c.id == sel_clip or c.id in self.sel_clips
-                x0, x1 = g.x(c.start), g.x(c.end)
-                p.setPen(QPen(theme.qc("#ffffff", 0.22 if sel else 0.10), 1))
-                p.drawRoundedRect(QRectF(x0 + 0.5, r.y + 3.5, x1 - x0 - 1, bottoms[c.id] - r.y - 5), 3, 3)
 
     def thumb(self, clip, t_local, size):
         return self.thumbs.get(clip, t_local, size)
@@ -197,37 +155,11 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             cx, _, cw, _ = self.geo.clip_rect(row, c)
             if cx - 2 <= x <= cx + cw + 2:
                 if x <= cx + CLIP_EDGE and cw > 3 * CLIP_EDGE:
-                    if x >= cx + 2 and x <= cx + CHEVRON_W and cw > CHEVRON_W + 4:
-                        return c, "chevron"
                     return c, "left"
                 if x >= cx + cw - CLIP_EDGE:
                     return c, "right"
-                if x <= cx + CHEVRON_W and cw > CHEVRON_W + 4:
-                    return c, "chevron"
                 return c, "body"
         return None, None
-
-    def key_hit(self, row, x, y):
-        node, spec = L.target(self.editor, row.clip, row.auto)
-        rng = L.value_range(spec, row.auto)
-        for k in row.auto.keys:
-            kx = self.geo.x(row.clip.start + row.clip.secs(k.t))
-            ky = row.y + row.h / 2 if L.is_color(spec) else L.v_to_y(k.v, row, rng)
-            if abs(kx - x) <= 6 and abs(ky - y) <= 7:
-                return k
-        return None
-
-    def handle_hit(self, row, x, y):
-        if self.sel_key is None or self.sel_key not in row.auto.keys or self.sel_key.curve != "custom":
-            return None
-        node, spec = L.target(self.editor, row.clip, row.auto)
-        h = D.bezier_handles(self.geo, row, row.clip, row.auto, self.sel_key, L.value_range(spec, row.auto))
-        if h is None:
-            return None
-        for i, (hx, hy) in ((0, h[2]), (1, h[3])):
-            if abs(hx - x) <= 6 and abs(hy - y) <= 6:
-                return i
-        return None
 
     # ── Souris ───────────────────────────────────────────────────────────
     def mousePressEvent(self, e):
@@ -247,9 +179,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
                 self.drag = {"kind": "scrub"}
                 self.playback.seek(max(0.0, self.snap(t, e.modifiers())))
             return
-        rows = self.rows()
-        row = g.row_at(rows, y, x)
-        if x >= HEADER_W and (row is None or row.kind == "track") and range_modifier(e.modifiers()):
+        row = g.row_at(self.rows(), y, x)
+        if x >= HEADER_W and range_modifier(e.modifiers()):
             # Cmd/Ctrl + clic sur un clip : l'ajouter / le retirer ; Cmd/Ctrl + glisser : zone de temps à copier
             hit = self.clip_hit(row, x)[0] if row is not None else None
             self.start_range(x, e.modifiers(), hit)
@@ -257,54 +188,35 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         if x >= HEADER_W:
             self.clear_range()
         shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        if row is not None and row.kind != "track" and x >= HEADER_W and \
-                not (g.x(row.clip.start) - 6 <= x <= g.x(row.clip.end) + 6):
-            row = None      # à côté des clips (à la hauteur de leurs lignes) : c'est du vide
-        if row is None or (row.kind == "track" and x >= HEADER_W and self.clip_hit(row, x)[0] is None):
+        if row is None or (x >= HEADER_W and self.clip_hit(row, x)[0] is None):
             # Glisser dans le vide : rectangle de sélection de clips ; simple clic : tête de lecture
             self.start_rect(x, y, shift)
             return
         if x < HEADER_W:
             self._press_header(row, x, y)
             return
-        if row.kind == "group":
-            self.toggle_group(row)          # clic sur un modifieur (dans son clip) : replier / déplier
+        clip, part = self.clip_hit(row, x)
+        if self._link_icon_hit(row, clip, x, y):
+            linked, shared = self.editor.clip_is_linked(clip)
+            if not linked:
+                self.editor.relink_clip(clip.id)
+            elif shared:
+                self.editor.unlink_clip(clip.id)
+            self._changed()
             return
-        if row.kind == "track":
-            clip, part = self.clip_hit(row, x)
-            if clip is not None and self._link_icon_hit(row, clip, x, y):
-                linked, shared = self.editor.clip_is_linked(clip)
-                if not linked:
-                    self.editor.relink_clip(clip.id)
-                elif shared:
-                    self.editor.unlink_clip(clip.id)
-                self._changed()
-                return
-            if part == "chevron":
-                clip.expanded = not clip.expanded
-                self.editor.enter_clip(clip.id)
-                self.editor.view_changed()
-                self._changed()
-                return
-            if shift:
-                self.toggle_clip(clip)          # Maj + clic : ajouter / retirer de la sélection
-                return
-            if clip.id not in self.sel_clips:
-                self.set_clip_selection([clip.id])
-            self.editor.enter_clip(clip.id)
-            self.editor.begin("Déplacer le clip" if part == "body" else "Durée du clip")
-            group = [(c, c.start) for _, c in self.selected_clips() if c is not clip] if part == "body" else []
-            self.drag = {"kind": "clip_" + part, "clip": clip, "track": row.track, "x0": x,
-                         "start": clip.start, "end": clip.end, "group": group,
-                         "keys": [(k, k.t) for a in clip.automations for k in a.keys]}
-            self.update()
+        if shift:
+            self.toggle_clip(clip)          # Maj + clic : ajouter / retirer de la sélection
             return
-        self._press_lane(row, x, y, e)
+        if clip.id not in self.sel_clips:
+            self.set_clip_selection([clip.id])
+        self.editor.select_clips(self.editor.clip_selection, clip.id)
+        self.editor.begin("Déplacer le clip" if part == "body" else "Durée du clip")
+        group = {c.id: c.start for _, c in self.selected_clips()} if part == "body" else {}
+        self.drag = {"kind": "clip_" + part, "clip": clip, "x0": x, "start": clip.start, "end": clip.end,
+                     "group": group if len(group) > 1 else {}}
+        self.update()
 
     def _click_empty(self, x, e):
-        if self.editor.context[0] == "clip":
-            self.editor.enter_def()
-            self.editor.set_view_source("timeline")
         if x >= HEADER_W:
             self.playback.seek(max(0.0, self.snap(self.geo.t(x), e.modifiers())))
             self.drag = {"kind": "scrub"}
@@ -344,53 +256,39 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             return
         if kind.startswith("clip_"):
             self._drag_clip(d, x, y, e.modifiers())
-            return
-        if kind == "key":
-            self._drag_key(d, x, y, e.modifiers())
-            return
-        if kind == "handle":
-            self._drag_handle(d, x, y)
 
     def mouseReleaseEvent(self, e):
-        if self.drag is not None:
-            kind = self.drag["kind"]
-            if kind == "rect":
-                self.end_rect(e)
-                self.drag = None
-                self.update()
-                return
-            if kind == "range":
-                self.end_range()
-                self.drag = None
-                return
-            d = self.drag
+        if self.drag is None:
+            return
+        kind = self.drag["kind"]
+        if kind == "rect":
+            self.end_rect(e)
             self.drag = None
-            self.default_guide = None
-            self.editor.set_preview_time(None)   # retour à la tête de lecture
-            if kind == "key" and d["existing"] and not d["moved"]:
-                # Simple clic sur un point : rampe → carré → sinusoïdale
-                label = d["row"].auto.cycle_curve(d["key"])
-                if label:
-                    self.editor.statusMessage.emit(f"Courbe : {label} (cliquer à nouveau pour changer)")
-            if kind == "clip_body" and d.get("group") and abs(e.position().x() - d["x0"]) < 2:
-                self.set_clip_selection([d["clip"].id])     # simple clic dans une sélection : ce clip seul
-            if kind != "scrub":
-                self.editor.commit()
-                self.editor.notify(timeline=True)
+            self.update()
+            return
+        if kind == "range":
+            self.end_range()
+            self.drag = None
+            return
+        d = self.drag
+        self.drag = None
+        if kind == "clip_body" and d.get("group") and abs(e.position().x() - d["x0"]) < 2:
+            self.set_clip_selection([d["clip"].id])     # simple clic dans une sélection : ce clip seul
+        if kind != "scrub":
+            self.editor.commit()
+            self.editor.notify(timeline=True)
 
     def _hover(self, x, y):
         g = self.geo
         cur = Qt.CursorShape.ArrowCursor
         if y >= g.top and x >= HEADER_W:
             row = g.row_at(self.rows(), y)
-            if row is not None and row.kind == "track":
-                c, part = self.clip_hit(row, x)
+            if row is not None:
+                _, part = self.clip_hit(row, x)
                 if part in ("left", "right"):
                     cur = Qt.CursorShape.SizeHorCursor
                 elif part == "body":
                     cur = Qt.CursorShape.OpenHandCursor
-                elif part == "chevron":
-                    cur = Qt.CursorShape.PointingHandCursor
         elif y < LOOP_H + 2 and x >= HEADER_W:
             cur = Qt.CursorShape.SizeHorCursor
         self.setCursor(cur)
@@ -400,27 +298,14 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         row = self.geo.row_at(self.rows(), y, x)
         if row is None:
             return
-        if row.kind == "group":
-            return
-        if row.kind == "track" and x < HEADER_W:
+        if x < HEADER_W:
             name, ok = QInputDialog.getText(self, "Renommer la piste", "Nom :", text=row.track.name)
             if ok and name.strip():
-                self.editor.timeline_mutate("Renommer la piste", lambda: setattr(row.track, "name", name.strip()))
+                self.editor.rename_track(row.track.id, name)
             return
-        if row.kind == "track":
-            clip, _ = self.clip_hit(row, x)
-            if clip is not None:
-                clip.expanded = not clip.expanded
-                self.editor.view_changed()
-                self._changed()
-            return
-        k = self.key_hit(row, x, y)
-        node, spec = L.target(self.editor, row.clip, row.auto)
-        if k is not None and L.is_color(spec):
-            c = QColorDialog.getColor(QColor.fromRgbF(*k.v), self, "Couleur de la clé",
-                                      QColorDialog.ColorDialogOption.DontUseNativeDialog)
-            if c.isValid():
-                self.editor.timeline_mutate("Clé d'automation", lambda: setattr(k, "v", (c.redF(), c.greenF(), c.blueF())))
+        clip, _ = self.clip_hit(row, x)
+        if clip is not None:
+            self.editor.enter_def(clip.def_id)          # sa forme s'ouvre dans l'espace Forme
 
     def wheelEvent(self, e):
         mods = e.modifiers()
@@ -477,7 +362,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             return
         super().keyPressEvent(e)
 
-    # ── Dépôt d'une forme personnalisée ──────────────────────────────────
+    # ── Dépôt d'une forme : un clip (place occupée : juste après ; sous les pistes : nouvelle piste) ──
     def dragEnterEvent(self, e):
         if e.mimeData().hasFormat(DEF_MIME):
             e.acceptProposedAction()
@@ -492,14 +377,11 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         def_id = bytes(e.mimeData().data(DEF_MIME)).decode("utf-8")
         pos = e.position()
         row = self.geo.row_at(self.rows(), pos.y())
-        track = row.track if row is not None else None
-        if track is None:
-            track = Track(f"Piste {len(self.tl.tracks) + 1}")
-            self.editor.timeline_mutate("Ajouter une piste", lambda: self.tl.tracks.append(track))
+        track = row.track if row is not None else self.editor.add_track()
         t = max(0.0, self.snap(self.geo.t(max(HEADER_W, pos.x()))))
         clip = self.editor.add_clip(def_id, track.id, t)
-        self.editor.enter_clip(clip.id)
+        self.editor.select_clip(clip.id)
         e.acceptProposedAction()
 
 
-__all__ = ["TimelineCanvas", "QPointF"]
+__all__ = ["TimelineCanvas", "QPointF", "QPen"]
