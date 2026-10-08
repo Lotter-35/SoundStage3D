@@ -1,7 +1,7 @@
 """Zone de la mire : affichage, zoom / déplacement de la vue, routage vers l'outil actif."""
 
 from PySide6.QtCore import QEvent, QPointF, Qt
-from PySide6.QtGui import QPainter
+from PySide6.QtGui import QInputDevice, QPainter
 from PySide6.QtWidgets import QWidget
 
 from ...laser.output import safety_rect
@@ -9,7 +9,7 @@ from .. import theme
 from . import painter as P
 from .tools import BucketTool, PencilTool, SelectTool, ShapeTool
 from .tools.base import ToolEvent
-from .viewport import Viewport
+from .viewport import WHEEL_ZOOM, Viewport, wheel_action
 
 DEF_MIME = "application/x-ildagen-def"
 POINTS_ZOOM = 6.0   # au-delà, les points laser réels sont affichés
@@ -172,21 +172,23 @@ class CanvasView(QWidget):
             self.tool.double_click(self._event(e))
 
     def wheelEvent(self, e):
+        # Souris : zoom ; pavé tactile : déplacement (deux doigts) ; Ctrl / Cmd + molette : zoom (D13)
         pos = e.position()
-        mods = e.modifiers()
-        pd = e.pixelDelta()
-        zoom_key = bool(mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier |
-                                Qt.KeyboardModifier.AltModifier))
-        if not pd.isNull() and not zoom_key:
-            # Pavé tactile : déplacement de la vue
-            self.vt.pan_pixels(pd.x(), pd.y())
+        dev = e.pointingDevice()
+        kind = dev.type() if dev is not None else QInputDevice.DeviceType.Mouse
+        if wheel_action(kind, e.phase(), e.modifiers()) == "pan":
+            d = QPointF(e.pixelDelta())
+            if d.isNull():
+                d = QPointF(e.angleDelta()) / 4.0      # pavé tactile sans déplacement en pixels
+            self.vt.pan_pixels(d.x(), d.y())
         else:
             dy = e.angleDelta().y() or e.angleDelta().x()
-            self.vt.zoom_at(1.0015 ** dy, pos.x(), pos.y())
+            self.vt.zoom_at(WHEEL_ZOOM ** dy, pos.x(), pos.y())
         self.update()
         e.accept()
 
     def event(self, e):
+        # Pincement sur le pavé tactile : zoom
         if e.type() == QEvent.Type.NativeGesture and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
             pos = e.position()
             self.vt.zoom_at(1.0 + e.value(), pos.x(), pos.y())

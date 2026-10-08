@@ -1,11 +1,29 @@
-"""Correspondance écran ↔ mire (zoom, déplacement de la vue)."""
+"""Correspondance écran ↔ mire (zoom, déplacement de la vue) et rôle de la molette."""
 
 import numpy as np
-from PySide6.QtCore import QPointF
+from PySide6.QtCore import QPointF, Qt
+from PySide6.QtGui import QInputDevice
 
 MIN_ZOOM = 0.2
 MAX_ZOOM = 400.0
 FILL = 0.44   # demi-côté de la mire / plus petit côté de la zone, au zoom 1
+WHEEL_ZOOM = 1.0015      # facteur de zoom par huitième de degré de molette (un cran = 120 → × 1,2)
+
+
+def wheel_action(device_type, phase, modifiers):
+    """Rôle d'un évènement de molette dans la mire : "zoom" ou "pan" (déplacement de la vue).
+
+    Souris : la molette zoome (D13). Pavé tactile : deux doigts déplacent la vue (le pincement zoome, voir
+    CanvasView.event). Un pavé tactile se reconnaît à son type d'appareil, ou aux phases de défilement
+    (début / suite / fin / inertie) que seuls les pavés tactiles envoient : sur macOS, une souris envoie aussi un
+    déplacement en pixels, ce n'est donc pas un critère. Ctrl / Cmd / Alt + molette zoome toujours.
+    """
+    zoom_key = Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier | Qt.KeyboardModifier.AltModifier
+    if modifiers & zoom_key:
+        return "zoom"
+    if device_type == QInputDevice.DeviceType.TouchPad or phase != Qt.ScrollPhase.NoScrollPhase:
+        return "pan"
+    return "zoom"
 
 
 class Viewport:
