@@ -308,6 +308,171 @@ def test_linked_clips_different_durations():
     assert abs(x1 - 0.4) < 1e-6 and abs(x2 - 0.4) < 1e-6, (x1, x2)
 
 
+def test_history_stale_step_never_merged():
+    """Une étape restée ouverte n'est jamais fusionnée avec l'action suivante : elle est enregistrée à part."""
+    doc = Document()
+    form = doc.library.defs[0].root
+    form.add(ShapeNode("star"))
+    h = History()
+    h.begin("Geste perdu", doc.to_dict())
+    form.children[0].transform.tx = 0.3
+    h.begin("Renommer", doc.to_dict())
+    form.children[0].name = "X"
+    assert h.commit(doc.to_dict())
+    assert [s.label for s in h.undo_stack] == ["Geste perdu", "Renommer"]
+    before = h.undo(doc.to_dict())
+    assert before["library"][0]["root"]["children"][0]["transform"]["tx"] == 0.3
+
+
+def test_history_merge_and_abort():
+    from ildagen.core import history as H
+    doc = Document()
+    form = doc.library.defs[0].root
+    form.add(ShapeNode("star"))
+    h = History()
+    for _ in range(5):           # flèche maintenue : une seule étape
+        h.begin("Déplacer", doc.to_dict())
+        form.children[0].transform.tx += 0.01
+        h.commit(doc.to_dict(), merge=("nudge", "a"))
+    assert len(h.undo_stack) == 1
+    h.undo_stack[-1].time -= H.MERGE_WINDOW + 0.1     # après une pause : nouvelle étape
+    h.begin("Déplacer", doc.to_dict())
+    form.children[0].transform.tx += 0.01
+    h.commit(doc.to_dict(), merge=("nudge", "a"))
+    assert len(h.undo_stack) == 2
+    h.begin("Rien", doc.to_dict())
+    assert h.abort(doc.to_dict()) is None and not h.pending()      # rien n'a changé : rien à restaurer
+    h.begin("Geste", doc.to_dict())
+    form.children[0].transform.ty = 0.5
+    assert h.abort(doc.to_dict())["library"][0]["root"]["children"][0]["transform"]["ty"] == 0.0
+
+
+def test_view_state_outside_history():
+    """Grille, symétrie, dépliage : hors de la comparaison d'historique, gardés après un rechargement."""
+    from ildagen.core import view_state as VS
+    doc = Document()
+    d = doc.library.defs[0]
+    g = GroupNode("G")
+    d.root.add(g)
+    clip = Clip(d.id, 0.0, 2.0)
+    doc.timeline.tracks[0].clips.append(clip)
+    h = History(strip=VS.strip)
+    h.begin("x", doc.to_dict())
+    doc.grid.mode, doc.grid.sym, doc.grid.snap = 2, 1, False
+    clip.expanded, clip.lane_sizes, g.expanded = True, {"a": "small"}, False
+    assert not h.commit(doc.to_dict())          # seul l'affichage a changé : pas d'étape
+    view = VS.capture(doc)
+    doc2 = Document()
+    doc2.load_dict(Document().to_dict() | {"library": doc.library.to_dict(), "timeline": doc.timeline.to_dict()})
+    VS.apply(doc2, view)
+    c2 = doc2.timeline.tracks[0].clips[0]
+    assert doc2.grid.mode == 2 and doc2.grid.sym == 1 and not doc2.grid.snap
+    assert c2.expanded and c2.lane_sizes == {"a": "small"} and not doc2.library.defs[0].root.children[0].expanded
+
+
+def test_settings_robust_load():
+    """settings.json abîmé : chaque réglage est vérifié, les mauvaises valeurs reprennent la valeur par défaut."""
+    import json
+    folder = tempfile.mkdtemp()
+    path = os.path.join(folder, "settings.json")
+    with open(path, "w") as f:
+        json.dump({"network": {"port": "abc", "channel": 99, "fps": "25", "host": 12},
+                   "general": {"default_color": [1, 2], "autosave": "oui", "smoothing": float("nan")},
+                   "ui": {"recent": ["/a", 3, None], "geometry": "xyz"}, "laser": [1, 2]}, f)
+    s = Settings(path=path)
+    assert s.get("network", "port") == 7255 and s.get("network", "channel") == 16 and s.get("network", "fps") == 25
+    assert s.get("network", "host") == "127.0.0.1" and s.get("general", "default_color") == [1.0, 1.0, 1.0]
+    assert s.get("general", "autosave") is True and s.get("general", "smoothing") == 40
+    assert s.get("ui", "recent") == ["/a"] and s.get("ui", "geometry") == "xyz"
+    with open(path, "w") as f:
+        json.dump([1, 2, 3], f)
+    assert Settings(path=path).get("network", "port") == 7255       # pas un dictionnaire : valeurs par défaut
+    s.set("network", "port", 8000)
+    s.save()
+    assert Settings(path=path).get("network", "port") == 8000
+    assert [n for n in os.listdir(folder) if n != "settings.json"] == []   # aucun fichier temporaire oublié
+
+
+def test_atomic_save_keeps_old_file():
+    from ildagen.core.atomic import write_json
+    folder = tempfile.mkdtemp()
+    path = os.path.join(folder, "p.ildaproj")
+    write_json(path, {"a": 1})
+    try:
+        write_json(path, {"a": object()})       # échec au milieu de l'écriture
+    except TypeError:
+        pass
+    with open(path) as f:
+        assert f.read() == '{"a": 1}'
+    assert os.listdir(folder) == ["p.ildaproj"]
+
+
+def test_malformed_project_load():
+    import json
+    from ildagen.core.timeline import SUBDIVISIONS
+    folder = tempfile.mkdtemp()
+    bad = os.path.join(folder, "liste.ildaproj")
+    with open(bad, "w") as f:
+        json.dump([1, 2, 3], f)
+    try:
+        Document.load(bad)
+        assert False, "un projet qui est une liste doit être refusé"
+    except ValueError:
+        pass
+    # Valeurs abîmées de la timeline : remplacées par des valeurs sûres (jamais infinies)
+    d = Document().to_dict()
+    d["version"] = 99
+    d["timeline"].update(bpm="abc", subdivision=42, loop_end=float("inf"), audio_path=5)
+    d["timeline"]["tracks"] = [{"name": 7, "clips": [{"def_id": "x", "start": "?", "duration": float("inf")}]}]
+    d["grid"] = {"mode": "x", "divisions": 1e9, "snap": "non"}
+    path = os.path.join(folder, "abime.ildaproj")
+    with open(path, "w") as f:
+        json.dump(d, f)
+    doc = Document.load(path)
+    tl = doc.timeline
+    c = tl.tracks[0].clips[0]
+    assert doc.version == 99 and tl.bpm == 120.0 and tl.subdivision == len(SUBDIVISIONS) - 1
+    assert tl.loop_end == 0.0 and tl.audio_path == "" and tl.tracks[0].name == "7"
+    assert c.start == 0.0 and c.duration == 2.0
+    assert doc.grid.mode == 1 and doc.grid.divisions == 64 and doc.grid.snap is True
+
+
+def test_clip_times_always_finite():
+    from ildagen.core.timeline import MAX_DURATION, Timeline
+    c = Clip("x", 1.0, 2.0)
+    c.duration = float("inf")
+    c.start = float("nan")
+    assert c.duration == 2.0 and c.start == 1.0
+    c.duration = 1e308
+    assert c.duration == MAX_DURATION
+    c.duration = -5
+    assert c.duration > 0
+    tl = Timeline()
+    tl.tracks[0].clips.append(c)
+    assert np.isfinite(tl.length())
+
+
+def test_autosave_rotation():
+    """Une sauvegarde automatique qui va recevoir un autre travail est d'abord copiée (les 10 dernières)."""
+    import json
+    from ildagen.core import autosave as AS
+    folder = tempfile.mkdtemp()
+    backups = AS.backup_dir(folder)
+    auto = os.path.join(folder, "autosave.ildaproj")
+    Document().save(auto)
+    assert AS.rotate(auto, backups) is None          # projet vide : pas de copie inutile
+    doc = Document()
+    doc.library.defs[0].root.add(ShapeNode("star"))
+    doc.timeline.audio_path = os.path.join(folder, "musique.mp3")
+    doc.save(auto)                                   # chemin de la musique relatif à la sauvegarde
+    for _ in range(AS.KEEP + 3):
+        dest = AS.rotate(auto, backups)
+    assert dest is not None and len(AS.backups(backups)) == AS.KEEP and AS.backups(backups)[0] == dest
+    with open(dest) as f:
+        d = json.load(f)
+    assert d["library"][0]["root"]["children"] and d["timeline"]["audio_path"] == os.path.join(folder, "musique.mp3")
+
+
 if __name__ == "__main__":
     for name, fn in list(globals().items()):
         if name.startswith("test_"):

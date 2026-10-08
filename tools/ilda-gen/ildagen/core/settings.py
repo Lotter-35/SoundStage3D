@@ -2,8 +2,12 @@
 
 import copy
 import json
+import logging
+import math
 import os
 import sys
+
+from .atomic import write_json
 
 DEFAULTS = {
     "network": {"host": "127.0.0.1", "port": 7255, "channel": 1, "fps": 30},
@@ -28,6 +32,79 @@ DEFAULTS = {
 }
 
 
+# Bornes des réglages numériques (une valeur hors bornes est ramenée dedans)
+RANGES = {
+    ("network", "port"): (1, 65535),
+    ("network", "channel"): (1, 16),
+    ("network", "fps"): (1, 240),
+    ("export", "fps"): (1, 240),
+    ("laser", "kpps"): (1, None),
+    ("general", "smoothing"): (0, 100),
+}
+
+log = logging.getLogger(__name__)
+
+
+def _number(v, kind):
+    """Nombre fini du type voulu (int / float) à partir d'un nombre ou d'un texte, sinon None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, str):
+        try:
+            v = float(v.strip().replace(",", "."))
+        except ValueError:
+            return None
+    if not isinstance(v, (int, float)) or not math.isfinite(v):
+        return None
+    return int(round(v)) if kind is int else float(v)
+
+
+def coerce(default, v):
+    """Valeur lue convertie au type de la valeur par défaut ; None si c'est impossible."""
+    if isinstance(default, bool):
+        if isinstance(v, bool):
+            return v
+        return bool(v) if isinstance(v, (int, float)) and v in (0, 1) else None
+    if isinstance(default, (int, float)):
+        return _number(v, type(default))
+    if isinstance(default, str):
+        return v if isinstance(v, str) else None
+    if isinstance(default, dict):
+        return v if isinstance(v, dict) else None
+    if isinstance(default, list):
+        if not isinstance(v, list):
+            return None
+        if not default:
+            return [x for x in v if isinstance(x, str)]        # liste de chemins (fichiers récents)
+        if all(isinstance(x, (int, float)) for x in default):
+            # Couleur : même nombre de composantes, toutes des nombres
+            out = [_number(x, float) for x in v]
+            return out if len(out) == len(default) and None not in out else None
+        if isinstance(default[0], list):
+            # Liste de lignes de nombres (repères d'un dégradé) : chaque ligne de la même longueur
+            rows = [coerce(default[0], x) for x in v]
+            return rows if rows and None not in rows else None
+        return list(v)
+    return v
+
+
+def valid_value(section, key, v):
+    """Réglage validé (type et bornes) ; valeur par défaut si la valeur lue n'est pas utilisable."""
+    default = DEFAULTS.get(section, {}).get(key)
+    if default is None:
+        return v                                  # réglage libre (disposition des panneaux…)
+    out = coerce(default, v)
+    if out is None:
+        log.warning("Réglage %s.%s invalide (%r) : valeur par défaut", section, key, v)
+        return copy.deepcopy(default)
+    lo, hi = RANGES.get((section, key), (None, None))
+    if lo is not None:
+        out = max(lo, out)
+    if hi is not None:
+        out = min(hi, out)
+    return out
+
+
 def config_dir():
     if sys.platform == "darwin":
         base = os.path.expanduser("~/Library/Application Support")
@@ -47,22 +124,26 @@ class Settings:
         self.load()
 
     def load(self):
+        """Lit les réglages ; chaque valeur est vérifiée (un fichier abîmé ne bloque jamais le démarrage)."""
         try:
             with open(self.path, encoding="utf-8") as f:
                 stored = json.load(f)
         except (OSError, ValueError):
             return
+        if not isinstance(stored, dict):
+            return
         for section, values in stored.items():
             if section in self.data and isinstance(values, dict):
                 if section == "brush" and values.get("v") != DEFAULTS["brush"]["v"]:
                     continue   # couleurs d'une ancienne version : on repart des valeurs par défaut (blanc)
-                self.data[section].update(values)
+                for key, v in values.items():
+                    if isinstance(key, str):
+                        self.data[section][key] = valid_value(section, key, v)
 
     def save(self):
         try:
-            with open(self.path, "w", encoding="utf-8") as f:
-                json.dump(self.data, f, ensure_ascii=False, indent=1)
-        except OSError:
+            write_json(self.path, self.data, indent=1)
+        except (OSError, TypeError, ValueError):
             pass
 
     def section(self, name):
