@@ -32,9 +32,10 @@ python tools/ilda-gen/ilda-gen.py            # ou : python tools/ilda-gen/ilda-g
 Pour le direct, lancer aussi le serveur SoundStage3D (`node server/server.js`) : il écoute l'IDN sur UDP 7255.
 Dans le jeu, régler un laser sur « ILDA live » et le même canal (1 à 16) que dans la barre de connexion.
 
-Au démarrage, le générateur **rouvre le dernier projet** et passe **en envoi live**. Chaque modification est
-**enregistrée automatiquement** dans le fichier du projet (un projet sans nom est gardé dans la sauvegarde
-automatique et rouvert la fois suivante). Ces trois comportements se désactivent dans Paramètres → Général.
+Au démarrage, le générateur **rouvre le dernier projet** et **reprend l'envoi live s'il était actif** à la
+dernière fermeture (sinon il reste coupé). Chaque modification est **enregistrée automatiquement** dans le
+fichier du projet (un projet sans nom est gardé dans la sauvegarde automatique et rouvert la fois suivante).
+L'enregistrement automatique et la réouverture se désactivent dans Paramètres → Général.
 
 ## Disposition
 
@@ -252,10 +253,37 @@ a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
 
 En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
 
+## Sortie laser
+
+- **Envoi live dans un fil dédié** : les images partent au rythme choisi (images/s), calculées à l'instant exact
+  de l'envoi, même si l'interface est occupée ; une image lourde ne bloque plus l'interface. Les gros envois sont
+  étalés dans le temps (pas de rafale perdue) ; le serveur jette une image dont un fragment s'est perdu.
+- **BLACKOUT** coupe immédiatement ; couper l'envoi live envoie quelques images éteintes et la fermeture IDN.
+  Hors live, rien n'est envoyé ni calculé en continu (l'aperçu de la mire est recalculé seulement quand
+  l'affichage change).
+- **Budget de points** : une image compte au plus *vitesse de balayage (kpps) × 1000 / images par seconde*
+  points (1 000 à 30 kpps et 30 images/s ; jamais plus de 20 000, limite du serveur). Au-delà, l'image est
+  allégée : points espacés, temps d'arrêt raccourcis, tracés simplifiés, et en dernier recours éclaircis. Le
+  compteur sous la mire indique les points envoyés et « réduit » quand l'image a été allégée.
+- La géométrie est **découpée au champ** avant d'ajouter des points : une répétition géante ne coûte rien de ce
+  qui tombe hors de la mire. Toute combinaison de réglages reste rapide (plafonds de sécurité).
+- Coins : temps d'arrêt selon l'angle (coin de fermeture des formes fermées compris, coins arrondis détectés) ;
+  sauts laser éteint avec accélération / freinage ; points éteints avant / après chaque tracé réglables.
+- **Anti point fixe** (Paramètres → Zone de sécurité, actif par défaut) : une image dont tous les points allumés
+  tiennent en un point est éteinte (forme de taille nulle, sortie réduite à rien…).
+
 ## Paramètres
 
-Général (couleur par défaut, lissage, enregistrement automatique, réouverture, live au démarrage) · Grille · Sortie laser (vitesse, points,
-blanking, coins) · Zone de sécurité · Trapèze · Taille / position (et puissance max).
+Général (couleur par défaut, lissage, enregistrement automatique, réouverture) · Grille · Sortie laser (vitesse de
+balayage en kpps et budget de points, distance entre points, blanking, coins) · Couleurs (décalage couleur, gamma,
+gains rouge / vert / bleu, puissance minimale) · Zone de sécurité (et anti point fixe) · Trapèze · Taille / position
+(taille minimale 5 %, puissance max). Les nombres de points sont réglés pour 30 kpps et suivent la vitesse de
+balayage.
+
+Export ILDA : par défaut le fichier contient le **contenu seul**, sans les réglages de sortie de ce laser (case
+« Appliquer les réglages de sortie » pour les inclure). Limites du format : 65 535 points par image et
+65 535 images. Formats à palette (0 et 1) : teinte la plus proche, luminosité rendue par tramage (une partie
+des points éteints).
 
 ## Tests
 
