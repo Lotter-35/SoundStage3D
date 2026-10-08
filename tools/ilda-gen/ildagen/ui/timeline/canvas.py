@@ -59,7 +59,20 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
     def _restored(self):
         self.drag = None
         self.sel_key = None
+        self.default_guide = None
         self._changed()
+
+    def abandon_drag(self):
+        """Glisser interrompu (Échap, relâchement jamais reçu) : annulé, le document revient à l'état d'avant."""
+        if self.drag is None:
+            return False
+        kind = self.drag["kind"]
+        self.drag = None
+        self.default_guide = None
+        if kind not in ("scrub", "rect", "range"):
+            self.editor.cancel_gesture()
+        self.update()
+        return True
 
     def set_peaks(self, peaks):
         self.peaks = peaks
@@ -233,6 +246,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         self.setFocus()
         if e.button() != Qt.MouseButton.LeftButton:
             return
+        self.abandon_drag()         # relâchement précédent jamais reçu
         x, y = e.position().x(), e.position().y()
         g = self.geo
         if y < g.top:
@@ -281,6 +295,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             if part == "chevron":
                 clip.expanded = not clip.expanded
                 self.editor.enter_clip(clip.id)
+                self.editor.view_changed()
                 self._changed()
                 return
             if shift:
@@ -309,6 +324,9 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
     def mouseMoveEvent(self, e):
         x, y = e.position().x(), e.position().y()
         d = self.drag
+        if d is not None and not (e.buttons() & Qt.MouseButton.LeftButton):
+            self.abandon_drag()     # bouton relâché hors de la fenêtre : le glisser est annulé
+            d = None
         if d is None:
             self._hover(x, y)
             return
@@ -405,6 +423,7 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             clip, _ = self.clip_hit(row, x)
             if clip is not None:
                 clip.expanded = not clip.expanded
+                self.editor.view_changed()
                 self._changed()
             return
         k = self.key_hit(row, x, y)
@@ -460,6 +479,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
         self.update()
 
     def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Escape and self.abandon_drag():
+            return
         if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
             self.delete_selection()
             return

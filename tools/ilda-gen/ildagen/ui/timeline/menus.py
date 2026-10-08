@@ -100,6 +100,7 @@ class TimelineMenus:
 
     def _toggle(self, clip):
         clip.expanded = not clip.expanded
+        self.editor.view_changed()
         self._changed()
 
     def _rename_track(self, tr):

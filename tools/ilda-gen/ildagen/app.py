@@ -1,5 +1,6 @@
 """Point d'entrée de l'application."""
 
+import logging
 import sys
 
 from PySide6.QtCore import Qt
@@ -21,10 +22,13 @@ def main(argv=None):
     settings = Settings()
     win = MainWindow(settings)
     win.show()
-    if len(argv) > 1 and argv[1].endswith(".ildaproj"):
-        win.project.open(argv[1])
-    else:
-        win.project.restore_session()
+    try:
+        if len(argv) > 1 and argv[1].endswith(".ildaproj"):
+            win.project.open(argv[1])
+        else:
+            win.project.restore_session()
+    except Exception:   # noqa: BLE001 — un projet abîmé n'empêche jamais de démarrer (projet vide)
+        logging.getLogger(__name__).exception("Ouverture du projet impossible au démarrage")
     if settings.get("general", "live_at_start"):
         win.connection.btn_live.setChecked(True)
     code = app.exec()

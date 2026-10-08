@@ -44,6 +44,8 @@ class CanvasView(QWidget):
 
     # ── Outils ───────────────────────────────────────────────────────────
     def set_tool(self, name):
+        # Changer d'outil pendant un geste l'annule (rien ne reste à moitié fait ni ouvert dans l'historique)
+        self.cancel_gesture()
         self.tool.deactivate()
         if name.startswith("shape:"):
             self.tool = self.tools["shape"]
@@ -54,15 +56,20 @@ class CanvasView(QWidget):
         self.update()
 
     def _restored(self):
-        sel = self.tools["select"]
-        sel.drag = None
-        sel.marquee = None
-        sel.guides = []
-        self.tools["pencil"].free = None
-        self.tools["pencil"].seg = None
-        self.tools["shape"].node = None
-        self.tools["shape"].start = None
+        for t in self.tools.values():
+            t.abort()
         self.update()
+
+    def cancel_gesture(self):
+        """Annule le geste en cours dans la mire (Échap, changement d'outil, souris perdue) :
+        le document revient à l'état d'avant le geste. Renvoie False s'il n'y avait pas de geste."""
+        if not self.tool.busy():
+            return False
+        if self.editor.gesture_active():
+            self.editor.cancel_gesture()       # restaure, puis tous les outils abandonnent leur geste
+        self.tool.abort()
+        self.update()
+        return True
 
     def _on_stats(self, n, fps):
         self.stats = (n, fps)
@@ -127,6 +134,8 @@ class CanvasView(QWidget):
 
     def mousePressEvent(self, e):
         self.setFocus()
+        if self.tool.busy():
+            self.cancel_gesture()       # relâchement jamais reçu (souris perdue) : l'ancien geste est annulé
         if e.button() == Qt.MouseButton.MiddleButton:
             self._panning = e.position()
             self.setCursor(Qt.CursorShape.ClosedHandCursor)
@@ -143,6 +152,8 @@ class CanvasView(QWidget):
             return
         ev = self._event(e, Qt.MouseButton.NoButton)
         self.last_world = ev.world
+        if not (e.buttons() & Qt.MouseButton.LeftButton) and self.tool.busy():
+            self.cancel_gesture()       # bouton relâché ailleurs (fenêtre quittée) : geste annulé
         if e.buttons() & Qt.MouseButton.LeftButton:
             self.tool.move(ev)
         else:
@@ -184,6 +195,9 @@ class CanvasView(QWidget):
         return super().event(e)
 
     def keyPressEvent(self, e):
+        if e.key() == Qt.Key.Key_Escape and (self.cancel_gesture() or self.editor.cancel_gesture()):
+            e.accept()          # Échap pendant un geste : il est annulé (sinon : comportement de l'outil)
+            return
         if self.tool.key_press(e.key(), e.modifiers()):
             e.accept()
             return

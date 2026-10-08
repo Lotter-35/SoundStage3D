@@ -54,6 +54,13 @@ class Tool:
     def deactivate(self):
         pass
 
+    def busy(self):
+        """Un geste est-il en cours (bouton de la souris enfoncé) ?"""
+        return False
+
+    def abort(self):
+        """Oublie le geste en cours (le document est remis en état par l'éditeur)."""
+
     def cursor(self):
         return Qt.CursorShape.CrossCursor
 

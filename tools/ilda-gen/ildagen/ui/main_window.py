@@ -100,6 +100,9 @@ class MainWindow(QMainWindow):
         self.editor.historyChanged.connect(self._history_actions)
         self.editor.gridChanged.connect(self._grid_actions)
         self.editor.projectChanged.connect(self._recent_menu)
+        self.editor.gestureChanged.connect(self.actions_["cancel_gesture"].setEnabled)
+        # L'application perd la main pendant un geste (autre application au premier plan) : il est annulé
+        QApplication.instance().applicationStateChanged.connect(self._app_state)
         self.update_title()
         self._history_actions()
         self._grid_actions()
@@ -134,6 +137,16 @@ class MainWindow(QMainWindow):
         if collapsed:
             total = sum(self.right_split.sizes())
             self.right_split.setSizes([total - self.properties.header.height(), self.properties.header.height()])
+
+    # ── Gestes ───────────────────────────────────────────────────────────
+    def cancel_gesture(self):
+        """Échap pendant un geste : la mire, la timeline ou un réglage revient à l'état d'avant le geste."""
+        if self.canvas.view.cancel_gesture() or self.editor.cancel_gesture():
+            self.editor.statusMessage.emit("Geste annulé")
+
+    def _app_state(self, state):
+        if state != Qt.ApplicationState.ApplicationActive and QApplication.activeModalWidget() is None:
+            self.cancel_gesture()
 
     # ── Actions ──────────────────────────────────────────────────────────
     def delete_pressed(self):
@@ -206,6 +219,7 @@ class MainWindow(QMainWindow):
                 ("main_split", self.main_split))
 
     def closeEvent(self, e):
+        self.cancel_gesture()       # quitter pendant un geste : il est annulé (jamais enregistré à moitié)
         if self.project.auto_on():
             # Sauvegarde automatique : rien à demander, le projet sera rouvert au prochain lancement
             self.project.timer.stop()

@@ -248,10 +248,12 @@ class LayerOpsMixin:
             self.mutate("Renommer", lambda: setattr(node, "name", name))
 
     def set_expanded(self, node, expanded):
+        """Groupe / modifieur déplié dans la liste : état d'affichage (hors historique, enregistré)."""
         if node.kind == "group" and node.locked:
             expanded = False
         if getattr(node, "expanded", None) != expanded:
             node.expanded = expanded
+            self.view_changed()
 
     # ── Presse-papiers ───────────────────────────────────────────────────
     def copy_selection(self):
@@ -431,20 +433,24 @@ class LayerOpsMixin:
     def brush_changed(self):
         """Couleur de tracé modifiée (fin du geste) : appliquée aussi aux formes sélectionnées."""
         self.settings.save()
-        self.brush_live()
-        if self.history.pending():
+        if self.brush_live():
             self.commit()
         self.brushChanged.emit()
 
+    BRUSH_LABEL = "Couleur de la sélection"
+
     def brush_live(self):
-        """Pendant un réglage (glisser du dégradé, de l'angle) : les formes sélectionnées suivent en direct."""
+        """Pendant un réglage (glisser du dégradé, de l'angle) : les formes sélectionnées suivent en direct.
+        Renvoie True si une étape « couleur de la sélection » est ouverte."""
         shapes = self.shapes_in(self.top_selected()) if self.editing_visible() else []
         if not shapes:
-            return
-        self.begin("Couleur de la sélection")
+            return False
+        if self.history.pending_label() != self.BRUSH_LABEL:
+            self.begin_action(self.BRUSH_LABEL)
         for s in shapes:
             self.apply_brush(s)
         self.notify()
+        return True
 
     def apply_brush(self, node):
         """Donne la couleur de tracé courante à une forme (sans historique : appelé dans un geste)."""

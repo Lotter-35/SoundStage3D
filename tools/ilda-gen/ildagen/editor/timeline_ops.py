@@ -235,7 +235,7 @@ class TimelineOpsMixin:
             clip.expanded = True
         self.timeline_mutate("Envoyer dans la timeline", do)
         if self.context != ("clip", clip.id):
-            self.enter_clip(clip.id)
+            self.enter_clip(clip.id, keep_selection=True)     # on reste sur le calque en cours de réglage
         self.statusMessage.emit(f"« {label} » ajouté à la timeline : modifiez-le à différents instants "
                                 "ou posez des points dans sa ligne")
         return a

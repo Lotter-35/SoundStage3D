@@ -62,6 +62,8 @@ def shot(win, name):
 
 def main():
     app = QApplication([])
+    # Une exception dans un slot Qt (bouton, signal…) ne plante pas l'application mais doit faire échouer le test
+    sys.excepthook = lambda t, v, tb: (traceback.print_exception(t, v, tb), check(f"exception {t.__name__} : {v}", False))
     app.setStyle("Fusion")
     theme.apply_palette(app)
     win = MainWindow(Settings(path=os.path.join(tempfile.mkdtemp(), "s.json")))
@@ -908,12 +910,548 @@ def main():
     ed.undo()
     check("annuler la suppression de la forme", len(ed.doc.library.defs) == 2 and ed.doc.timeline.has_clips())
     ed.dirty = False
+    gestures_and_safety(app, win)
+    ed.dirty = False
     print("\n" + ("TOUT EST OK" if not errors else f"{len(errors)} problème(s) : {', '.join(errors)}"))
     # Fermeture comme dans l'application (vérifie aussi qu'elle ne plante pas)
     from ildagen.app import shutdown
     win.close()
     shutdown(win, app)
     return 1 if errors else 0
+
+
+def gestures_and_safety(app, win):
+    """Gestes annulables (outil changé, Échap, Ctrl+Z), état d'affichage hors historique, flèches regroupées,
+    formes nulles, valeurs tapées, fichiers abîmés, sauvegardes automatiques jamais écrasées."""
+    import json
+    from PySide6.QtGui import QColor, QKeyEvent
+    from PySide6.QtWidgets import QColorDialog, QMessageBox
+    from shiboken6 import isValid
+    from ildagen.core import autosave as AS
+    from ildagen.core.document import Document
+    from ildagen.core.timeline import MAX_DURATION
+    from ildagen.ui.properties.forms import ParamForm
+
+    ed = win.editor
+    view = win.canvas.view
+    proj = win.project
+    L, NB = Qt.MouseButton.LeftButton, Qt.MouseButton.NoButton
+    messages = []
+    saved = {k: getattr(QMessageBox, k) for k in ("critical", "warning", "information", "question")}
+    QMessageBox.critical = lambda *a, **k: messages.append(("critical", a[2] if len(a) > 2 else ""))
+    QMessageBox.warning = lambda *a, **k: messages.append(("warning", a[2] if len(a) > 2 else ""))
+    QMessageBox.information = lambda *a, **k: messages.append(("information", ""))
+    QMessageBox.question = lambda *a, **k: QMessageBox.StandardButton.Discard
+
+    def press(w, p, mods=M.NoModifier):
+        send(w, QEvent.Type.MouseButtonPress, p, L, L, mods)
+
+    def move(w, p, mods=M.NoModifier, buttons=L):
+        send(w, QEvent.Type.MouseMove, p, NB, buttons, mods)
+
+    def release(w, p, mods=M.NoModifier):
+        send(w, QEvent.Type.MouseButtonRelease, p, L, NB, mods)
+        app.processEvents()
+
+    def key(w, k, mods=M.NoModifier):
+        QApplication.sendEvent(w, QKeyEvent(QEvent.Type.KeyPress, k, mods))
+        QApplication.sendEvent(w, QKeyEvent(QEvent.Type.KeyRelease, k, mods))
+        app.processEvents()
+
+    def root():
+        return ed.current_root()
+
+    def kids():
+        return len(root().children)
+
+    def steps():
+        return len(ed.history.undo_stack)
+
+    def sp(x, y):
+        p = view.vt.to_screen(x, y)
+        return QPoint(int(round(p.x())), int(round(p.y())))
+
+    def center(node_id):
+        q = build_frame(ed, ed.eval_context()).quad if ed.selection == [node_id] else None
+        if q is None:
+            ed.set_selection([node_id])
+            q = build_frame(ed, ed.eval_context()).quad
+        return float(q[:, 0].mean()), float(q[:, 1].mean())
+
+    def handles():
+        fr = build_frame(ed, ed.eval_context())
+        return {k: QPoint(int(round(v.x())), int(round(v.y()))) for k, v in handle_positions(view.vt, fr).items()}
+
+    def grab(node_id):
+        """Point du contour gauche de la forme, loin des poignées (centre = pivot, milieu du côté = poignée)."""
+        ed.set_selection([node_id])
+        q = build_frame(ed, ed.eval_context()).quad
+        y0, y1 = float(q[:, 1].min()), float(q[:, 1].max())
+        return sp(float(q[:, 0].min()), y0 + 0.25 * (y1 - y0))
+
+    def load_json(path):
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+
+    def form_for(node_id):
+        app.processEvents()
+        return next((f for f in win.properties.findChildren(ParamForm)
+                     if isValid(f) and f.node_id == node_id and f.isVisibleTo(win.properties)), None)
+
+    proj.timer.stop()
+    proj.new()
+    ed.set_symmetry(0)
+    ed.set_grid_mode(1)
+    view.setFocus()
+    app.processEvents()
+
+    # ── A1 : changer d'outil pendant un geste l'annule ──────────────────
+    ed.set_tool("shape:rect")
+    drag(view, sp(-0.6, 0.6), sp(-0.3, 0.3))
+    rect_id = root().children[0].id
+    n0, s0 = kids(), steps()
+    press(view, sp(0.2, 0.6))
+    move(view, sp(0.3, 0.5))
+    move(view, sp(0.5, 0.3))
+    drawing = kids() == n0 + 1 and ed.gesture_active() and win.actions_["cancel_gesture"].isEnabled()
+    ed.set_tool("select")                     # V avant de relâcher
+    move(view, sp(0.6, 0.2))
+    release(view, sp(0.6, 0.2))
+    check("outil changé pendant un tracé : la forme en cours est annulée", drawing and kids() == n0
+          and steps() == s0 and not ed.gesture_active() and not win.actions_["cancel_gesture"].isEnabled())
+    ed.set_selection([rect_id])
+    c0 = center(rect_id)
+    key(view, Qt.Key.Key_Right)
+    ed.undo()
+    check("… puis un petit pas : Ctrl+Z n'annule que le petit pas", ed.find(rect_id) is not None
+          and kids() == n0 and abs(center(rect_id)[0] - c0[0]) < 1e-5)
+    ed.set_tool("pencil")
+    press(view, sp(0.1, -0.2))
+    for i in range(1, 10):
+        move(view, sp(0.1 + i * 0.04, -0.2 - i * 0.03))
+    ed.set_tool("shape:rect")                 # R avant de relâcher
+    release(view, sp(0.5, -0.5))
+    check("crayon puis R pendant le trait : trait annulé, rien d'ouvert", kids() == n0 and steps() == s0
+          and not ed.gesture_active())
+    ed.set_tool("select")
+    ed.set_selection([rect_id])
+    a = grab(rect_id)
+    press(view, a)
+    move(view, QPoint(a.x() + 20, a.y()))
+    move(view, QPoint(a.x() + 40, a.y()))
+    moved = abs(center(rect_id)[0] - c0[0]) > 1e-3
+    ed.set_tool("shape:polygon")              # P avant de relâcher
+    release(view, QPoint(a.x() + 40, a.y()))
+    check("déplacement puis P : la forme revient à sa place, rien d'ouvert", moved
+          and abs(center(rect_id)[0] - c0[0]) < 1e-5 and steps() == s0 and not ed.gesture_active(),
+          f"{moved} {center(rect_id)[0] - c0[0]} {steps() - s0} {ed.gesture_active()}")
+    ed.set_tool("select")
+    ed.set_selection([rect_id])
+    drag(view, a, QPoint(a.x() + 30, a.y()))
+    c1 = center(rect_id)
+    ed.set_tool("pencil")
+    click(view, sp(0.8, -0.8))                # simple clic au crayon (rien n'est dessiné)
+    check("un clic au crayon ensuite n'annule pas le déplacement", abs(center(rect_id)[0] - c1[0]) < 1e-5
+          and steps() == s0 + 1, f"{c1[0]:.3f} → {center(rect_id)[0]:.3f}")
+    ed.undo()
+
+    # ── A2 : Ctrl+Z / Ctrl+Y pendant un geste n'annulent que le geste ───
+    ed.set_tool("shape:ellipse")
+    n0, s0 = kids(), steps()
+    press(view, sp(0.3, 0.3))
+    move(view, sp(0.4, 0.4))
+    move(view, sp(0.6, 0.6))
+    ed.undo()
+    release(view, sp(0.6, 0.6))
+    check("Ctrl+Z pendant un tracé : seul le tracé est annulé", kids() == n0 and steps() == s0
+          and ed.find(rect_id) is not None and not ed.gesture_active())
+    drag(view, sp(0.3, 0.3), sp(0.6, 0.6))
+    ed.undo()                                  # une action à rétablir
+    ed.set_tool("select")
+    ed.set_selection([rect_id])
+    c0 = center(rect_id)
+    a = grab(rect_id)
+    press(view, a)
+    move(view, QPoint(a.x() + 30, a.y()))
+    ed.redo()
+    move(view, QPoint(a.x() + 50, a.y()))
+    release(view, QPoint(a.x() + 50, a.y()))
+    check("Ctrl+Y pendant un déplacement : seul le déplacement est annulé (rien n'est rétabli)",
+          abs(center(rect_id)[0] - c0[0]) < 1e-5 and kids() == n0 and len(ed.history.redo_stack) == 1
+          and not ed.gesture_active())
+    ed.redo()
+    ed.undo()
+    check("… et l'annulation suivante ne défait que l'action rétablie", kids() == n0 and ed.find(rect_id) is not None)
+
+    # ── A3 : Échap annule le geste en cours ─────────────────────────────
+    ed.set_tool("shape:rect")
+    n0, s0 = kids(), steps()
+    press(view, sp(0.2, -0.2))
+    move(view, sp(0.4, -0.4))
+    key(view, Qt.Key.Key_Escape)
+    move(view, sp(0.5, -0.5))
+    release(view, sp(0.5, -0.5))
+    check("Échap pendant un tracé de forme : rien n'est créé", kids() == n0 and steps() == s0)
+    ed.set_tool("pencil")
+    press(view, sp(0.2, -0.2))
+    for i in range(1, 8):
+        move(view, sp(0.2 + i * 0.03, -0.2 - i * 0.03))
+    key(view, Qt.Key.Key_Escape)
+    release(view, sp(0.5, -0.5))
+    check("Échap pendant un trait au crayon : rien n'est créé", kids() == n0 and steps() == s0)
+    ed.set_tool("select")
+    ed.set_selection([rect_id])
+    c0 = center(rect_id)
+    a = grab(rect_id)
+    press(view, a)
+    move(view, QPoint(a.x() + 40, a.y() + 10))
+    key(view, Qt.Key.Key_Escape)
+    move(view, QPoint(a.x() + 60, a.y() + 10))
+    release(view, QPoint(a.x() + 60, a.y() + 10))
+    check("Échap pendant un déplacement : la forme revient, la sélection reste", abs(center(rect_id)[0] - c0[0]) < 1e-5
+          and steps() == s0 and ed.selection == [rect_id])
+    for hid in ("c1", "rot", "pivot"):
+        node = ed.find(rect_id)
+        before = (node.transform.to_dict(), node.rect)
+        h = handles()
+        press(view, h[hid])
+        move(view, QPoint(h[hid].x() + 25, h[hid].y() - 15))
+        changed = (ed.find(rect_id).transform.to_dict(), ed.find(rect_id).rect) != before
+        key(view, Qt.Key.Key_Escape)
+        release(view, QPoint(h[hid].x() + 25, h[hid].y() - 15))
+        node = ed.find(rect_id)
+        check(f"Échap pendant la poignée « {hid} » : rien ne change", changed and (node.transform.to_dict(), node.rect) == before
+              and steps() == s0)
+    key(view, Qt.Key.Key_Escape)
+    check("Échap sans geste : désélectionne (comme avant)", ed.selection == [])
+
+    # Réglage glissé (Propriétés) puis Échap : action « Annuler le geste en cours »
+    ed.set_selection([rect_id])
+    form = form_for(rect_id)
+    field = form.fields["tf.rot"]
+    r0 = ed.find(rect_id).transform.rot
+    c = QPoint(field.width() // 2, field.height() // 2)
+    press(field, c)
+    move(field, QPoint(c.x() + 30, c.y()))
+    scrubbed = ed.find(rect_id).transform.rot != r0 and win.actions_["cancel_gesture"].isEnabled()
+    win.actions_["cancel_gesture"].trigger()
+    if isValid(field):
+        move(field, QPoint(c.x() + 60, c.y()))
+        release(field, QPoint(c.x() + 60, c.y()))
+    check("Échap pendant un réglage glissé : valeur d'avant, rien d'enregistré", scrubbed
+          and ed.find(rect_id).transform.rot == r0 and steps() == s0 and not ed.param_editing)
+
+    # Timeline : Échap pendant le glisser d'un clip
+    fid = ed.current_form_id()
+    clip = ed.add_clip(fid, ed.doc.timeline.tracks[0].id, 1.0, 2.0)
+    ed.enter_def(fid)
+    s0 = steps()
+    canvas = win.timeline.canvas
+    app.processEvents()
+    tr_row = next(r for r in canvas.rows() if r.kind == "track")
+    y = int(tr_row.y + tr_row.h / 2)
+    x = int(canvas.geo.x(clip.start + 1.0))
+    press(canvas, QPoint(x, y))
+    move(canvas, QPoint(x + int(canvas.geo.pps), y))
+    clip_moved = abs(ed.doc.timeline.find_clip(clip.id)[1].start - 1.0) > 0.1
+    key(canvas, Qt.Key.Key_Escape)
+    move(canvas, QPoint(x + 2 * int(canvas.geo.pps), y))
+    release(canvas, QPoint(x + 2 * int(canvas.geo.pps), y))
+    check("Échap pendant le glisser d'un clip : il revient à sa place", clip_moved
+          and abs(ed.doc.timeline.find_clip(clip.id)[1].start - 1.0) < 1e-5 and steps() == s0)
+    # Relâchement jamais reçu (fenêtre quittée) : le geste est annulé au mouvement suivant
+    press(canvas, QPoint(x, y))
+    move(canvas, QPoint(x + int(canvas.geo.pps), y))
+    move(canvas, QPoint(x + int(canvas.geo.pps), y), buttons=NB)
+    check("timeline : relâchement perdu = glisser annulé", abs(ed.doc.timeline.find_clip(clip.id)[1].start - 1.0) < 1e-5
+          and not ed.gesture_active())
+    ed.enter_def(fid)
+    ed.set_tool("select")
+    ed.set_selection([rect_id])
+    c0 = center(rect_id)
+    a = grab(rect_id)
+    press(view, a)
+    move(view, QPoint(a.x() + 30, a.y()))
+    win._app_state(Qt.ApplicationState.ApplicationInactive)      # autre application au premier plan
+    release(view, QPoint(a.x() + 30, a.y()))
+    check("l'application perd la main pendant un déplacement : annulé", abs(center(rect_id)[0] - c0[0]) < 1e-5
+          and not ed.gesture_active())
+
+    # ── A4 : l'état d'affichage n'est pas annulé, mais il est enregistré ─
+    s0 = steps()
+    ed.set_tool("shape:rect")
+    n0 = kids()
+    drag(view, sp(0.5, -0.5), sp(0.8, -0.8))
+    ed.set_grid_mode(2)
+    ed.set_symmetry(1)
+    ed.set_snap(False)
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    canvas._toggle(clip)                       # déplier le clip
+    no_step = steps() == s0 + 1
+    ed.undo()
+    g = ed.doc.grid
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    check("annuler ne touche pas l'affichage (grille, symétrie, aimant, clip déplié)", no_step and kids() == n0
+          and g.mode == 2 and g.sym == 1 and not g.snap and clip.expanded, f"{g.mode} {g.sym} {g.snap} {clip.expanded}")
+    ed.set_symmetry(0)
+    ed.set_snap(True)
+    ed.set_grid_mode(1)
+    ed.set_tool("select")
+    # Groupe replié dans la liste des calques, ligne de réglage réduite : gardés après annuler
+    ed.set_selection([rect_id])
+    ed.group_selected()
+    grp_id = ed.selection[0]
+    ed.automate_param(ed.find(rect_id), "tf.rot")
+    ed.enter_def(fid)
+    s0 = steps()
+    ed.set_expanded(ed.find(grp_id), False)
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    app.processEvents()
+    lane = next(r for r in canvas.rows() if r.kind == "lane" and r.clip is clip and r.auto.key == "tf.rot")
+    canvas.set_lane_small(lane, not lane.small)
+    small = clip.lane_sizes.copy()
+    no_step = steps() == s0 and ed.view_dirty
+    ed.rename(ed.find(rect_id), "Renommé")
+    ed.undo()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    check("annuler garde le dépliage des calques et la hauteur des lignes", no_step and small
+          and not ed.find(grp_id).expanded and clip.lane_sizes == small and ed.find(rect_id).name != "Renommé")
+    ed.undo()
+    ed.undo()
+    path = os.path.join(tempfile.mkdtemp(), "vue.ildaproj")
+    proj._write(path)
+    ed.set_grid_mode(2)
+    proj.autosave()
+    check("affichage modifié : enregistré par la sauvegarde automatique (projet nommé)",
+          Document.load(path).grid.mode == 2 and not ed.view_dirty)
+    ed.set_grid_mode(1)
+    ed.set_selection([rect_id])
+    a = grab(rect_id)
+    press(view, a)
+    move(view, QPoint(a.x() + 30, a.y()))
+    proj.autosave()                                # pendant le geste : rien n'est écrit
+    waited = Document.load(path).grid.mode == 2
+    key(view, Qt.Key.Key_Escape)
+    release(view, QPoint(a.x() + 30, a.y()))
+    proj.autosave()
+    proj.timer.stop()
+    check("sauvegarde automatique : attend la fin du geste (jamais un état annulé ensuite)", waited
+          and Document.load(path).grid.mode == 1)
+
+    # ── A5 : flèche maintenue = une seule étape ─────────────────────────
+    ed.set_selection([rect_id])
+    s0 = steps()
+    c0 = center(rect_id)
+    for _ in range(6):
+        key(view, Qt.Key.Key_Right)
+    one = steps() == s0 + 1 and center(rect_id)[0] > c0[0] + 0.02
+    ed.undo()
+    check("flèche répétée : une seule étape d'annulation", one and abs(center(rect_id)[0] - c0[0]) < 1e-5)
+    key(view, Qt.Key.Key_Right)
+    ed.history.undo_stack[-1].time -= 5.0      # une pause
+    key(view, Qt.Key.Key_Right)
+    check("flèche après une pause : nouvelle étape", steps() == s0 + 2)
+    ed.undo()
+    ed.undo()
+
+    # ── A6 : une opération qui échoue ne laisse rien d'ouvert ───────────
+    s0, n0 = steps(), kids()
+
+    def failing():
+        root().children.pop(0)
+        raise ValueError("échec voulu")
+    raised = False
+    try:
+        ed.mutate("Échec", failing)
+    except ValueError:
+        raised = True
+    ed.rename(ed.find(rect_id), "Rect A6")
+    check("opération en échec : annulée, l'action suivante a sa propre étape", raised and kids() == n0
+          and steps() == s0 + 1 and ed.history.undo_label() == "Renommer")
+    ed.undo()
+
+    # ── A7 : Ctrl+Z pendant un réglage glissé ; couleur annulée dans un clip ─
+    ed.set_selection([rect_id])
+    s0 = steps()
+    form = form_for(rect_id)
+    field = form.fields["tf.rot"]
+    r0 = ed.find(rect_id).transform.rot
+    press(field, c)
+    move(field, QPoint(c.x() + 30, c.y()))
+    editing = ed.param_editing
+    ed.undo()
+    if isValid(field):
+        release(field, QPoint(c.x() + 30, c.y()))
+    check("Ctrl+Z pendant un réglage glissé : annulé, la mire réaffiche la sélection", editing
+          and not ed.param_editing and ed.find(rect_id).transform.rot == r0 and steps() == s0)
+    field = form_for(rect_id).fields["tf.rot"]
+    drag(field, c, QPoint(c.x() + 30, c.y()))
+    check("le réglage suivant est bien enregistré", steps() == s0 + 1
+          and ed.history.undo_label() == "Réglage : Rotation" and not ed.param_editing)
+    ed.undo()
+    ed.enter_clip(clip.id)
+    armed = ed.new_automation(clip.id)
+    ed.set_selection([rect_id])
+    s0 = steps()
+    col0 = tuple(ed.find(rect_id).color)
+    swatch = form_for(rect_id).fields["col.color"]
+    real_exec = QColorDialog.exec
+
+    def cancelled_dialog(dlg):
+        dlg.currentColorChanged.emit(QColor(255, 0, 0))     # aperçu en direct…
+        return 0                                           # … puis « Annuler »
+    QColorDialog.exec = cancelled_dialog
+    try:
+        swatch.click()
+    finally:
+        QColorDialog.exec = real_exec
+    app.processEvents()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    auto = next((x for x in clip.automations if x.id == armed.id), None)
+    check("couleur annulée dans un clip : aucune clé, aucune automation liée", auto is not None and auto.armed
+          and not auto.keys and tuple(ed.find(rect_id).color) == col0 and steps() == s0 and not ed.gesture_active())
+    ed.undo()                                      # l'automation en attente
+    ed.enter_def(fid)
+
+    # ── S1 : forme revenue au point de départ = pas de forme ────────────
+    for kind in ("rect", "line"):
+        ed.set_tool("shape:" + kind)
+        n0, s0 = kids(), steps()
+        a = sp(0.0, -0.6)
+        press(view, a)
+        move(view, QPoint(a.x() + 20, a.y() + 10))
+        move(view, QPoint(a.x() + 1, a.y()))
+        release(view, QPoint(a.x() + 1, a.y()))
+        check(f"forme « {kind} » ramenée au départ : pas créée", kids() == n0 and steps() == s0 and not ed.gesture_active())
+    click(view, sp(0.0, -0.6))
+    check("simple clic avec une forme : taille par défaut (inchangé)", kids() == n0 + 1)
+    ed.undo()
+    ed.set_tool("select")
+
+    # ── S9 : valeurs tapées infinies / NaN refusées, clip borné ─────────
+    ed.set_selection([rect_id])
+    field = form_for(rect_id).fields["tf.rot"]
+    r0 = ed.find(rect_id).transform.rot
+    for txt in ("inf", "nan", "-inf"):
+        field.setText(txt)
+        field._typed()
+    ok_inf = ed.find(rect_id).transform.rot == r0
+    field.setText("1e308")
+    field._typed()
+    check("réglage tapé : inf / nan refusés, valeur énorme ramenée au maximum", ok_inf
+          and ed.find(rect_id).transform.rot == 360.0, f"{ed.find(rect_id).transform.rot}")
+    ed.undo()
+    ed.enter_clip(clip.id)
+    ed.clear_selection()
+    app.processEvents()
+    dur = win.properties._clip_fields["duration"]
+    d0 = ed.current_clip().duration
+    dur.setText("inf")
+    dur._typed()
+    ok_inf = ed.current_clip().duration == d0
+    dur.setText("1e308")
+    dur._typed()
+    check("durée du clip : inf refusé, maximum 1 h", ok_inf and ed.current_clip().duration == MAX_DURATION)
+    ed.current_clip().duration = float("inf")
+    canvas.grab()                                  # dessin de la timeline sans erreur
+    check("clip : durée infinie impossible", ed.current_clip().duration == MAX_DURATION)
+    ed.undo()
+
+    # ── S10 : « envoyer dans la timeline » depuis la vue Forme ──────────
+    ed.enter_def(fid)
+    ed.set_selection([rect_id])
+    form = form_for(rect_id)
+    n_err = len(errors)
+    form.autos["tf.rot"].click()
+    app.processEvents()
+    clip = ed.doc.timeline.find_clip(clip.id)[1]
+    check("envoyer un réglage dans la timeline (vue Forme) : pas d'erreur, on reste sur le calque",
+          len(errors) == n_err and ed.selection == [rect_id] and form_for(rect_id) is not None
+          and clip.automation_for(rect_id, "tf.rot") is not None)
+    ed.undo()
+    ed.enter_def(fid)
+
+    # ── S7 : projets / sauvegardes abîmés : message, jamais de plantage ─
+    folder = tempfile.mkdtemp()
+    bad_list = os.path.join(folder, "liste.ildaproj")
+    with open(bad_list, "w") as f:
+        json.dump([1, 2, 3], f)
+    bad_types = os.path.join(folder, "types.ildaproj")
+    with open(bad_types, "w") as f:
+        json.dump({"version": 3, "library": [{"id": "x", "name": "F", "root": {"kind": "group", "children": 5}}]}, f)
+    bad_json = os.path.join(folder, "json.ildaproj")
+    with open(bad_json, "w") as f:
+        f.write("{pas du json")
+    doc_before = ed.doc
+    for p in (bad_list, bad_types, bad_json):
+        messages.clear()
+        ok = proj.open(p)
+        check(f"projet abîmé ({os.path.basename(p)}) : message, projet en cours gardé", not ok and ed.doc is doc_before
+              and messages and messages[0][0] == "critical", str(messages))
+    net = os.path.join(folder, "reseau.ildaproj")
+    d = Document().to_dict()
+    d["network"] = {"port": "abc", "channel": 99}
+    with open(net, "w") as f:
+        json.dump(d, f)
+    ok = proj.open(net)
+    check("réglages réseau abîmés dans un projet : ouvert, valeurs sûres", ok and ed.settings.get("network", "port") == 7255
+          and ed.settings.get("network", "channel") == 16)
+    newer = os.path.join(folder, "futur.ildaproj")
+    d = Document().to_dict()
+    d["version"] = 99
+    with open(newer, "w") as f:
+        json.dump(d, f)
+    messages.clear()
+    ok = proj.open(newer)
+    ed.set_tool("shape:rect")
+    drag(view, sp(-0.2, -0.2), sp(0.2, 0.2))
+    proj.autosave()
+    check("format plus récent : avertissement, ouvert, jamais réécrit automatiquement", ok and messages
+          and messages[0][0] == "warning" and load_json(newer)["version"] == 99 and not proj.auto_on())
+    ed.set_tool("select")
+    s = ed.settings
+    s.set("general", "reopen_last", True)
+    proj.new()                                     # comme au lancement : projet vide
+    s.set("ui", "last_project", bad_types)
+    messages.clear()
+    proj.restore_session()
+    check("dernier projet abîmé au démarrage : message, projet vide, pas de nouvel essai", messages
+          and not ed.doc.path and not ed.doc.library.defs[0].root.children and s.get("ui", "last_project") == "",
+          f"{messages} {ed.doc.path} {len(ed.doc.library.defs[0].root.children)} {s.get('ui', 'last_project')}")
+
+    # ── S8 : la sauvegarde automatique d'un projet sans nom n'est jamais perdue ─
+    proj.new()
+    ed.set_tool("shape:star")
+    drag(view, sp(-0.3, 0.3), sp(0.3, -0.3))
+    proj.timer.stop()
+    proj.autosave()                                # travail sans nom n° 1
+    for p_ in AS.backups(proj.backup_dir):
+        os.remove(p_)
+    first = load_json(proj.autosave_path)
+    proj.new()                                     # comme un lancement qui ne rouvre pas ce travail
+    proj.autosave()
+    untouched = load_json(proj.autosave_path) == first
+    ed.set_tool("shape:ellipse")
+    drag(view, sp(-0.3, 0.3), sp(0.3, -0.3))
+    proj.timer.stop()
+    proj.autosave()                                # travail n° 2 : le n° 1 est d'abord copié
+    proj.autosave()
+    backs = AS.backups(proj.backup_dir)
+    shapes = lambda d: [c.get("shape") for c in d["library"][0]["root"]["children"]]  # noqa: E731
+    check("nouveau travail sans nom : l'ancien est copié dans les sauvegardes datées (une seule fois)",
+          untouched and len(backs) == 1 and shapes(load_json(backs[0])) == ["star"]
+          and shapes(load_json(proj.autosave_path)) == ["ellipse"])
+    check("menu Fichier → Récupérer une sauvegarde automatique…", win.actions_["recover_backup"].text()
+          == "Récupérer une sauvegarde automatique…")
+    ok = proj.open_backup(backs[0])
+    check("sauvegarde récupérée : projet sans nom avec l'ancien travail", ok and not ed.doc.path and ed.dirty
+          and [c.shape for c in root().children] == ["star"])
+    proj.autosave()
+    check("… et le travail qu'elle remplace est copié à son tour", len(AS.backups(proj.backup_dir)) == 2)
+    ed.set_tool("select")
+    proj.timer.stop()
+    for k, v in saved.items():
+        setattr(QMessageBox, k, v)
 
 
 if __name__ == "__main__":

@@ -51,11 +51,15 @@ def build_actions(win):
     act("music", "Importer une musique…", win.project.import_music, "Ctrl+Shift+I")
     act("export", "Exporter en ILDA…", win.export_ilda, "Ctrl+E")
     act("recover", "Récupérer la sauvegarde automatique", win.project.recover)
+    act("recover_backup", "Récupérer une sauvegarde automatique…", win.project.recover_backup)
     act("quit", "Quitter", win.close, SK.Quit)
 
     # Édition
     act("undo", "Annuler", ed.undo, SK.Undo)
     act("redo", "Rétablir", ed.redo, [QKeySequence(SK.Redo), QKeySequence("Ctrl+Y")])
+    # Échap pendant un geste (glisser, réglage…) : il est annulé. Active seulement pendant un geste,
+    # sinon Échap garde son rôle habituel (désélectionner, fermer une saisie…)
+    act("cancel_gesture", "Annuler le geste en cours", win.cancel_gesture, "Escape").setEnabled(False)
     act("cut", "Couper", win.cut_pressed, SK.Cut)
     act("copy", "Copier", win.copy_pressed, SK.Copy)
     act("paste", "Coller", win.paste_pressed, SK.Paste)
@@ -114,6 +118,7 @@ def build_menus(win, A):
     m.addAction(A["export"])
     m.addSeparator()
     m.addAction(A["recover"])
+    m.addAction(A["recover_backup"])
     m.addSeparator()
     m.addAction(A["quit"])
 

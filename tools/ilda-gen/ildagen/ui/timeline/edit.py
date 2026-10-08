@@ -52,6 +52,7 @@ class TimelineEditing:
             row.clip.lane_sizes.pop(lid, None)    # retour au comportement automatique
         else:
             row.clip.lane_sizes[lid] = "small" if small else "big"
+        self.editor.view_changed()
         self._changed()
 
     def toggle_group(self, row):
@@ -61,6 +62,7 @@ class TimelineEditing:
             ids.remove(row.node.id)
         else:
             ids.append(row.node.id)
+        self.editor.view_changed()
         self._changed()
 
     def _press_header(self, row, x, y):
@@ -112,7 +114,7 @@ class TimelineEditing:
             else:
                 v = L.y_to_v(y, row, L.value_range(spec, auto), spec, auto)
             if v is None:
-                self.editor.history.cancel()
+                self.editor.cancel_gesture()
                 return
             if auto not in clip.automations:
                 # Premier clic sur un réglage pas encore animé : l'automation est créée
