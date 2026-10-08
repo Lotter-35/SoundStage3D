@@ -6,33 +6,50 @@ Blender, DaVinci Resolve, Figma (mode sombre).
 
 ## 1. Ce qu'on s'interdit
 
-- Dégradés décoratifs, lueurs (glow), néons, ombres portées marquées, effets de verre.
+- Dégradés décoratifs, lueurs (glow), néons, ombres portées marquées, effets de verre. Seule exception : le
+  halo des faisceaux dans l'aperçu laser (c'est le contenu, pas l'interface).
 - Emojis dans l'interface.
-- Couleurs d'accent multiples : **un seul accent**, plus le rouge réservé au danger.
+- Couleurs d'accent multiples : **un seul accent**, plus le rouge réservé au danger (BLACKOUT) et le vert à
+  l'état « connecté / live ».
+- Le **bleu** par défaut et les **couleurs délavées** (pastels, teintes grisées, fonds teintés à 20 %) : l'interface
+  est en **gris neutres** (sans dominante bleue) et l'accent est une couleur **franche**.
+- Le « look IA » : logo en dégradé, pastilles colorées, panneaux flottants arrondis, notes et badges décoratifs.
 - Coins très arrondis, gros boutons « pilule », espacements généreux de site web.
 - Icônes partout : une icône n'est mise que si elle se lit plus vite qu'un mot.
 - Animations d'interface décoratives (seules les transitions utiles, < 120 ms).
 
-## 2. Palette (thème sombre)
+## 2. Palette et thèmes
 
-| Rôle | Valeur | Usage |
+Base **neutre** : gris purs (aucune dominante bleue). L'état actif se lit d'abord par la luminosité ; un **seul
+accent franc** marque ce qui est actif ou sélectionné. Le thème se choisit dans **Paramètres → Apparence**.
+
+| Rôle | Graphite (par défaut) | Usage |
 |---|---|---|
-| Fond application | `#16171a` | Derrière les panneaux |
-| Fond panneau | `#1d1e22` | Calques, propriétés, timeline |
-| Fond mire | `#0b0b0d` | Zone de projection (quasi noir, comme un mur dans le noir) |
-| Fond champ / ligne survolée | `#26272c` | Champs de saisie, survol |
-| Bordure / séparateur | `#2e3036` | Lignes de 1 px |
-| Texte principal | `#d6d7db` | |
-| Texte secondaire | `#8a8d96` | Libellés, unités |
-| Texte désactivé | `#55585f` | |
-| **Accent** | `#4a90e2` | Sélection, outil actif, tête de lecture, focus |
-| Accent atténué | `#4a90e2` à 20 % | Fond des lignes sélectionnées |
-| Danger | `#e5484d` | Blackout, envoi live actif, suppression |
-| Succès | `#3fb950` | Pastille « connecté » uniquement |
-| Grille mire | `#ffffff` à 6 % / 12 % (axes, croix) | Discrète, ne doit jamais rivaliser avec le laser |
-| Grille timeline | mesure `#ffffff` 14 %, temps 7 %, subdivision 3 % | |
+| Fond application | `#141414` | Derrière les panneaux |
+| Fond panneau | `#1c1c1c` | Calques, réglages, timeline |
+| Fond mire | `#000000` | Zone de projection et vignettes |
+| Champ / survol | `#262626` / `#2c2c2c` | Champs, sliders, survol |
+| Sélection | `#383838` | Fond de la ligne / de l'onglet sélectionné |
+| Bordure | `#2b2b2b` | Lignes de 1 px |
+| Texte | `#e4e4e4` / `#9b9b9b` / `#5f5f5f` | Principal / secondaire / désactivé |
+| Remplissage slider | `#3c3c3c` | Barre des sliders au repos |
+| **Accent** | `#ff7a00` (orange) | Outil actif, sélection, tête de lecture, slider en cours, interrupteur « oui », cue en cours |
+| Danger | `#e03b3b` | BLACKOUT, suppression |
+| Live / connecté | `#22b14c` | Pastille de connexion, icône du bouton Live |
 
-Les couleurs sont centralisées dans un seul fichier de thème (aucune couleur écrite en dur ailleurs).
+Thèmes fournis (un fond + un accent) :
+
+| Thème | Fond | Accent |
+|---|---|---|
+| Graphite · Orange (par défaut) | Graphite | `#ff7a00` |
+| Graphite · Jaune | Graphite | `#ffc800` |
+| Noir · Violet | Noir (`#0a0a0a` / `#111111`) | `#c04dff` |
+| Monochrome | Graphite | `#e8e8e8` (blanc) |
+
+Couleurs **franches** autorisées pour l'identification : pistes de la timeline (bande à gauche de l'en-tête,
+liseré en haut des clips) et marqueurs de parties (étiquette pleine, texte noir).
+
+Les couleurs sont centralisées dans le fichier de thème (aucune couleur écrite en dur ailleurs).
 
 ## 3. Typographie et densité
 
@@ -63,15 +80,20 @@ Emplacements retenus :
 
 ## 5. Comportements visuels
 
-- Sélection : cadre en **pointillés** couleur accent, poignées carrées de 7 px (fond sombre, bord accent),
+- Sélection : cadre fin couleur accent, poignées carrées de 7 px (fond sombre, bord accent),
   poignée de rotation ronde au-dessus.
 - Glisser-déposer des calques : **ligne d'insertion** de 2 px couleur accent ; cadre accent quand on dépose dans un groupe.
-- Envoi live actif : le bouton passe en rouge plein — on doit toujours savoir d'un coup d'œil si le laser émet.
+- Envoi live actif : bouton « Live » enfoncé avec l'icône en vert. **BLACKOUT** : texte rouge au repos, **rouge
+  plein** quand il est engagé — les deux états ne se ressemblent jamais.
+- Maîtres (lumière, taille, vitesse, position, rotation, couleur) : cachés, dans un panneau déroulant ouvert par
+  le bouton « Maîtres » tout en haut à droite.
+- Barre du haut : **menus** (Fichier, Édition, Affichage, Lecture, Paramètres) à gauche, onglets **Forme · Show ·
+  Live** au centre, connexion · Live · BLACKOUT · Maîtres à droite. Pas de logo.
 - Éléments masqués / verrouillés : texte en couleur désactivée, pas d'autre décoration.
 
 ## Timeline : hiérarchie visuelle
 
-- **Le bleu (accent) est réservé à ce qui est actif** : tête de lecture, clip sélectionné (liseré), point de
+- **L'accent est réservé à ce qui est actif** : tête de lecture, clip sélectionné (liseré), point de
   courbe sélectionné, sélection en cours. Tout le reste est en gris.
 - Priorité de lecture : 1) les formes (vignettes) et leur nom, 2) les courbes (gris clair), 3) les noms des
   modifieurs et réglages (gris, petits), 4) les aides (grille, ↺, flèches : très discrets).
@@ -80,5 +102,5 @@ Emplacements retenus :
 
 ## Réglages oui / non
 
-Interrupteur (pastille qui glisse, bleu = oui, gris = non) suivi du mot **« Oui »** ou **« Non »** : jamais une
+Interrupteur (pastille qui glisse, accent = oui, gris = non) suivi du mot **« Oui »** ou **« Non »** : jamais une
 simple case pleine sans coche, dont l'état est ambigu.

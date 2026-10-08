@@ -14,7 +14,7 @@
     const a = []; for (let i = 0; i <= 120; i++) { const x = x0 + (x1 - x0) * i / 120; a.push([x, y + amp * Math.sin(ph + cyc * TAU * (x - x0) / (x1 - x0))]); } return a;
   };
   const liss = (a, b, r, d = 0) => { const o = []; for (let i = 0; i <= 400; i++) { const t = i / 400 * TAU; o.push([r * Math.sin(a * t + d), r * Math.sin(b * t)]); } return o; };
-  const C = { red: '#ff3b3b', green: '#39ff6a', blue: '#4a7dff', cyan: '#36e6ff', mag: '#ff3bd8', yel: '#ffe23b', white: '#f4f4ff', orange: '#ff8a2b', violet: '#a86bff' };
+  const C = { red: '#ff2020', green: '#22ff55', blue: '#3355ff', cyan: '#20e0ff', mag: '#ff2bd0', yel: '#ffe600', white: '#ffffff', orange: '#ff8000', violet: '#9a4dff' };
 
   // Chaque scène : liste de [points, couleur, options]
   const S = {
@@ -41,8 +41,8 @@
     const k = ++uid, g = parseFloat(el.dataset.glow || '1');
     const w = parseFloat(el.dataset.w || '1');
     let h = `<svg viewBox="-1 -1 2 2" preserveAspectRatio="xMidYMid meet" style="width:100%;height:100%;display:block">`;
-    h += `<defs><filter id="g${k}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${.018 * g}" result="a"/><feGaussianBlur in="SourceGraphic" stdDeviation="${.006 * g}" result="b"/>`;
-    h += `<feMerge><feMergeNode in="a"/><feMergeNode in="a"/><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><g filter="url(#g${k})" fill="none" stroke-linecap="round" stroke-linejoin="round">`;
+    h += `<defs><filter id="g${k}" x="-50%" y="-50%" width="200%" height="200%"><feGaussianBlur stdDeviation="${.012 * g}" result="a"/><feComponentTransfer in="a" result="a2"><feFuncA type="linear" slope=".7"/></feComponentTransfer>`;
+    h += `<feMerge><feMergeNode in="a2"/><feMergeNode in="SourceGraphic"/></feMerge></filter></defs><g filter="url(#g${k})" fill="none" stroke-linecap="round" stroke-linejoin="round">`;
     for (const [pts, col, o = {}] of sc) {
       h += `<path d="${P(pts)}" stroke="${col}" stroke-width="${(o.w || 1.3) * .011 * w}"${o.dash ? ` stroke-dasharray="${o.dash}"` : ''}/>`;
     }
@@ -75,9 +75,9 @@
           else { const px = pts[i - 1][0] * W, py = pad + (1 - pts[i - 1][1]) * (H - 2 * pad), m = (px + x) / 2; d += `C${m} ${py} ${m} ${y} ${x} ${y}`; }
         });
       }
-      const col = el.dataset.col || '#d6d7db';
+      const col = el.dataset.col || '#cfcfcf';
       let s = `<svg width="${W}" height="${H}" style="display:block"><path d="${d}" fill="none" stroke="${col}" stroke-opacity=".85" stroke-width="1.4"/>`;
-      if (!sine) pts.forEach(p => { const x = p[0] * W, y = pad + (1 - p[1]) * (H - 2 * pad); s += `<path d="M${x} ${y - 4}L${x + 4} ${y}L${x} ${y + 4}L${x - 4} ${y}Z" fill="#1d1e22" stroke="${col}" stroke-width="1.1"/>`; });
+      if (!sine) pts.forEach(p => { const x = p[0] * W, y = pad + (1 - p[1]) * (H - 2 * pad); s += `<path d="M${x} ${y - 4}L${x + 4} ${y}L${x} ${y + 4}L${x - 4} ${y}Z" fill="#1c1c1c" stroke="${col}" stroke-width="1.1"/>`; });
       el.innerHTML = s + '</svg>';
     });
   }
@@ -91,13 +91,14 @@
         const beat = Math.pow(Math.max(0, Math.cos((x / W) * 64 * Math.PI)), 6);
         const sec = x / W; const env = sec < .25 ? .35 : sec < .5 ? .55 : sec < .75 ? .95 : .6;
         const a = (0.15 + 0.55 * beat + 0.3 * rnd()) * env * H / 2;
-        s += `<rect x="${x}" y="${H / 2 - a}" width="1.2" height="${2 * a}" fill="#5b6070"/>`;
+        s += `<rect x="${x}" y="${H / 2 - a}" width="1.2" height="${2 * a}" fill="#5a5a5a"/>`;
       }
       el.innerHTML = s + '</svg>';
     });
   }
 
   window.addEventListener('DOMContentLoaded', () => {
+    const th = new URLSearchParams(location.search).get('theme'); if (th) document.body.classList.add('t-' + th);
     icons();
     document.querySelectorAll('[data-laser]').forEach(render);
     curves(); waves();

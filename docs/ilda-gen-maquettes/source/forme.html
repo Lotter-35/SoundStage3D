@@ -2,51 +2,47 @@
 <html lang="fr"><head><meta charset="utf-8"><title>Espace Forme</title>
 <link rel="stylesheet" href="mock.css"><script src="icons.js"></script><script src="laser.js"></script>
 <style>
-  .lib { width: 206px; }
+  .lib { width: 200px; }
   .lib .tiles { grid-template-columns: 1fr 1fr; }
-  .rp { width: 340px; }
-  .loopbar { height: 38px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 12px; background: var(--bg-panel); border-top: 1px solid var(--border); }
-  .meter { display: flex; align-items: center; gap: 8px; margin-left: auto; color: var(--dim); }
-  .meter .m { width: 120px; height: 6px; border-radius: 3px; background: var(--bg-field); overflow: hidden; }
-  .meter .m i { display: block; height: 100%; width: 46%; background: var(--success); }
-  .sel-frame { position: absolute; border: 1px solid var(--accent); }
-  .sel-frame span { position: absolute; width: 7px; height: 7px; background: var(--bg-mire); border: 1px solid var(--accent); }
-  .sec { padding: 8px 12px 3px; font-size: 10.5px; font-weight: 600; letter-spacing: .07em; color: var(--off); text-transform: uppercase; }
-  .ttl { padding: 10px 12px 6px; display: flex; align-items: baseline; gap: 8px; }
-  .ttl b { font-size: 14px; font-weight: 600; }
+  .rp { width: 330px; }
+  .loopbar { height: 34px; flex: none; display: flex; align-items: center; gap: 10px; padding: 0 10px; background: var(--bg-panel); border-top: 1px solid var(--border); color: var(--dim); }
+  .meter { display: flex; align-items: center; gap: 8px; margin-left: auto; }
+  .meter .m { width: 110px; height: 5px; border-radius: 1px; background: var(--bg-field); overflow: hidden; }
+  .meter .m i { display: block; height: 100%; width: 46%; background: #00c853; }
+  .sel-frame { position: absolute; border: 1px solid var(--acc); }
+  .sel-frame span { position: absolute; width: 7px; height: 7px; background: #000; border: 1px solid var(--acc); }
+  .sec { padding: 10px 10px 4px; font-size: 11px; font-weight: 600; color: var(--dim); }
+  .ttl { padding: 8px 10px 6px; display: flex; align-items: baseline; gap: 8px; }
+  .ttl b { font-size: 13px; font-weight: 600; }
   .ttl span { color: var(--dim); }
-  .tfoot { display: flex; gap: 2px; padding: 4px 6px; border-top: 1px solid var(--border); }
-  .tfoot .btn { height: 26px; }
+  .tfoot { display: flex; gap: 2px; padding: 3px 6px; border-top: 1px solid var(--border); }
 </style></head>
 <body>
 <div class="top">
-  <div class="brand"><div class="dot"></div>ILDA Gen <small>Mon show · enregistré</small></div>
-  <div class="spaces">
-    <div class="on"><i data-i="pen-line" class="s"></i>Forme<kbd>⌘1</kbd></div>
-    <div><i data-i="audio-waveform" class="s"></i>Show<kbd>⌘2</kbd></div>
-    <div><i data-i="grid-3x3" class="s"></i>Live<kbd>⌘3</kbd></div>
-  </div>
+  <div class="menus"><span>Fichier</span><span>Édition</span><span>Affichage</span><span>Lecture</span><span>Paramètres</span></div>
+  <div class="spaces"><div class="on">Forme<kbd>⌘1</kbd></div><div>Show<kbd>⌘2</kbd></div><div>Live<kbd>⌘3</kbd></div></div>
   <div class="right">
-    <div class="pill"><span class="led"></span>SoundStage3D <span class="dim">· canal 1</span></div>
-    <div class="pill live"><i data-i="radio" class="s"></i>Live actif</div>
-    <div class="pill cut"><i data-i="octagon-x" class="s"></i>Coupure</div>
+    <div class="tb plain"><span class="led"></span>SoundStage3D <span class="dim">· canal 1</span></div>
+    <div class="tb open"><i data-i="radio" class="s" style="color:var(--live)"></i>Live</div>
+    <div class="tb bo">BLACKOUT</div>
+    <div class="tb"><i data-i="sliders-vertical" class="s"></i>Maîtres</div>
   </div>
 </div>
 
 <div class="main">
   <div class="tools">
-    <div class="tool on"><i data-i="mouse-pointer-2"></i><span class="k">V</span></div>
-    <div class="tool"><i data-i="pencil"></i><span class="k">B</span></div>
-    <div class="tool"><i data-i="paint-bucket"></i><span class="k">G</span></div>
+    <div class="tool on"><i data-i="mouse-pointer-2"></i></div>
+    <div class="tool"><i data-i="pencil"></i></div>
+    <div class="tool"><i data-i="paint-bucket"></i></div>
     <div class="gap"></div>
-    <div class="tool"><i data-i="slash"></i><span class="k">L</span></div>
-    <div class="tool"><i data-i="square"></i><span class="k">R</span></div>
-    <div class="tool"><i data-i="circle"></i><span class="k">E</span></div>
-    <div class="tool"><i data-i="triangle"></i><span class="k">T</span></div>
-    <div class="tool"><i data-i="star"></i><span class="k">S</span></div>
-    <div class="tool"><i data-i="hexagon"></i><span class="k">P</span></div>
+    <div class="tool"><i data-i="slash"></i></div>
+    <div class="tool"><i data-i="square"></i></div>
+    <div class="tool"><i data-i="circle"></i></div>
+    <div class="tool"><i data-i="triangle"></i></div>
+    <div class="tool"><i data-i="star"></i></div>
+    <div class="tool"><i data-i="hexagon"></i></div>
     <div class="gap"></div>
-    <div class="swatch2"><div style="right:0;bottom:0;background:#ff3bd8"></div><div style="left:0;top:0;background:#36e6ff"></div></div>
+    <div class="swatch2"><div style="right:0;bottom:0;background:#ff2bd0"></div><div style="left:0;top:0;background:#20e0ff"></div></div>
   </div>
 
   <div class="col l lib">
@@ -76,46 +72,45 @@
       <div class="ib"><i data-i="zoom-in"></i></div>
     </div>
     <div class="stage">
-      <div class="proj" style="width:600px;height:600px">
+      <div class="proj" style="width:620px;height:620px">
         <div class="grid"></div>
         <div class="axis" style="left:0;right:0;top:50%;height:1px"></div>
         <div class="axis" style="top:0;bottom:0;left:50%;width:1px"></div>
         <div class="laser" data-laser="star-sel" style="position:absolute;inset:0"></div>
-        <div class="sel-frame" style="left:118px;top:112px;width:364px;height:340px">
+        <div class="sel-frame" style="left:122px;top:116px;width:376px;height:351px">
           <span style="left:-4px;top:-4px"></span><span style="right:-4px;top:-4px"></span><span style="left:-4px;bottom:-4px"></span><span style="right:-4px;bottom:-4px"></span>
           <span style="left:calc(50% - 4px);top:-4px"></span><span style="left:calc(50% - 4px);bottom:-4px"></span><span style="top:calc(50% - 4px);left:-4px"></span><span style="top:calc(50% - 4px);right:-4px"></span>
         </div>
       </div>
     </div>
     <div class="loopbar">
-      <div class="btn"><i data-i="pause" class="s"></i>Aperçu en boucle</div>
+      <div class="btn"><i data-i="pause" class="s"></i>Boucle</div>
       <div class="seg"><span>0,5×</span><span class="on">1×</span><span>2×</span></div>
-      <span style="color:var(--dim)">Tempo des effets</span><span class="mono">128 BPM</span>
-      <div class="meter"><span>684 points</span><div class="m"><i></i></div><span style="color:var(--success)">30 images/s · fluide</span></div>
+      <span>Tempo</span><span class="mono" style="color:var(--text)">128 BPM</span>
+      <div class="meter"><span>684 points</span><div class="m"><i></i></div><span style="color:var(--text)">30 images/s</span></div>
     </div>
   </div>
 
   <div class="col r rp">
     <div class="ph">Calques<span class="r"><i data-i="plus" class="s"></i><i data-i="folder-plus" class="s"></i><i data-i="trash-2" class="s"></i></span></div>
     <div class="tree">
-      <div class="row mod"><span class="caret"></span><i data-i="zap" class="ic s"></i>Clignotement<span class="r"><i data-i="eye" class="s"></i></span></div>
-      <div class="row mod"><span class="caret"></span><i data-i="ellipsis" class="ic s"></i>Points<span class="r"><i data-i="eye" class="s"></i></span></div>
+      <div class="row"><span class="caret"></span><i data-i="zap" class="ic s"></i>Clignotement<span class="r"><i data-i="eye" class="s"></i></span></div>
+      <div class="row"><span class="caret"></span><i data-i="ellipsis" class="ic s"></i>Points<span class="r"><i data-i="eye" class="s"></i></span></div>
       <div class="row"><span class="caret"><i data-i="chevron-down" class="s"></i></span><i data-i="folder" class="ic s"></i>Centre<span class="r"><i data-i="eye" class="s"></i></span></div>
       <div class="row sel ind1"><i data-i="star" class="ic s"></i>Étoile<span class="r"><i data-i="lock-open" class="s"></i><i data-i="eye" class="s"></i></span></div>
       <div class="row ind1"><i data-i="hexagon" class="ic s"></i>Hexagone<span class="r"><i data-i="eye" class="s"></i></span></div>
       <div class="row"><span class="caret"></span><i data-i="circle" class="ic s"></i>Cercle extérieur<span class="r"><i data-i="lock" class="s"></i><i data-i="eye" class="s"></i></span></div>
     </div>
-    <div class="tfoot"><div class="btn ghost"><i data-i="sliders-horizontal" class="s"></i>Modifieur</div></div>
+    <div class="tfoot"><div class="btn ghost"><i data-i="plus" class="s"></i>Modifieur</div></div>
     <div class="sep"></div>
 
-    <div class="ph">Réglages</div>
-    <div class="ttl"><b>Étoile</b><span>Tracé · étoile</span><span style="margin-left:auto;color:var(--off)"><i data-i="rotate-ccw" class="s"></i></span></div>
+    <div class="ph">Réglages<span class="r"><i data-i="rotate-ccw" class="s"></i></span></div>
+    <div class="ttl"><b>Étoile</b><span>Tracé · étoile</span></div>
     <div class="sl"><span class="lb">Taille</span><div class="bar act"><i style="width:62%"></i><b>62 %</b></div><span class="osc"><i data-i="sine" class="s"></i></span></div>
     <div class="sl"><span class="lb">Branches</span><div class="bar"><i style="width:25%"></i><b>5</b></div><span class="osc"><i data-i="sine" class="s"></i></span></div>
     <div class="sl"><span class="lb">Creux</span><div class="bar"><i style="width:42%"></i><b>42 %</b></div><span class="osc"><i data-i="sine" class="s"></i></span></div>
     <div class="sl"><span class="lb">Rotation</span><div class="bar"><i style="width:30%"></i><b>~ 45 °/s</b></div><span class="osc on"><i data-i="sine" class="s"></i></span></div>
-    <div class="sl"><span class="lb">Couleur</span><div></div><span></span></div>
-    <div class="chips" style="margin-top:-24px"><span class="on" style="background:#36e6ff"></span><span style="background:#ff3bd8"></span><span style="background:#39ff6a"></span><span style="background:#ffe23b"></span><span style="background:#ff3b3b"></span><span style="background:#f4f4ff"></span><span style="background:linear-gradient(90deg,#ff3b3b,#ffe23b,#39ff6a,#36e6ff,#a86bff)"></span></div>
+    <div class="sl"><span class="lb">Couleur</span><div class="chips"><span class="on" style="background:#20e0ff"></span><span style="background:#ff2bd0"></span><span style="background:#22ff55"></span><span style="background:#ffe600"></span><span style="background:#ff2020"></span><span style="background:#ffffff"></span><span style="background:#262626;border:1px dashed #555"></span></div><span></span></div>
 
     <div class="sec">Modifieurs qui agissent sur ce calque</div>
     <div class="card">
@@ -129,14 +124,11 @@
     <div class="card">
       <div class="hd"><span class="tg"></span>Clignotement<span class="sub">· 1/4 de temps</span><span class="r"><i data-i="chevron-right" class="s"></i></span></div>
     </div>
+    <div class="card">
+      <div class="hd"><span class="tg off"></span><span style="color:var(--dim)">Symétrie</span><span class="sub">· désactivé</span><span class="r"><i data-i="chevron-right" class="s"></i></span></div>
+    </div>
   </div>
 </div>
 
-<div class="status"><span>Mon show.ildaproj</span><span class="r"><span>Sortie : SoundStage3D · canal 1 · 30 images/s</span></span></div>
-
-<div class="note" data-n="1" style="left:430px;top:52px">Onglets en haut : Forme, Show, Live</div>
-<div class="note" data-n="2" style="left:54px;top:470px;max-width:180px">Outils de dessin : uniquement dans Forme</div>
-<div class="note" data-n="3" style="left:1110px;top:690px;max-width:300px">Tout se règle par sliders, au même endroit : le calque, puis les modifieurs qui agissent dessus</div>
-<div class="note" data-n="4" style="left:978px;top:400px;max-width:120px">~ = oscillateur : mouvement en boucle (rotation continue…)</div>
-<div class="note" data-n="5" style="left:330px;top:800px">Pas de timeline ici : la forme tourne en boucle</div>
+<div class="status"><span>Mon show.ildaproj · enregistré</span><span class="r"><span>Sortie : SoundStage3D · canal 1 · 30 images/s</span></span></div>
 </body></html>
