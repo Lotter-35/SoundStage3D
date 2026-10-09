@@ -30,7 +30,7 @@ python tools/ilda-gen/ilda-gen.py            # ou : python tools/ilda-gen/ilda-g
 ```
 
 Pour le direct, lancer aussi le serveur SoundStage3D (`node server/server.js`) : il écoute l'IDN sur UDP 7255.
-Dans le jeu, régler un laser sur « ILDA live » et le même canal (1 à 16) que dans la barre de connexion.
+Dans le jeu, régler un laser sur « ILDA live » et le même canal (1 à 16) que dans la connexion (en haut à droite).
 
 Au démarrage, le générateur **rouvre le dernier projet** et **reprend l'envoi live s'il était actif** à la
 dernière fermeture (sinon il reste coupé). Chaque modification est **enregistrée automatiquement** dans le
@@ -43,17 +43,21 @@ sauvegarde automatique…**. Un projet ou un fichier de réglages abîmé n'emp�
 explique le problème et l'on repart d'un projet vide (ou des réglages par défaut). Un projet créé par une
 version plus récente est ouvert avec un avertissement, sans être réenregistré automatiquement.
 
-## Disposition
+## Disposition : trois espaces de travail
 
-| Zone | Contenu |
+Barre du haut : **menus** à gauche · onglets **Forme · Show · Live** au centre (`Cmd+1` / `Cmd+2` / `Cmd+3`) ·
+à droite l'état de connexion (clic : adresse, port, canal, cadence), **Live**, **BLACKOUT** et **Maîtres**
+(lumière, taille, vitesse, position, rotation, couleur forcée de toute la sortie). Ce qui part au laser
+**suit l'espace affiché**.
+
+| Espace | Contenu |
 |---|---|
-| Haut | Menus · IP / port / canal / images par seconde · état de la connexion · **Envoi live** · **BLACKOUT** |
-| Gauche | Outils (sélection, crayon, seau), formes de base, couleur de tracé, **liste des formes** du projet |
-| Centre | La mire (zone de projection), grille orthogonale ou polaire, compteur de points |
-| Droite | Calques, puis Propriétés (repliable) — **sur toute la hauteur** (sous la barre de connexion) |
-| Bas (à gauche du panneau de droite) | Timeline : transport, BPM, grille musicale, musique, pistes, clips ; elle s'arrête contre le panneau Calques / Propriétés |
+| **Forme** | La forme sans le temps : outils de dessin, liste des formes en vignettes, mire, barre de boucle (aperçu des mouvements cycliques, tempo, compteur de points), **Calques** puis **Réglages** (sliders, oscillateurs, modifieurs qui agissent sur le calque) |
+| **Show** | Le temps : formes et effets à glisser, aperçu (ou « Sortie corrigée »), timeline calée sur la musique, inspecteur du clip (effets d'animation) |
+| **Live** | Jouer en direct : pages, grille de cues 8 × 4, départ calé sur le tempo, sortie, effets rapides |
 
-Tous les séparateurs se déplacent ; la disposition est mémorisée.
+Chaque espace garde sa disposition (séparateurs mémorisés) ; **Affichage → Réinitialiser la disposition**
+remet les tailles d'origine. Thème : **Paramètres → Apparence** (10 thèmes).
 
 ## Raccourcis
 
@@ -61,7 +65,7 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 
 | Action | Raccourci |
 |---|---|
-| Sélection / Crayon / Seau | `V` / `B` / `G` |
+| Sélection / Crayon / Seau (espace Forme) | `V` / `B` / `G` |
 | Inverser les deux couleurs / couleurs par défaut | `X` / `D` |
 | Trait, Carré, Cercle, Triangle, Étoile, Polygone, Mire ILDA | `L` `R` `E` `T` `S` `P` `M` |
 | Annuler / Rétablir | `Ctrl+Z` / `Ctrl+Maj+Z` ou `Ctrl+Y` (pendant un glisser : annulent seulement ce glisser) |
@@ -70,13 +74,15 @@ Sur Mac : `Ctrl` = `Cmd` (la touche `Ctrl` marche aussi) et `Alt` = `Option`. `S
 | Supprimer | `Suppr` ou `Retour arrière` |
 | Tout sélectionner | `Ctrl+A` |
 | Grouper / Dégrouper | `Ctrl+G` / `Ctrl+Maj+G` |
-| Réinitialiser les réglages de la sélection | `Ctrl+Maj+R` (ou bouton ↺ de Propriétés, ou clic droit) |
-| Réinitialiser un seul réglage | bouton ↺ à droite du réglage, `Alt` + clic sur sa valeur (ou clic droit sur son nom / sa valeur) |
-| Sans grille / orthogonale / polaire | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` |
+| Réinitialiser les réglages de la sélection | `Ctrl+Maj+R` (ou bouton ↺ de Réglages) |
+| Réinitialiser un seul réglage | clic droit (ou `Alt` + clic) sur son slider |
+| Espace Forme / Show / Live | `Ctrl+1` / `Ctrl+2` / `Ctrl+3` |
+| Sans grille / orthogonale / polaire | `Ctrl+Alt+1` / `Ctrl+Alt+2` / `Ctrl+Alt+3` |
 | Aimant (les poignées s'accrochent à la grille) | `Ctrl+;` ou bouton aimant au-dessus de la mire |
 | Symétrie de dessin marche / arrêt | `Ctrl+Maj+M` ou bouton symétrie au-dessus de la mire (petite flèche à sa droite : choisir le mode) |
 | Ajuster la vue | `Ctrl+0` |
-| Lecture / pause | `Espace` |
+| Lecture / pause (Show) | `Espace` |
+| Live : lancer un cue / effets rapides / tout arrêter | sa touche (A Z E R T Y U I, Q S D F…, F1–F8) / `1`–`8` maintenus / `Échap` |
 | Enregistrer / Ouvrir / Nouveau | `Ctrl+S` / `Ctrl+O` / `Ctrl+N` |
 | Exporter en ILDA | `Ctrl+E` |
 
@@ -163,90 +169,80 @@ changer la couleur les recolore en direct (annulable). **Les dégradés se font 
 Un modifieur de couleur placé au-dessus
 d'une forme reste prioritaire sur sa couleur propre.
 
-## Calques et modifieurs
+## Calques et Réglages (espace Forme)
 
-Boutons sous les calques : **Modifieur** (menu de tous les modifieurs), **nouveau calque** (vide ; le prochain trait au crayon le remplit), **nouveau
-groupe** (groupe la sélection s'il y en a une), **forme personnalisée**, **supprimer**.
-
-
-- Le panneau Calques montre **le contenu de la forme choisie à gauche** (son nom est écrit en haut du panneau).
-- Chaque forme est un calque. Glisser-déposer pour réordonner (ligne bleue = position, toujours au niveau des
-  modifieurs, jamais décalée) ou ranger dans un groupe (lâcher au milieu de sa ligne : cadre bleu). On ne dépose
-  jamais *dans* un modifieur : sur sa ligne, on va au-dessus ou en dessous.
-- Œil : afficher / masquer (masquer un groupe masque tout son contenu). Cadenas (toujours affiché, ouvert ou fermé) : verrouiller. Un groupe
-  verrouillé ne se déplie plus mais se sélectionne et se déplace comme un seul bloc.
-- **Modifieurs** (bouton « Modifieur » sous les calques, ou clic droit → Ajouter un modifieur) : ils agissent sur tout ce qui est **en dessous d'eux dans
-  le même groupe**. Leurs réglages s'affichent sous la ligne du calque et dans Propriétés.
-  Dans la liste, une **ligne verticale part de chaque modifieur et longe tous les calques qu'il modifie**
-  (ils sont décalés d'un cran vers la droite, comme rangés sous lui ; plusieurs modifieurs empilés restent
-  alignés entre eux et partagent la même ligne, seules les formes sont décalées).
-  Modifieur sélectionné ou survolé : une barre bleue à gauche relie le modifieur aux calques qu'il modifie,
-  ces formes sont entourées en pointillés dans la mire et Propriétés indique « Agit sur : … ».
-- **Modifieur sur modifieur** : clic droit sur un modifieur → Ajouter un sous-modifieur (Translation, Rotation,
-  Échelle). Exemples : Translation sur Dots = décalage des points le
-  long du trait ; Translation sur Symétrie = déplacement du centre du miroir.
-- Couleur par défaut : blanc (modifiable dans Paramètres).
+- **Calques** : la forme choisie à gauche, calque par calque (œil, cadenas). Glisser-déposer pour réordonner ou
+  ranger dans un groupe ; on ne dépose jamais *dans* un modifieur. Un calque verrouillé n'est plus modifiable
+  (réglages grisés). En haut du panneau : nouveau calque, nouveau groupe, forme personnalisée, supprimer ;
+  en bas : **+ Modifieur** (liste par catégories avec **recherche**).
+- **Modifieurs** : ils agissent sur tout ce qui est **en dessous d'eux dans le même groupe** (comme les calques de
+  réglage de Photoshop). Modifieur sur modifieur : clic droit → sous-modifieur (Translation, Rotation, Échelle).
+- **Réglages** (un seul endroit) : tous les réglages du calque sélectionné en **sliders** (glisser, molette après
+  un clic, flèches, double-clic pour taper, `Échap` annule, clic droit = valeur par défaut), puis **les
+  modifieurs qui agissent sur ce calque** en cartes repliables (interrupteur = modifieur actif). Les réglages
+  inutiles dans le mode choisi sont masqués.
+- **Oscillateur** (bouton ∿ à droite d'un réglage numérique) : la valeur bouge toute seule, en boucle — **onde**
+  (sinus, triangle, carré, scie, aléatoire ; amplitude, cadence calée sur le tempo ou en Hz) ou **vitesse**
+  (rotation continue, défilement). Le champ affiche alors « ~ Sinus · 1 temps » ou « ~ 45 °/s ».
 
 Modifieurs disponibles : Translation, Rotation, Inclinaison 3D, Profondeur Z, Échelle, Miroir, Pivot ·
-Symétrie miroir, Symétrie radiale / kaléidoscope, Répétition linéaire · Onde, Simplification · Dots, Tirets,
-Dessin progressif, Masque de zone, Beams · Couleur, Dégradé, Défilement de couleur, Arc-en-ciel,
+Symétrie miroir, Symétrie radiale / kaléidoscope, Répétition linéaire · Onde, Simplification · Points, Tirets,
+Dessin progressif, Masque de zone, Faisceaux · Couleur, Dégradé, Défilement de couleur, Arc-en-ciel,
 Teinte / saturation / luminosité, Segments alternés, Couleur aléatoire, Remplacement de couleur ·
-Luminosité, Fondu le long du tracé, Stroboscope, Pulsation.
+Luminosité, Fondu le long du tracé, Stroboscope, Pulsation. Le réglage commun « Dosage » mélange l'effet du
+modifieur avec ce qu'il reçoit.
 
-## Formes (liste de gauche)
+## Formes
 
-Un projet, ce sont des **formes** (la liste « Formes perso » à gauche) et la **timeline** qui les joue. Il n'y
-a pas de « scène » : il y a toujours au moins une forme (« Forme 1 »).
+Un projet, ce sont des **formes** (vignettes à gauche dans Forme et Show), la **timeline** qui les joue (Show)
+et la **grille de cues** (Live). Il y a toujours au moins une forme.
 
-- **Clic** sur une forme : elle est sélectionnée (en bleu), la mire l'affiche et le panneau Calques montre son
-  contenu. On la modifie directement (traits, formes, modifieurs, autres formes…), sans bouton « Terminer ».
-- **+** (en haut de la liste, ou clic droit → Nouvelle forme) : nouvelle forme vide, « Forme 2 », « Forme 3 »…
-- **Double-clic** : renommer. **Clic droit** : renommer, dupliquer, placer dans la forme en cours, supprimer.
-  `Suppr` : supprimer la forme et toutes ses occurrences (annulable).
-- **Glisser** une forme : sur une piste de la timeline (clip) ou dans la mire (elle est placée dans la forme en
-  cours, liée : la modifier met à jour toutes ses occurrences).
-- Une forme peut aussi naître d'une sélection : clic droit → **Créer une forme personnalisée** (les calques
-  sont remplacés par une occurrence de la nouvelle forme).
-- Les **groupes** servent seulement à ranger les calques d'une forme.
-- Au-dessus de la mire, **Forme / Show / Live** : l'espace actif (en attendant les onglets de la refonte, voir
-  `docs/ilda-gen-refonte.md`). Forme : la forme choisie (modifiable), ses oscillateurs tournent en boucle ;
-  Show : la sortie de la timeline à la tête de lecture (non modifiable) ; Live : les cues en cours. **L'envoi
-  live suit l'espace actif.**
+- **Clic** sur une vignette : la forme s'ouvre dans la mire et dans Calques ; on la modifie directement.
+- **+** : nouvelle forme vide. **Double-clic** : renommer. **Clic droit** : renommer, dupliquer, placer dans
+  la forme en cours, supprimer (`Suppr`, annulable).
+- **Glisser** une vignette : sur une piste de la timeline (clip), dans une case du Live (cue), ou dans la mire
+  (occurrence liée dans la forme en cours).
+- Une forme peut aussi naître d'une sélection : clic droit → **Créer une forme personnalisée**.
 
-## Timeline (espace Show)
+## Espace Show
 
-Refonte en cours : les anciennes automations sont remplacées par des **effets d'animation posés sur les clips**
-(valeur fixe, courbe ou oscillateur ; modèle prêt, leur interface arrive avec l'espace Show). Un projet d'une
-ancienne version s'ouvre avec ses formes et ses clips, sans ses animations (message à l'ouverture).
+- **Bibliothèque** : formes (glisser sur une piste = clip ; double-clic = clip à la tête de lecture) et
+  **effets** (recherche, catégories, favoris ★ ; glisser sur un clip, ou double-clic pour l'ajouter au clip
+  actif).
+- **Aperçu** de la timeline à la tête de lecture, maîtres compris ; « Sortie corrigée » = après les réglages de
+  sortie, avec la zone de sécurité en pointillés.
+- **Transport** : lecture / stop / boucle, position (mesure.temps.sub · temps), BPM + Tap, grille (1/2, 1/4,
+  1/8 ; ▾ : 1/16, 1/32, triolets), aimant, zoom, musique ; menu ⋯ : début de la mesure 1, caler sur la tête de
+  lecture, temps par mesure.
+- **Règle** : numéros de mesure, **repères** nommés et colorés (`M` ou clic droit ; glisser, double-clic pour
+  renommer), bande de boucle.
+- **Pistes** : couleur (clic sur la bande), nom (double-clic), M / S / verrou, ordre (glisser l'en-tête).
+- **Clips** : jamais de chevauchement sur une piste (contour rouge si la place est prise) ; aimant sur la
+  grille, les bords des autres clips, les repères, la tête de lecture et la boucle (`Alt` = libre) ; bords =
+  durée (l'animation s'étire ; `Maj` = les clés gardent leur instant) ; poignées de **fondu** aux coins du haut.
+  Les clips d'une même forme **partagent leur animation** (chaîne) : **Délier** (inspecteur ou clic droit)
+  lui donne sa propre copie, **Relier** la lui rend. Double-clic : ouvrir la forme dans Forme.
+- **Sélection** : clic, `Ctrl`/`Maj` + clic, rectangle, `Ctrl+A` ; flèches = un pas de grille (↑/↓ : piste),
+  `Début`/`Fin`, `Z` / `Maj+Z` : tout voir / la sélection, `Échap` : désélectionner. `Ctrl+C/X/V/D`, `Suppr`.
+- **Molette** : défilement vertical ; `Maj` : le temps ; `Ctrl`/`Cmd` ou pincement : zoom ; pavé tactile : 2D.
+- **Inspecteur du clip** : début, durée, fondus ; animation partagée ou propre ; **effets d'animation** en
+  cartes (interrupteur, cible « Toute la forme » ou un calque, réordonnables) ; chaque réglage en **Fixe**,
+  **Courbe** (clés : clic = sélection, glisser, double-clic = nouvelle clé, clic droit = type de courbe ou
+  supprimer) ou **Oscillateur** ; « + Ajouter » ; « Ouvrir dans Forme ». Un clip déplié montre ses courbes
+  dans la timeline.
+- Un projet d'une ancienne version s'ouvre avec ses formes et ses clips, sans ses anciennes automations.
 
-1. **Musique…** pour importer un morceau (forme d'onde affichée), régler le **BPM** (ou **Tap**), le nombre de
-   temps par mesure, la **grille** (temps, 1/2, 1/4, 1/8, triolets) et le départ de la **mesure 1** (« Ici » =
-   tête de lecture).
-2. Glisser une forme (liste de gauche) sur une piste : un clip est créé (des vignettes montrent la forme tout le
-   long du clip, effets compris ; une place occupée : juste après). Glisser le clip pour le déplacer, ses bords
-   pour changer sa durée : **jamais de chevauchement** sur une piste (le clip s'arrête contre son voisin). Les
-   courbes des effets sont en proportion de la durée du clip. L'**aimant** accroche tout à la grille (`Alt`
-   pendant un glisser = libre). Double-clic sur un clip : sa forme s'ouvre dans l'espace Forme.
-   **Clips liés** : les clips d'une même forme **partagent leur animation** (chaîne 🔗 en haut à droite).
-   Clic sur la chaîne (ou clic droit → **Délier**) : ce clip reçoit sa propre copie de l'animation (la forme
-   reste commune ; chaîne brisée). Clic sur la chaîne brisée (ou **Relier**) : il reprend celle des autres clips.
-3. Propriétés du clip sélectionné : début, durée, **fondus** d'entrée et de sortie (dessinés en diagonale).
-4. Molette : défilement de gauche à droite ; `Maj` + molette : pistes de haut en bas ; `Ctrl` + molette : zoom.
-   Pavé tactile : glisser à deux doigts vers le haut / le bas = pistes, sur le côté = temps.
-5. Zone de boucle : glisser dans la bande en haut de la règle, puis activer la boucle. Clic droit dans la règle :
-   ajouter un **repère**.
-6. **Sélection de clips** (comme une vraie timeline) : glisser dans le vide = **rectangle de sélection** ;
-   `Ctrl` (`Cmd`) + clic ou `Maj` + clic sur un clip = l'ajouter / le retirer ; `Ctrl+A` = tous les clips ;
-   glisser un clip sélectionné déplace toute la sélection ; un simple clic dans le vide désélectionne et place
-   la tête de lecture.
-7. **Copier / coller des clips** (la timeline doit avoir le focus : cliquer dedans) : `Ctrl` (`Cmd`) + glisser
-   dans les pistes sélectionne une **zone de temps** (clips + vide, aimantée à la grille). `Ctrl+C` copie la
-   zone (sans zone : les clips sélectionnés), `Ctrl+D` les recopie juste après eux-mêmes, `Ctrl+V` colle à la
-   **tête de lecture**, sur les mêmes pistes (place occupée : piste suivante), avec leur animation (liée), puis
-   **avance la tête de la longueur copiée** : `Ctrl+V` répété enchaîne les copies avec le même écart.
-   `Ctrl+X` coupe, `Suppr` supprime les clips de la zone (ou sélectionnés), `Échap` annule la zone.
+## Espace Live
 
-En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
+- **Pages** (une par partie du morceau) : double-clic = renommer, glisser = réordonner, « + », clic droit.
+- **Grille de cues 8 × 4** : une case = une forme (ses oscillateurs tournent). Clic = lancer (re-clic =
+  arrêter), touche du clavier de la case (A Z E R T Y U I / Q S D F G H J K / W X C V B N , ; / F1–F8),
+  `Échap` = tout arrêter. Clic droit : placer une forme, changer la touche, ouvrir dans Forme, vider ; glisser
+  une case sur une autre pour les échanger, ou une forme depuis la liste.
+- **Départ** : immédiat, au prochain temps ou à la prochaine mesure (« en attente » en pointillés) ;
+  **Plusieurs cues** : sinon un nouveau cue remplace le précédent.
+- **Sortie** (aperçu), BPM + **Tap** (le dernier tap cale le début de mesure), **effets rapides** actifs tant
+  qu'on les maintient (souris ou touches `1`–`8`).
 
 ## Sortie laser
 
@@ -269,7 +265,7 @@ En lecture, la mire montre la sortie de la timeline et l'envoi live suit.
 
 ## Paramètres
 
-Général (couleur par défaut, lissage, enregistrement automatique, réouverture) · Grille · Sortie laser (vitesse de
+Apparence (10 thèmes, appliqués aussitôt) · Général (couleur par défaut, lissage, enregistrement automatique, réouverture) · Grille · Sortie laser (vitesse de
 balayage en kpps et budget de points, distance entre points, blanking, coins) · Couleurs (décalage couleur, gamma,
 gains rouge / vert / bleu, puissance minimale) · Zone de sécurité (et anti point fixe) · Trapèze · Taille / position
 (taille minimale 5 %, puissance max). Les nombres de points sont réglés pour 30 kpps et suivent la vitesse de
@@ -285,6 +281,10 @@ des points éteints).
 ```sh
 python tools/ilda-gen/tests/test_core.py
 QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_ui.py
+QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_widgets.py
+QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_forme.py
+QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_show.py
+QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_live.py
 ```
 
 ## Structure du code
@@ -294,6 +294,6 @@ QT_QPA_PLATFORM=offscreen python tools/ilda-gen/tests/test_ui.py
 | `ildagen/core/` | Modèle sans interface : calques, transformations, modifieurs (`modifiers/`), oscillateurs, évaluation, timeline, animations et effets (`effects/`), live, maîtres, document |
 | `ildagen/laser/` | Optimisation des points, réglages de sortie, paquets IDN, fichiers ILDA |
 | `ildagen/editor/` | État de l'éditeur (espaces Forme / Show / Live), opérations, annuler / rétablir et gestes (`history_ops.py`), état d'exécution du live, sortie live, lecture, forme d'onde, export |
-| `ildagen/ui/` | Interface Qt : thème, icônes, mire et outils, calques, propriétés, timeline, fenêtres |
+| `ildagen/ui/` | Interface Qt : thèmes (`theme.py`), briques communes (`widgets/`), barre du haut (`shell/`), espaces `forme/`, `show/`, `live/`, mire et outils (`canvas/`), calques, réglages, timeline, fenêtres |
 
 Ajouter un modifieur : écrire une classe dans `ildagen/core/modifiers/` et l'ajouter à la liste `MODIFIERS` du module.

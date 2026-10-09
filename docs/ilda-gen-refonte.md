@@ -1,5 +1,8 @@
 # ilda-gen v2 — plan de la refonte (Forme / Show / Live)
 
+> **Statut : livré** (socle, coquille, espaces Forme, Show et Live ; tests `test_core`, `test_ui`, `test_widgets`,
+> `test_forme`, `test_show`, `test_live`). Exigences correspondantes : cahier des charges §17.
+
 Document de référence de la refonte : décisions prises avec l'utilisateur, modèle de données, découpage du code
 et ordre des travaux. Maquettes : `docs/ilda-gen-maquettes/`. Direction artistique :
 `docs/ilda-gen-direction-artistique.md`. Version d'avant la refonte (lançable) : `tools/ilda-gen-v1/`.

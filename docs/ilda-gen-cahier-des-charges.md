@@ -439,12 +439,37 @@ Voir `docs/ilda-gen-direction-artistique.md` (thème sombre, épuré, profession
 
 ## 15. État d'avancement
 
-Tout ce qui est marqué Demandé, Décidé ou Retour est implémenté dans `tools/ilda-gen/` (mode d'emploi :
-`tools/ilda-gen/README.md`). Propositions non retenues pour l'instant : bibliothèque de formes partagée entre
-projets (FPS-06), MDL catégorie G (dynamiques).
+Version 2 (refonte Forme / Show / Live) livrée dans `tools/ilda-gen/` : voir §17 et `docs/ilda-gen-refonte.md`.
+La version d'avant la refonte reste lançable dans `tools/ilda-gen-v1/`. Les exigences des sections 2 à 13 qui
+parlent de la timeline à automations, de la barre de connexion ou du panneau Propriétés sont **remplacées** par
+§17 (les autres restent valables). Propositions non retenues pour l'instant : bibliothèque de formes partagée
+entre projets (FPS-06), MDL catégorie G (dynamiques), aide à la découverte (messages d'accueil).
 
 ## 16. Hors périmètre pour l'instant
 
 - Modifieurs dynamiques en dehors de la timeline.
 - Détection automatique du BPM.
 - Contenu du menu Paramètres (structure seulement).
+
+## 17. Version 2 : trois espaces (Forme / Show / Live)
+
+Décisions détaillées : `docs/ilda-gen-refonte.md` (D1 à D14). Maquettes : `docs/ilda-gen-maquettes/`.
+
+| ID | Exigence | Statut |
+|---|---|---|
+| V2-01 | Trois **espaces** séparés, onglets au centre de la barre du haut : **Forme** (⌘1), **Show** (⌘2), **Live** (⌘3) ; disposition mémorisée par espace, « Réinitialiser la disposition ». | Décidé |
+| V2-02 | Barre du haut : **menus dans la fenêtre** (aussi sur Mac) à gauche, pas de logo ; à droite connexion (clic : adresse, port, canal, cadence), **Live**, **BLACKOUT**, **Maîtres**. | Retour |
+| V2-03 | **Maîtres** cachés derrière un bouton en haut à droite : lumière, taille, vitesse, position X/Y, rotation, couleur forcée ; ils agissent sur toute la sortie et les aperçus, hors annulation. | Retour |
+| V2-04 | La sortie laser **suit l'espace affiché** (Forme : la forme en boucle ; Show : la timeline ; Live : les cues). | Décidé |
+| V2-05 | Live **pas forcé au démarrage** : il reprend seulement s'il était actif à la fermeture. | Retour |
+| V2-06 | **Forme** : outils de dessin, formes en vignettes animées, mire, barre de boucle (pause, vitesse d'aperçu, tempo, compteur de points), **Calques** compacts (aucun réglage dans les lignes), **Réglages** en sliders (un seul endroit), modifieurs qui agissent sur le calque en cartes, menu Modifieur avec recherche. | Retour |
+| V2-07 | **Oscillateurs** sur tout réglage numérique d'une forme : onde (sinus, triangle, carré, scie, aléatoire ; amplitude ; cadence calée sur le tempo ou en Hz) ou vitesse (rotation continue). Ils tournent en boucle, sans timeline. | Retour |
+| V2-08 | **Show** : bibliothèque formes + effets (recherche, favoris, glisser), aperçu et « Sortie corrigée », timeline (repères, fondus, couleurs de piste, aimant sur les clips, pas de chevauchement, raccourcis), inspecteur du clip. | Retour |
+| V2-09 | **Effets d'animation sur les clips** (Rotation, Taille, Position, Bascule 3D, Fondu, Dessin progressif, Masquer, Répétition, Symétrie radiale, Éclatement, Couleur, Arc-en-ciel, Stroboscope, Pulsation, Onde, Réglage de la forme) ; chaque effet vise toute la forme ou un calque ; chaque réglage en **Fixe**, **Courbe** ou **Oscillateur**. | Retour |
+| V2-10 | Clips d'une même forme : **animation partagée** par défaut ; « Délier » copie seulement l'animation ; plus de copies cachées de formes. Dans Show, les réglages statiques d'une forme ne se modifient pas (« Ouvrir dans Forme »). | Retour |
+| V2-11 | **Live** : pages, grille de cues 8 × 4 (une case = une forme), touches du clavier, départ immédiat / au temps / à la mesure, un ou plusieurs cues, Tap tempo, 8 **effets rapides** à maintenir (touches 1 à 8). | Retour |
+| V2-12 | **DA neutre** : gris purs, un seul accent franc, ni bleu par défaut ni couleurs délavées ; **10 thèmes** (Paramètres → Apparence). | Retour |
+| V2-13 | Molette : souris = zoom, pavé tactile = défilement, pincement = zoom. | Retour |
+| V2-14 | Vocabulaire : Points (ex-Dots), Faisceaux (ex-Beams), Dosage (ex-Intensité d'un modifieur), « images/s », unités partout, réglages inutiles masqués. | Retour |
+| V2-15 | Anciens projets : formes et clips gardés, anciennes automations retirées (message). | Retour |
+
