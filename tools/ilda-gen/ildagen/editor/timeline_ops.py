@@ -1,5 +1,6 @@
 """Opérations de timeline (espace Show) : tête de lecture, sélection de clips, pistes, clips (sans
-chevauchement), liaison des animations (D5), fondus, marqueurs. Effets d'animation : effect_ops.py.
+chevauchement, recadrage), fondus. Liaison des animations (D5) et marqueurs : marker_ops.py. Effets
+d'animation : effect_ops.py.
 
 Chaque modification passe par l'historique (une étape) ; appelée pendant un geste ouvert (glisser), elle
 s'ajoute à ce geste.
@@ -7,10 +8,11 @@ s'ajoute à ce geste.
 
 from ..core import placement as P
 from ..core.nodes import new_id
-from ..core.timeline import MAX_START, MIN_DURATION, TRACK_COLORS, Clip, Marker
+from ..core.timeline import MAX_START, MIN_DURATION, TRACK_COLORS, Clip
+from .marker_ops import LinkMarkerOpsMixin
 
 
-class TimelineOpsMixin:
+class TimelineOpsMixin(LinkMarkerOpsMixin):
     def set_playhead(self, t):
         t = max(0.0, float(t))
         if abs(t - self.playhead) > 1e-9:
@@ -93,10 +95,11 @@ class TimelineOpsMixin:
             self.timeline_mutate("Déplacer la piste", lambda: (tl.tracks.remove(tr), tl.tracks.insert(index, tr)))
 
     def set_track_flag(self, track_id, flag, on):
-        """flag : « muted » (muet) ou « solo »."""
+        """flag : « muted » (muet), « solo » ou « locked » (verrouillée)."""
         tr = self.doc.timeline.find_track(track_id)
-        if tr is not None and flag in ("muted", "solo"):
-            self.timeline_mutate("Piste", lambda: setattr(tr, flag, bool(on)))
+        if tr is not None and flag in ("muted", "solo", "locked") and getattr(tr, flag) != bool(on):
+            label = {"muted": "Piste muette", "solo": "Solo", "locked": "Verrouiller la piste"}[flag]
+            self.timeline_mutate(label, lambda: setattr(tr, flag, bool(on)))
 
     # ── Clips ────────────────────────────────────────────────────────────
     def add_clip(self, def_id, track_id=None, start=0.0, duration=None):
@@ -114,13 +117,16 @@ class TimelineOpsMixin:
         return clip
 
     def move_clip(self, clip_id, start, track_id=None):
-        """Déplace un clip (sur une autre piste si track_id) au plus près de `start`, sans chevauchement."""
+        """Déplace un clip (sur une autre piste si track_id) au plus près de `start`, sans chevauchement.
+        Piste verrouillée (celle du clip ou celle d'arrivée) : rien ne bouge."""
         tl = self.doc.timeline
         tr, clip = tl.find_clip(clip_id)
         if clip is None:
             return None
         dest = tl.find_track(track_id) if track_id else tr
         dest = dest or tr
+        if tr.locked or dest.locked:
+            return clip
 
         def do():
             if dest is not tr:
@@ -130,30 +136,58 @@ class TimelineOpsMixin:
         self._tl_edit("Déplacer le clip", do)
         return clip
 
-    def move_clips(self, origins, delta):
-        """Déplace ensemble des clips : origins = {id: début d'origine} ; le décalage est borné pour qu'aucun
-        clip ne touche un voisin (ni ne passe avant 0)."""
+    def move_clips(self, origins, delta, track_shift=0):
+        """Déplace ensemble des clips de `delta` secondes et de `track_shift` pistes : origins = {id: début
+        d'origine} ou {id: (début, index de piste d'origine)}. Décalage le plus proche possible sans qu'aucun
+        clip ne touche un voisin (ni ne passe avant 0). Renvoie le décalage retenu, ou None si le groupe ne
+        tient nulle part avec ce changement de piste (rien ne bouge alors)."""
         tl = self.doc.timeline
         moves = []
-        for cid, s0 in origins.items():
+        for cid, o in origins.items():
             tr, c = tl.find_clip(cid)
-            if c is not None:
-                moves.append((tr, c, s0))
+            if c is None:
+                continue
+            s0, ti = o if isinstance(o, tuple) else (o, tl.tracks.index(tr))
+            if not 0 <= ti < len(tl.tracks) or tl.tracks[ti].locked:
+                return None
+            moves.append((ti, c, s0))
         if not moves:
             return 0.0
-        d = P.group_delta(moves, delta)
+        res = P.group_fit(tl.tracks, moves, delta, track_shift)
+        if res is None:
+            return None
+        d, shift = res
 
         def do():
-            for _, c, s0 in moves:
+            for ti, c, s0 in moves:
+                src = tl.find_clip(c.id)[0]
+                dest = tl.tracks[ti + shift]
+                if dest is not src:
+                    src.clips.remove(c)
+                    dest.clips.append(c)
                 c.start = s0 + d
         self._tl_edit("Déplacer les clips", do)
         return d
 
-    def resize_clip(self, clip_id, start=None, end=None):
-        """Change le début et / ou la fin d'un clip ; ses bords s'arrêtent contre ses voisins."""
+    def clip_curve_keys(self, clip_id):
+        """[(clé, u)] de toutes les courbes de l'animation du clip (instantané pris au début d'un recadrage)."""
+        tl = self.doc.timeline
+        _, clip = tl.find_clip(clip_id)
+        anim = tl.animations.get(clip.anim_id) if clip is not None else None
+        if anim is None:
+            return []
+        return [(k, k.t) for e in anim.effects for t in e.params.values() for k in t.curve.keys]
+
+    def resize_clip(self, clip_id, start=None, end=None, ref=None, keep_times=False):
+        """Change le début et / ou la fin d'un clip ; ses bords s'arrêtent contre ses voisins.
+        Les clés de courbe sont en proportion de la durée : la courbe s'étire avec le clip. ref = (début, durée,
+        clip_curve_keys) pris au début du geste ; keep_times : les clés gardent leurs instants en secondes
+        (recadrage, Maj) — l'animation étant partagée, ses clips liés changent aussi."""
         tr, clip = self.doc.timeline.find_clip(clip_id)
         if clip is None:
             return None
+        if tr.locked:
+            return clip
         lo, hi = P.resize_limits(tr, clip)
         s = clip.start if start is None else min(max(lo, float(start)), clip.end - MIN_DURATION)
         e = clip.end if end is None else max(min(hi, float(end)), s + MIN_DURATION)
@@ -161,6 +195,10 @@ class TimelineOpsMixin:
         def do():
             clip.start = max(0.0, s)
             clip.duration = e - clip.start
+            if ref is not None:
+                s0, d0, keys = ref
+                for k, u0 in keys:
+                    k.t = (u0 * d0 + s0 - clip.start) / clip.duration if keep_times else u0
         self._tl_edit("Durée du clip", do)
         return clip
 
@@ -181,10 +219,10 @@ class TimelineOpsMixin:
         n = len(clips)
         self.statusMessage.emit(f"{n} clip(s) copié(s) · {length:.3f} s" if n else "Zone vide copiée")
 
-    def paste_clips(self, t):
-        """Colle à l'instant t (sur les mêmes pistes ; place occupée : piste suivante libre, ou nouvelle), avec
-        la même animation (liée), puis avance la tête de lecture de la longueur copiée.
-        Renvoie (début, fin, clips collés) ou None."""
+    def paste_clips(self, t, move_playhead=True):
+        """Colle à l'instant t (sur les mêmes pistes ; place occupée ou piste verrouillée : piste suivante libre,
+        ou nouvelle), avec la même animation (liée), puis avance la tête de lecture de la longueur copiée
+        (sauf move_playhead=False : Dupliquer). Renvoie (début, fin, clips collés) ou None."""
         cb = self.clip_clipboard
         if not cb:
             return None
@@ -203,7 +241,7 @@ class TimelineOpsMixin:
                 while len(tl.tracks) <= ti:
                     tl.tracks.append(tl.new_track())
                 i = ti
-                while not P.is_free(tl.tracks[i], c.start, c.duration):
+                while tl.tracks[i].locked or not P.is_free(tl.tracks[i], c.start, c.duration):
                     i += 1
                     if i >= len(tl.tracks):
                         tl.tracks.append(tl.new_track())
@@ -211,7 +249,8 @@ class TimelineOpsMixin:
                 tl.attach(c)          # même animation que le clip copié (ou celle de sa forme s'il n'existe plus)
         self.timeline_mutate("Coller", do)
         end = t + cb["length"]
-        self.set_playhead(end)
+        if move_playhead:
+            self.set_playhead(end)
         return t, end, [c for _, c in new]
 
     def delete_clips(self, clips, label="Supprimer les clips"):
@@ -260,77 +299,3 @@ class TimelineOpsMixin:
             self.move_clip(clip_id, min(MAX_START, float(start)))
         if duration is not None:
             self.resize_clip(clip_id, end=clip.start + float(duration))
-
-    # ── Liaison des animations (D5) ──────────────────────────────────────
-    def clip_link_state(self, clip):
-        """(animation partagée avec d'autres clips, animations d'autres clips de la même forme)."""
-        return self.doc.timeline.link_state(clip)
-
-    def clip_is_linked(self, clip):
-        """(lié, partagé) pour l'icône de chaîne : non lié = sa propre animation alors que d'autres clips de la
-        même forme en ont une autre (« Relier » possible)."""
-        shared, others = self.doc.timeline.link_state(clip)
-        return shared or not others, shared
-
-    def unlink_clip(self, clip_id):
-        """« Délier » : le clip reçoit une copie de son animation (la forme reste commune)."""
-        tl = self.doc.timeline
-        _, clip = tl.find_clip(clip_id)
-        if clip is None:
-            return None
-        res = []
-        self.timeline_mutate("Délier le clip", lambda: res.append(tl.unlink(clip)))
-        self.statusMessage.emit("Clip délié : son animation se modifie seule (la forme reste commune)")
-        return res[0] if res else None
-
-    def relink_clip(self, clip_id, anim_id=None):
-        """« Relier » : le clip reprend l'animation d'un autre clip de la même forme."""
-        tl = self.doc.timeline
-        _, clip = tl.find_clip(clip_id)
-        if clip is None:
-            return None
-        if not tl.link_state(clip)[1]:
-            self.statusMessage.emit("Aucun autre clip de cette forme à qui se relier")
-            return None
-        res = []
-        self.timeline_mutate("Relier le clip", lambda: res.append(tl.relink(clip, anim_id)))
-        if res and res[0] is not None:
-            self.statusMessage.emit("Clip relié : il partage l'animation des autres clips de sa forme")
-        return res[0] if res else None
-
-    # ── Marqueurs ────────────────────────────────────────────────────────
-    def add_marker(self, t, name=None, color=None):
-        tl = self.doc.timeline
-        m = Marker(t, name or f"Repère {len(tl.markers) + 1}", color or TRACK_COLORS[len(tl.markers) % len(TRACK_COLORS)])
-
-        def do():
-            tl.markers.append(m)
-            tl.markers.sort(key=lambda x: x.t)
-        self.timeline_mutate("Ajouter un repère", do)
-        return m
-
-    def remove_marker(self, marker_id):
-        tl = self.doc.timeline
-        m = tl.find_marker(marker_id)
-        if m is not None:
-            self.timeline_mutate("Supprimer le repère", lambda: tl.markers.remove(m))
-
-    def move_marker(self, marker_id, t):
-        tl = self.doc.timeline
-        m = tl.find_marker(marker_id)
-        if m is not None:
-            def do():
-                m.t = min(MAX_START, max(0.0, float(t)))
-                tl.markers.sort(key=lambda x: x.t)
-            self._tl_edit("Déplacer le repère", do)
-
-    def rename_marker(self, marker_id, name):
-        m = self.doc.timeline.find_marker(marker_id)
-        name = (name or "").strip()
-        if m is not None and name and name != m.name:
-            self.timeline_mutate("Renommer le repère", lambda: setattr(m, "name", name))
-
-    def set_marker_color(self, marker_id, color):
-        m = self.doc.timeline.find_marker(marker_id)
-        if m is not None and color in TRACK_COLORS:
-            self.timeline_mutate("Couleur du repère", lambda: setattr(m, "color", color))

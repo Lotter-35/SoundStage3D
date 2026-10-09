@@ -21,7 +21,7 @@ class TimelineClipboard:
     range_sel = None     # (début, fin) de la zone de temps sélectionnée
 
     def start_range(self, x, mods, clip=None):
-        t = max(0.0, self.snap(self.geo.t(x), mods))
+        t = max(0.0, self.snapper.snap(self.geo.t(x), mods, objects=False))     # zone : sur la grille
         self.drag = {"kind": "range", "t0": t, "x0": x, "clip": clip, "moved": False, "old": self.range_sel}
 
     def drag_range(self, x, mods):
@@ -29,7 +29,7 @@ class TimelineClipboard:
         if not d["moved"] and abs(x - d["x0"]) < 4:
             return
         d["moved"] = True
-        t = max(0.0, self.snap(self.geo.t(x), mods))
+        t = max(0.0, self.snapper.snap(self.geo.t(x), mods, objects=False))     # zone : sur la grille
         a = d["t0"]
         self.range_sel = (min(a, t), max(a, t))
         self.update()

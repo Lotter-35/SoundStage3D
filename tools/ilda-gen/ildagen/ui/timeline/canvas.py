@@ -1,71 +1,119 @@
-"""Zone de la timeline : affichage et interactions (tête de lecture, boucle, pistes, clips).
+"""Zone de la timeline : règle, musique, pistes et clips (affichage, défilement, zoom).
 
-Les clips se déplacent et se redimensionnent sans jamais en chevaucher un autre sur leur piste ; leurs effets
-d'animation se règlent dans l'espace Show (inspecteur du clip). Double-clic sur un clip : sa forme s'ouvre
-dans l'espace Forme.
+Les gestes sont répartis par sujet : mouse.py (aiguillage de la souris), edit.py (clips), keys.py (clés de
+courbe), ruler.py (tête de lecture, repères, boucle), tracks.py (en-têtes des pistes), keyboard.py (touches),
+menus.py (clic droit), drops.py (formes et effets déposés), selection.py / clipboard.py (sélection, zone de
+temps). Un seul modèle de sélection de clips : celui de l'éditeur (le clip actif en fait partie).
+
+Affichage économe (T5, T6) : la disposition est gardée tant que rien ne change, seules les pistes et les clips
+visibles sont peints, les courbes et les vignettes sont en cache ; au repos, rien ne repeint.
 """
 
-from PySide6.QtCore import QPointF, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QPainter, QPen, QPixmap
-from PySide6.QtWidgets import QInputDialog, QWidget
+import time
+from collections import Counter
+
+from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
+from PySide6.QtGui import QPainter, QPixmap
+from PySide6.QtWidgets import QWidget
 
 from ...editor.waveform import PEAKS_PER_S
+from ..canvas.viewport import wheel_action
 from .. import theme
-from ..canvas.view import DEF_MIME
 from . import draw as D
-from .clipboard import TimelineClipboard, range_modifier
+from .clipboard import TimelineClipboard
+from .draw_clip import ClipStyle, draw_clip, draw_ghost
+from .drops import TimelineDrops
 from .edit import TimelineEditing
-from .geometry import CLIP_EDGE, HEADER_W, LOOP_H, TimelineGeometry, link_icon_rect
+from .geometry import HEADER_W, RULER_H, TimelineGeometry
+from .keyboard import TimelineKeyboard
+from .keys import KeyEditing
+from .lanes import clip_lanes
 from .menus import TimelineMenus
+from .mouse import TimelineMouse
+from .ruler import RulerEditing
 from .selection import TimelineSelection
+from .snapping import Snapper
 from .thumbs import ThumbCache
+from .tracks import TrackHeaders
 
 MIN_PPS = 4.0
 MAX_PPS = 2000.0
 
 
-class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard, TimelineSelection):
+class TimelineCanvas(TimelineMouse, TimelineEditing, KeyEditing, RulerEditing, TrackHeaders, TimelineKeyboard,
+                     TimelineMenus, TimelineDrops, TimelineClipboard, TimelineSelection, QWidget):
     scrollChanged = Signal()
-    # QWidget est en tête : sa version masquerait celle du mixin, on la relie explicitement
-    contextMenuEvent = TimelineMenus.contextMenuEvent
 
     def __init__(self, editor, playback, parent=None):
-        super().__init__(parent)
+        QWidget.__init__(self, parent)
         self.editor = editor
         self.playback = playback
         self.geo = TimelineGeometry()
+        self.snapper = Snapper(self)
         self.peaks = None
         self._wave_cache = None
         self.drag = None
+        self.sel_key = None           # (id du clip, id de l'effet, réglage, clé) : clé sélectionnée
+        self.sel_marker = None        # id du repère sélectionné
+        self.small_lanes = set()      # lignes réduites (affichage seulement)
+        self.hover = {}               # {"box": id de clip, "row": id de piste, "ruler": x}
+        self.ghost = None             # place visée mais occupée (contour rouge)
+        self.drop_hint = None         # clip visé par un effet glissé, ou ligne de dépôt d'une forme
+        self.inline = None            # champ de saisie posé sur un nom (piste, repère)
+        self.paints = 0
+        self.last_paint_ms = 0.0
+        self._layout_rev = 0
+        self._layout = None
         self.thumbs = ThumbCache(editor)
+        self.thumbs.ready.connect(self.update)
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
         self.setAcceptDrops(True)
         self.setMinimumHeight(120)
         editor.timelineChanged.connect(self._changed)
-        editor.clipSelectionChanged.connect(self.update)
-        editor.docChanged.connect(self.update)
+        editor.docChanged.connect(self._doc_changed)
+        editor.clipSelectionChanged.connect(self._selection_changed)
         editor.projectChanged.connect(self._changed)
         editor.playheadChanged.connect(self._playhead)
         editor.restored.connect(self._restored)
+        theme.notifier.changed.connect(lambda _: (self.thumbs.clear(), self.update()))
 
     @property
     def tl(self):
         return self.editor.doc.timeline
 
+    # ── Changements ──────────────────────────────────────────────────────
+    def relayout(self):
+        self._layout_rev += 1
+        self._layout = None
+
     def _changed(self):
+        self.relayout()
+        self.clamp_scroll()
         self.scrollChanged.emit()
+        self.update()
+
+    def _doc_changed(self):
+        self.relayout()
+        self.update()
+
+    def _selection_changed(self):
+        k = self.sel_key
+        if k is not None and k[0] not in self.editor.clip_selection:
+            self.sel_key = None          # T4 : la clé d'un clip qui n'est plus sélectionné ne l'est plus
         self.update()
 
     def _restored(self):
         self.drag = None
+        self.sel_key = None
+        self.ghost = None
+        self.snapper.clear()
         self._changed()
 
     def set_peaks(self, peaks):
         self.peaks = peaks
         self._wave_cache = None
-        self.scrollChanged.emit()
-        self.update()
+        self._changed()
 
     def _playhead(self, t):
         if self.editor.playing:
@@ -76,60 +124,180 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
                 self.scrollChanged.emit()
         self.update()
 
-    # ── Temps aimanté ────────────────────────────────────────────────────
-    def snap(self, t, mods=Qt.KeyboardModifier.NoModifier):
-        if mods & Qt.KeyboardModifier.AltModifier:
-            return t
-        return self.tl.snap_time(t)
+    # ── Disposition ──────────────────────────────────────────────────────
+    def rows(self):
+        g = self.geo
+        g.has_wave = self.peaks is not None
+        key = (self._layout_rev, g.t0, g.pps, g.scroll_y, g.top)
+        if self._layout is None or self._layout[0] != key:
+            small = self.small_lanes
+            rows = g.layout(self.tl.tracks, lambda c: clip_lanes(self.editor, c, small))
+            self._layout = (key, rows)
+        return self._layout[1]
 
+    def content_height(self):
+        return self.geo.content_height(self.rows())
+
+    def find_box(self, clip_id):
+        for r in self.rows():
+            for b in r.boxes:
+                if b.clip.id == clip_id:
+                    return b
+        return None
+
+    def clamp_scroll(self):
+        """T8 : après un repli (moins de contenu), la vue ne reste pas dans le vide."""
+        g = self.geo
+        g.width, g.height = self.width(), self.height()
+        max_y = max(0, self.content_height() - g.view_h())
+        if g.scroll_y > max_y:
+            g.scroll_y = int(max_y)
+            self._layout = None
+        max_t0 = max(0.0, self.tl.length() - (g.width - HEADER_W) / g.pps * 0.5)
+        if g.t0 > max_t0:
+            g.t0 = max_t0
+            self._layout = None
+
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
+        self.geo.width, self.geo.height = self.width(), self.height()
+        self.clamp_scroll()
+        self.scrollChanged.emit()
+
+    # ── Défilement, zoom ─────────────────────────────────────────────────
     def zoom_at(self, factor, x):
-        t = self.geo.t(x)
-        self.geo.pps = min(MAX_PPS, max(MIN_PPS, self.geo.pps * factor))
-        self.geo.t0 = max(0.0, t - (x - HEADER_W) / self.geo.pps)
+        g = self.geo
+        x = max(HEADER_W, x)
+        t = g.t(x)
+        g.pps = min(MAX_PPS, max(MIN_PPS, g.pps * factor))
+        g.t0 = max(0.0, t - (x - HEADER_W) / g.pps)
+        self.clamp_scroll()
         self.scrollChanged.emit()
         self.update()
 
+    def zoom_to(self, a, b):
+        """Montre l'intervalle [a, b] sur toute la largeur (marge de 4 %)."""
+        g = self.geo
+        span = max(0.05, b - a)
+        w = max(50, self.width() - HEADER_W)
+        g.pps = min(MAX_PPS, max(MIN_PPS, w / (span * 1.08)))
+        g.t0 = max(0.0, a - span * 0.04)
+        self.clamp_scroll()
+        self.scrollChanged.emit()
+        self.update()
+
+    def zoom_fit(self, selection=True):
+        """Z : la sélection de clips (s'il y en a), sinon tout le contenu."""
+        sel = self.selected_clips() if selection else []
+        if sel:
+            self.zoom_to(min(c.start for _, c in sel), max(c.end for _, c in sel))
+        else:
+            self.zoom_to(0.0, max(self.tl.content_end(), self.tl.audio_duration, self.tl.bar_len * 4))
+
+    def scroll_time(self, dx):
+        if dx:
+            self.geo.t0 = max(0.0, self.geo.t0 - dx / self.geo.pps)
+            self.clamp_scroll()
+            self.scrollChanged.emit()
+            self.update()
+
+    def scroll_by(self, dy):
+        g = self.geo
+        max_y = max(0, self.content_height() - g.view_h())
+        g.scroll_y = int(min(max_y, max(0, g.scroll_y + dy)))
+        self.scrollChanged.emit()
+        self.update()
+
+    def wheelEvent(self, e):
+        """Molette : défilement vertical ; Maj : le temps ; Ctrl / Cmd : zoom. Pavé tactile : deux doigts
+        = défilement dans les deux sens (le pincement zoome : event())."""
+        mods = e.modifiers()
+        pd, ad = e.pixelDelta(), e.angleDelta()
+        trackpad = wheel_action(e.device().type() if e.device() else None, e.phase(),
+                                Qt.KeyboardModifier.NoModifier) == "pan"
+        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
+            self.zoom_at(1.0015 ** (ad.y() or ad.x()), e.position().x())
+        elif trackpad:
+            d = pd if not pd.isNull() else ad / 2
+            self.scroll_time(d.x())
+            if d.y():
+                self.scroll_by(-d.y())
+        elif mods & Qt.KeyboardModifier.ShiftModifier:
+            self.scroll_time((ad.y() or ad.x()) / 2)
+        else:
+            self.scroll_by(-(ad.y() or ad.x()) / 2)
+        e.accept()
+
+    def event(self, e):
+        if e.type() == QEvent.Type.NativeGesture and e.gestureType() == Qt.NativeGestureType.ZoomNativeGesture:
+            self.zoom_at(1.0 + e.value(), e.position().x())
+            return True
+        if e.type() == QEvent.Type.ShortcutOverride and self.override_shortcut(e):
+            e.accept()
+            return True
+        return super().event(e)
+
     # ── Dessin ───────────────────────────────────────────────────────────
     def paintEvent(self, _e):
+        t_start = time.perf_counter()
         g = self.geo
         g.width, g.height = self.width(), self.height()
-        g.has_wave = self.peaks is not None
+        rows = self.rows()
+        ed = self.editor
         p = QPainter(self)
-        p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.fillRect(self.rect(), theme.qc(theme.BG_APP))
-        rows = g.rows(self.editor)
+        lines, _ = D.grid_lines(self.tl, *g.visible_range(), g.pps)
         self.thumbs.begin_paint()
         p.setClipRect(QRectF(HEADER_W, g.top, g.width - HEADER_W, g.height - g.top))
-        for i, r in enumerate(rows):
-            if i % 2:
-                p.fillRect(QRectF(HEADER_W, r.y, g.width - HEADER_W, r.h), theme.qc("#ffffff", 0.012))
-        D.draw_grid(p, g, self.tl, g.top, g.height)
-        sel = set(self.editor.clip_selection)
+        D.draw_grid(p, g, lines, g.top, g.height)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        sel = set(ed.clip_selection)
+        solo = any(tr.solo for tr in self.tl.tracks)
+        dpr = self.devicePixelRatioF()
+        lib = ed.doc.library
+        hover = self.hover.get("box")
+        uses = Counter(c.anim_id for _, c in self.tl.all_clips())      # animations partagées (chaîne)
         for r in rows:
-            for c in r.track.clips:
-                D.draw_clip(p, g, r, c, self.editor, c.id in sel, r.track.muted, self.thumb)
+            if r.y > g.height or r.y + r.h < g.top:
+                continue                                     # culling vertical
+            tr = r.track
+            silent = tr.muted or (solo and not tr.solo)
+            for b in r.boxes:
+                if b.right < HEADER_W or b.x > g.width or b.y > g.height or b.y + b.h < g.top:
+                    continue
+                c = b.clip
+                d = lib.get(c.def_id)
+                st = ClipStyle(c.id in sel, silent, c.id == hover, uses[c.anim_id] > 1, tr.locked)
+                draw_clip(p, g, b, tr.color, d.name if d else "?", st, self.thumbs.get, self.sel_key, dpr)
+            p.fillRect(QRectF(HEADER_W, r.y + r.h - 1, g.width - HEADER_W, 1), theme.qc(theme.BORDER))
         self.draw_range(p)
         self.draw_rect(p)
+        if self.ghost is not None:
+            draw_ghost(p, *self.ghost)
+        self.draw_drop_hint(p)
+        self.draw_key_guides(p)
         p.setClipping(False)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)
         if self.peaks is not None:
             p.drawPixmap(0, 0, self._waveform_pixmap())
-        D.draw_ruler(p, g, self.tl)
-        p.setClipRect(QRectF(0, g.top, HEADER_W + 1, g.height - g.top))
-        D.draw_headers(p, g, rows, self.editor)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        D.draw_ruler(p, g, self.tl, lines, D.marker_rects(p, g, self.tl), self.sel_marker, self.hover.get("ruler"))
+        hover_row = next((r for r in rows if r.track.id == self.hover.get("row")), None)
+        p.setClipRect(QRectF(0, g.top, HEADER_W, g.height - g.top))
+        D.draw_headers(p, g, rows, solo, hover_row, self.track_drop_y())
         p.setClipping(False)
-        D.draw_corner(p, g, self.tl)
-        D.draw_playhead(p, g, self.editor.playhead)
+        D.draw_corner(p, g, self.peaks is not None)
+        if self.snapper.line is not None and self.drag is not None:
+            D.draw_snap_line(p, g, self.snapper.line)
+        D.draw_playhead(p, g, ed.playhead)
         p.end()
-        if self.thumbs.pending:
-            # Vignettes pas encore calculées : on continue juste après (l'interface reste fluide)
-            QTimer.singleShot(0, self.update)
-
-    def thumb(self, clip, t_local, size):
-        return self.thumbs.get(clip, t_local, size)
+        self.thumbs.end_paint()
+        self.paints += 1
+        self.last_paint_ms = (time.perf_counter() - t_start) * 1000.0
 
     def _waveform_pixmap(self):
         g = self.geo
-        key = (round(g.t0, 5), round(g.pps, 5), g.width, id(self.peaks))
+        key = (round(g.t0, 5), round(g.pps, 5), g.width, id(self.peaks), theme.CURRENT)
         if self._wave_cache is None or self._wave_cache[0] != key:
             pm = QPixmap(self.size())
             pm.fill(Qt.GlobalColor.transparent)
@@ -139,249 +307,8 @@ class TimelineCanvas(QWidget, TimelineEditing, TimelineMenus, TimelineClipboard,
             self._wave_cache = (key, pm)
         return self._wave_cache[1]
 
-    # ── Repérage ─────────────────────────────────────────────────────────
-    def rows(self):
-        return self.geo.rows(self.editor)
+    def schedule(self, fn, ms=0):
+        QTimer.singleShot(ms, fn)
 
-    def _link_icon_hit(self, row, clip, x, y):
-        linked, shared = self.editor.clip_is_linked(clip)
-        if linked and not shared:
-            return False
-        ix, iy, iw, ih = link_icon_rect(self.geo, row, clip)
-        return ix - 2 <= x <= ix + iw + 2 and iy - 2 <= y <= iy + ih + 2
-
-    def clip_hit(self, row, x):
-        for c in sorted(row.track.clips, key=lambda c: c.start, reverse=True):
-            cx, _, cw, _ = self.geo.clip_rect(row, c)
-            if cx - 2 <= x <= cx + cw + 2:
-                if x <= cx + CLIP_EDGE and cw > 3 * CLIP_EDGE:
-                    return c, "left"
-                if x >= cx + cw - CLIP_EDGE:
-                    return c, "right"
-                return c, "body"
-        return None, None
-
-    # ── Souris ───────────────────────────────────────────────────────────
-    def mousePressEvent(self, e):
-        self.setFocus()
-        if e.button() != Qt.MouseButton.LeftButton:
-            return
-        self.abandon_drag()         # relâchement précédent jamais reçu
-        x, y = e.position().x(), e.position().y()
-        g = self.geo
-        if y < g.top:
-            if x < HEADER_W:
-                return
-            t = g.t(x)
-            if y < LOOP_H + 2:
-                self._press_loop(t, x)
-            else:
-                self.drag = {"kind": "scrub"}
-                self.playback.seek(max(0.0, self.snap(t, e.modifiers())))
-            return
-        row = g.row_at(self.rows(), y, x)
-        if x >= HEADER_W and range_modifier(e.modifiers()):
-            # Cmd/Ctrl + clic sur un clip : l'ajouter / le retirer ; Cmd/Ctrl + glisser : zone de temps à copier
-            hit = self.clip_hit(row, x)[0] if row is not None else None
-            self.start_range(x, e.modifiers(), hit)
-            return
-        if x >= HEADER_W:
-            self.clear_range()
-        shift = bool(e.modifiers() & Qt.KeyboardModifier.ShiftModifier)
-        if row is None or (x >= HEADER_W and self.clip_hit(row, x)[0] is None):
-            # Glisser dans le vide : rectangle de sélection de clips ; simple clic : tête de lecture
-            self.start_rect(x, y, shift)
-            return
-        if x < HEADER_W:
-            self._press_header(row, x, y)
-            return
-        clip, part = self.clip_hit(row, x)
-        if self._link_icon_hit(row, clip, x, y):
-            linked, shared = self.editor.clip_is_linked(clip)
-            if not linked:
-                self.editor.relink_clip(clip.id)
-            elif shared:
-                self.editor.unlink_clip(clip.id)
-            self._changed()
-            return
-        if shift:
-            self.toggle_clip(clip)          # Maj + clic : ajouter / retirer de la sélection
-            return
-        if clip.id not in self.sel_clips:
-            self.set_clip_selection([clip.id])
-        self.editor.select_clips(self.editor.clip_selection, clip.id)
-        self.editor.begin("Déplacer le clip" if part == "body" else "Durée du clip")
-        group = {c.id: c.start for _, c in self.selected_clips()} if part == "body" else {}
-        self.drag = {"kind": "clip_" + part, "clip": clip, "x0": x, "start": clip.start, "end": clip.end,
-                     "group": group if len(group) > 1 else {}}
-        self.update()
-
-    def _click_empty(self, x, e):
-        if x >= HEADER_W:
-            self.playback.seek(max(0.0, self.snap(self.geo.t(x), e.modifiers())))
-            self.drag = {"kind": "scrub"}
-
-    def mouseMoveEvent(self, e):
-        x, y = e.position().x(), e.position().y()
-        d = self.drag
-        if d is not None and not (e.buttons() & Qt.MouseButton.LeftButton):
-            self.abandon_drag()     # bouton relâché hors de la fenêtre : le glisser est annulé
-            d = None
-        if d is None:
-            self._hover(x, y)
-            return
-        g = self.geo
-        tl = self.tl
-        kind = d["kind"]
-        if kind == "scrub":
-            self.playback.seek(max(0.0, self.snap(g.t(x), e.modifiers())))
-            return
-        if kind == "range":
-            self.drag_range(x, e.modifiers())
-            return
-        if kind == "rect":
-            self.drag_rect(x, y)
-            return
-        if kind in ("loop_start", "loop_end", "loop_move"):
-            t = max(0.0, self.snap(g.t(x), e.modifiers()))
-            if kind == "loop_start":
-                tl.loop_start = min(t, tl.loop_end)
-            elif kind == "loop_end":
-                tl.loop_end = max(t, tl.loop_start)
-            else:
-                dt = self.snap(d["a"] + g.t(x) - d["t0"], e.modifiers()) - d["a"]
-                dt = max(dt, -d["a"])          # la boucle ne commence jamais avant 0
-                tl.loop_start, tl.loop_end = d["a"] + dt, d["b"] + dt
-            self.update()
-            return
-        if kind.startswith("clip_"):
-            self._drag_clip(d, x, y, e.modifiers())
-
-    def mouseReleaseEvent(self, e):
-        if self.drag is None:
-            return
-        kind = self.drag["kind"]
-        if kind == "rect":
-            self.end_rect(e)
-            self.drag = None
-            self.update()
-            return
-        if kind == "range":
-            self.end_range()
-            self.drag = None
-            return
-        d = self.drag
-        self.drag = None
-        if kind == "clip_body" and d.get("group") and abs(e.position().x() - d["x0"]) < 2:
-            self.set_clip_selection([d["clip"].id])     # simple clic dans une sélection : ce clip seul
-        if kind != "scrub":
-            self.editor.commit()
-            self.editor.notify(timeline=True)
-
-    def _hover(self, x, y):
-        g = self.geo
-        cur = Qt.CursorShape.ArrowCursor
-        if y >= g.top and x >= HEADER_W:
-            row = g.row_at(self.rows(), y)
-            if row is not None:
-                _, part = self.clip_hit(row, x)
-                if part in ("left", "right"):
-                    cur = Qt.CursorShape.SizeHorCursor
-                elif part == "body":
-                    cur = Qt.CursorShape.OpenHandCursor
-        elif y < LOOP_H + 2 and x >= HEADER_W:
-            cur = Qt.CursorShape.SizeHorCursor
-        self.setCursor(cur)
-
-    def mouseDoubleClickEvent(self, e):
-        x, y = e.position().x(), e.position().y()
-        row = self.geo.row_at(self.rows(), y, x)
-        if row is None:
-            return
-        if x < HEADER_W:
-            name, ok = QInputDialog.getText(self, "Renommer la piste", "Nom :", text=row.track.name)
-            if ok and name.strip():
-                self.editor.rename_track(row.track.id, name)
-            return
-        clip, _ = self.clip_hit(row, x)
-        if clip is not None:
-            self.editor.enter_def(clip.def_id)          # sa forme s'ouvre dans l'espace Forme
-
-    def wheelEvent(self, e):
-        mods = e.modifiers()
-        pd = e.pixelDelta()
-        ad = e.angleDelta()
-        if mods & (Qt.KeyboardModifier.ControlModifier | Qt.KeyboardModifier.MetaModifier):
-            self.zoom_at(1.0015 ** (ad.y() or ad.x()), e.position().x())
-        elif mods & Qt.KeyboardModifier.ShiftModifier:
-            # Maj + molette : défilement vertical des pistes
-            dy = pd.y() if not pd.isNull() else (ad.y() or ad.x()) / 2
-            self.scroll_by(-dy)
-        elif self._is_trackpad(e):
-            # Pavé tactile : glisser à deux doigts = haut / bas (pistes) et gauche / droite (temps)
-            d = pd if not pd.isNull() else ad / 2
-            self._scroll_time(d.x())
-            if d.y():
-                self.scroll_by(-d.y())
-        else:
-            # Molette : la timeline défile de gauche à droite
-            dx = (ad.x() if abs(ad.x()) > abs(ad.y()) else ad.y()) / 2
-            self._scroll_time(dx)
-        e.accept()
-
-    @staticmethod
-    def _is_trackpad(e):
-        from PySide6.QtGui import QInputDevice
-        dev = e.device()
-        if dev is not None and dev.type() == QInputDevice.DeviceType.TouchPad:
-            return True
-        return not e.pixelDelta().isNull() or e.phase() != Qt.ScrollPhase.NoScrollPhase
-
-    def _scroll_time(self, dx):
-        if not dx:
-            return
-        self.geo.t0 = max(0.0, self.geo.t0 - dx / self.geo.pps)
-        self.scrollChanged.emit()
-        self.update()
-
-    def scroll_by(self, dy):
-        g = self.geo
-        max_y = max(0, g.content_height(self.editor) - (self.height() - g.top))
-        g.scroll_y = int(min(max_y, max(0, g.scroll_y + dy)))
-        self.scrollChanged.emit()
-        self.update()
-
-    def keyPressEvent(self, e):
-        if e.key() == Qt.Key.Key_Escape and self.abandon_drag():
-            return
-        if e.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            self.delete_selection()
-            return
-        if e.key() == Qt.Key.Key_Escape and self.range_sel is not None:
-            self.clear_range()
-            return
-        super().keyPressEvent(e)
-
-    # ── Dépôt d'une forme : un clip (place occupée : juste après ; sous les pistes : nouvelle piste) ──
-    def dragEnterEvent(self, e):
-        if e.mimeData().hasFormat(DEF_MIME):
-            e.acceptProposedAction()
-
-    def dragMoveEvent(self, e):
-        if e.mimeData().hasFormat(DEF_MIME):
-            e.acceptProposedAction()
-
-    def dropEvent(self, e):
-        if not e.mimeData().hasFormat(DEF_MIME):
-            return
-        def_id = bytes(e.mimeData().data(DEF_MIME)).decode("utf-8")
-        pos = e.position()
-        row = self.geo.row_at(self.rows(), pos.y())
-        track = row.track if row is not None else self.editor.add_track()
-        t = max(0.0, self.snap(self.geo.t(max(HEADER_W, pos.x()))))
-        clip = self.editor.add_clip(def_id, track.id, t)
-        self.editor.select_clip(clip.id)
-        e.acceptProposedAction()
-
-
-__all__ = ["TimelineCanvas", "QPointF", "QPen"]
+    def ruler_contains(self, y):
+        return y < RULER_H

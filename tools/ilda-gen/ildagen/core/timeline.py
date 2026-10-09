@@ -13,9 +13,9 @@ from .animation import Animation
 from .nodes import new_id
 from .params import finite  # noqa: F401  (réexporté : utilisé par les autres modules)
 
-# (libellé, subdivisions par temps)
+# (libellé, subdivisions par temps) ; « 2 temps » (blanche) ajouté à la fin : les indices enregistrés restent valables
 SUBDIVISIONS = [("Temps", 1), ("1/2 temps", 2), ("1/4 temps", 4), ("1/8 temps", 8),
-                ("Triolets", 3), ("Triolets de 1/2", 6)]
+                ("Triolets", 3), ("Triolets de 1/2", 6), ("2 temps", 0.5)]
 
 # Couleurs franches des pistes et des marqueurs
 TRACK_COLORS = ["#00c853", "#ffd000", "#d500f9", "#ff3d00", "#00e5ff", "#ff4081", "#c6ff00", "#ff9100"]
@@ -124,11 +124,15 @@ class Track:
         self.color = valid_color(color, TRACK_COLORS[0])
         self.muted = False
         self.solo = False
+        self.locked = False           # verrouillée : ses clips ne bougent plus (ni déposés, ni supprimés)
         self.clips = []
 
     def to_dict(self):
-        return {"id": self.id, "name": self.name, "color": self.color, "muted": self.muted, "solo": self.solo,
-                "clips": [c.to_dict() for c in self.clips]}
+        d = {"id": self.id, "name": self.name, "color": self.color, "muted": self.muted, "solo": self.solo,
+             "clips": [c.to_dict() for c in self.clips]}
+        if self.locked:
+            d["locked"] = True
+        return d
 
     @classmethod
     def from_dict(cls, d, index=0):
@@ -136,6 +140,7 @@ class Track:
                 valid_color(d.get("color"), TRACK_COLORS[index % len(TRACK_COLORS)]))
         t.muted = bool(d.get("muted", False))
         t.solo = bool(d.get("solo", False))
+        t.locked = d.get("locked") is True
         t.clips = [Clip.from_dict(c) for c in d.get("clips", []) if isinstance(c, dict)]
         return t
 
@@ -192,11 +197,12 @@ class Timeline:
 
     def position(self, t):
         """(mesure, temps, subdivision) à partir de 1 ; mesures négatives avant la mesure 1."""
-        beats = (t - self.bar_offset) / self.beat_len
+        beats = (t - self.bar_offset) / self.beat_len + 1e-9
         bar = math.floor(beats / self.beats_per_bar)
         beat_in_bar = beats - bar * self.beats_per_bar
         beat = math.floor(beat_in_bar)
-        sub = math.floor((beat_in_bar - beat) * SUBDIVISIONS[self.subdivision][1])
+        n = max(1, int(SUBDIVISIONS[self.subdivision][1]))
+        sub = math.floor((beat_in_bar - beat) * n)
         return bar + 1, beat + 1, sub + 1
 
     # ── Contenu ─────────────────────────────────────────────────────────
