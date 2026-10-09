@@ -1,38 +1,45 @@
-"""Formulaire de réglages d'un calque (forme, groupe, instance, modifieur), relié à l'éditeur.
+"""Formulaire des réglages d'un calque (forme, groupe, forme placée, modifieur), relié à l'éditeur.
 
-Le formulaire garde l'identifiant du calque (et non l'objet) : il reste valable après annuler / rétablir.
-(Les oscillateurs des réglages seront proposés par le panneau Réglages de l'espace Forme.)
+Une ligne par réglage (fields.py) ; les réglages inutiles dans le mode choisi sont masqués (ParamSpec.visible_if) ;
+bouton ∿ : oscillateur du réglage (osc_popup.py). Chaque geste (glisser, pas de molette, saisie, choix) est
+une seule étape d'annulation ; Échap, Ctrl+Z ou un geste annulé ailleurs l'abandonnent.
+Calque verrouillé : champs grisés. Le formulaire garde l'identifiant du calque (et non l'objet) : il reste
+valable après annuler / rétablir ; refresh() remet les valeurs du document dans les champs (même un champ qui a
+le focus : jamais de valeur périmée réécrite ensuite).
 """
 
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QGridLayout, QLabel, QMenu, QToolButton, QWidget
+from PySide6.QtCore import QTimer, Signal
+from PySide6.QtWidgets import QVBoxLayout, QWidget
 from shiboken6 import isValid
 
 from ...core import nodes as N
-from ...core import shape_color
 from ...core.param_specs import ACTIVE_SPEC, TRANSFORM_SPECS, shape_param_spec  # noqa: F401 (réexportés)
+from ...core.params import ParamSpec
 from ...core.shapes import SHAPE_PARAMS
-from .. import icons
-from .widgets import BoolField, ColorSwatch, EnumField, GradientBar, PaletteField, ScrubField
+from ..widgets import osc_summary
+from .common import LABEL_W, display_spec, display, scaled_osc
+from .fields import ColorRow, FieldRow, ParamSlider, make_field
+
+# « Couleur » d'une forme : par défaut (pastille « aucune ») ou unie (col.mode + col.color en une ligne)
+SHAPE_COLOR = ParamSpec("col.color", "Couleur", "color", (1.0, 1.0, 1.0),
+                        tip="Pastille en pointillés : couleur par défaut (celle des modifieurs, sinon le blanc)")
 
 
-def specs_for(node, compact):
-    """[(spec, facteur d'affichage)] des réglages à montrer pour un calque."""
-    out = []
+def form_specs(node):
+    """[(spec, facteur d'affichage)] des réglages montrés pour un calque, dans l'ordre du panneau."""
     if node.kind == "modifier":
-        if not compact:
-            out.append((ACTIVE_SPEC, 1.0))
-        out += [(s, 1.0) for s in node.modifier.all_params()]
-        return out
-    if compact:
-        return out
-    if node.has_transform:
-        out += TRANSFORM_SPECS
+        return [(s, 1.0) for s in node.modifier.all_params()] if node.modifier is not None else []
+    out = []
     if node.kind == "shape":
-        for k in SHAPE_PARAMS.get(node.shape, {}):
-            out.append((shape_param_spec(node.shape, k), 1.0))
-        out += [(s, 1.0) for s in shape_color.SPECS]
+        out += [(shape_param_spec(node.shape, k), 1.0) for k in SHAPE_PARAMS.get(node.shape, {})]
+    if node.has_transform:
+        out += list(TRANSFORM_SPECS)
+    if node.kind == "shape":
+        out.append((SHAPE_COLOR, 1.0))
     return out
+
+
+specs_for = form_specs        # ancien nom
 
 
 def same_value(a, b):
@@ -44,163 +51,198 @@ def same_value(a, b):
     return a == b
 
 
-def make_field(spec, factor):
-    if spec.kind in ("float", "int"):
-        return ScrubField(spec.decimals, spec.min, spec.max, (spec.soft_min, spec.soft_max),
-                          spec.unit, factor, integer=spec.kind == "int")
-    if spec.kind == "bool":
-        return BoolField()
-    if spec.kind == "enum":
-        return EnumField(spec.options)
-    if spec.kind == "color":
-        return ColorSwatch(cancellable=True)
-    if spec.kind == "gradient":
-        return GradientBar()
-    if spec.kind == "palette":
-        return PaletteField()
-    return QLabel("?")
+def get_value(node, key):
+    """Valeur d'un réglage telle que le formulaire la montre (couleur d'une forme : None = par défaut)."""
+    if key == "col.color" and node.kind == "shape":
+        return None if node.color_mode == 0 else tuple(node.color)
+    return N.get_param(node, key)
 
 
 class ParamForm(QWidget):
-    heightChanged = Signal()     # la hauteur du formulaire a changé (la ligne du calque la suit)
+    heightChanged = Signal()     # des lignes sont apparues / ont disparu
 
-    def __init__(self, editor, node_id, compact=False, parent=None):
+    def __init__(self, editor, node_id, compact=False, label_width=LABEL_W, margins=(10, 2, 10, 4), parent=None):
         super().__init__(parent)
         self.editor = editor
         self.node_id = node_id
-        self.compact = compact
-        self.fields = {}
+        self.fields = {}         # clé → champ qui porte la valeur
+        self.rows = {}           # clé → ligne (montrée ou masquée selon le mode)
         self.specs = {}
-        self.resets = {}
-        self._editing = False
+        self.factors = {}
+        self._editing = None     # clé du réglage en cours de geste
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(*margins)
+        lay.setSpacing(0)
         node = editor.find(node_id)
-        grid = QGridLayout(self)
-        m = (8, 2, 6, 4) if compact else (10, 6, 10, 8)
-        grid.setContentsMargins(*m)
-        grid.setHorizontalSpacing(4 if compact else 8)
-        grid.setVerticalSpacing(3 if compact else 4)
-        grid.setColumnStretch(2, 1)
         if node is None:
             return
-        row = 0
-        for spec, factor in specs_for(node, compact):
-            label = QLabel(spec.label)
-            label.setObjectName("dim")
-            label.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            label.customContextMenuRequested.connect(lambda pos, s=spec, w=label: self._label_menu(s, w.mapToGlobal(pos)))
-            field = make_field(spec, factor)
-            reset = QToolButton()
-            reset.setIcon(icons.icon("rotate-ccw", 12))
-            reset.setIconSize(icons.qsize(12))
-            reset.setAutoRaise(True)
-            reset.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            reset.setFixedSize(18, 18)
-            reset.setToolTip(f"Réinitialiser « {spec.label} »")
-            reset.clicked.connect(lambda _=False, s=spec: self._reset(s))
-            self.resets[spec.key] = reset
-            if spec.kind == "gradient":
-                grid.addWidget(label, row, 1, 1, 2)
-                grid.addWidget(reset, row, 3)
-                row += 1
-                grid.addWidget(field, row, 1, 1, 2)
+        for spec, factor in form_specs(node):
+            if spec is None:
+                continue
+            if spec is SHAPE_COLOR:
+                field = ColorRow(allow_none=True, none_tip="Couleur par défaut")
+                row = FieldRow(spec.label, field, label_width, spec.tip)
             else:
-                grid.addWidget(label, row, 1)
-                # Les champs prennent toute la largeur disponible (sauf case à cocher / couleur)
-                grid.addWidget(field, row, 2, Qt.AlignmentFlag.AlignLeft if spec.kind in ("bool", "color", "palette") else Qt.AlignmentFlag(0))
-                grid.addWidget(reset, row, 3)
-            label.setToolTip("Clic droit : réinitialiser · Alt + clic sur la valeur : réinitialiser")
-            if hasattr(field, "resetRequested"):
-                field.resetRequested.connect(lambda s=spec: self._reset(s))
-            field.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-            field.customContextMenuRequested.connect(lambda pos, s=spec, w=field: self._label_menu(s, w.mapToGlobal(pos)))
-            field.editStarted.connect(lambda s=spec: self._started(s))
-            field.valueEdited.connect(lambda v, s=spec: self._edited(s, v))
-            field.editFinished.connect(self._finished)
-            if hasattr(field, "editCancelled"):
-                field.editCancelled.connect(self._cancelled)
-            self.fields[spec.key] = field
-            self.specs[spec.key] = spec
-            row += 1
+                row, field = make_field(spec, label_width, factor)
+                if row is None:
+                    continue
+            self._wire(spec.key, field)
+            self.fields[spec.key], self.rows[spec.key] = field, row
+            self.specs[spec.key], self.factors[spec.key] = spec, factor
+            lay.addWidget(row)
         self.refresh()
-        editor.docChanged.connect(self.refresh)
+        # Plusieurs changements d'affilée (geste, annuler) : une seule mise à jour des champs
+        self._later = QTimer(self)
+        self._later.setSingleShot(True)
+        self._later.timeout.connect(self.refresh)
+        editor.docChanged.connect(self.refresh_later)
         editor.restored.connect(self._abort)
 
     def node(self):
         return self.editor.find(self.node_id)
 
-    def refresh(self):
-        node = self.node()
-        if node is None or self._editing or not isValid(self):
+    def refresh_later(self):
+        if not isValid(self):
             return
-        for key, field in self.fields.items():
-            v = self.editor.effective_param(node, key)
-            if v is None:
-                v = self.specs[key].default_value()
-            field.set_value(v)
-            # Le bouton ↺ s'allume quand la valeur n'est plus celle par défaut
-            self.resets[key].setEnabled(not same_value(v, self.specs[key].default_value()))
+        if not self.isVisible():
+            self._stale = True         # panneau caché (ou en attente de destruction) : mis à jour à l'affichage
+            return
+        if not self._later.isActive():
+            self._later.start(0)
 
-    def _started(self, spec):
-        self._editing = True
+    def showEvent(self, e):
+        super().showEvent(e)
+        if getattr(self, "_stale", False):
+            self._stale = False
+            self.refresh()
+
+    # ── Liaison des champs ───────────────────────────────────────────────
+    def _wire(self, key, f):
+        f.editStarted.connect(lambda k=key: self._started(k))
+        if isinstance(f, ParamSlider):
+            f.valueChanged.connect(lambda v, k=key: self._edited(k, v))
+            f.editFinished.connect(lambda _v: self._finished())
+            f.editCancelled.connect(lambda _v: self._cancelled())
+            f.oscRequested.connect(lambda k=key: self.open_osc(k))
+            return
+        f.valueEdited.connect(lambda v, k=key: self._edited(k, v))
+        f.editFinished.connect(self._finished)
+        if hasattr(f, "editCancelled"):
+            f.editCancelled.connect(self._cancelled)
+
+    def _started(self, key):
+        if self._editing is not None:
+            self._finished()
+        self._editing = key
         self.editor.param_editing = True
-        self.editor.begin(f"Réglage : {spec.label}")
+        self.editor.begin(f"Réglage : {self.specs[key].label}")
 
-    def _edited(self, spec, v):
+    def _edited(self, key, v):
         node = self.node()
         if node is None:
             return
-        if spec.key.startswith("sp."):
-            v = int(round(v))
-        elif spec.kind != "gradient":
+        spec = self.specs[key]
+        if key == "col.color" and node.kind == "shape":
+            N.set_param(node, "col.mode", 0 if v is None else 1)
+            if v is not None:
+                N.set_param(node, "col.color", tuple(v))
+            self.editor.set_param(node, "col.mode", node.color_mode)
+            return
+        if spec.kind == "int" or key.startswith("sp."):
+            v = int(round(float(v)))
+        if spec.kind != "gradient":
             v = spec.clamp(v)
-        self.editor.set_param(node, spec.key, v)
+        self.editor.set_param(node, key, v)
 
     def _finished(self):
-        self._editing = False
+        if self._editing is None:
+            return
+        self._editing = None
         self.editor.param_editing = False
         self.editor.commit()
         self.editor.notify()
 
     def _cancelled(self):
-        """Sélecteur de couleur annulé : rien n'est écrit, le réglage revient à l'état d'avant."""
-        self._editing = False
+        """Geste abandonné (Échap, sélecteur de couleur annulé) : le document revient à l'état d'avant."""
+        self._editing = None
         self.editor.cancel_gesture()
 
     def _abort(self):
-        """Geste annulé ailleurs (Échap, Ctrl+Z…) : le réglage glissé en cours s'arrête là."""
+        """Geste annulé ailleurs (Échap, Ctrl+Z…) : le réglage en cours s'arrête là."""
         if not isValid(self):
             return
-        self._editing = False
+        self._editing = None
+        if not self.isVisible():
+            self._stale = True
+            return
         for f in self.fields.values():
             if hasattr(f, "abort"):
                 f.abort()
-        self.refresh()
+        self.refresh_later()
 
-    def _label_menu(self, spec, gpos):
+    # ── Affichage ────────────────────────────────────────────────────────
+    def refresh(self):
+        node = self.node()
+        if node is None or not isValid(self):
+            return
+        locked = bool(node.locked or node.locked_ancestor() is not None)
+        bpb = self.editor.doc.timeline.beats_per_bar
+        changed = False
+        for key, field in self.fields.items():
+            spec, row = self.specs[key], self.rows[key]
+            shown = spec.shown(lambda k: get_value(node, k))
+            if row.isHidden() == shown:
+                row.setVisible(shown)
+                changed = True
+            if row.isEnabled() == locked:
+                row.setEnabled(not locked)
+            if key == self._editing:
+                continue
+            v = get_value(node, key)
+            if v is None and not (key == "col.color" and node.kind == "shape"):
+                v = spec.default_value()
+            field.set_value(v)
+            if isinstance(field, ParamSlider):
+                osc = node.osc.get(key)
+                k = display(spec, self.factors[key])[0]
+                field.set_summary(osc_summary(scaled_osc(osc, k), display_spec(spec, self.factors[key]), bpb)
+                                  if osc is not None else "")
+        if changed:
+            self.heightChanged.emit()
+
+    def shown_keys(self):
+        return [k for k, r in self.rows.items() if not r.isHidden()]
+
+    def is_default(self):
+        """Tous les réglages montrés ont-ils leur valeur par défaut (arrondie à ce qui est affiché : 0,0004 montré
+        « 0 » compte pour 0) ? La couleur et les oscillateurs ne sont pas des réglages à réinitialiser."""
         node = self.node()
         if node is None:
-            return
-        menu = QMenu(self)
-        a_reset = menu.addAction("Réinitialiser (Alt + clic)")
-        a_all = menu.addAction("Réinitialiser tous les réglages du calque")
-        chosen = menu.exec(gpos)
-        if chosen is a_reset:
-            self._reset(spec)
-        elif chosen is a_all:
-            self.editor.reset_params([node])
+            return True
+        for key in self.shown_keys():
+            spec = self.specs[key]
+            v = get_value(node, key)
+            if spec.kind in ("float", "int"):
+                f = self.fields[key]
+                if round(float(v) * f.factor, f.decimals) != round(float(spec.default_value()) * f.factor, f.decimals):
+                    return False
+            elif key != "col.color" and not same_value(v, spec.default_value()):
+                return False
+        return True
 
-    def _reset(self, spec):
+    # ── Oscillateurs ─────────────────────────────────────────────────────
+    def open_osc(self, key):
+        """Bouton ∿ : pose un oscillateur (s'il n'y en a pas) et ouvre son éditeur sous le champ."""
+        from .osc_popup import OscPopup
         node = self.node()
-        if node is None:
-            return
-        self.editor.begin(f"Réinitialiser : {spec.label}")
-        self.editor.set_param(node, spec.key, self.default_for(node, spec))
-        self.editor.commit()
-        self.editor.notify()
-
-    @staticmethod
-    def default_for(node, spec):
-        return spec.default_value()
+        if node is None or node.locked or node.locked_ancestor() is not None:
+            return None
+        if key not in node.osc and self.editor.set_osc(node, key) is None:
+            return None
+        pop = OscPopup(self.editor, self.node_id, key, self.specs[key], self.factors[key], self)
+        pop.show_under(self.fields[key])
+        self.popup = pop
+        return pop
 
 
-__all__ = ["ParamForm", "specs_for", "N"]
+__all__ = ["ParamForm", "form_specs", "specs_for", "same_value", "get_value", "SHAPE_COLOR", "N"]

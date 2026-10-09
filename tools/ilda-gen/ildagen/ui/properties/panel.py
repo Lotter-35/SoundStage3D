@@ -84,7 +84,16 @@ class PropertiesPanel(QWidget):
         if self._clip_fields is not None:
             self._refresh_clip()
 
+    def showEvent(self, e):
+        super().showEvent(e)
+        if getattr(self, "_dirty", False):
+            self.rebuild()
+
     def rebuild(self):
+        # Caché (autre espace) : reconstruit seulement quand il réapparaît (pas de travail inutile)
+        self._dirty = not self.isVisible()
+        if self._dirty:
+            return
         self._clip_fields = None
         w = QWidget()
         lay = QVBoxLayout(w)

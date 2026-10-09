@@ -168,8 +168,7 @@ def main():
     n_before = len(root().children)
     drag(view, sp(-0.6, 0.5), sp(-0.6, 0.8), M.AltModifier)
     check("Alt + glisser = duplique", len(root().children) == n_before + 1)
-    ed.undo()
-    ed.undo()
+    ed.undo()                       # copie + déplacement = une seule étape (M3)
     check("annuler la copie", len(root().children) == n_before)
     # Sélection rectangle
     ed.clear_selection()
@@ -322,7 +321,10 @@ def main():
     strokes = ed.display_strokes()
     check("rendu avec modifieurs", len(strokes) > 4, str(len(strokes)))
     app.processEvents()
-    check("réglages affichés dans la ligne du modifieur", m.id in tree.param_widgets)
+    ed.set_selection([sym.id])
+    app.processEvents()
+    check("réglages du modifieur dans Réglages (plus dans la ligne, D10)", win.properties.form is not None
+          and win.properties.form.node_id == sym.id)
     # Glisser sur un modifieur : jamais dedans, au-dessus ou en dessous, ligne alignée (pas de décalage)
     mi = tree.model_.index_for_id(m.id)
     si = tree.model_.index_for_id(sym.id)
@@ -335,10 +337,10 @@ def main():
     check("glisser sur un modifieur : jamais dedans", mid[0] is not mm and top[0] is not mm and bot[0] is not mm
           and mid[2][0] == "line")
     check("au-dessus / en dessous du modifieur", top[1] == mm.index() and bot[1] == mm.index() + 1
-          and bot[2][1] >= tree.visualRect(tree.model_.params_index(m.id)).bottom())
+          and bot[2][1] >= rm.bottom())
     check("ligne d'insertion au même niveau pour deux modifieurs", top[2][2] == stop[2][2], f"{top[2][2]} / {stop[2][2]}")
     # Réglage au clic-glisser (même après un premier clic qui a mis le champ en saisie)
-    form = tree.param_widgets[sym.id]
+    form = win.properties.form
     field = form.fields["angle"]
     L_ = Qt.MouseButton.LeftButton
     c = QPoint(field.width() // 2, field.height() // 2)
@@ -352,7 +354,10 @@ def main():
     check("après le réglage : sélection réaffichée", not ed.param_editing)
     drag(field, c, QPoint(c.x() + 60, c.y()))
     angle_field = field
-    check("l'unité n'est pas dans le texte modifiable", "°" not in angle_field.text())
+    angle_field.start_typing()
+    typed = angle_field.typing_editor().text()
+    angle_field._close_editor()
+    check("l'unité n'est pas dans le texte modifiable", "°" not in typed, typed)
     check("clic + glisser à droite augmente la valeur", ed.find(sym.id).values["angle"] > a0,
           f"{a0} → {ed.find(sym.id).values['angle']}")
     shot(win, "02_modifieurs")
@@ -384,7 +389,8 @@ def main():
     check("espace Show : la mire montre la timeline, les outils n'agissent plus",
           ed.workspace == "show" and not ed.editing_visible() and win.top.spaces.current() == 1 and win.stack.currentWidget() is win.show_space)
     check("clip actif : Propriétés montre ses réglages (début, durée, fondus)",
-          sorted(win.properties._clip_fields or {}) == ["duration", "fade_in", "fade_out", "start"])
+          win.show_space.inspector.fields is not None
+          and sorted(win.show_space.inspector.fields.fields) == ["duration", "fade_in", "fade_out", "start"])
     tl_canvas = win.timeline.canvas
     check("timeline : seulement les pistes (plus de lignes d'automation)",
           all(r.kind == "track" for r in tl_canvas.rows()) and len(tl_canvas.rows()) == len(tl.tracks))
@@ -400,8 +406,10 @@ def main():
     ed.set_playhead(2.0)
     x1 = mean_x()
     check("effet en courbe : la mire suit la tête de lecture", abs((x1 - x0) - 0.2) < 1e-6, f"{x1 - x0:.4f}")
-    win.properties._clip_fields["fade_in"].setText("1")
-    win.properties._clip_fields["fade_in"]._typed()
+    fi = win.show_space.inspector.fields.fields["fade_in"]
+    fi.start_typing()
+    fi.typing_editor().setText("1")
+    fi._commit_typing()
     clip = ed.doc.timeline.find_clip(clip.id)[1]
     check("fondu d'entrée tapé dans Propriétés", abs(clip.fade_in - 1.0) < 1e-9, f"{clip.fade_in}")
     ed.undo()
@@ -550,7 +558,7 @@ def main():
     send(canvas, QEvent.Type.MouseButtonDblClick, pt, Qt.MouseButton.LeftButton, Qt.MouseButton.LeftButton, M.NoModifier)
     app.processEvents()
     check("double-clic sur un clip : sa forme s'ouvre dans Forme", ed.workspace == "forme"
-          and ed.current_form_id() == clip.def_id and win.layers.ctx.text() == d.name)
+          and ed.current_form_id() == clip.def_id and win.canvas.header.name_label.text() == d.name)
     ed.set_current_form(F1)
     ed.set_workspace("show")
     t_before = ed.playhead
@@ -590,11 +598,15 @@ def main():
     ed.mutate("test", lambda: N.set_param(inst, "tf.tx", 0.25))
     app.processEvents()
     form = next((f for f in win.properties.findChildren(ParamForm) if f.node() is inst), None)
-    ok = form is not None and form.resets["tf.tx"].isEnabled()
+    ok = form is not None and not form.is_default() and win.properties.reset_btn.isEnabled()
     if ok:
-        form.resets["tf.tx"].click()
-    check("bouton ↺ à côté d'un réglage", ok and abs(N.get_param(inst, "tf.tx")) < 1e-9
-          and not form.resets["tf.tx"].isEnabled(), f"{N.get_param(inst, 'tf.tx')}")
+        f_tx = form.fields["tf.tx"]
+        send(f_tx, QEvent.Type.MouseButtonPress, QPoint(f_tx.width() // 2, f_tx.height() // 2),
+             Qt.MouseButton.RightButton, Qt.MouseButton.RightButton, M.NoModifier)
+        app.processEvents()
+    check("clic droit sur un réglage : valeur par défaut (↺ du panneau éteint)", ok
+          and abs(N.get_param(inst, "tf.tx")) < 1e-9 and not win.properties.reset_btn.isEnabled(),
+          f"{N.get_param(inst, 'tf.tx')}")
     ed.mutate("test", lambda: N.set_param(inst, "tf.tx", old_tx))
     before = ed.effective_transform(inst).sx
     ed.flip_selection(True)
@@ -661,15 +673,14 @@ def main():
     app.processEvents()
     new = ed.current_form()
     check("+ : nouvelle forme vide, sélectionnée", len(ed.doc.library.defs) == n_forms + 1 and not new.root.children
-          and ed.current_form_id() == new.id and lst.currentItem().data(Qt.ItemDataRole.UserRole) == new.id
-          and win.layers.ctx.text() == new.name, new.name)
+          and ed.current_form_id() == new.id and lst.current_id() == new.id and lst.tile(new.id).selected
+          and win.canvas.header.name_label.text() == new.name, new.name)
     ed.set_tool("shape:ellipse")
     drag(view, sp(-0.2, -0.2), sp(0.2, 0.2))
     check("on dessine directement dans la forme choisie", len(new.root.children) == 1 and not
           any(c.shape == "ellipse" and c.local_bbox()[0] < -0.19 for c in root().children if c.kind == "shape"))
-    item = next(lst.item(i) for i in range(lst.count()) if lst.item(i).data(Qt.ItemDataRole.UserRole) == F1)
-    r = lst.visualItemRect(item)
-    click(lst.viewport(), r.center())
+    tile = lst.tile(F1)
+    click(tile, tile.rect().center())
     check("clic sur une forme de la liste : elle s'affiche et ses calques aussi", ed.current_form_id() == F1
           and ed.workspace == "forme" and win.layers.tree.model_.rowCount() == len(root().children))
     dup = ed.duplicate_form(new.id)
@@ -1117,12 +1128,14 @@ def gestures_and_safety(app, win):
     ed.set_selection([rect_id])
     field = form_for(rect_id).fields["tf.rot"]
     r0 = ed.find(rect_id).transform.rot
+    def typed(f, txt):
+        f.start_typing()
+        f.typing_editor().setText(txt)
+        f._commit_typing()
     for txt in ("inf", "nan", "-inf"):
-        field.setText(txt)
-        field._typed()
+        typed(field, txt)
     ok_inf = ed.find(rect_id).transform.rot == r0
-    field.setText("1e308")
-    field._typed()
+    typed(field, "1e308")
     check("réglage tapé : inf / nan refusés, valeur énorme ramenée au maximum", ok_inf
           and ed.find(rect_id).transform.rot == 360.0, f"{ed.find(rect_id).transform.rot}")
     ed.undo()
@@ -1130,13 +1143,16 @@ def gestures_and_safety(app, win):
     ed.select_clip(clip.id)
     ed.clear_selection()
     app.processEvents()
-    dur = win.properties._clip_fields["duration"]
+    app.processEvents()
+    dur = win.show_space.inspector.fields.fields["duration"]
     d0 = ed.current_clip().duration
-    dur.setText("inf")
-    dur._typed()
+    dur.start_typing()
+    dur.typing_editor().setText("inf")
+    dur._commit_typing()
     ok_inf = ed.current_clip().duration == d0
-    dur.setText("1e308")
-    dur._typed()
+    dur.start_typing()
+    dur.typing_editor().setText("1e308")
+    dur._commit_typing()
     check("durée du clip : inf refusé, maximum 1 h", ok_inf and ed.current_clip().duration == MAX_DURATION)
     ed.current_clip().duration = float("inf")
     canvas.grab()                                  # dessin de la timeline sans erreur

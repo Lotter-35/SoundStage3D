@@ -22,7 +22,7 @@ ATTRS = {"mode": "color_mode", "color": "color", "stops": "stops", "type": "grad
 
 SPECS = [
     E("col.mode", "Couleur", COLOR_MODES),
-    C("col.color", "Couleur unie", (1.0, 1.0, 1.0)),
+    C("col.color", "Couleur unie", (1.0, 1.0, 1.0), visible_if={"col.mode": 1}),
 ]
 
 

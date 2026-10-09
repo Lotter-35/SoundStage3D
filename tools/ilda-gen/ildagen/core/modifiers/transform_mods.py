@@ -1,12 +1,12 @@
 """Modifieurs de position et de transformation."""
 
 from .. import mathutil as mu
-from ..params import F, B, E, PIVOT_OPTIONS
+from ..params import F, B, E, MIRE, PIVOT_OPTIONS
 from .base import Modifier, map_pts, pivot_point
 
 
 def mix_of(p):
-    """Intensité 0..1. Les modifieurs de position l'appliquent à leurs réglages (½ intensité = ½ rotation,
+    """Dosage 0..1. Les modifieurs de position l'appliquent à leurs réglages (½ dosage = ½ rotation,
     ½ déplacement…) : mélanger les points en ligne droite rétrécirait la forme pendant une rotation."""
     return max(0.0, min(1.0, p.get("mix", 100.0) / 100.0))
 
@@ -19,8 +19,8 @@ class Translate(Modifier):
     description = "Déplace les formes en X / Y."
     blendable = True
     self_mix = True
-    params = [F("x", "X", 0.0, -4.0, 4.0, soft_min=-1.0, soft_max=1.0, decimals=3),
-              F("y", "Y", 0.0, -4.0, 4.0, soft_min=-1.0, soft_max=1.0, decimals=3)]
+    params = [F("x", "X", 0.0, -4.0, 4.0, soft_min=-1.0, soft_max=1.0, decimals=3, **MIRE),
+              F("y", "Y", 0.0, -4.0, 4.0, soft_min=-1.0, soft_max=1.0, decimals=3, **MIRE)]
     center_keys = ("x", "y")
 
     def apply(self, strokes, p, ctx):
@@ -143,8 +143,8 @@ class Pivot(Modifier):
     category = "Position"
     icon = "locate-fixed"
     description = "Fixe le point autour duquel tournent / grandissent les modifieurs placés au-dessus (pivot Auto)."
-    params = [F("x", "X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("y", "Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3)]
+    params = [F("x", "X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE),
+              F("y", "Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE)]
     center_keys = ("x", "y")
 
     def apply(self, strokes, p, ctx):

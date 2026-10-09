@@ -71,8 +71,8 @@ class Strobe(Modifier):
     icon = "zap"
     description = "Clignotement (fréquence libre ou calée sur le BPM)."
     params = [E("sync", "Synchro", SYNC, 1),
-              F("rate", "Fréquence", 8.0, 0.1, 60.0, " Hz", 1),
-              E("division", "Division", DIVISIONS, 3),
+              F("rate", "Fréquence", 8.0, 0.1, 60.0, " Hz", 1, soft_max=20.0, visible_if={"sync": 0}),
+              E("division", "Division", DIVISIONS, 3, visible_if={"sync": 1}),
               F("duty", "Allumé", 50.0, 1.0, 99.0, "%", 0)]
 
     def is_animated(self, p):
@@ -93,8 +93,8 @@ class Pulse(Modifier):
     icon = "activity"
     description = "Variation douce et régulière de l'intensité."
     params = [E("sync", "Synchro", SYNC, 1),
-              F("rate", "Fréquence", 2.0, 0.05, 60.0, " Hz", 2),
-              E("division", "Division", DIVISIONS, 2),
+              F("rate", "Fréquence", 2.0, 0.05, 60.0, " Hz", 2, soft_max=10.0, visible_if={"sync": 0}),
+              E("division", "Division", DIVISIONS, 2, visible_if={"sync": 1}),
               F("depth", "Profondeur", 100.0, 0.0, 100.0, "%", 0),
               E("shape", "Forme", ["Sinus", "Triangle", "Dent de scie"])]
 

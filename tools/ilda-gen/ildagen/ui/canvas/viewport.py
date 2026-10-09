@@ -8,6 +8,7 @@ MIN_ZOOM = 0.2
 MAX_ZOOM = 400.0
 FILL = 0.44   # demi-côté de la mire / plus petit côté de la zone, au zoom 1
 WHEEL_ZOOM = 1.0015      # facteur de zoom par huitième de degré de molette (un cran = 120 → × 1,2)
+KEEP_PX = 48             # partie de la mire toujours visible quand on déplace la vue
 
 
 def wheel_action(device_type, phase, modifiers):
@@ -66,10 +67,20 @@ class Viewport:
         nx, ny = self.to_world(sx, sy)
         self.pan_x += wx - nx
         self.pan_y += wy - ny
+        self.clamp()
 
     def pan_pixels(self, dx, dy):
         self.pan_x -= dx / self.half
         self.pan_y += dy / self.half
+        self.clamp()
+
+    def clamp(self):
+        """Déplacement borné : au moins KEEP_PX pixels de la mire restent à l'écran (on la retrouve toujours)."""
+        h = self.half
+        lx = 1.0 + max(0.0, self.w / 2 - KEEP_PX) / h
+        ly = 1.0 + max(0.0, self.h / 2 - KEEP_PX) / h
+        self.pan_x = min(lx, max(-lx, self.pan_x))
+        self.pan_y = min(ly, max(-ly, self.pan_y))
 
     def fit(self):
         self.zoom = 1.0

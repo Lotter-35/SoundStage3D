@@ -20,8 +20,8 @@ def pick_color(parent, rgb, title="Couleur"):
 class FgBgSwatch(QWidget):
     """Couleur active (grand carré) et seconde couleur (petit carré)."""
 
-    BIG = 28
-    SMALL = 18
+    BIG = 20
+    SMALL = 15
 
     def __init__(self, editor, parent=None):
         super().__init__(parent)

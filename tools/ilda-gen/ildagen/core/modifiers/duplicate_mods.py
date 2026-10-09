@@ -6,7 +6,7 @@ import numpy as np
 
 from .. import limits as L
 from .. import mathutil as mu
-from ..params import F, I, B
+from ..params import F, I, B, MIRE
 from ..path import strokes_bbox
 from .base import Modifier
 
@@ -46,8 +46,8 @@ class MirrorSymmetry(Modifier):
     description = "Reflète les formes : 1 axe = x2, 2 axes = x4, 4 axes = x8…"
     params = [I("axes", "Axes", 1, 1, 16),
               F("angle", "Angle de l'axe", 90.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
-              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3)]
+              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE),
+              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE)]
     center_keys = ("cx", "cy")
     angle_key = "angle"
 
@@ -71,8 +71,8 @@ class RadialSymmetry(Modifier):
     params = [I("count", "Copies", 6, 1, 64, soft_max=32),
               F("angle", "Décalage", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
               B("kaleido", "Kaléidoscope", False),
-              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3)]
+              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE),
+              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE)]
     center_keys = ("cx", "cy")
     angle_key = "angle"
 
@@ -98,8 +98,8 @@ class LinearRepeat(Modifier):
     icon = "copy"
     description = "N copies avec un décalage constant de position, rotation et taille."
     params = [I("count", "Copies", 3, 1, 64, soft_max=32),
-              F("dx", "Décalage X", 0.2, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("dy", "Décalage Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
+              F("dx", "Décalage X", 0.2, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE),
+              F("dy", "Décalage Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE),
               F("rot", "Rotation", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
               F("scale", "Taille", 100.0, 1.0, 400.0, "%", 1, soft_max=200),
               B("centered", "Centrer les copies", False)]

@@ -20,6 +20,7 @@ CORNER_EDGES = {"c0": ("c1", "c3"), "c1": ("c0", "c2"), "c2": ("c3", "c1"), "c3"
 CORNER_INDEX = {"c0": 0, "c1": 1, "c2": 2, "c3": 3}
 EDGE_CORNERS = {"e0": (0, 1), "e1": (1, 2), "e2": (2, 3), "e3": (3, 0)}
 OPPOSITE_EDGE = {"e0": "e2", "e2": "e0", "e1": "e3", "e3": "e1"}
+MIN_FACTOR = 0.01    # facteur d'échelle minimal d'un geste (1 %)
 
 
 def scale_matrix(frame, hid, mouse, shift, alt, snap=None):
@@ -59,6 +60,9 @@ def scale_matrix(frame, hid, mouse, shift, alt, snap=None):
         k = (fx if drive_x else fy) if snap is not None else (fx if abs(fx) > abs(fy) else fy)
         fx = math.copysign(abs(k), fx) if fx != 0 else k
         fy = math.copysign(abs(k), fy) if fy != 0 else k
+    # Jamais d'échelle nulle (aimant sur le point d'ancrage) : la forme ne pourrait plus être agrandie
+    fx = fx if abs(fx) >= MIN_FACTOR else math.copysign(MIN_FACTOR, fx)
+    fy = fy if abs(fy) >= MIN_FACTOR else math.copysign(MIN_FACTOR, fy)
     s = mu.about(mu.scaling(fx, fy), a_s, a_t)
     return f @ s @ finv
 

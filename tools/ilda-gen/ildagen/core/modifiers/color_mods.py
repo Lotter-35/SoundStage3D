@@ -5,13 +5,15 @@ import math
 import numpy as np
 
 from .. import colorutil as cu
-from ..params import F, I, E, C, G, P
+from ..params import F, I, E, C, G, P, FRACTION, MIRE
 from ..path import Stroke, closed_pts, cumulative, resample_share, resample_stroke
 from .base import Modifier, stroke_rng
 
 COLOR_STEP = 0.02
 SCOPES = ["Par tracé", "Global (tous les tracés)"]
 GRAD_MODES = ["Le long du tracé", "Linéaire", "Radial", "Angulaire"]
+# Centre utile pour les dégradés dans l'espace (pas le long du tracé)
+CENTRE = {"mode": (1, 2, 3)}
 
 
 def prepared(strokes):
@@ -102,12 +104,12 @@ class Gradient(Modifier):
     self_mix = True
     params = [G("stops", "Couleurs", [[0.0, 1.0, 0.0, 0.0], [1.0, 0.0, 0.0, 1.0]]),
               E("mode", "Type", GRAD_MODES),
-              E("scope", "Portée", SCOPES),
-              F("angle", "Angle", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
-              F("size", "Étendue", 2.0, 0.01, 20.0, decimals=2, soft_max=4.0),
-              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1),
+              E("scope", "Portée", SCOPES, visible_if={"mode": 0}),
+              F("angle", "Angle", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360, visible_if={"mode": (1, 3)}),
+              F("size", "Étendue", 2.0, 0.01, 20.0, decimals=2, soft_max=4.0, visible_if={"mode": (1, 2)}, **MIRE),
+              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, visible_if=CENTRE, **MIRE),
+              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, visible_if=CENTRE, **MIRE),
+              F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1, **FRACTION),
               E("repeat", "Répétition", ["Étendre", "Répéter", "Miroir"])]
     center_keys = ("cx", "cy")
     angle_key = "angle"
@@ -135,7 +137,7 @@ class ColorScroll(Modifier):
     category = "Couleur"
     icon = "arrow-right-left"
     description = "Fait glisser les couleurs le long du tracé (décalage, et vitesse optionnelle)."
-    params = [F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1),
+    params = [F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1, **FRACTION),
               F("speed", "Vitesse", 0.0, -50.0, 50.0, " tours/s", 2, soft_min=-4, soft_max=4),
               E("scope", "Portée", SCOPES)]
     phase_key = "offset"
@@ -174,14 +176,14 @@ class Rainbow(Modifier):
     blendable = True
     self_mix = True
     params = [E("mode", "Type", GRAD_MODES),
-              E("scope", "Portée", SCOPES),
-              F("cycles", "Répétitions", 1.0, 0.01, 64.0, decimals=2, soft_max=8),
-              F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1),
+              E("scope", "Portée", SCOPES, visible_if={"mode": 0}),
+              F("cycles", "Répétitions", 1.0, 0.01, 64.0, " ×", 2, soft_max=8),
+              F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1, **FRACTION),
               F("speed", "Vitesse", 0.0, -50.0, 50.0, " tours/s", 2, soft_min=-4, soft_max=4),
               F("sat", "Saturation", 100.0, 0.0, 100.0, "%", 0),
-              F("angle", "Angle", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360),
-              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3)]
+              F("angle", "Angle", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360, visible_if={"mode": (1, 3)}),
+              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, visible_if=CENTRE, **MIRE),
+              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, visible_if=CENTRE, **MIRE)]
     center_keys = ("cx", "cy")
     angle_key = "angle"
 
@@ -229,9 +231,10 @@ class AlternateColors(Modifier):
     description = "Alterne 2 à 4 couleurs par segment, par tracé ou par longueur."
     params = [I("count", "Nombre de couleurs", 2, 2, 4),
               C("c1", "Couleur 1", (1.0, 0.0, 0.0)), C("c2", "Couleur 2", (0.0, 0.0, 1.0)),
-              C("c3", "Couleur 3", (0.0, 1.0, 0.0)), C("c4", "Couleur 4", (1.0, 1.0, 1.0)),
+              C("c3", "Couleur 3", (0.0, 1.0, 0.0), visible_if={"count": lambda n: n >= 3}),
+              C("c4", "Couleur 4", (1.0, 1.0, 1.0), visible_if={"count": lambda n: n >= 4}),
               E("mode", "Alternance", ["Par segment", "Par tracé", "Par longueur"]),
-              F("length", "Longueur", 0.1, 0.005, 4.0, decimals=3, soft_max=0.5),
+              F("length", "Longueur", 0.1, 0.005, 4.0, decimals=3, soft_max=0.5, visible_if={"mode": 2}, **MIRE),
               F("offset", "Décalage", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1)]
     phase_key = "offset"
     size_keys = ("length",)
@@ -270,11 +273,11 @@ class RandomColor(Modifier):
     category = "Couleur"
     icon = "dices"
     description = "Une couleur au hasard par tracé ou par segment (graine réglable)."
-    params = [I("seed", "Graine", 1, 0, 99999),
+    params = [I("seed", "Graine", 1, 0, 99999, soft_max=100, tip="Autre graine = autre tirage des couleurs"),
               E("mode", "Par", ["Tracé", "Segment"]),
               E("palette", "Palette", ["Toutes les teintes", "Couleurs laser pures", "Couleurs choisies"]),
-              P("colors", "Couleurs", [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)]),
-              F("sat", "Saturation", 100.0, 0.0, 100.0, "%", 0)]
+              P("colors", "Couleurs", [(1, 0, 0), (0, 1, 0), (0, 0, 1), (1, 1, 0)], visible_if={"palette": 2}),
+              F("sat", "Saturation", 100.0, 0.0, 100.0, "%", 0, visible_if={"palette": 0})]
 
     def _pick(self, rng, p, n):
         if p["palette"] == 1:

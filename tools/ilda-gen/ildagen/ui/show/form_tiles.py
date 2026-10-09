@@ -68,13 +68,24 @@ class FormTiles(QWidget):
         self._rebuild_timer = QTimer(self)
         self._rebuild_timer.setSingleShot(True)
         self._rebuild_timer.timeout.connect(self.rebuild)
-        editor.libraryChanged.connect(self.rebuild)
-        editor.projectChanged.connect(self.rebuild)
-        editor.docChanged.connect(lambda: self._rebuild_timer.start(300))
+        self._dirty = False
+        editor.libraryChanged.connect(self._changed)
+        editor.projectChanged.connect(self._changed)
+        editor.docChanged.connect(lambda: self._changed(later=True))
         editor.workspaceChanged.connect(lambda _: self._timer_state())
         self.rebuild()
 
+    def _changed(self, later=False):
+        """Espace Show caché : rien n'est recalculé maintenant, seulement au prochain affichage."""
+        if not self.isVisible():
+            self._dirty = True
+        elif later:
+            self._rebuild_timer.start(300)
+        else:
+            self.rebuild()
+
     def rebuild(self):
+        self._dirty = False
         defs = self.editor.doc.library.visible()
         ids = [d.id for d in defs]
         if [t.def_id for t in self.tiles] != ids:
@@ -122,6 +133,8 @@ class FormTiles(QWidget):
 
     def showEvent(self, e):
         super().showEvent(e)
+        if self._dirty:
+            self.rebuild()
         self._timer_state()
 
     def hideEvent(self, e):

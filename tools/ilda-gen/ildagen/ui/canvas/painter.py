@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPen, QBrush
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 
 from ...core import draw_symmetry as DS
 from ...core import grid as G
@@ -57,11 +57,19 @@ def draw_grid(p, vt, grid):
         while step * vt.half < 5 and step < 1.0:
             step *= 2
         k = int(round(1.0 / step))
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)   # lignes droites : 10 fois plus rapide
+        lines = ([], [])
         for i in range(-k, k + 1):
             v = i * step
-            p.setPen(strong if i == 0 else weak)
-            p.drawLine(vt.to_screen(v, -1), vt.to_screen(v, 1))
-            p.drawLine(vt.to_screen(-1, v), vt.to_screen(1, v))
+            group = lines[0 if i == 0 else 1]
+            group.append(QLineF(vt.to_screen(v, -1), vt.to_screen(v, 1)))
+            group.append(QLineF(vt.to_screen(-1, v), vt.to_screen(1, v)))
+        p.setPen(weak)
+        p.drawLines(lines[1])
+        p.setPen(strong)
+        p.drawLines(lines[0])
+        p.restore()
     else:
         c = vt.to_screen(0, 0)
         rs = G.ring_step(grid)
@@ -164,24 +172,16 @@ def draw_safety(p, vt, rect):
     p.drawRect(QRectF(vt.to_screen(x0, y1), vt.to_screen(x1, y0)))
 
 
-def draw_counter(p, area, stats, zoom):
-    """Petit compteur dans le coin bas droit : points envoyés (ou prévus hors live), image réduite pour tenir
-    le budget de points, image coupée par la sécurité anti point fixe."""
-    n = stats.count if stats is not None else 0
-    warn = stats is not None and (stats.reduced or stats.static)
-    txt = (f"{n:,} pts".replace(",", " ") + (" envoyés" if stats.sent else "")) if n else "Aucun tracé"
-    if stats is not None and stats.reduced:
-        txt += " · réduit"
-    if stats is not None and stats.static:
-        txt += " · point fixe coupé"
-    if abs(zoom - 1.0) > 1e-3:
-        txt += f" · {zoom * 100:.0f} %"
+def draw_zoom(p, area, zoom):
+    """Niveau de zoom dans le coin bas droit, quand la vue n'est pas à 100 % (les points laser sont comptés
+    dans la barre de boucle)."""
+    if abs(zoom - 1.0) <= 1e-3:
+        return
+    txt = f"{zoom * 100:.0f} %"
     p.setFont(theme.mono_font(10))
-    fm = p.fontMetrics()
-    w = fm.horizontalAdvance(txt) + 12
-    r = QRectF(area.right() - w - 8, area.bottom() - 22, w, 16)
-    p.setPen(theme.qc(theme.WARNING if warn else theme.TEXT_DIM))
-    p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
+    w = p.fontMetrics().horizontalAdvance(txt) + 12
+    p.setPen(theme.qc(theme.TEXT_DIM))
+    p.drawText(QRectF(area.right() - w - 8, area.bottom() - 22, w, 16), Qt.AlignmentFlag.AlignCenter, txt)
 
 
 def draw_quad(p, vt, quad, color, dashed=True, width=1.0):

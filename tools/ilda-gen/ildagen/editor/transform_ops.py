@@ -14,6 +14,7 @@ from ..core.transform import TRANSFORM_KEYS
 
 # Ordre de grandeur de chaque réglage (pour comparer leurs variations)
 KEY_SCALE = {"rot": 180.0, "tilt_x": 90.0, "tilt_y": 90.0}
+MIN_SCALE = 1e-3     # échelle minimale (jamais nulle : la forme resterait aplatie pour toujours)
 
 
 class TransformOpsMixin:
@@ -58,16 +59,33 @@ class TransformOpsMixin:
         finally:
             self.blockSignals(blocker)
 
-    def apply_world_matrix(self, node, base_tf, world_m, ctx):
-        """Nouvelle transformation de node = (monde) world_m appliquée à son état de départ base_tf."""
+    def apply_world_matrix(self, node, base_tf, world_m, ctx, keep_pivot=False):
+        """Nouvelle transformation de node = (monde) world_m appliquée à son état de départ base_tf.
+        keep_pivot : le pivot reste au même endroit (centre de l'inclinaison 3D : la forme inclinée suit la
+        souris). L'échelle ne devient jamais nulle (une forme aplatie ne pourrait plus être agrandie)."""
         p = self.parent_matrix(node, ctx)
         try:
             pinv = np.linalg.inv(p)
         except np.linalg.LinAlgError:
             return
-        tf = base_tf.copy()
-        tf.set_affine(pinv @ world_m @ p @ base_tf.affine())
+        base = base_tf.copy()
+        for k in ("sx", "sy"):
+            v = getattr(base, k)
+            if abs(v) < MIN_SCALE:
+                setattr(base, k, MIN_SCALE if v >= 0 else -MIN_SCALE)
+        tf = base.copy()
+        tf.set_affine(pinv @ world_m @ p @ base.affine())
+        for k in ("sx", "sy"):
+            v = getattr(tf, k)
+            if abs(v) < MIN_SCALE:
+                setattr(tf, k, MIN_SCALE if v >= 0 else -MIN_SCALE)
         tf.tilt_x, tf.tilt_y = base_tf.tilt_x, base_tf.tilt_y
+        if keep_pivot:
+            wx, wy = base.world_pivot()
+            try:
+                tf.set_pivot(*mu.apply_point(np.linalg.inv(tf.affine()), wx, wy))
+            except np.linalg.LinAlgError:
+                pass
         self.write_transform(node, tf)
 
     def world_pivot(self, node, ctx):

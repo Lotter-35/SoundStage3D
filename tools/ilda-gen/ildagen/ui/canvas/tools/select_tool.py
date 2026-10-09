@@ -6,13 +6,13 @@ from PySide6.QtGui import QPen
 
 from ....core import grid as G
 from ....core import mathutil as mu
-from ....core.evaluator import hit_test, node_quad
+from ....core.evaluator import hit_test, local_content_bbox, node_quad, to_world
 from ... import theme
 from ..painter import draw_guides
 from . import gestures as GS
 from . import line_handles as LH
 from .base import Tool
-from .selection_frame import build_frame, draw_frame, handle_cursor, hit_handle, inside_frame, pickable
+from .selection_frame import Frame, build_frame, draw_frame, handle_cursor, hit_handle, inside_frame, pickable
 
 NUDGE = 0.005
 NUDGE_BIG = 0.05
@@ -131,13 +131,21 @@ class SelectTool(Tool):
         frame = self.frame(ctx)
         if frame is None or self.transform_locked(frame):
             return
-        if ev.alt:
-            self.editor.duplicate_selection()
-            ctx = self.editor.eval_context()
-            frame = self.frame(ctx)
-            if frame is None:
-                return
-        self._start("move", ev, ctx, frame, label="Déplacer")
+        # Alt : la copie n'est faite qu'au premier vrai mouvement (Alt + clic sans bouger ne crée rien),
+        # dans la même étape d'annulation que le déplacement
+        self._start("move", ev, ctx, frame, label="Dupliquer" if ev.alt else "Déplacer")
+        self.drag["dup"] = ev.alt
+
+    def _duplicate_now(self, d):
+        """Alt + glisser : les copies prennent la place de la sélection dans le geste en cours."""
+        d["dup"] = False
+        if not self.editor.duplicate_in_gesture():
+            return
+        ctx = self.editor.eval_context()
+        frame = self.frame(ctx)
+        if frame is not None:
+            d["frame"], d["ctx"] = frame, ctx
+            d["base"] = {n.id: self.editor.effective_transform(n, ctx) for n in frame.nodes}
 
     def move(self, ev):
         if self.marquee is not None:
@@ -156,6 +164,10 @@ class SelectTool(Tool):
         self.view.update()
 
     def _drag_move(self, ev, d):
+        if d.get("dup"):
+            if abs(ev.screen.x() - d["press_s"].x()) + abs(ev.screen.y() - d["press_s"].y()) < 3:
+                return
+            self._duplicate_now(d)
         delta = np.array(ev.world) - d["press_w"]
         self.guides = []
         if ev.shift:
@@ -220,10 +232,35 @@ class SelectTool(Tool):
             self._apply_all(d, GS.skew_matrix(frame, hid, world - d["press_w"], ev.alt))
         elif ev.ctrl and corner and single_shape and not ev.shift:
             self._bake(d, GS.distort_quad(frame, hid, world))
+        elif frame.single and d["base"][frame.nodes[0].id].has_tilt():
+            # Forme inclinée en 3D : l'échelle se calcule dans son plan (avant la perspective), la souris y
+            # est ramenée ; le pivot (centre de l'inclinaison) reste en place : la poignée suit la souris
+            fa, h = self._untilted(d)
+            mouse = np.array(mu.apply_point(h, float(world[0]), float(world[1])))
+            self._apply_all(d, GS.scale_matrix(fa, hid, mouse, ev.shift, ev.alt), keep_pivot=True)
         else:
             self._apply_all(d, GS.scale_matrix(frame, hid, world, ev.shift, ev.alt, snap))
 
-    def _apply_all(self, d, w):
+    def _untilted(self, d):
+        """(cadre sans l'inclinaison 3D du calque, homographie mire inclinée → plan du calque), en cache."""
+        if "untilt" not in d:
+            n, ctx = d["frame"].nodes[0], d["ctx"]
+            tf0 = d["base"][n.id].copy()
+            tf0.tilt_x = tf0.tilt_y = 0.0
+            q = d["frame"].quad
+            b = local_content_bbox(n, ctx)
+            x0, y0, x1, y1 = b
+            if x1 - x0 < 1e-4:
+                x0, x1 = x0 - 0.01, x1 + 0.01
+            if y1 - y0 < 1e-4:
+                y0, y1 = y0 - 0.01, y1 + 0.01
+            corners = np.array([[x0, y1], [x1, y1], [x1, y0], [x0, y0]], dtype=float)
+            qa = to_world(n, tf0.apply(corners), ctx)
+            h = mu.homography([tuple(p) for p in q], [tuple(p) for p in qa])
+            d["untilt"] = (Frame([n], [qa], None), h)
+        return d["untilt"]
+
+    def _apply_all(self, d, w, keep_pivot=False):
         if d["baked"]:
             # Retour à la géométrie d'origine si une déformation a eu lieu plus tôt dans le même geste
             for n in d["frame"].nodes:
@@ -232,7 +269,7 @@ class SelectTool(Tool):
                     n.shape, n.rect, n.sparams, n.paths, n.transform = shape, rect, dict(sparams), paths, tf.copy()
             d["baked"] = False
         for n in d["frame"].nodes:
-            self.editor.apply_world_matrix(n, d["base"][n.id], w, d["ctx"])
+            self.editor.apply_world_matrix(n, d["base"][n.id], w, d["ctx"], keep_pivot)
 
     def _bake(self, d, quad):
         n = d["frame"].nodes[0]

@@ -33,6 +33,7 @@ class CanvasView(QWidget):
         self._panning = None
         self.last_world = None
         self.stats = None
+        self.time_source = None     # temps de l'aperçu de la forme (pause, vitesse de l'aperçu) ; None : la boucle
         editor.docChanged.connect(self.update)
         editor.selectionChanged.connect(self.update)
         editor.gridChanged.connect(self.update)
@@ -92,7 +93,11 @@ class CanvasView(QWidget):
         P.draw_grid(p, self.vt, self.editor.doc.grid)
         if self.editor.editing_visible():
             P.draw_symmetry_axes(p, self.vt, self.editor.doc.grid)
-        strokes = self.editor.display_strokes()
+        ed = self.editor
+        if ed.workspace == "forme" and self.time_source is not None:
+            strokes = ed.form_strokes(self.time_source())
+        else:
+            strokes = ed.display_strokes()
         show_points = self.vt.zoom >= POINTS_ZOOM
         P.draw_strokes(p, self.vt, strokes, alpha=0.55 if show_points else 1.0)
         settings = self.editor.settings
@@ -108,7 +113,7 @@ class CanvasView(QWidget):
             if self.tool is not self.tools["select"]:
                 self.tools["select"].draw(p)
             self.tool.draw(p)
-        P.draw_counter(p, self.rect(), self.stats, self.vt.zoom)
+        P.draw_zoom(p, self.rect(), self.vt.zoom)     # points : compteur de la barre de boucle
         p.end()
 
     def _draw_modifier_scope(self, p):
@@ -134,6 +139,8 @@ class CanvasView(QWidget):
 
     def mousePressEvent(self, e):
         self.setFocus()
+        if not self.editor.editing_visible() and e.button() != Qt.MouseButton.MiddleButton:
+            return                      # hors de l'espace Forme, aucun outil n'agit (M7)
         if self.tool.busy():
             self.cancel_gesture()       # relâchement jamais reçu (souris perdue) : l'ancien geste est annulé
         if e.button() == Qt.MouseButton.MiddleButton:
@@ -199,6 +206,9 @@ class CanvasView(QWidget):
     def keyPressEvent(self, e):
         if e.key() == Qt.Key.Key_Escape and (self.cancel_gesture() or self.editor.cancel_gesture()):
             e.accept()          # Échap pendant un geste : il est annulé (sinon : comportement de l'outil)
+            return
+        if not self.editor.editing_visible():
+            super().keyPressEvent(e)
             return
         if self.tool.key_press(e.key(), e.modifiers()):
             e.accept()

@@ -6,17 +6,18 @@ Clés : celles des modifieurs, « tf.* » (transformation), « sp.* » (réglage
 """
 
 from . import shape_color
-from .params import B, F, I
+from .params import FRACTION, MIRE, B, F, I
 from .shapes import SHAPE_PARAMS
 
 # Réglages de transformation (clés « tf. ») ; facteur d'affichage pour les échelles en %
+# (le panneau Réglages lit l'affichage de chaque réglage : ParamSpec.display())
 TRANSFORM_SPECS = [
-    (F("tf.tx", "Position X", 0.0, -8.0, 8.0, decimals=3, soft_min=-1, soft_max=1), 1.0),
-    (F("tf.ty", "Position Y", 0.0, -8.0, 8.0, decimals=3, soft_min=-1, soft_max=1), 1.0),
+    (F("tf.tx", "Position X", 0.0, -8.0, 8.0, decimals=3, soft_min=-1, soft_max=1, **MIRE), 1.0),
+    (F("tf.ty", "Position Y", 0.0, -8.0, 8.0, decimals=3, soft_min=-1, soft_max=1, **MIRE), 1.0),
     (F("tf.rot", "Rotation", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360), 1.0),
-    (F("tf.sx", "Échelle X", 1.0, -100.0, 100.0, " %", 1, soft_min=0, soft_max=2), 100.0),
-    (F("tf.sy", "Échelle Y", 1.0, -100.0, 100.0, " %", 1, soft_min=0, soft_max=2), 100.0),
-    (F("tf.shear", "Cisaillement", 0.0, -10.0, 10.0, decimals=3, soft_min=-1, soft_max=1), 1.0),
+    (F("tf.sx", "Échelle X", 1.0, -100.0, 100.0, " %", 1, soft_min=0, soft_max=2, **FRACTION), 100.0),
+    (F("tf.sy", "Échelle Y", 1.0, -100.0, 100.0, " %", 1, soft_min=0, soft_max=2, **FRACTION), 100.0),
+    (F("tf.shear", "Cisaillement", 0.0, -10.0, 10.0, decimals=3, soft_min=-1, soft_max=1, **FRACTION), 1.0),
     (F("tf.tilt_x", "Inclinaison X", 0.0, -89.0, 89.0, "°", 1), 1.0),
     (F("tf.tilt_y", "Inclinaison Y", 0.0, -89.0, 89.0, "°", 1), 1.0),
 ]
@@ -32,7 +33,10 @@ def shape_param_spec(shape, key):
     if p is None:
         return None
     label, default, lo, hi = p
-    return I("sp." + (key[3:] if key.startswith("sp.") else key), label, default, lo, hi)
+    unit = ""
+    if label.endswith(" (%)"):           # « Creux (%) » : l'unité va après la valeur
+        label, unit = label[:-4], "%"
+    return I("sp." + (key[3:] if key.startswith("sp.") else key), label, default, lo, hi, unit)
 
 
 def param_spec(node, key):

@@ -1,9 +1,9 @@
-"""Modifieurs de tracé : pointillés, tirets, dessin progressif, masque, beams."""
+"""Modifieurs de tracé : points, tirets, dessin progressif, masque, faisceaux."""
 
 import numpy as np
 
 from ..limits import MAX_PIECES
-from ..params import F, I, B, E
+from ..params import F, I, B, E, FRACTION, MIRE
 from ..path import Stroke, closed_pts, cumulative, sample_at, resample_share, resample_stroke
 from .base import Modifier
 
@@ -72,13 +72,13 @@ def measured_lines(strokes):
 
 class Dots(Modifier):
     type_id = "dots"
-    label = "Dots"
+    label = "Points"
     category = "Tracé"
     icon = "ellipsis"
     description = "Transforme les lignes en suite de points. Une Translation X posée dessus décale les points (phase)."
-    params = [F("spacing", "Espacement", 0.06, 0.002, 4.0, decimals=3, soft_max=0.5),
-              I("size", "Éclat", 3, 1, 60),
-              F("phase", "Phase", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1),
+    params = [F("spacing", "Espacement", 0.06, 0.002, 4.0, decimals=3, soft_max=0.5, **MIRE),
+              I("size", "Éclat", 3, 1, 60, soft_max=20, tip="Passages sur chaque point (plus = plus lumineux)"),
+              F("phase", "Phase", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1, **FRACTION),
               B("ends", "Premier et dernier point", True)]
     phase_key = "phase"
     size_keys = ("spacing",)
@@ -118,9 +118,9 @@ class Dashes(Modifier):
     category = "Tracé"
     icon = "equal"
     description = "Découpe les lignes en tirets."
-    params = [F("dash", "Tiret", 0.08, 0.002, 4.0, decimals=3, soft_max=0.5),
-              F("gap", "Espace", 0.05, 0.002, 4.0, decimals=3, soft_max=0.5),
-              F("phase", "Phase", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1)]
+    params = [F("dash", "Tiret", 0.08, 0.002, 4.0, decimals=3, soft_max=0.5, **MIRE),
+              F("gap", "Espace", 0.05, 0.002, 4.0, decimals=3, soft_max=0.5, **MIRE),
+              F("phase", "Phase", 0.0, -100.0, 100.0, decimals=3, soft_min=-1, soft_max=1, **FRACTION)]
     phase_key = "phase"
     size_keys = ("dash", "gap")
 
@@ -225,10 +225,10 @@ class Mask(Modifier):
     icon = "square-dashed"
     description = "N'affiche que ce qui est dans (ou hors de) une zone."
     params = [E("shape", "Forme", ["Rectangle", "Ellipse"]),
-              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3),
-              F("w", "Largeur", 1.0, 0.0, 8.0, decimals=3, soft_max=2.0),
-              F("h", "Hauteur", 1.0, 0.0, 8.0, decimals=3, soft_max=2.0),
+              F("cx", "Centre X", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE),
+              F("cy", "Centre Y", 0.0, -4.0, 4.0, soft_min=-1, soft_max=1, decimals=3, **MIRE),
+              F("w", "Largeur", 1.0, 0.0, 8.0, decimals=3, soft_max=2.0, **MIRE),
+              F("h", "Hauteur", 1.0, 0.0, 8.0, decimals=3, soft_max=2.0, **MIRE),
               B("invert", "Inverser", False)]
     center_keys = ("cx", "cy")
     size_keys = ("w", "h")
@@ -270,13 +270,13 @@ class Mask(Modifier):
 
 class Beams(Modifier):
     type_id = "beams"
-    label = "Beams"
+    label = "Faisceaux"
     category = "Tracé"
     icon = "zap"
     description = "Remplace les formes par des points fixes très lumineux (faisceaux dans la fumée)."
     params = [E("mode", "Placement", ["Sur les sommets", "Répartis le long du tracé"]),
               I("count", "Nombre", 8, 1, 256, soft_max=64),
-              I("dwell", "Éclat", 20, 1, 200, soft_max=60)]
+              I("dwell", "Éclat", 20, 1, 200, soft_max=60, tip="Passages sur chaque faisceau (plus = plus lumineux)")]
 
     def apply(self, strokes, p, ctx):
         out = []
