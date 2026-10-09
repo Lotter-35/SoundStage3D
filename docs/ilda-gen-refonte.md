@@ -233,7 +233,7 @@ Ce qui a été fait différemment du plan (ou précisé) en écrivant le socle (
   des animations ont réellement été retirées (`Document.load_notice()`).
 - **Live dans le fichier** : pages, cues, mode de départ et « plusieurs cues » sont du contenu (annulables) ;
   la page affichée est de l'état d'affichage (`doc.view["live_page"]`, avec `workspace` et `layouts` pour les
-  dispositions des espaces). Touches par défaut de la 4e ligne : `12345678` (`normalize_key` accepte aussi
+  dispositions des espaces). Touches par défaut de la 4e ligne : `F1` à `F8` (espace Live : les chiffres 1 à 8 tiennent les effets rapides, ils ne sont jamais donnés à un cue ; `normalize_key` accepte aussi
   la rangée des chiffres d'un clavier AZERTY sans Maj). Une touche déjà prise sur la page n'est pas donnée deux
   fois.
 - **Compatibilité** : `Library.visible()` (toutes les formes) et `EditorState.contextChanged` (forme en cours ou
