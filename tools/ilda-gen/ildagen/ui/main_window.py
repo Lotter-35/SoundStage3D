@@ -212,6 +212,7 @@ class MainWindow(QMainWindow):
         self.forme.right_split.setSizes([360, 460])
         self.show_space.v_split.setSizes([320, 520])
         self.show_space.split.setSizes([1100, 340])
+        self.live_space.reset_layout()
         self.editor.statusMessage.emit("Disposition réinitialisée")
 
     def closeEvent(self, e):

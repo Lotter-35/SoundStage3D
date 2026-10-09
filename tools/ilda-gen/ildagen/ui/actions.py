@@ -101,6 +101,16 @@ def build_actions(win):
     for k, label, _ in BASIC_SHAPES:
         act("tool_" + k, label, tool("shape:" + k), SHAPE_KEYS[k])
 
+    # Ces touches simples ne servent que dans l'espace Forme : dans Live, les lettres lancent les cues ;
+    # dans Show, elles ne doivent pas changer d'outil en douce. Une action désactivée n'a plus de raccourci.
+    forme_keys = [a for k, a in A.items() if k.startswith("tool_") or k in ("swap_colors", "reset_colors")]
+
+    def forme_only(ws):
+        for a in forme_keys:
+            a.setEnabled(ws == "forme")
+    ed.workspaceChanged.connect(forme_only)
+    forme_only(ed.workspace)
+
     act("settings", "Paramètres…", win.open_settings, SK.Preferences if not QKeySequence(SK.Preferences).isEmpty() else "Ctrl+,")
     act("about", "À propos", win.about)
     return A
