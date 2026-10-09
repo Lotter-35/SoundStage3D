@@ -14,6 +14,7 @@ HANDLE = 7
 HIT = 7
 ROT_DIST = 24
 TILT_GAP = 20
+SMALL = 4 * HIT      # côté (px) sous lequel les poignées des côtés et le pivot sont cachés
 # Coordonnées « carré unité » des poignées (s le long du bord haut, t le long du bord gauche)
 UNIT = {"c0": (0.0, 1.0), "c1": (1.0, 1.0), "c2": (1.0, 0.0), "c3": (0.0, 0.0),
         "e0": (0.5, 1.0), "e1": (1.0, 0.5), "e2": (0.5, 0.0), "e3": (0.0, 0.5)}
@@ -104,10 +105,21 @@ def handle_positions(vt, frame):
     return pos
 
 
+def is_small(vt, frame):
+    """Cadre trop petit à l'écran pour les poignées des côtés et le pivot (comme Illustrator) : seuls les coins
+    (et la rotation) restent, sinon le pivot ou un milieu de côté prendrait tous les clics."""
+    sq = vt.to_screen_arr(frame.quad)
+    w = float(np.hypot(*(sq[1] - sq[0])))
+    h = float(np.hypot(*(sq[0] - sq[3])))
+    return min(w, h) < SMALL
+
+
 def hit_handle(vt, frame, sp, allow_pivot=True):
     pos = handle_positions(vt, frame)
-    order = ["rot", "tilt"] + (["pivot"] if allow_pivot and frame.single else []) + \
-        ["c0", "c1", "c2", "c3", "e0", "e1", "e2", "e3"]
+    small = is_small(vt, frame)
+    # Les coins d'abord, puis les côtés, le pivot en dernier
+    order = ["rot", "tilt", "c0", "c1", "c2", "c3"] + ([] if small else ["e0", "e1", "e2", "e3"]) + \
+        (["pivot"] if allow_pivot and frame.single and not small else [])
     for hid in order:
         p = pos[hid]
         if abs(p.x() - sp.x()) <= HIT and abs(p.y() - sp.y()) <= HIT:
@@ -155,11 +167,12 @@ def draw_frame(p, vt, frame, handles=True, tilt=True):
     if not handles:
         return
     pos = handle_positions(vt, frame)
+    small = is_small(vt, frame)
     p.setPen(QPen(theme.qc(theme.ACCENT, 0.7), 1))
     p.drawLine(pos["e0"], pos["rot"])
     p.setPen(QPen(acc, 1))
     p.setBrush(theme.qc(theme.BG_MIRE))
-    for hid in ("c0", "c1", "c2", "c3", "e0", "e1", "e2", "e3"):
+    for hid in ("c0", "c1", "c2", "c3") + (() if small else ("e0", "e1", "e2", "e3")):
         c = pos[hid]
         p.drawRect(QRectF(c.x() - HANDLE / 2, c.y() - HANDLE / 2, HANDLE, HANDLE))
     p.drawEllipse(pos["rot"], 4.5, 4.5)
@@ -167,7 +180,7 @@ def draw_frame(p, vt, frame, handles=True, tilt=True):
         t = pos["tilt"]
         p.drawPolygon(QPolygonF([QPointF(t.x(), t.y() - 5), QPointF(t.x() + 5, t.y()),
                                  QPointF(t.x(), t.y() + 5), QPointF(t.x() - 5, t.y())]))
-    if frame.single:
+    if frame.single and not small:
         c = pos["pivot"]
         p.setBrush(Qt.BrushStyle.NoBrush)
         p.drawEllipse(c, 3.5, 3.5)

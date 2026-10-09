@@ -35,7 +35,8 @@ def snap_point(p, grid):
     if grid.mode == 2:
         r, a = polar(p)
         rs = ring_step(grid)
-        r = round(r / rs) * rs
+        # Au-delà du dernier cercle dessiné : accroché à ce cercle (jamais à un cercle invisible)
+        r = min(round(r / rs), max(1, grid.rings)) * rs
         if r < 1e-9:
             return 0.0, 0.0
         a = round(a / ray_step(grid)) * ray_step(grid)

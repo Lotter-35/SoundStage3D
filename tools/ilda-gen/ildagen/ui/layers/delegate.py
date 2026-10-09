@@ -1,11 +1,16 @@
-"""Dessin d'une ligne de calque : icône, nom, résumé du modifieur, verrou, œil."""
+"""Dessin d'une ligne de calque (24 px) : flèche de dépliage, icône, nom, verrou, œil.
+
+Ligne sélectionnée : fond de sélection, liseré et icône couleur accent. Calque masqué ou verrouillé : texte en
+couleur désactivée. Le verrou ouvert n'apparaît qu'au survol ou sur la ligne sélectionnée ; fermé, il reste.
+Le nom est du texte brut, tronqué avant les boutons (jamais de bouton poussé hors de la ligne).
+"""
 
 from PySide6.QtCore import QRect, QSize, Qt
 from PySide6.QtWidgets import QLineEdit, QStyle, QStyledItemDelegate
 
 from ...core.shapes import BASIC_SHAPES
 from .. import icons, theme
-from .model import KIND_ROLE, NODE_ROLE
+from .model import NODE_ROLE
 
 SHAPE_ICONS = {k: ic for k, _, ic in BASIC_SHAPES}
 SHAPE_ICONS["path"] = "pencil"
@@ -64,25 +69,25 @@ def content_offset(node, root=None):
     return level_shift(node, root) + own_shift(node)
 
 
-def draw_scope_lines(p, view, node, rect, start_depth=0):
+def draw_scope_lines(p, view, node, rect):
     """Barre verticale sombre sous les modifieurs, alignée sur leur icône, le long des formes qu'ils modifient.
     Plusieurs modifieurs empilés partagent la même barre."""
     indent = view.indentation()
     root = view.editor.current_root()
     selected = view.scope_sources
-    L = node
-    dd = start_depth
+    cur = node
+    dd = 0
     mid = rect.top() + rect.height() // 2
 
     def color(mods):
         return theme.qc(theme.WHITE, 0.30 if any(m.id in selected for m in mods) else 0.11)
 
-    while L is not None and L is not root and L.parent is not None:
-        x = rect.left() - dd * indent + level_shift(L, root) + ICON_C
-        before = mods_before(L)
-        if L.kind == "modifier":
-            covering = before if has_targets(L) else []
-            own = [L] if has_targets(L) else []
+    while cur is not None and cur is not root and cur.parent is not None:
+        x = rect.left() - dd * indent + level_shift(cur, root) + ICON_C
+        before = mods_before(cur)
+        if cur.kind == "modifier":
+            covering = before if has_targets(cur) else []
+            own = [cur] if has_targets(cur) else []
             if dd == 0:
                 if covering:
                     p.fillRect(QRect(x, rect.top(), 1, mid - 9 - rect.top()), color(covering))
@@ -92,7 +97,7 @@ def draw_scope_lines(p, view, node, rect, start_depth=0):
                 p.fillRect(QRect(x, rect.top(), 1, rect.height()), color(covering + own))
         elif before:
             p.fillRect(QRect(x, rect.top(), 1, rect.height()), color(before))
-        L = L.parent
+        cur = cur.parent
         dd += 1
 
 
@@ -110,45 +115,42 @@ def lock_rect(rect):
     return QRect(rect.right() - 2 * BTN - 2, rect.top(), BTN, rect.height())
 
 
+def is_dim(node):
+    return not node.effectively_visible() or node.locked or node.locked_ancestor() is not None
+
+
 class LayerDelegate(QStyledItemDelegate):
     def __init__(self, view):
         super().__init__(view)
         self.view = view
-        self.hover_row = None
+        self.hover_row = None       # identifiant du calque survolé
 
     def sizeHint(self, option, index):
-        if index.data(KIND_ROLE) == "params":
-            w = self.view.param_widgets.get(index.data(NODE_ROLE).id)
-            h = w.sizeHint().height() if w is not None else 0
-            return QSize(option.rect.width(), h + 6)
         return QSize(option.rect.width(), theme.ROW_H)
 
     def paint(self, p, option, index):
-        if index.data(KIND_ROLE) == "params":
-            p.fillRect(option.rect, theme.qc(theme.BG_APP))
-            p.save()
-            draw_scope_lines(p, self.view, index.data(NODE_ROLE), option.rect, start_depth=1)
-            p.restore()
-            return
         node = index.data(NODE_ROLE)
         r = option.rect
         selected = bool(option.state & QStyle.StateFlag.State_Selected)
+        hover = self.hover_row == node.id
         p.save()
         if selected:
-            # Ligne sélectionnée : fond de sélection + liseré accent à gauche, icône accent
             p.fillRect(r, theme.qc(theme.SEL))
             p.fillRect(QRect(r.left(), r.top(), 2, r.height()), theme.qc(theme.ACCENT))
+        elif hover:
+            p.fillRect(r, theme.qc(theme.BG_HOVER))
         draw_scope_lines(p, self.view, node, r)
-        dim = not node.effectively_visible()
+        dim = is_dim(node)
+        dpr = self.view.devicePixelRatioF()
         cx = r.left() + content_offset(node, self.view.editor.current_root())
-        # Flèche de dépliage (dans la ligne, alignée sur le contenu)
         if self.view.model().rowCount(index) > 0:
             name = "chevron-down" if self.view.isExpanded(index) else "chevron-right"
-            p.drawPixmap(cx + 1, r.top() + (r.height() - 12) // 2, icons.pixmap(name, theme.TEXT_OFF, 12))
+            p.drawPixmap(cx + 1, r.top() + (r.height() - 12) // 2, icons.pixmap(name, theme.TEXT_OFF, 12, dpr))
         ic_color = theme.TEXT_OFF if dim else (theme.ACCENT if selected else theme.TEXT_DIM)
-        p.drawPixmap(cx + CHEV, r.top() + (r.height() - 14) // 2, icons.pixmap(node_icon(node), ic_color, 14))
-        x = cx + CHEV + 20
-        right_limit = lock_rect(r).left() - 4
+        p.drawPixmap(cx + CHEV, r.top() + (r.height() - 14) // 2, icons.pixmap(node_icon(node), ic_color, 14, dpr))
+        x = cx + CHEV + 21
+        show_lock = node.locked or ((selected or hover) and node.kind != "modifier")
+        right_limit = (lock_rect(r).left() if show_lock else eye_rect(r).left()) - 4
         p.setFont(theme.ui_font(12))
         fm = p.fontMetrics()
         name = node.name
@@ -156,33 +158,27 @@ class LayerDelegate(QStyledItemDelegate):
             d = self.view.editor.doc.library.get(node.def_id)
             if d is not None and d.name != node.name:
                 name = f"{node.name}  ({d.name})"
-        name_w = min(fm.horizontalAdvance(name) + 4, max(0, right_limit - x))
+        w = max(0, right_limit - x)
         p.setPen(theme.qc(theme.TEXT_OFF if dim else theme.TEXT))
-        p.drawText(QRect(x, r.top(), name_w, r.height()), Qt.AlignmentFlag.AlignVCenter,
-                   fm.elidedText(name, Qt.TextElideMode.ElideRight, name_w))
-        # Cadenas toujours visible à côté de l'œil : ouvert (discret) ou fermé
-        lr = lock_rect(r)
-        lock = icons.pixmap("lock", theme.TEXT, 14) if node.locked else icons.pixmap("lock-open", theme.TEXT_OFF, 14)
-        p.drawPixmap(lr.left() + 4, lr.top() + (lr.height() - 14) // 2, lock)
+        p.drawText(QRect(x, r.top(), w, r.height()), Qt.AlignmentFlag.AlignVCenter | Qt.TextFlag.TextSingleLine,
+                   fm.elidedText(name, Qt.TextElideMode.ElideRight, w))
+        if show_lock:
+            lr = lock_rect(r)
+            pm = icons.pixmap("lock", theme.TEXT_DIM, 13, dpr) if node.locked else \
+                icons.pixmap("lock-open", theme.TEXT_OFF, 13, dpr)
+            p.drawPixmap(lr.left() + 4, lr.top() + (lr.height() - 13) // 2, pm)
         er = eye_rect(r)
-        eye = icons.pixmap("eye" if node.visible else "eye-off", theme.TEXT_DIM if node.visible else theme.TEXT_OFF, 14)
-        p.drawPixmap(er.left() + 4, er.top() + (er.height() - 14) // 2, eye)
+        eye = icons.pixmap("eye" if node.visible else "eye-off", theme.TEXT_OFF, 13, dpr)
+        p.drawPixmap(er.left() + 4, er.top() + (er.height() - 13) // 2, eye)
         p.restore()
 
     def createEditor(self, parent, option, index):
-        if index.data(KIND_ROLE) == "params":
-            return None
         e = QLineEdit(parent)
         e.setFrame(False)
         return e
 
     def updateEditorGeometry(self, editor, option, index):
+        # Champ de saisie du nom : de l'icône jusqu'avant le verrou (il ne le recouvre jamais)
         r = option.rect
-        if index.data(KIND_ROLE) == "params":
-            # Réglages en ligne : toute la largeur de la ligne (pas la place du nom d'un calque)
-            node = index.data(NODE_ROLE)
-            x = r.left() + content_offset(node, self.view.editor.current_root()) + CHEV   # aligné sur l'icône du modifieur
-            editor.setGeometry(QRect(x, r.top() + 2, r.right() - x + 1, r.height() - 4))
-            return
-        off = content_offset(index.data(NODE_ROLE), self.view.editor.current_root()) + CHEV
-        editor.setGeometry(QRect(r.left() + 18 + off, r.top() + 2, max(40, lock_rect(r).left() - r.left() - 26), r.height() - 4))
+        x = r.left() + content_offset(index.data(NODE_ROLE), self.view.editor.current_root()) + CHEV + 18
+        editor.setGeometry(QRect(x, r.top() + 2, max(40, lock_rect(r).left() - 4 - x), r.height() - 4))

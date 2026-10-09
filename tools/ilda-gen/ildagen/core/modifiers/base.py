@@ -5,7 +5,8 @@ import numpy as np
 from ..params import ParamSpec, F
 from ..path import strokes_bbox
 
-MIX = F("mix", "Intensité", 100.0, 0.0, 100.0, "%", decimals=0)
+MIX = F("mix", "Dosage", 100.0, 0.0, 100.0, "%", decimals=0,
+        tip="Dosage : 0 % = sans effet, 100 % = effet complet")
 
 
 class Modifier:
@@ -15,7 +16,7 @@ class Modifier:
     icon = "sliders-horizontal"
     description = ""
     params = []
-    blendable = False     # possède un réglage « Intensité » (mélange avec l'entrée)
+    blendable = False     # possède un réglage « Dosage » (mélange avec l'entrée)
     self_mix = False      # le modifieur gère lui-même ce mélange
 
     # Effet d'un sous-modifieur de transformation posé sur ce modifieur (« modifieur sur modifieur »)

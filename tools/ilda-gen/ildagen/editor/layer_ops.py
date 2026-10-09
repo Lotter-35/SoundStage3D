@@ -1,4 +1,5 @@
-"""Opérations sur les calques : ajout, suppression, groupes, déplacement, presse-papiers, formes personnalisées."""
+"""Opérations sur les calques : ajout, suppression, groupes, déplacement, presse-papiers, modifieurs, couleur
+(les formes de la bibliothèque : form_ops.py)."""
 
 import json
 
@@ -10,20 +11,23 @@ from ..core import draw_symmetry as DS
 from ..core import mathutil as mu
 from ..core import nodes as N
 from ..core.evaluator import EvalContext, eval_children
-from ..core.library import ShapeDef
 from ..core.modifiers import SUB_MODIFIER_TYPES, registry
 from ..core.path import strokes_bbox
+from .form_ops import FormOpsMixin
 
 CLIP_MIME = "application/x-ildagen-nodes"
 
 
-class LayerOpsMixin:
+class LayerOpsMixin(FormOpsMixin):
     # ── Où insérer un nouveau calque : au-dessus du calque sélectionné ───
     def insertion_point(self):
         root = self.current_root()
         sel = self.top_selected()
         if sel:
             n = sel[0]
+            # Sous-modifieur sélectionné : à côté du modifieur qui le porte (pas en haut de la forme)
+            while n.parent is not None and n.parent.kind == "modifier":
+                n = n.parent
             parent = n.parent
             if parent is not None and not parent.locked and parent.kind == "group" and not n.locked_ancestor():
                 return parent, parent.children.index(n)
@@ -246,6 +250,12 @@ class LayerOpsMixin:
             node.expanded = expanded
             self.view_changed()
 
+    def set_card_open(self, node, on):
+        """Carte d'un modifieur dépliée dans Réglages : état d'affichage (hors historique, enregistré)."""
+        if node.kind == "modifier" and node.show_params != bool(on):
+            node.show_params = bool(on)
+            self.view_changed()
+
     # ── Presse-papiers ───────────────────────────────────────────────────
     def copy_selection(self):
         nodes = self.top_selected()
@@ -303,14 +313,26 @@ class LayerOpsMixin:
         if not nodes:
             return []
         copies = []
-
-        def do():
-            for n in nodes:
-                c = N.clone_node(n)          # oscillateurs compris
-                n.parent.add(c, n.index())
-                copies.append(c)
-        self.mutate("Dupliquer", do)
+        self.mutate("Dupliquer", lambda: copies.extend(self._clone_in_place(nodes)))
         self.set_selection([c.id for c in copies])
+        return copies
+
+    def duplicate_in_gesture(self):
+        """Alt + glisser : copies de la sélection dans le geste déjà ouvert (une seule étape d'annulation)."""
+        nodes = self.top_selected()
+        copies = self._clone_in_place(nodes)
+        if copies:
+            self.notify(structure=True)
+            self.set_selection([c.id for c in copies])
+        return copies
+
+    @staticmethod
+    def _clone_in_place(nodes):
+        copies = []
+        for n in nodes:
+            c = N.clone_node(n)          # oscillateurs compris
+            n.parent.add(c, n.index())
+            copies.append(c)
         return copies
 
     # ── Réinitialiser ────────────────────────────────────────────────────
@@ -358,6 +380,7 @@ class LayerOpsMixin:
         if type_id not in registry:
             return None
         m = N.ModifierNode(type_id)
+        m.show_params = True              # sa carte est dépliée dans Réglages
         if onto is not None and onto.kind == "modifier" and type_id in SUB_MODIFIER_TYPES:
             def do():
                 onto.add(m, 0)
@@ -439,108 +462,3 @@ class LayerOpsMixin:
         self.structureChanged.emit()
         self.last_touched = shapes[-1].id
         return len(shapes)
-
-    # ── Formes personnalisées ────────────────────────────────────────────
-    def create_custom_shape(self, name):
-        nodes = self.top_selected() or list(self.work_root().children)
-        if not nodes:
-            return None
-        own_def = self.current_form_id()
-        parent = nodes[0].parent
-        d = ShapeDef(name)
-        inst = N.InstanceNode(d.id, name)
-
-        def do():
-            idx = min(n.index() for n in nodes if n.parent is parent)
-            for n in sorted(nodes, key=lambda n: (n.parent is not parent, n.index())):
-                n.parent.remove(n)
-                d.root.add(n)
-            self.doc.library.add(d)
-            parent.add(inst, idx)
-            ctx = EvalContext(self.doc.library, 0.0, self.doc.timeline.bpm, self.default_color())
-            b = strokes_bbox(eval_children(d.root.children, ctx))
-            if b:
-                inst.transform.px, inst.transform.py = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
-        if own_def and any(x.kind == "instance" and x.def_id == own_def for n in nodes for x in n.walk()):
-            return None
-        self.mutate("Créer une forme personnalisée", do, library=True)
-        self.set_selection([inst.id])
-        return d
-
-    def place_instance(self, def_id, pos=None):
-        d = self.doc.library.get(def_id)
-        if d is None:
-            return None
-        cur = self.current_form_id()
-        if cur and (cur == def_id or d.uses_def(cur, self.doc.library)):
-            self.statusMessage.emit("Impossible : une forme ne peut pas se contenir elle-même")
-            return None
-        inst = N.InstanceNode(def_id, d.name)
-        ctx = EvalContext(self.doc.library, 0.0, self.doc.timeline.bpm, self.default_color())
-        b = strokes_bbox(eval_children(d.root.children, ctx))
-        if b:
-            inst.transform.px, inst.transform.py = (b[0] + b[2]) / 2, (b[1] + b[3]) / 2
-            if pos is not None:
-                inst.transform.tx = pos[0] - inst.transform.px
-                inst.transform.ty = pos[1] - inst.transform.py
-        return self.add_node(inst, "Placer une forme")
-
-    def rename_def(self, def_id, name):
-        d = self.doc.library.get(def_id)
-        if d and name.strip():
-            def do():
-                d.name = name.strip()
-                d.root.name = d.name
-            self.mutate("Renommer la forme", do, library=True, timeline=True)
-
-    def new_form(self, name=None):
-        """Bouton « + » de la liste des formes : nouvelle forme vide, sélectionnée."""
-        from ..core.document import next_form_name
-        d = ShapeDef(name or next_form_name(self.doc.library))
-        d.root.name = d.name
-        self.mutate("Nouvelle forme", lambda: self.doc.library.add(d), library=True)
-        self.enter_def(d.id)
-        return d
-
-    def duplicate_form(self, def_id):
-        src = self.doc.library.get(def_id)
-        if src is None:
-            return None
-        root = N.clone_node(src.root)
-        d = ShapeDef(src.name + " copie", root)
-        root.name = d.name
-
-        def do():
-            lib = self.doc.library
-            lib.defs.insert(lib.defs.index(src) + 1, d)
-        self.mutate("Dupliquer la forme", do, library=True)
-        self.enter_def(d.id)
-        return d
-
-    def delete_def(self, def_id):
-        lib = self.doc.library
-        if lib.get(def_id) is None:
-            return
-        removing_current = self.current_form_id() == def_id
-
-        def do():
-            lib.remove(def_id)
-            for other in lib.defs:
-                for n in list(other.root.walk()):
-                    if n.kind == "instance" and n.def_id == def_id and n.parent:
-                        n.parent.remove(n)
-            self.doc.timeline.remove_def(def_id)
-            self.doc.live.remove_def(def_id)
-            if not lib.defs:
-                from ..core.document import ensure_form
-                ensure_form(lib)
-            if removing_current:
-                self.selection = []
-                self.form_id = lib.defs[0].id     # la forme en cours doit rester valide
-        self.mutate("Supprimer la forme", do, library=True, timeline=True)
-        self.liveChanged.emit()
-        if removing_current:
-            self.contextChanged.emit()
-            self.structureChanged.emit()
-        self.select_clips([i for i in self.clip_selection if self.doc.timeline.find_clip(i)[1] is not None])
-        self.set_selection([])

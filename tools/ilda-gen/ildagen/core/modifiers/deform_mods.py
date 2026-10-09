@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 
-from ..params import F, E
+from ..params import F, E, MIRE
 from ..path import resample_share, resample_stroke, rdp
 from .base import Modifier
 
@@ -18,7 +18,7 @@ class Wave(Modifier):
     icon = "audio-waveform"
     description = "Fait onduler les formes (amplitude, fréquence, phase)."
     params = [E("direction", "Direction", ["Horizontale (ondule en Y)", "Verticale (ondule en X)", "Radiale"]),
-              F("amp", "Amplitude", 0.08, -2.0, 2.0, soft_min=0.0, soft_max=0.5, decimals=3),
+              F("amp", "Amplitude", 0.08, -2.0, 2.0, soft_min=0.0, soft_max=0.5, decimals=3, **MIRE),
               F("freq", "Fréquence", 3.0, 0.0, 100.0, " cycles", 2, soft_max=20.0),
               F("phase", "Phase", 0.0, -360.0, 360.0, "°", 1, soft_min=0, soft_max=360)]
     phase_key = "phase"
@@ -61,7 +61,7 @@ class Simplify(Modifier):
     category = "Déformation"
     icon = "spline"
     description = "Réduit le nombre de points (laser plus stable)."
-    params = [F("tol", "Tolérance", 0.01, 0.0, 0.5, decimals=3, soft_max=0.1)]
+    params = [F("tol", "Tolérance", 0.01, 0.0, 0.5, decimals=3, soft_max=0.1, **MIRE)]
 
     def apply(self, strokes, p, ctx):
         tol = p["tol"]
