@@ -165,7 +165,7 @@ def draw_frame(p, vt, frame, handles=True, tilt=True):
     if not frame.single:
         for q in frame.quads:
             draw_quad(p, vt, q, theme.qc(theme.ACCENT, 0.35))
-    draw_quad(p, vt, frame.quad, acc)
+    draw_quad(p, vt, frame.quad, acc, dashed=False)      # cadre fin plein, couleur accent
     if not handles:
         return
     pos = handle_positions(vt, frame)

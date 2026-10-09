@@ -134,7 +134,16 @@ class LoopBar(QWidget):
         editor.projectChanged.connect(self.refresh)
         editor.restored.connect(self.refresh)
         live.statsChanged.connect(self._stats)
+        theme.notifier.changed.connect(self._restyle)
+        self._restyle()
         self.refresh()
+
+    def _restyle(self, *_):
+        # Tempo : texte à chasse fixe sans cadre ; cadre accent pendant la saisie
+        self.bpm.setStyleSheet(f"QLineEdit {{ background: transparent; border: 1px solid transparent; "
+                               f"padding: 0 2px; color: {theme.TEXT}; }} QLineEdit:hover {{ border-color: "
+                               f"{theme.BORDER}; }} QLineEdit:focus {{ background: {theme.BG_FIELD}; "
+                               f"border-color: {theme.ACCENT}; }}")
 
     def refresh(self):
         if not self.bpm.hasFocus():

@@ -13,7 +13,7 @@ from .loop_bar import LoopBar, PreviewClock
 from .reglages import ReglagesPanel
 
 SPLIT = [244, 856, 340]       # outils + formes · mire · calques et réglages (fenêtre de 1440 px)
-RIGHT = [300, 540]            # calques · réglages
+RIGHT = [270, 570]            # calques · réglages
 
 
 class FormeWorkspace(QWidget):
