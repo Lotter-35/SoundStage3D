@@ -137,7 +137,7 @@ class MainWindow(QMainWindow):
             self.timeline.canvas.delete_selection()
         elif self.editor.workspace == "live":
             return
-        elif w is self.tools.defs:
+        elif w is self.tools.defs or self.tools.defs.isAncestorOf(w):
             self.tools.defs.delete_current()
         else:
             self.editor.delete_selected()
@@ -208,8 +208,7 @@ class MainWindow(QMainWindow):
     def reset_layout(self):
         """Affichage → Réinitialiser la disposition : chaque espace reprend ses tailles d'origine."""
         self.settings.section("ui").pop("spaces", None)
-        self.forme.split.setSizes([200, 900, 340])
-        self.forme.right_split.setSizes([360, 460])
+        self.forme.reset_layout()
         self.show_space.v_split.setSizes([320, 520])
         self.show_space.split.setSizes([1100, 340])
         self.editor.statusMessage.emit("Disposition réinitialisée")

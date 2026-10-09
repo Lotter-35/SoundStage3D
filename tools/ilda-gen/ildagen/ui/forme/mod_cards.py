@@ -63,7 +63,7 @@ class ModifierCard(Card):
         self.form = None
         self.switch.setToolTip("Modifieur actif (œil du calque)")
         self.toggledOn.connect(self._switched)
-        self.expandedChanged.connect(self._expanded)
+        self.expandedChanged.connect(self._on_expand)
         if self.is_expanded():
             self._build()
         self.refresh()
@@ -80,7 +80,7 @@ class ModifierCard(Card):
         if node is not None:
             self.editor.set_visible(node, on)
 
-    def _expanded(self, on):
+    def _on_expand(self, on):
         node = self.node()
         if on and self.form is None:
             self._build()

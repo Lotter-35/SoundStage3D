@@ -9,9 +9,9 @@ Tous émettent editStarted / valueEdited(valeur) / editFinished (et editCancelle
 FieldRow pose un libellé (colonne de largeur fixe, tronqué « … ») devant un champ qui n'en dessine pas.
 """
 
-from PySide6.QtCore import QFontMetrics, Qt, Signal
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QToolButton, QWidget
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFontMetrics
+from PySide6.QtWidgets import QColorDialog, QHBoxLayout, QSizePolicy, QToolButton, QWidget
 
 from ...core.oscillator import can_oscillate
 from .. import theme
@@ -145,6 +145,7 @@ class FieldRow(QWidget):
         self.label = ElidedLabel(label)
         self.label.setObjectName("dim")
         self.label.setFixedWidth(label_width)
+        self.label.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Preferred)
         lay.addWidget(self.label)
         lay.addWidget(field, 1)
         if tip:

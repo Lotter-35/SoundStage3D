@@ -164,24 +164,16 @@ def draw_safety(p, vt, rect):
     p.drawRect(QRectF(vt.to_screen(x0, y1), vt.to_screen(x1, y0)))
 
 
-def draw_counter(p, area, stats, zoom):
-    """Petit compteur dans le coin bas droit : points envoyés (ou prévus hors live), image réduite pour tenir
-    le budget de points, image coupée par la sécurité anti point fixe."""
-    n = stats.count if stats is not None else 0
-    warn = stats is not None and (stats.reduced or stats.static)
-    txt = (f"{n:,} pts".replace(",", " ") + (" envoyés" if stats.sent else "")) if n else "Aucun tracé"
-    if stats is not None and stats.reduced:
-        txt += " · réduit"
-    if stats is not None and stats.static:
-        txt += " · point fixe coupé"
-    if abs(zoom - 1.0) > 1e-3:
-        txt += f" · {zoom * 100:.0f} %"
+def draw_zoom(p, area, zoom):
+    """Niveau de zoom dans le coin bas droit, quand la vue n'est pas à 100 % (les points laser sont comptés
+    dans la barre de boucle)."""
+    if abs(zoom - 1.0) <= 1e-3:
+        return
+    txt = f"{zoom * 100:.0f} %"
     p.setFont(theme.mono_font(10))
-    fm = p.fontMetrics()
-    w = fm.horizontalAdvance(txt) + 12
-    r = QRectF(area.right() - w - 8, area.bottom() - 22, w, 16)
-    p.setPen(theme.qc(theme.WARNING if warn else theme.TEXT_DIM))
-    p.drawText(r, Qt.AlignmentFlag.AlignCenter, txt)
+    w = p.fontMetrics().horizontalAdvance(txt) + 12
+    p.setPen(theme.qc(theme.TEXT_DIM))
+    p.drawText(QRectF(area.right() - w - 8, area.bottom() - 22, w, 16), Qt.AlignmentFlag.AlignCenter, txt)
 
 
 def draw_quad(p, vt, quad, color, dashed=True, width=1.0):
