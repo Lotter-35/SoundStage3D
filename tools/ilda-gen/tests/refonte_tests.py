@@ -265,7 +265,7 @@ def test_no_overlap_placement():
 # ── Live ─────────────────────────────────────────────────────────────────────
 
 def test_live_set_keys_and_file():
-    assert default_key(0) == "A" and default_key(8) == "Q" and default_key(23) == ";" and default_key(31) == "8"
+    assert default_key(0) == "A" and default_key(8) == "Q" and default_key(23) == ";" and default_key(31) == "F8"
     assert normalize_key("z") == "Z" and normalize_key("é") == "2"
     ls = LiveSet()
     p = ls.pages[0]

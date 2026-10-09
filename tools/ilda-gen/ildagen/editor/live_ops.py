@@ -6,7 +6,7 @@ la page affichée et les maîtres n'entrent jamais dans l'historique.
 
 import time
 
-from ..core.live import QUICK_BY_ID, SLOTS, Cue, Page, default_key, normalize_key
+from ..core.live import QUICK_BY_ID, QUICK_KEYS, SLOTS, Cue, Page, default_key, normalize_key
 
 
 class LiveOpsMixin:
@@ -106,6 +106,9 @@ class LiveOpsMixin:
         """Touche du clavier d'un cue (une seule case par touche sur la page : l'autre la perd)."""
         page, _, cue = self.doc.live.find_cue(cue_id)
         key = normalize_key(key)
+        if key and key in QUICK_KEYS:
+            self.statusMessage.emit("Les touches 1 à 8 tiennent les effets rapides : choisissez une autre touche")
+            return
         if cue is None or key == cue.key:
             return
 
@@ -171,10 +174,44 @@ class LiveOpsMixin:
             self.runtime.release(qid)
             self._runtime_changed()
 
+    def release_all_quick(self):
+        """Plus aucun effet rapide tenu (la fenêtre perd la main, on quitte l'espace Live…)."""
+        if self.runtime.held:
+            self.runtime.held.clear()
+            self._runtime_changed()
+
+    def prune_live(self):
+        """Oublie les cues lancés qui n'existent plus (case vidée par Annuler, forme supprimée)."""
+        live, lib = self.doc.live, self.doc.library
+        gone = [k for k, pc in self.runtime.cues.items()
+                if live.find_cue(k)[2] is None or lib.get(pc.def_id) is None]
+        for k in gone:
+            self.runtime.stop(k)
+        if gone:
+            self._runtime_changed()
+
+    def playing_cues(self, now=None):
+        """Cues en cours (toutes pages) : [PlayingCue] dans l'ordre de leur départ."""
+        return self.runtime.active(time.perf_counter() if now is None else now)
+
     def set_live_origin(self, now=None):
         """La grille des départs calés commence une mesure maintenant (Tap sur le premier temps)."""
         self.runtime.origin = time.perf_counter() if now is None else now
         self.liveChanged.emit()
+
+    def set_tempo(self, bpm):
+        """Tempo du projet (Tap de l'espace Live). Des tapes rapprochées ne font qu'une étape d'annulation."""
+        tl = self.doc.timeline
+        try:
+            bpm = round(float(bpm), 1)
+        except (TypeError, ValueError):
+            return
+        if not 20.0 <= bpm <= 400.0 or bpm == tl.bpm:
+            return
+        self.begin_action("Tempo")
+        tl.bpm = bpm
+        self.commit(merge="tempo")
+        self.notify(timeline=True)
 
     # ── Maîtres (état d'affichage, hors annulation) ──────────────────────
     def set_master(self, key, value):

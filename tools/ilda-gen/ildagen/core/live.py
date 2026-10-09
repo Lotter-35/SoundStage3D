@@ -13,9 +13,12 @@ ROWS = 4
 SLOTS = COLS * ROWS
 LAUNCH_MODES = ["Immédiat", "Au temps", "À la mesure"]
 
-# Touches par défaut, ligne par ligne (clavier AZERTY) ; 4e ligne : les chiffres
-DEFAULT_KEYS = ["AZERTYUI", "QSDFGHJK", "WXCVBN,;", "12345678"]
-# Rangée des chiffres d'un clavier AZERTY sans Maj (&é"'(-è_) : mêmes cases que 1 à 8
+# Touches par défaut, ligne par ligne (clavier AZERTY) ; 4e ligne : F1 à F8, car les chiffres 1 à 8 tiennent
+# les effets rapides (QUICK_KEYS)
+DEFAULT_KEYS = [list("AZERTYUI"), list("QSDFGHJK"), list("WXCVBN,;"), [f"F{i}" for i in range(1, 9)]]
+FKEYS = tuple(f"F{i}" for i in range(1, 13))
+QUICK_KEYS = "12345678"       # touche i + 1 : effet rapide i, tant qu'on la tient
+# Rangée des chiffres d'un clavier AZERTY sans Maj (&é"'(-è_) : mêmes touches que 1 à 8
 AZERTY_DIGITS = {c: str(i + 1) for i, c in enumerate("&é\"'(-è_")}
 
 
@@ -26,11 +29,43 @@ def default_key(slot):
 
 
 def normalize_key(text):
-    """Texte d'une touche → touche de cue (majuscule ; « é » de la rangée des chiffres → « 2 »…)."""
+    """Texte d'une touche → touche de cue (majuscule ; « é » de la rangée des chiffres → « 2 » ; « f1 » → « F1 »)."""
     if not isinstance(text, str) or not text:
         return ""
+    if text.upper() in FKEYS:
+        return text.upper()
     k = text[:1]
     return AZERTY_DIGITS.get(k, k.upper())
+
+
+def loop_length(d, library, bpm, beats_per_bar=4):
+    """Durée d'une boucle d'un cue (s, temps de la forme) : la plus longue période de ses oscillateurs (formes
+    placées dedans comprises ; en mode vitesse, le temps d'un tour d'un réglage qui reboucle), sinon une mesure.
+    Au plus 16 mesures (barre d'avancement des cues en cours)."""
+    from .param_specs import param_spec
+    beat = 60.0 / max(1.0, float(bpm))
+    bar = beat * max(1, int(beats_per_bar))
+    best = 0.0
+    seen = set()
+    stack = [d.root] if d is not None else []
+    while stack:
+        for n in stack.pop().walk():
+            for key, osc in n.osc.items():
+                if osc.mode == "onde":
+                    best = max(best, osc.period(bpm))
+                elif osc.speed:
+                    spec = param_spec(n, key)
+                    if spec is not None and spec.min is not None and spec.max is not None and spec.max > spec.min:
+                        # Un angle revient au même dessin tous les 360° (même si sa plage va de −360 à 360)
+                        span = min(360.0, spec.max - spec.min) if spec.unit == "°" else spec.max - spec.min
+                        turn = span / abs(osc.speed)
+                        best = max(best, turn * beat if osc.sync else turn)
+            if n.kind == "instance" and n.def_id not in seen and len(seen) < 64:
+                seen.add(n.def_id)
+                sub = library.get(n.def_id)
+                if sub is not None:
+                    stack.append(sub.root)
+    return min(best, 16 * bar) if best > 0 else bar
 
 
 class Cue:
@@ -151,8 +186,8 @@ QUICK_EFFECTS = [
     QuickEffect("rotate", "Rotation", "rotate-cw", "rotate", {"angle": 0.0, "pivot": 2},
                 {"angle": Osc("vitesse", speed=90.0, sync=True)}),
     QuickEffect("rainbow", "Arc-en-ciel", "rainbow", "rainbow", {"speed": 1.0, "cycles": 1.0}),
-    QuickEffect("blackout", "Fondu noir", "sun", "dimmer", {"level": 0.0}, attack=0.5),
-    QuickEffect("pulse", "Pulsation", "activity", "pulse", {"sync": 1, "division": _PULSE_1_TEMPS, "depth": 100.0}),
+    QuickEffect("blackout", "Fondu noir", "blend", "dimmer", {"level": 0.0}, attack=0.5),
+    QuickEffect("pulse", "Pulsation", "scaling", "pulse", {"sync": 1, "division": _PULSE_1_TEMPS, "depth": 100.0}),
     QuickEffect("wave", "Onde", "waves", "wave", {"amp": 0.06, "freq": 4.0, "phase": 0.0},
                 {"phase": Osc("vitesse", speed=360.0, sync=False)}),
     QuickEffect("mirror", "Miroir", "flip-horizontal-2", "radial_sym", {"count": 2, "kaleido": True}),

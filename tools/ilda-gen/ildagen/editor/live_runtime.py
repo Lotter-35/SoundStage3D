@@ -137,20 +137,21 @@ def quick_values(q, etype, t, bpm):
     return out
 
 
-def evaluate_live(doc, runtime, now, default_color=(1.0, 1.0, 1.0)):
-    """Sortie Live à l'heure `now` : chaque cue en cours (sa forme au temps local depuis son départ,
-    oscillateurs compris), puis les effets rapides maintenus. Renvoie (tracés, animé)."""
+def cue_strokes(doc, pc, s_now, default_color=(1.0, 1.0, 1.0)):
+    """Tracés d'un cue en cours (PlayingCue) : sa forme au temps local depuis son départ, oscillateurs compris.
+    s_now : temps de l'horloge Vitesse (runtime.clock.at(heure murale))."""
+    d = doc.library.get(pc.def_id)
+    if d is None:
+        return []
+    local = max(0.0, s_now - pc.s_start)
+    ctx = EvalContext(doc.library, local, doc.timeline.bpm, default_color, None, 0.0)
+    ctx.overrides = osc_overrides(d.root, local, ctx, 0.0)
+    return evaluate(d.root, ctx)
+
+
+def apply_quick(doc, runtime, strokes, s_now, default_color=(1.0, 1.0, 1.0)):
+    """Effets rapides maintenus, appliqués dans l'ordre de QUICK_EFFECTS à toute la sortie."""
     bpm = doc.timeline.bpm
-    s_now = runtime.clock.at(now)
-    strokes = []
-    for pc in runtime.active(now):
-        d = doc.library.get(pc.def_id)
-        if d is None:
-            continue
-        local = max(0.0, s_now - pc.s_start)
-        ctx = EvalContext(doc.library, local, bpm, default_color, None, 0.0)
-        ctx.overrides = osc_overrides(d.root, local, ctx, 0.0)
-        strokes.extend(evaluate(d.root, ctx))
     for q in QUICK_EFFECTS:
         if q.id not in runtime.held:
             continue
@@ -160,4 +161,14 @@ def evaluate_live(doc, runtime, now, default_color=(1.0, 1.0, 1.0)):
         t = max(0.0, s_now - runtime.held[q.id])
         ctx = EvalContext(doc.library, t, bpm, default_color, None, 0.0)
         strokes = et.apply(strokes, quick_values(q, et, t, bpm), ctx)
-    return strokes, True
+    return strokes
+
+
+def evaluate_live(doc, runtime, now, default_color=(1.0, 1.0, 1.0)):
+    """Sortie Live à l'heure `now` : chaque cue en cours (sa forme au temps local depuis son départ,
+    oscillateurs compris), puis les effets rapides maintenus. Renvoie (tracés, animé)."""
+    s_now = runtime.clock.at(now)
+    strokes = []
+    for pc in runtime.active(now):
+        strokes.extend(cue_strokes(doc, pc, s_now, default_color))
+    return apply_quick(doc, runtime, strokes, s_now, default_color), True
