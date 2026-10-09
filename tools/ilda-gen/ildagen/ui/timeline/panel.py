@@ -1,7 +1,7 @@
-"""Panneau de la timeline : transport + zone des pistes + barres de défilement."""
+"""Panneau de la timeline : barre de transport + zone des pistes + barres de défilement."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QFrame, QGridLayout, QScrollArea, QScrollBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QGridLayout, QScrollBar, QVBoxLayout, QWidget
 
 from .canvas import TimelineCanvas
 from .geometry import HEADER_W
@@ -17,16 +17,7 @@ class TimelinePanel(QWidget):
         lay.setSpacing(0)
         self.canvas = TimelineCanvas(editor, playback)
         self.transport = TransportBar(editor, playback, self.canvas)
-        # La barre de transport défile si la place manque : elle ne doit pas bloquer la largeur des panneaux
-        self.transport_scroll = QScrollArea()
-        self.transport_scroll.setWidget(self.transport)
-        self.transport_scroll.setWidgetResizable(True)
-        self.transport_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        self.transport_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.transport_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
-        self.transport_scroll.setFixedHeight(self.transport.sizeHint().height())
-        self.transport_scroll.horizontalScrollBar().setFixedHeight(4)
-        lay.addWidget(self.transport_scroll)
+        lay.addWidget(self.transport)
         grid = QGridLayout()
         grid.setContentsMargins(0, 0, 0, 0)
         grid.setSpacing(0)
@@ -46,14 +37,13 @@ class TimelinePanel(QWidget):
         self._updating = True
         c = self.canvas
         g = c.geo
-        tl = self.editor.doc.timeline
         view_w = max(1, c.width() - HEADER_W)
-        total = int(tl.length() * g.pps)
+        total = int(self.editor.doc.timeline.length() * g.pps)
         self.hbar.setRange(0, max(0, total - view_w // 2))
         self.hbar.setPageStep(view_w)
         self.hbar.setValue(int(g.t0 * g.pps))
         view_h = max(1, c.height() - g.top)
-        content = g.content_height(self.editor)
+        content = c.content_height()
         self.vbar.setRange(0, max(0, content - view_h))
         self.vbar.setPageStep(view_h)
         self.vbar.setValue(g.scroll_y)

@@ -6,7 +6,7 @@ large=True : grands segments (onglets Forme · Show · Live de la barre du haut)
 largeur occupant toute la place.
 
 Signal : currentChanged(int) = choix de l'utilisateur (clic, flèches si le widget a le focus).
-set_current(i) : sans signal.
+set_current(i) : sans signal (-1 : aucun segment actif).
 """
 
 from PySide6.QtCore import QEvent, QRectF, QSize, Qt, Signal
@@ -53,7 +53,8 @@ class Segmented(QWidget):
         return self._current
 
     def set_current(self, i):
-        if 0 <= i < len(self._options) and i != self._current:
+        """i = -1 : aucun segment actif (choix fait ailleurs, dans un menu)."""
+        if -1 <= i < len(self._options) and i != self._current:
             self._current = i
             self.update()
 

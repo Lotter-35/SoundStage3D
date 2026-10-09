@@ -210,8 +210,7 @@ class MainWindow(QMainWindow):
         self.settings.section("ui").pop("spaces", None)
         self.forme.split.setSizes([200, 900, 340])
         self.forme.right_split.setSizes([360, 460])
-        self.show_space.v_split.setSizes([320, 520])
-        self.show_space.split.setSizes([1100, 340])
+        self.show_space.reset_layout()
         self.live_space.reset_layout()
         self.editor.statusMessage.emit("Disposition réinitialisée")
 

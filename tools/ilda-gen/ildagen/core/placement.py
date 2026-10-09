@@ -1,7 +1,8 @@
 """Pas de chevauchement sur une piste : les opérations bornent les clips contre leurs voisins.
 
 - déplacer un clip : il va au plus près de l'endroit voulu, dans un intervalle libre assez grand ;
-- déplacer plusieurs clips ensemble : le décalage est borné pour qu'aucun ne touche un voisin ;
+- déplacer plusieurs clips ensemble (dans le temps et d'une piste à l'autre) : le décalage commun le plus
+  proche où aucun ne touche un voisin ;
 - redimensionner : un bord s'arrête contre le clip voisin ;
 - déposer / ajouter sur une place occupée : juste après ; coller : la même place sur une autre piste.
 """
@@ -94,6 +95,47 @@ def group_delta(moves, delta):
     if lo > hi:
         return 0.0
     return min(max(delta, lo), hi)
+
+
+def group_fit(tracks, moves, delta, shift=0):
+    """Déplacement d'un groupe de clips dans le temps et de `shift` pistes (toutes du même nombre).
+    moves : [(index de la piste d'origine, clip, début d'origine)]. Renvoie (décalage, pistes) : le décalage le
+    plus proche de `delta` où chaque clip tient sur sa piste d'arrivée sans chevauchement (ni avant 0, ni sur
+    une piste verrouillée), ou None si aucun ne convient. Les clips du groupe ne se gênent pas entre eux."""
+    if not moves:
+        return None
+    lo_i = min(i for i, _, _ in moves)
+    hi_i = max(i for i, _, _ in moves)
+    shift = max(-lo_i, min(len(tracks) - 1 - hi_i, int(shift)))
+    ids = {c.id for _, c, _ in moves}
+    dests = [(tracks[i + shift], c, s0) for i, c, s0 in moves]
+    if any(getattr(tr, "locked", False) for tr, _, _ in dests):
+        return None
+    free = {tr.id: gaps(tr, ids) for tr, _, _ in dests}
+
+    def fits(d):
+        for tr, c, s0 in dests:
+            s = s0 + d
+            if s < -EPS:
+                return False
+            e = s + c.duration
+            if not any(a - EPS <= s and e <= b + EPS for a, b in free[tr.id]):
+                return False
+        return True
+
+    if fits(delta):
+        return delta, shift
+    # Candidats : chaque clip calé contre le bord d'un intervalle libre de sa piste d'arrivée (ou à 0)
+    cands = {-min(s0 for _, _, s0 in dests)}
+    for tr, c, s0 in dests:
+        for a, b in free[tr.id]:
+            cands.add(a - s0)
+            if b < END:
+                cands.add(b - s0 - c.duration)
+    ok = [d for d in cands if fits(d)]
+    if not ok:
+        return None
+    return min(ok, key=lambda d: (abs(d - delta), d)), shift
 
 
 def resolve_overlaps(timeline):
