@@ -19,7 +19,7 @@ LANE_LABEL_H = 14     # bande du nom du réglage (la courbe passe dessous)
 TRACK_MIN_H = CLIP_PAD + CLIP_HEAD + STRIP_H + 6
 CLIP_EDGE = 6
 CHEVRON_W = 14
-FADE_GRAB = 6         # demi-largeur de la zone de prise d'une poignée de fondu
+FADE_GRAB = 5         # demi-largeur de la zone de prise d'une poignée de fondu
 KEY_GRAB = 6
 
 
@@ -192,18 +192,17 @@ class TimelineGeometry:
     def zone(self, b, x, y):
         """Partie du clip sous (x, y) : chevron, left, right, fade_in, fade_out, body, lane (avec la ligne)."""
         e = edge_width(b.w)
-        if y < b.strip_top:
-            if b.foldable:
-                cx, cy, cw, ch = self.chevron_rect(b)
-                if cx - 2 <= x <= cx + cw and b.w > CHEVRON_W + 2 * e:
-                    return "chevron", None
-        elif y < b.lanes_top:
-            if b.w >= 24 and y <= b.strip_top + 9:
-                fi, fo = self.fade_handles(b)
-                if abs(x - fi) <= FADE_GRAB and abs(x - fi) <= abs(x - fo):
-                    return "fade_in", None
-                if abs(x - fo) <= FADE_GRAB:
-                    return "fade_out", None
+        if b.w >= 24 and b.strip_top - 4 <= y <= b.strip_top + 6:
+            # Poignées de fondu : petits carrés aux coins du haut de la bande de vignettes
+            fi, fo = self.fade_handles(b)
+            if abs(x - fi) <= FADE_GRAB and abs(x - fi) <= abs(x - fo):
+                return "fade_in", None
+            if abs(x - fo) <= FADE_GRAB:
+                return "fade_out", None
+        if y < b.strip_top and b.foldable:
+            cx, cy, cw, ch = self.chevron_rect(b)
+            if cx - 2 <= x <= cx + cw and b.w > CHEVRON_W + 2 * e:
+                return "chevron", None
         if x < b.x + e:
             return "left", None
         if x >= b.right - e:
