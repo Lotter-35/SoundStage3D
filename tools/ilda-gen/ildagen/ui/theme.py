@@ -187,6 +187,8 @@ QMenuBar {{ background: {BG_PANEL}; border-bottom: 1px solid {BORDER}; padding: 
 QMenuBar::item {{ padding: 4px 9px; background: transparent; border-radius: {R}px; }}
 QMenuBar::item:selected {{ background: {BG_HOVER}; }}
 QMenuBar::item:pressed {{ background: {SEL}; }}
+QWidget#topbar {{ background: {BG_PANEL}; border-bottom: 1px solid {BORDER}; }}
+QWidget#topbar QMenuBar {{ background: transparent; border: none; padding: 0; }}
 QMenu {{ background: {BG_POPUP}; border: 1px solid {BORDER_STRONG}; padding: 4px 0; }}
 QMenu::item {{ padding: 4px 26px 4px 18px; }}
 QMenu::item:selected {{ background: {SEL}; color: {TEXT}; }}

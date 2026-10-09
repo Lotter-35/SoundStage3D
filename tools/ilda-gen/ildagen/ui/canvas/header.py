@@ -1,10 +1,9 @@
-"""Barre au-dessus de la mire : espace actif (Forme / Show / Live), grilles, zoom."""
+"""Barre au-dessus de la mire : forme en cours, grilles, aimant, symétrie, zoom."""
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QToolButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QToolButton, QVBoxLayout, QWidget
 
 from ...core import draw_symmetry as DS
-from ...core.document import WORKSPACES
 from .. import icons
 from .symmetry_menu import build_symmetry_menu
 from .view import CanvasView
@@ -31,25 +30,8 @@ class CanvasHeader(QWidget):
         lay.setContentsMargins(8, 3, 8, 3)
         lay.setSpacing(4)
 
-        # Espace actif (provisoire, en attendant les onglets de la barre du haut) : ce que montre la mire et
-        # ce qui part au laser le suivent
-        self.src_group = QButtonGroup(self)
-        self.btn_scene = QPushButton("Forme")
-        self.btn_tl = QPushButton("Show")
-        self.btn_live = QPushButton("Live")
-        for i, b in enumerate((self.btn_scene, self.btn_tl, self.btn_live)):
-            b.setCheckable(True)
-            b.setFocusPolicy(Qt.FocusPolicy.NoFocus)
-            self.src_group.addButton(b, i)
-            lay.addWidget(b)
-        self.btn_scene.setToolTip("Espace Forme : afficher et éditer la forme en cours (oscillateurs en boucle)")
-        self.btn_tl.setToolTip("Espace Show : la timeline à la tête de lecture (aperçu non modifiable)")
-        self.btn_live.setToolTip("Espace Live : les cues en cours et les effets rapides")
-        self.src_group.idClicked.connect(lambda i: editor.set_workspace(WORKSPACES[i]))
-
         self.ctx_label = QLabel("")
         self.ctx_label.setObjectName("dim")
-        lay.addSpacing(10)
         lay.addWidget(self.ctx_label)
         lay.addStretch(1)
 
@@ -97,10 +79,7 @@ class CanvasHeader(QWidget):
         self.btn_sym.setChecked(bool(grid.sym))
         self.btn_sym.setToolTip("Symétrie de dessin (Ctrl+Maj+M) : " + DS.describe(grid) +
                                 "\nCe qu'on dessine est rangé sous un modifieur Symétrie ajouté automatiquement. Flèche à droite : choisir le mode.")
-        ws = self.editor.workspace
-        for b, w in zip((self.btn_scene, self.btn_tl, self.btn_live), WORKSPACES):
-            b.setChecked(ws == w)
-        self.ctx_label.setText(self.editor.context_label() if ws == "forme" else "")
+        self.ctx_label.setText(self.editor.context_label() if self.editor.workspace == "forme" else "")
 
 
 class CanvasArea(QWidget):

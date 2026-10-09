@@ -73,16 +73,17 @@ def build_actions(win):
     # Affichage
     grid_group = QActionGroup(win)
     for i, label in enumerate(("Sans grille", "Grille orthogonale", "Grille polaire")):
-        a = act(f"grid{i}", label, lambda _=False, m=i: ed.set_grid_mode(m), f"Ctrl+{i + 1}", checkable=True)
+        a = act(f"grid{i}", label, lambda _=False, m=i: ed.set_grid_mode(m), f"Ctrl+Alt+{i + 1}", checkable=True)
         grid_group.addAction(a)
     act("snap", "Aimant (grille)", lambda: ed.set_snap(not ed.doc.grid.snap), "Ctrl+;", checkable=True)
     act("symmetry", "Symétrie de dessin (marche / arrêt)", ed.toggle_symmetry, "Ctrl+Shift+M", checkable=True)
     act("fit", "Ajuster la vue", lambda: win.canvas.view.fit_view(), "Ctrl+0")
     act("zoom_in", "Zoomer", lambda: win.canvas.view.zoom_by(1.4), SK.ZoomIn)
     act("zoom_out", "Dézoomer", lambda: win.canvas.view.zoom_by(1 / 1.4), SK.ZoomOut)
-    act("view_scene", "Espace Forme", lambda: ed.set_workspace("forme"))
-    act("view_tl", "Espace Show", lambda: ed.set_workspace("show"))
-    act("view_live", "Espace Live", lambda: ed.set_workspace("live"))
+    act("view_scene", "Espace Forme", lambda: ed.set_workspace("forme"), "Ctrl+1", checkable=True)
+    act("view_tl", "Espace Show", lambda: ed.set_workspace("show"), "Ctrl+2", checkable=True)
+    act("view_live", "Espace Live", lambda: ed.set_workspace("live"), "Ctrl+3", checkable=True)
+    act("reset_layout", "Réinitialiser la disposition", win.reset_layout)
 
     # Lecture
     act("play", "Lecture / pause", lambda: None if _typing() else win.playback.toggle(), "Space")
@@ -106,7 +107,7 @@ def build_actions(win):
 
 
 def build_menus(win, A):
-    mb = win.menuBar()
+    mb = win.top.menu_bar
     m = mb.addMenu("Fichier")
     for k in ("new", "open"):
         m.addAction(A[k])
@@ -133,7 +134,7 @@ def build_menus(win, A):
         m.addSeparator() if k is None else m.addAction(A[k])
     from .canvas.symmetry_menu import build_symmetry_menu
     m.addMenu(build_symmetry_menu(win.editor, m, "Mode de symétrie"))
-    for k in (None, "view_scene", "view_tl", "view_live", None, "fit", "zoom_in", "zoom_out"):
+    for k in (None, "view_scene", "view_tl", "view_live", None, "fit", "zoom_in", "zoom_out", None, "reset_layout"):
         m.addSeparator() if k is None else m.addAction(A[k])
 
     m = mb.addMenu("Lecture")
@@ -142,5 +143,6 @@ def build_menus(win, A):
 
     m = mb.addMenu("Paramètres")
     m.addAction(A["settings"])
-    m.addSeparator()
+
+    m = mb.addMenu("Aide")
     m.addAction(A["about"])

@@ -382,7 +382,7 @@ def main():
     ed.select_clip(clip.id)
     app.processEvents()
     check("espace Show : la mire montre la timeline, les outils n'agissent plus",
-          ed.workspace == "show" and not ed.editing_visible() and win.canvas.header.btn_tl.isChecked())
+          ed.workspace == "show" and not ed.editing_visible() and win.top.spaces.current() == 1 and win.stack.currentWidget() is win.show_space)
     check("clip actif : Propriétés montre ses réglages (début, durée, fondus)",
           sorted(win.properties._clip_fields or {}) == ["duration", "fade_in", "fade_out", "start"])
     tl_canvas = win.timeline.canvas
@@ -563,7 +563,7 @@ def main():
     check("lecture : la tête avance", ed.playhead > t_before, f"{t_before:.3f} → {ed.playhead:.3f}")
     # Pavé tactile : deux doigts = défilement horizontal ET vertical
     from PySide6.QtGui import QWheelEvent
-    for _ in range(3):
+    for _ in range(12):        # assez de pistes pour dépasser la hauteur de la timeline
         ed.add_track()
     canvas.geo.t0, canvas.geo.scroll_y = 2.0, 0
     canvas.resize(canvas.width(), 140)

@@ -3,27 +3,29 @@
 import os
 
 from PySide6.QtCore import QByteArray, Qt, QTimer
-from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QSplitter, QStatusBar, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QMainWindow, QMessageBox, QStackedWidget, QStatusBar
 
+from ..core.document import WORKSPACES
 from ..editor.live_output import LiveOutput
 from ..editor.playback import Playback
 from ..editor.state import EditorState
 from ..editor.waveform import WaveformLoader
 from .actions import build_actions, build_menus
-from .canvas import CanvasArea
-from .connection_bar import ConnectionBar
 from .context_menu import build_layer_menu
 from .dialogs import ExportDialog, SettingsDialog
-from .layers import LayersPanel
+from .forme import FormeWorkspace
+from .live import LiveWorkspace
 from .project import ProjectController
-from .properties import PropertiesPanel
-from .timeline import TimelinePanel
-from .tool_panel import ToolPanel
+from .shell import TopBar
+from .show import ShowWorkspace
 
 APP_NAME = "ILDA Gen"
 
 
 class MainWindow(QMainWindow):
+    """Barre du haut (menus, onglets Forme / Show / Live, connexion, Live, BLACKOUT, Maîtres) au-dessus de la
+    pile des trois espaces de travail ; chaque espace garde sa propre disposition."""
+
     def __init__(self, settings):
         super().__init__()
         self.settings = settings
@@ -33,58 +35,25 @@ class MainWindow(QMainWindow):
         self.live.attach_playback(self.playback)
         self.waveform = WaveformLoader()
         self.resize(1440, 900)
-        self.setMinimumSize(900, 600)
+        self.setMinimumSize(1000, 640)
 
-        # Panneaux
-        self.connection = ConnectionBar(self.editor, self.live)
-        self.tools = ToolPanel(self.editor)
-        self.canvas = CanvasArea(self.editor, self.live)
-        self.layers = LayersPanel(self.editor)
-        self.properties = PropertiesPanel(self.editor)
-        self.timeline = TimelinePanel(self.editor, self.playback)
+        self.top = TopBar(self.editor, self.live)
+        self.connection = self.top           # réglages réseau, boutons Live et BLACKOUT
+        self.setMenuWidget(self.top)
+
+        self.forme = FormeWorkspace(self)
+        self.show_space = ShowWorkspace(self)
+        self.live_space = LiveWorkspace(self)
+        self.spaces = {"forme": self.forme, "show": self.show_space, "live": self.live_space}
+        self.stack = QStackedWidget()
+        for ws in WORKSPACES:
+            self.stack.addWidget(self.spaces[ws])
+        self.setCentralWidget(self.stack)
+        # Raccourcis vers les panneaux (menus, tests)
+        self.tools, self.canvas = self.forme.tools, self.forme.canvas
+        self.layers, self.properties = self.forme.layers, self.forme.properties
+        self.timeline = self.show_space.timeline
         self.project = ProjectController(self, self.editor, self.playback, self.waveform)
-
-        self.right_split = QSplitter(Qt.Orientation.Vertical)
-        self.right_split.addWidget(self.layers)
-        self.right_split.addWidget(self.properties)
-        self.right_split.setStretchFactor(0, 3)
-        self.right_split.setStretchFactor(1, 2)
-        self.right_split.setChildrenCollapsible(False)
-        self.properties.collapsedChanged.connect(self._properties_collapsed)
-
-        # Gauche : outils + mire, et la timeline dessous (elle s'arrête contre le panneau de droite)
-        self.h_split = QSplitter(Qt.Orientation.Horizontal)
-        self.h_split.addWidget(self.tools)
-        self.h_split.addWidget(self.canvas)
-        self.h_split.setStretchFactor(0, 0)
-        self.h_split.setStretchFactor(1, 1)
-        self.h_split.setCollapsible(1, False)
-        self.h_split.setSizes([180, 880])
-
-        self.v_split = QSplitter(Qt.Orientation.Vertical)
-        self.v_split.addWidget(self.h_split)
-        self.v_split.addWidget(self.timeline)
-        self.v_split.setStretchFactor(0, 3)
-        self.v_split.setStretchFactor(1, 1)
-        self.v_split.setCollapsible(0, False)
-        self.v_split.setSizes([620, 260])
-
-        # Droite : calques + propriétés sur toute la hauteur
-        self.main_split = QSplitter(Qt.Orientation.Horizontal)
-        self.main_split.addWidget(self.v_split)
-        self.main_split.addWidget(self.right_split)
-        self.main_split.setStretchFactor(0, 1)
-        self.main_split.setStretchFactor(1, 0)
-        self.main_split.setCollapsible(0, False)
-        self.main_split.setSizes([1100, 320])
-
-        central = QWidget()
-        cl = QVBoxLayout(central)
-        cl.setContentsMargins(0, 0, 0, 0)
-        cl.setSpacing(0)
-        cl.addWidget(self.connection)
-        cl.addWidget(self.main_split, 1)
-        self.setCentralWidget(central)
 
         self.status = QStatusBar()
         self.setStatusBar(self.status)
@@ -96,6 +65,7 @@ class MainWindow(QMainWindow):
         self.canvas.view.context_menu_builder = builder
         self.layers.tree.context_menu_builder = builder
 
+        self.editor.workspaceChanged.connect(self._workspace)
         self.editor.projectChanged.connect(self.update_title)
         self.editor.historyChanged.connect(self.update_title)
         self.editor.historyChanged.connect(self._history_actions)
@@ -108,8 +78,19 @@ class MainWindow(QMainWindow):
         self._history_actions()
         self._grid_actions()
         self._recent_menu()
+        self._workspace(self.editor.workspace)
         self.restore_layout()
         QTimer.singleShot(0, self.canvas.view.setFocus)
+
+    def _workspace(self, ws):
+        self.cancel_gesture()             # changer d'espace pendant un geste : il est annulé
+        self.stack.setCurrentWidget(self.spaces[ws])
+        for k, w in (("forme", "view_scene"), ("show", "view_tl"), ("live", "view_live")):
+            self.actions_[w].setChecked(k == ws)
+        if ws == "forme":
+            QTimer.singleShot(0, self.canvas.view.setFocus)
+        elif ws == "show":
+            QTimer.singleShot(0, self.timeline.canvas.setFocus)
 
     # ── Titre, menus dynamiques ──────────────────────────────────────────
     def update_title(self):
@@ -152,37 +133,47 @@ class MainWindow(QMainWindow):
     # ── Actions ──────────────────────────────────────────────────────────
     def delete_pressed(self):
         w = QApplication.focusWidget()
-        if w is self.timeline.canvas:
+        if self.editor.workspace == "show":
             self.timeline.canvas.delete_selection()
+        elif self.editor.workspace == "live":
+            return
         elif w is self.tools.defs:
             self.tools.defs.delete_current()
         else:
             self.editor.delete_selected()
 
-    # Copier / couper / coller : la timeline (clips) si elle a le focus, sinon les calques
+    # Copier / couper / coller : les clips dans Show, les calques dans Forme
     def _timeline_focused(self):
-        return QApplication.focusWidget() is self.timeline.canvas
+        return self.editor.workspace == "show"
 
     def copy_pressed(self):
-        if not (self._timeline_focused() and self.timeline.canvas.copy_clips()):
+        if self._timeline_focused():
+            self.timeline.canvas.copy_clips()
+        elif self.editor.workspace == "forme":
             self.editor.copy_selection()
 
     def cut_pressed(self):
-        if not (self._timeline_focused() and self.timeline.canvas.cut_clips()):
+        if self._timeline_focused():
+            self.timeline.canvas.cut_clips()
+        elif self.editor.workspace == "forme":
             self.editor.cut_selection()
 
     def paste_pressed(self):
-        if not (self._timeline_focused() and self.timeline.canvas.paste_clips()):
+        if self._timeline_focused():
+            self.timeline.canvas.paste_clips()
+        elif self.editor.workspace == "forme":
             self.editor.paste()
 
     def duplicate_pressed(self):
-        if not (self._timeline_focused() and self.timeline.canvas.duplicate_clips()):
+        if self._timeline_focused():
+            self.timeline.canvas.duplicate_clips()
+        elif self.editor.workspace == "forme":
             self.editor.duplicate_selection()
 
     def select_all_pressed(self):
         if self._timeline_focused():
             self.timeline.canvas.select_all_clips()
-        else:
+        elif self.editor.workspace == "forme":
             self.editor.select_all()
 
     def export_ilda(self):
@@ -196,28 +187,32 @@ class MainWindow(QMainWindow):
         QMessageBox.about(self, APP_NAME, f"<b>{APP_NAME}</b><br>Générateur ILDA pour SoundStage3D.<br>"
                                           "Icônes : Lucide (licence ISC).")
 
-    # ── Disposition des panneaux ─────────────────────────────────────────
+    # ── Disposition des panneaux (une par espace) ─────────────────────────
     def restore_layout(self):
         ui = self.settings.section("ui")
         try:
             if ui.get("geometry"):
                 self.restoreGeometry(QByteArray.fromBase64(ui["geometry"].encode()))
-            for key, split in self._splits():
-                if ui.get(key):
-                    split.restoreState(QByteArray.fromBase64(ui[key].encode()))
         except (TypeError, ValueError):
             pass
+        spaces = ui.get("spaces")
+        if isinstance(spaces, dict):
+            for ws, w in self.spaces.items():
+                w.restore_layout(spaces.get(ws))
 
     def save_layout(self):
         ui = self.settings.section("ui")
         ui["geometry"] = bytes(self.saveGeometry().toBase64()).decode()
-        for key, split in self._splits():
-            ui[key] = bytes(split.saveState().toBase64()).decode()
+        ui["spaces"] = {ws: w.save_layout() for ws, w in self.spaces.items()}
 
-    def _splits(self):
-        # Clés « 2 » : nouvelle disposition (calques sur toute la hauteur), les anciennes tailles ne s'appliquent plus
-        return (("h_split2", self.h_split), ("v_split2", self.v_split), ("r_split", self.right_split),
-                ("main_split", self.main_split))
+    def reset_layout(self):
+        """Affichage → Réinitialiser la disposition : chaque espace reprend ses tailles d'origine."""
+        self.settings.section("ui").pop("spaces", None)
+        self.forme.split.setSizes([200, 900, 340])
+        self.forme.right_split.setSizes([360, 460])
+        self.show_space.v_split.setSizes([320, 520])
+        self.show_space.split.setSizes([1100, 340])
+        self.editor.statusMessage.emit("Disposition réinitialisée")
 
     def closeEvent(self, e):
         self.cancel_gesture()       # quitter pendant un geste : il est annulé (jamais enregistré à moitié)
