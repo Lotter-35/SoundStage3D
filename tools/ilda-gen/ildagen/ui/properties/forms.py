@@ -8,7 +8,7 @@ valable après annuler / rétablir ; refresh() remet les valeurs du document dan
 le focus : jamais de valeur périmée réécrite ensuite).
 """
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 from shiboken6 import isValid
 
@@ -91,11 +91,19 @@ class ParamForm(QWidget):
             self.specs[spec.key], self.factors[spec.key] = spec, factor
             lay.addWidget(row)
         self.refresh()
-        editor.docChanged.connect(self.refresh)
+        # Plusieurs changements d'affilée (geste, annuler) : une seule mise à jour des champs
+        self._later = QTimer(self)
+        self._later.setSingleShot(True)
+        self._later.timeout.connect(self.refresh)
+        editor.docChanged.connect(self.refresh_later)
         editor.restored.connect(self._abort)
 
     def node(self):
         return self.editor.find(self.node_id)
+
+    def refresh_later(self):
+        if isValid(self) and not self._later.isActive():
+            self._later.start(0)
 
     # ── Liaison des champs ───────────────────────────────────────────────
     def _wire(self, key, f):
@@ -156,7 +164,7 @@ class ParamForm(QWidget):
         for f in self.fields.values():
             if hasattr(f, "abort"):
                 f.abort()
-        self.refresh()
+        self.refresh_later()
 
     # ── Affichage ────────────────────────────────────────────────────────
     def refresh(self):
@@ -219,6 +227,7 @@ class ParamForm(QWidget):
             return None
         pop = OscPopup(self.editor, self.node_id, key, self.specs[key], self.factors[key], self)
         pop.show_under(self.fields[key])
+        self.popup = pop
         return pop
 
 

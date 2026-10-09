@@ -120,10 +120,12 @@ def hit_handle(vt, frame, sp, allow_pivot=True):
     # Les coins d'abord, puis les côtés, le pivot en dernier
     order = ["rot", "tilt", "c0", "c1", "c2", "c3"] + ([] if small else ["e0", "e1", "e2", "e3"]) + \
         (["pivot"] if allow_pivot and frame.single and not small else [])
-    for hid in order:
-        p = pos[hid]
-        if abs(p.x() - sp.x()) <= HIT and abs(p.y() - sp.y()) <= HIT:
-            return hid
+    for group in (order[:2], order[2:6], order[6:]):
+        # Dans chaque groupe (rotation / coins / côtés et pivot), la poignée la plus proche
+        near = [(abs(pos[h].x() - sp.x()) + abs(pos[h].y() - sp.y()), h) for h in group
+                if abs(pos[h].x() - sp.x()) <= HIT and abs(pos[h].y() - sp.y()) <= HIT]
+        if near:
+            return min(near)[1]
     # Juste à l'extérieur d'un coin : rotation (comme Photoshop)
     poly = QPolygonF([QPointF(*q) for q in vt.to_screen_arr(frame.quad)])
     if not poly.containsPoint(sp, Qt.FillRule.OddEvenFill):

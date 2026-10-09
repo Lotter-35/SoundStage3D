@@ -102,7 +102,8 @@ class LayerTreeView(QTreeView):
             while p.isValid():
                 if not self.isExpanded(p):
                     self.setExpanded(p, True)
-                    # Ouvert pour montrer la sélection : il le reste à la prochaine reconstruction
+                # Ouvert pour montrer la sélection : il le reste à la prochaine reconstruction
+                if not getattr(p.data(NODE_ROLE), "expanded", True):
                     self.editor.set_expanded(p.data(NODE_ROLE), True)
                 p = p.parent()
         self.selectionModel().select(sel, QItemSelectionModel.SelectionFlag.ClearAndSelect)

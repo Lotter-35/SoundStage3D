@@ -11,7 +11,7 @@ from ...core.path import strokes_bbox
 from ..widgets import LaserScene
 
 ANIM_MS = 100                    # 10 images/s pour les vignettes animées
-SAMPLES = (0.0, 0.37, 0.91, 1.53, 2.2)   # instants de boucle pour le cadrage d'une forme animée
+SAMPLES = (0.0, 0.61, 1.37)   # instants de boucle pour le cadrage d'une forme animée
 
 
 def union(a, b):

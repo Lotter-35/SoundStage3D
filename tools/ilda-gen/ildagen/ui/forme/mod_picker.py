@@ -109,8 +109,11 @@ class ModifierPicker(QFrame):
                 if not self.list.item(i).isHidden() and self.list.item(i).flags() & Qt.ItemFlag.ItemIsEnabled]
 
     def _select_first(self):
+        """Choix par défaut : le premier dont le NOM correspond à la recherche, sinon le premier montré."""
         items = self.visible_items()
-        self.list.setCurrentItem(items[0] if items else None)
+        words = norm(self.search.text()).split()
+        best = next((it for it in items if words and all(w in norm(it.text()) for w in words)), None)
+        self.list.setCurrentItem(best or (items[0] if items else None))
 
     def _move(self, step):
         items = self.visible_items()

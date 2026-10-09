@@ -1,6 +1,7 @@
 """Connexion au serveur SoundStage3D : IP, port, canal, images/s (ouvert depuis l'état de connexion)."""
 
 from PySide6.QtCore import Qt
+from PySide6.QtNetwork import QAbstractSocket, QHostAddress, QHostInfo
 from PySide6.QtWidgets import QGridLayout, QLabel, QLineEdit, QSpinBox, QWidget
 
 from ..spin import SpinBox
@@ -55,9 +56,37 @@ class ConnectionPopup(Popup):
         live.connectionChanged.connect(self._connection)
         self._connection(live.connected)
 
+    def _host(self):
+        """Adresse tapée : une IP valide est gardée telle quelle ; un nom d'hôte est résolu (DNS) en IP ; sinon
+        None (message d'erreur, l'ancienne adresse reste)."""
+        text = self.host.text().strip() or "127.0.0.1"
+        addr = QHostAddress()
+        if addr.setAddress(text):
+            return text
+        looks_ip = all(c.isdigit() or c == "." for c in text)
+        if not looks_ip:
+            info = QHostInfo.fromName(text)
+            ips = [a for a in info.addresses() if a.protocol() == QAbstractSocket.NetworkLayerProtocol.IPv4Protocol]
+            if info.error() == QHostInfo.HostInfoError.NoError and ips:
+                self.state.setText(f"{text} → {ips[0].toString()}")
+                return ips[0].toString()
+        self.state.setText(f"Adresse invalide ou introuvable : « {text} »")
+        self.state.setObjectName("warning")
+        self.state.style().unpolish(self.state)
+        self.state.style().polish(self.state)
+        self.host.setText(str(self.settings.get("network", "host")))
+        return None
+
     def _apply(self, *_):
         s = self.settings
-        s.set("network", "host", self.host.text().strip() or "127.0.0.1")
+        host = self._host() if self.sender() is self.host else str(s.get("network", "host"))
+        if host is None:
+            return
+        if self.state.objectName() == "warning" and self.sender() is self.host:
+            self.state.setObjectName("dim")
+            self.state.style().unpolish(self.state)
+            self.state.style().polish(self.state)
+        s.set("network", "host", host)
         s.set("network", "port", self.port.value())
         s.set("network", "channel", self.channel.value())
         s.set("network", "fps", self.fps.value())

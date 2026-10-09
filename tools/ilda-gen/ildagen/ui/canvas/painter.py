@@ -4,7 +4,7 @@ import math
 
 import numpy as np
 from PySide6.QtCore import QLineF, QPointF, QRectF, Qt
-from PySide6.QtGui import QColor, QPen, QBrush
+from PySide6.QtGui import QBrush, QColor, QPainter, QPen
 
 from ...core import draw_symmetry as DS
 from ...core import grid as G
@@ -57,11 +57,19 @@ def draw_grid(p, vt, grid):
         while step * vt.half < 5 and step < 1.0:
             step *= 2
         k = int(round(1.0 / step))
+        p.save()
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, False)   # lignes droites : 10 fois plus rapide
+        lines = ([], [])
         for i in range(-k, k + 1):
             v = i * step
-            p.setPen(strong if i == 0 else weak)
-            p.drawLine(vt.to_screen(v, -1), vt.to_screen(v, 1))
-            p.drawLine(vt.to_screen(-1, v), vt.to_screen(1, v))
+            group = lines[0 if i == 0 else 1]
+            group.append(QLineF(vt.to_screen(v, -1), vt.to_screen(v, 1)))
+            group.append(QLineF(vt.to_screen(-1, v), vt.to_screen(1, v)))
+        p.setPen(weak)
+        p.drawLines(lines[1])
+        p.setPen(strong)
+        p.drawLines(lines[0])
+        p.restore()
     else:
         c = vt.to_screen(0, 0)
         rs = G.ring_step(grid)

@@ -101,7 +101,10 @@ class ReglagesPanel(QWidget):
         for sig in (editor.selectionChanged, editor.structureChanged, editor.contextChanged, editor.restored,
                     editor.projectChanged):
             sig.connect(self.sync)
-        editor.docChanged.connect(self.refresh)
+        self._later = QTimer(self)
+        self._later.setSingleShot(True)
+        self._later.timeout.connect(self.refresh)
+        editor.docChanged.connect(lambda: self._later.isActive() or self._later.start(0))
         self.sync()
 
     # ── Contenu ──────────────────────────────────────────────────────────
