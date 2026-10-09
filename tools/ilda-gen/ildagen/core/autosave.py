@@ -49,11 +49,12 @@ def rotate(autosave_path, folder, keep=KEEP):
         return None
     now = time.time()
     stamp = time.strftime("%Y-%m-%d_%H-%M-%S", time.localtime(now)) + f".{int(now * 1000) % 1000:03d}"
-    dest = os.path.join(folder, f"{PREFIX}{stamp}.ildaproj")
-    n = 2
+    # Numéro à 3 chiffres toujours présent : deux copies de la même milliseconde restent dans l'ordre
+    n = 1
+    dest = os.path.join(folder, f"{PREFIX}{stamp}-{n:03d}.ildaproj")
     while os.path.exists(dest):
-        dest = os.path.join(folder, f"{PREFIX}{stamp}-{n}.ildaproj")
         n += 1
+        dest = os.path.join(folder, f"{PREFIX}{stamp}-{n:03d}.ildaproj")
     if d is None:
         # Fichier illisible : copié tel quel
         with open(autosave_path, "rb") as src, open(dest, "wb") as out:
