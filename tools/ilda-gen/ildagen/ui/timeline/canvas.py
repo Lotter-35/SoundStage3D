@@ -12,7 +12,7 @@ visibles sont peints, les courbes et les vignettes sont en cache ; au repos, rie
 import time
 from collections import Counter
 
-from PySide6.QtCore import QEvent, QRectF, Qt, QTimer, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, Signal
 from PySide6.QtGui import QPainter, QPixmap
 from PySide6.QtWidgets import QWidget
 
@@ -24,7 +24,7 @@ from .clipboard import TimelineClipboard
 from .draw_clip import ClipStyle, draw_clip, draw_ghost
 from .drops import TimelineDrops
 from .edit import TimelineEditing
-from .geometry import HEADER_W, RULER_H, TimelineGeometry
+from .geometry import HEADER_W, TimelineGeometry
 from .keyboard import TimelineKeyboard
 from .keys import KeyEditing
 from .lanes import clip_lanes
@@ -306,9 +306,3 @@ class TimelineCanvas(TimelineMouse, TimelineEditing, KeyEditing, RulerEditing, T
             p.end()
             self._wave_cache = (key, pm)
         return self._wave_cache[1]
-
-    def schedule(self, fn, ms=0):
-        QTimer.singleShot(ms, fn)
-
-    def ruler_contains(self, y):
-        return y < RULER_H

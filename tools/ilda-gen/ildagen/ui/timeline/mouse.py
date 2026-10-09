@@ -9,7 +9,7 @@ ajouter / retirer. Tout clic ailleurs que sur une clé désélectionne la clé (
 from PySide6.QtCore import Qt
 
 from .clipboard import range_modifier
-from .geometry import HEADER_W, KEY_GRAB, RULER_H
+from .geometry import HEADER_W, RULER_H
 
 
 class TimelineMouse:
@@ -29,19 +29,6 @@ class TimelineMouse:
                 return row, b, "key", lane          # une clé passe avant le bord du clip
         zone, lane = g.zone(b, x, y)
         return row, b, zone, lane
-
-    def clip_hit(self, row, x, y=None):
-        """(clip, zone) sous x dans une piste (compatibilité : y au milieu de la bande de vignettes)."""
-        if row is None:
-            return None, None
-        if y is None:
-            y = row.y + row.h / 2
-            b = next((b for b in row.boxes if b.x <= x < b.right), None) or self.geo.box_at(row, x, y)
-            y = b.strip_top + 15 if b is not None else y
-        b = self.geo.box_at(row, x, y)
-        if b is None:
-            return None, None
-        return b.clip, self.geo.zone(b, x, y)[0]
 
     # ── Appui ────────────────────────────────────────────────────────────
     def mousePressEvent(self, e):
@@ -231,6 +218,3 @@ class TimelineMouse:
             self.update()
         super().leaveEvent(e)
 
-    @staticmethod
-    def key_grab():
-        return KEY_GRAB

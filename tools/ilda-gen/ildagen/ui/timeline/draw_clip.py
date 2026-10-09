@@ -153,10 +153,11 @@ def draw_lane(p, geo, b, ln, sel_key):
     lab = label_rect(p, b, ln)
     m = lane_map(b, ln)
     p.save()
-    region = QRegion(lr.toAlignedRect())
     if ln.small:
-        region = region.subtracted(QRegion(lab.adjusted(-2, -1, 4, 2).toAlignedRect()))
-    p.setClipRegion(region, Qt.ClipOperation.IntersectClip)
+        region = QRegion(lr.toAlignedRect()).subtracted(QRegion(lab.adjusted(-2, -1, 4, 2).toAlignedRect()))
+        p.setClipRegion(region, Qt.ClipOperation.IntersectClip)
+    else:
+        p.setClipRect(lr, Qt.ClipOperation.IntersectClip)
     curve = track.curve
     if CV.is_color(ln.spec):
         _color_band(p, b, m, curve)

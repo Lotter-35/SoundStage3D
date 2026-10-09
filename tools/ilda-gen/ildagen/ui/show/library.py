@@ -19,7 +19,6 @@ def separator():
     s = QFrame()
     s.setFixedHeight(1)
     s.setObjectName("sep")
-    s.setStyleSheet("")
     s.setFrameShape(QFrame.Shape.HLine)
     return s
 

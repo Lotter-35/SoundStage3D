@@ -578,6 +578,33 @@ def main():
     check("M4 : zone de sécurité en coordonnées de sortie", pv.view.safety == (-0.5, -0.5, 0.5, 0.5))
     pv.mode._choose(0)
 
+    # ── Inspecteur : ordre des effets (glisser une carte), interrupteur, retirer, Ouvrir dans Forme ──
+    from ildagen.ui.show.effect_card import MOVE_MIME
+    from PySide6.QtCore import QMimeData
+    c1 = tl().find_clip(c1.id)[1]
+    ed.select_clip(c1.id)
+    ed.add_effect(c1.id, "scale")
+    settle()
+    anim = tl().animations[c1.anim_id]
+    order0 = [e.id for e in anim.effects]
+    md = QMimeData()
+    md.setData(MOVE_MIME, order0[-1].encode("utf-8"))
+    area = insp.effects_area
+    area.dropEvent(QDropEvent(QPointF(20, 1), Qt.DropAction.MoveAction, md, L, M.NoModifier))
+    check("carte glissée en tête : ordre des effets", [e.id for e in anim.effects] == [order0[-1]] + order0[:-1])
+    settle()
+    first = insp.card(order0[-1])
+    first.switch.click()
+    check("interrupteur de la carte : effet coupé", not anim.effects[0].enabled)
+    n = len(anim.effects)
+    ed.remove_effect(order0[-1])
+    settle()
+    check("effet retiré : carte enlevée", len(insp.cards) == n - 1)
+    insp.open_btn.click()
+    check("« Ouvrir dans Forme »", ed.workspace == "forme" and ed.current_form_id() == c1.def_id)
+    ed.set_workspace("show")
+    settle()
+
     # ── Transport : tient dans une fenêtre de 1100 px (F1) ───────────────
     win.resize(1100, 760)
     settle()

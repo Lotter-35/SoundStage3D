@@ -15,7 +15,6 @@ from PySide6.QtCore import Qt
 
 K = Qt.Key
 OWN_KEYS = (K.Key_Left, K.Key_Right, K.Key_Up, K.Key_Down, K.Key_Home, K.Key_End, K.Key_Z, K.Key_M)
-PLAIN = Qt.KeyboardModifier.NoModifier | Qt.KeyboardModifier.ShiftModifier | Qt.KeyboardModifier.KeypadModifier
 
 
 class TimelineKeyboard:

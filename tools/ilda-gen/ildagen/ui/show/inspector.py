@@ -10,7 +10,7 @@ from PySide6.QtCore import QRectF, Qt, QTimer
 from PySide6.QtWidgets import (QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QScrollArea, QToolButton,
                                QVBoxLayout, QWidget)
 
-from ...core.effects import by_category, effect_specs
+from ...core.effects import by_category
 from ...core.evaluator import evaluate_form
 from .. import icons, theme
 from ..timeline.drops import EFFECT_MIME
@@ -313,4 +313,4 @@ class ClipInspector(QScrollArea):
         return next((c for c in self.cards if c.effect_id == effect_id), None)
 
 
-__all__ = ["ClipInspector", "effect_specs"]
+__all__ = ["ClipInspector"]

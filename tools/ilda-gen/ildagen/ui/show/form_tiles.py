@@ -5,7 +5,7 @@ Forme) ; double-clic = un clip à la tête de lecture, sur la piste du clip acti
 bougent (oscillateurs) s'animent doucement (8 images/s), seulement quand Show est affiché.
 """
 
-from PySide6.QtCore import QMimeData, QPoint, QRectF, Qt, QTimer
+from PySide6.QtCore import QMimeData, QPoint, Qt, QTimer
 from PySide6.QtGui import QDrag
 from PySide6.QtWidgets import QGridLayout, QWidget
 
@@ -139,5 +139,3 @@ class FormTiles(QWidget):
         ed.select_clip(c.id)
         return c
 
-    def tile_rect(self, i):
-        return QRectF(self.tiles[i].geometry())
