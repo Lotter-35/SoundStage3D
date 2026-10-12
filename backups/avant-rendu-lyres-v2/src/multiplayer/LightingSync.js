@@ -1,0 +1,1160 @@
+/**
+ * LightingSync.js
+ * ─────────────────────────────────────────────────────────────────────────────
+ * Module autonome dédié à la synchronisation multijoueur :
+ * - Ambiance & Ciel (preset 23 ambiances, étoiles, boost scène, reset global)
+ * - Illumination Globale Statique (GI 0 lag, intensités, rebonds, couleurs)
+ * - Post-traitement Laser (bloom, aberration chromatique, fumée scénique)
+ * - Lumières 3D de la scène (déplacement gizmo/sliders, couleurs, intensité, spots, ombres)
+ *     * Synchronisé dans le menu si l'autre joueur a sélectionné la même lumière
+ *     * Sinon synchronisation invisible en arrière-plan dans la scène 3D
+ * - Lasers 3D de la scène (déplacement, rotation, duplication, suppression)
+ * - Personnalisation laser (LaserInspectorPanel) :
+ *     * Synchronisé dans le menu si l'autre joueur a ouvert le même laser
+ *     * Sinon synchronisation en arrière-plan dans la scène 3D
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+import * as THREE from 'three';
+import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=2';
+import { SPOT_LOCAL_GLOBALS } from '../spot/config/spotParams.js';
+import { HAZE_LOCAL_KEYS } from '../haze/hazeParams.js';
+
+export class LightingSync {
+    /**
+     * @param {object} options
+     * @param {import('./MultiplayerClient.js').MultiplayerClient} options.mp
+     * @param {import('../ui/AmbiancePanel.js').AmbiancePanel} options.ambiancePanel
+     * @param {import('../laser/LaserManager.js').LaserManager} options.laserManager
+     * @param {import('../scene/staticGI.js').StaticGlobalIllumination} options.staticGI
+     * @param {THREE.Scene} options.scene
+     */
+    constructor({ mp, ambiancePanel, laserManager, staticGI, scene }) {
+        this.mp = mp;
+        this.ambiancePanel = ambiancePanel;
+        this.laserManager = laserManager;
+        this.staticGI = staticGI;
+        this.scene = scene;
+
+        this._isApplyingRemote = false;
+        this._throttleTimers = new Map();
+        this._pendingThrottled = new Map();
+        this._THROTTLE_MS = 30; // ~33 fps pour les manipulations fluides sans saturer le réseau
+    }
+
+    /**
+     * Initialise les écouteurs réseau et branche les interfaces
+     */
+    init() {
+        if (!this.mp) return;
+
+        this.currentLightingVersion = this.mp.lightingVersion || 1;
+
+        // 1. Écoute des mises à jour réseau
+        this.mp.onLightingUpdate((msg) => {
+            if (msg.version) {
+                this.currentLightingVersion = msg.version;
+            }
+            this.handleRemoteUpdate(msg);
+        });
+
+        // 2. Écoute du battement de cœur périodique (source de vérité du serveur)
+        this.mp.onHeartbeatSync((msg) => {
+            if (msg.lightingVersion && msg.lightingState) {
+                if (this.currentLightingVersion === undefined || msg.lightingVersion > this.currentLightingVersion) {
+                    console.log(`[LightingSync] Version serveur plus récente (${this.currentLightingVersion} < ${msg.lightingVersion}), réconciliation d'état.`);
+                    this.currentLightingVersion = msg.lightingVersion;
+                    this.applyFullState(msg.lightingState);
+                }
+            }
+        });
+
+        // 3. Écoute de la synchronisation complète sur demande
+        if (typeof this.mp.onLightingFullSync === 'function') {
+            this.mp.onLightingFullSync((msg) => {
+                if (msg.lightingState) {
+                    this.currentLightingVersion = msg.version || this.currentLightingVersion;
+                    this.applyFullState(msg.lightingState);
+                }
+            });
+        }
+
+        // 4. Si un état complet est disponible (connexion à une room déjà existante)
+        if (this.mp.lightingState) {
+            this.applyFullState(this.mp.lightingState);
+        }
+
+        // 3. Écoute des actions de l'AmbiancePanel
+        if (this.ambiancePanel) {
+            this.ambiancePanel.onSync((event) => {
+                this.handleLocalEvent(event);
+            });
+        }
+
+        // 4. Écoute des actions de l'inspecteur laser
+        if (this.ambiancePanel && this.ambiancePanel._laserInspectorPanel) {
+            this.ambiancePanel._laserInspectorPanel.onSync((event) => {
+                this.handleLocalEvent(event);
+            });
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Envoi Local ➔ Réseau
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Traite un événement émis par l'interface locale et l'envoie sur le réseau
+     * @param {object} event
+     */
+    handleLocalEvent(event) {
+        if (!this.mp || !this.mp.connected || !this.mp.roomId) return;
+        if (this._isApplyingRemote) return;
+
+        const { category, id, data } = event;
+
+        // Incrémentation optimiste locale de la version pour rester aligné avec le serveur
+        this.currentLightingVersion = (this.currentLightingVersion || 1) + 1;
+
+        // Si l'événement est marqué comme immédiat (ex: fin de glisser gizmo), envoi direct
+        if (event.immediate) {
+            this.mp.sendLighting(event);
+            return;
+        }
+
+        // Événements continus nécessitant un throttling (sliders, gizmo)
+        if (category === 'laser_transform' || (category === 'light_update' && data && (data.position || data.target || data.rotation || data.color || data.intensity)) || category === 'laser_param' || category === 'spot_update' || category === 'spot_global' || category === 'spot_multi' || category === 'ledbar_update' || category === 'laser2_update' || category === 'strobe_update' || category === 'haze') {
+            const idPart = (id !== undefined && id !== null) ? id : 'global';
+            const throttleKey = event.throttleKey || `${category}_${idPart}_${data ? Object.keys(data).join('_') : (event.param || '')}`;
+            this._sendThrottled(throttleKey, event);
+            return;
+        }
+
+        // Événements discrets / immédiats (presets, ajouts, suppressions, resets)
+        this.mp.sendLighting(event);
+    }
+
+    _sendThrottled(key, payload) {
+        this._pendingThrottled.set(key, payload);
+
+        if (!this._throttleTimers.has(key)) {
+            // Premier événement : envoi immédiat
+            this.mp.sendLighting(payload);
+            this._pendingThrottled.delete(key);
+
+            const timer = setTimeout(() => {
+                this._throttleTimers.delete(key);
+                if (this._pendingThrottled.has(key)) {
+                    const latest = this._pendingThrottled.get(key);
+                    this._pendingThrottled.delete(key);
+                    this.mp.sendLighting(latest);
+                }
+            }, this._THROTTLE_MS);
+
+            this._throttleTimers.set(key, timer);
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Réception Réseau ➔ Application Scène 3D & Interface
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Applique une mise à jour reçue d'un autre joueur
+     * @param {object} msg
+     */
+    handleRemoteUpdate(msg) {
+        this._isApplyingRemote = true;
+        if (this.ambiancePanel) this.ambiancePanel._isRemoteUpdate = true;
+        if (this.ambiancePanel?._laserInspectorPanel) this.ambiancePanel._laserInspectorPanel._isRemoteUpdate = true;
+
+        try {
+            const { category, data, id } = msg;
+
+            switch (category) {
+                // ── 1. Ambiance Céleste ──
+                case 'env':
+                    this._applyEnvUpdate(data);
+                    break;
+
+                // ── 2. Illumination Globale Statique (GI) ──
+                case 'gi':
+                    this._applyGIUpdate(data);
+                    break;
+
+                // ── 3. Post-traitement Laser ──
+                case 'laser_post':
+                    this._applyLaserPostUpdate(data);
+                    break;
+
+                // ── 4. Lumières de la Scène ──
+                case 'light_update':
+                    this._applyLightUpdate(id, data);
+                    break;
+
+                case 'light_add':
+                    this._applyLightAdd(data);
+                    break;
+
+                case 'light_remove':
+                    this._applyLightRemove(id);
+                    break;
+
+                case 'light_reset':
+                    this._applyLightReset(id);
+                    break;
+
+                // ── 5. Lasers 3D de la Scène ──
+                case 'laser_transform':
+                    this._applyLaserTransform(id, data);
+                    break;
+
+                case 'laser_param':
+                    this._applyLaserParam(id, msg.param, msg.value, msg.animTime, msg.pausedOffset);
+                    break;
+
+                case 'laser_add':
+                    this._applyLaserAdd(data);
+                    break;
+
+                case 'laser_remove':
+                    this._applyLaserRemove(id);
+                    break;
+
+                case 'laser_reset_all':
+                    this._applyLaserResetAll(id);
+                    break;
+
+                // ── Brouillard de salle ──
+                case 'haze':
+                    this._applyHaze(data);
+                    break;
+
+                // ── 6. Stroboscopes ──
+                case 'strobe_add':
+                    this._applyStrobeAdd(data);
+                    break;
+
+                case 'strobe_update':
+                    this._applyStrobeUpdate(id, data);
+                    break;
+
+                case 'strobe_remove':
+                    this._applyStrobeRemove(id);
+                    break;
+
+                // ── 7. Lyres Spot ──
+                case 'spot_add':
+                    this._applySpotAdd(data);
+                    break;
+
+                case 'spot_update':
+                    this._applySpotUpdate(id, data);
+                    break;
+
+                case 'spot_remove':
+                    this._applySpotRemove(id);
+                    break;
+
+                case 'spot_action':
+                    if (msg.action === 'reset') this._spotManager()?.getSpot(id)?.reset(msg.mode);
+                    break;
+
+                case 'spot_global':
+                    this._applySpotGlobal(data);
+                    break;
+
+                case 'spot_multi':
+                    // Réglage appliqué par la console à plusieurs lyres : { id: { param: valeur } }
+                    for (const [spotId, changes] of Object.entries(data || {})) this._applySpotUpdate(spotId, changes);
+                    break;
+
+                case 'spot_fx': {
+                    const fxEngine = this._spotManager()?.effects;
+                    if (!fxEngine) break;
+                    if (msg.action === 'start') fxEngine.start(msg.fx);
+                    else if (msg.action === 'stop') fxEngine.stop(msg.id);
+                    else if (msg.action === 'stopAll') fxEngine.stopAll();
+                    break;
+                }
+
+                // ── 8. Barres LED ──
+                case 'ledbar_add':
+                    this._applyLedBarAdd(data);
+                    break;
+
+                case 'ledbar_update':
+                    this._applyLedBarUpdate(id, data);
+                    break;
+
+                case 'ledbar_remove':
+                    this._applyLedBarRemove(id);
+                    break;
+
+                case 'ledbar_action':
+                    if (msg.action === 'reset') this._ledBarManager()?.getBar(id)?.reset(msg.mode);
+                    break;
+
+                // ── 9. Nouveaux lasers (moteur de points) ──
+                case 'laser2_add':
+                    this._applyLaser2Add(data);
+                    break;
+
+                case 'laser2_update':
+                    this._applyLaser2Update(id, data);
+                    break;
+
+                case 'laser2_remove':
+                    this._applyLaser2Remove(id);
+                    break;
+
+                // ── 6. Reset Global ──
+                case 'reset_all':
+                    if (this.ambiancePanel) {
+                        this.ambiancePanel.resetAll();
+                    }
+                    break;
+            }
+        } catch (err) {
+            console.error('[LightingSync] Erreur lors de l\'application distante :', err);
+        } finally {
+            this._isApplyingRemote = false;
+            if (this.ambiancePanel) this.ambiancePanel._isRemoteUpdate = false;
+            if (this.ambiancePanel?._laserInspectorPanel) this.ambiancePanel._laserInspectorPanel._isRemoteUpdate = false;
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Handlers spécifiques
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _applyEnvUpdate(data) {
+        if (!data || !this.ambiancePanel) return;
+
+        if (data.presetKey !== undefined) {
+            this.ambiancePanel.applyEnvPreset(data.presetKey);
+            if (this.ambiancePanel._cPreset) {
+                try { this.ambiancePanel._cPreset.updateDisplay(); } catch (_) {}
+            }
+        }
+
+        if (data.stars !== undefined) {
+            this.ambiancePanel.envState.stars = Boolean(data.stars);
+            this.ambiancePanel._updateStarsVisibility();
+        }
+        if (data.starSize !== undefined) {
+            this.ambiancePanel.setStarSize(data.starSize);
+        }
+        if (data.starCount !== undefined) {
+            this.ambiancePanel.setStarCount(data.starCount);
+        }
+        if (data.starBrightness !== undefined) {
+            this.ambiancePanel.setStarBrightness(data.starBrightness);
+        }
+        if (data.stageBoost !== undefined) {
+            this.ambiancePanel.envState.stageBoost = data.stageBoost;
+            this.ambiancePanel._updateStageBoost();
+        }
+
+        // Rafraîchir l'affichage du menu Ambiance & Ciel si ouvert
+        if (this.ambiancePanel.gui) {
+            const fEnv = this.ambiancePanel.gui.folders?.find(f => f._title === '🌌 Ambiance & Ciel');
+            if (fEnv) {
+                fEnv.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} });
+                fEnv.folders?.forEach(f => f.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} }));
+            }
+        }
+    }
+
+    _applyGIUpdate(data) {
+        if (!data || !this.staticGI) return;
+
+        let needsEnvMap = false;
+        for (const [key, val] of Object.entries(data)) {
+            this.staticGI.params[key] = val;
+            if (key.includes('Color')) needsEnvMap = true;
+        }
+
+        this.staticGI.update();
+        if (needsEnvMap) {
+            this.staticGI.generateStaticEnvMap();
+        }
+
+        if (this.ambiancePanel && this.ambiancePanel.fGI) {
+            this.ambiancePanel.fGI.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} });
+        }
+    }
+
+    _applyLaserPostUpdate(data) {
+        if (!data || !this.laserManager) return;
+
+        for (const [key, val] of Object.entries(data)) {
+            // L'anti-crénelage est un réglage local (par machine), jamais imposé par le serveur
+            if (key === 'antialiasing') continue;
+            this.laserManager.setPostProcessingParam(key, val);
+        }
+
+        if (this.ambiancePanel && this.ambiancePanel.gui) {
+            const fLaser = this.ambiancePanel.gui.folders?.find(f => f._title === '🔴 Post-traitement Laser');
+            if (fLaser) {
+                fLaser.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} });
+                fLaser.folders?.forEach(f => f.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} }));
+            }
+            const fLightsBloom = this.ambiancePanel.gui.folders?.find(f => f._title === '💡 Bloom Lampes & Scène');
+            if (fLightsBloom) {
+                fLightsBloom.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} });
+                fLightsBloom.folders?.forEach(f => f.controllers?.forEach(c => { try { c.updateDisplay(); } catch (_) {} }));
+            }
+        }
+    }
+
+    _applyLightUpdate(id, data) {
+        if (!this.ambiancePanel || !id || !data) return;
+
+        // Protection anti-conflit : ne pas écraser si le joueur local est en train de manipuler cette lumière au Gizmo
+        if (this.ambiancePanel.isDraggingGizmo && this.ambiancePanel.selectedEntry && this.ambiancePanel.selectedEntry.id === id) {
+            return;
+        }
+
+        const entry = this.ambiancePanel.lights.find(e => e.id === id);
+        if (!entry || !entry.light) return;
+
+        const light = entry.light;
+
+        // Position 3D
+        if (data.position) {
+            light.position.set(data.position.x, data.position.y, data.position.z);
+            if (entry.markerMesh) entry.markerMesh.position.copy(light.position);
+        }
+
+        // Cible (Target)
+        if (data.target && light.target) {
+            light.target.position.set(data.target.x, data.target.y, data.target.z);
+            light.target.updateMatrixWorld(true);
+        }
+
+        // Rotation directe (ex: RectAreaLight ou orientation fixe)
+        if (data.rotation) {
+            light.rotation.set(data.rotation.x, data.rotation.y, data.rotation.z);
+            if (entry.markerMesh) entry.markerMesh.rotation.set(data.rotation.x, data.rotation.y, data.rotation.z);
+        }
+
+        // Si la lumière possède une cible (SpotLight, DirectionalLight), synchroniser son orientation
+        if (light.target && this.ambiancePanel._syncLightRotationFromTarget) {
+            this.ambiancePanel._syncLightRotationFromTarget(entry);
+        }
+
+        light.updateMatrixWorld(true);
+
+        // Propriétés scalaires et visuelles
+        if (data.color !== undefined) {
+            light.color.set(data.color);
+            if (entry.markerMesh) {
+                const core = entry.markerMesh.children[0];
+                if (core && core.material) core.material.color.set(data.color);
+            }
+            if (light.userData?.bulbMesh?.material) {
+                light.userData.bulbMesh.material.color.set(data.color);
+            }
+        }
+        if (data.intensity !== undefined) light.intensity = data.intensity;
+        if (data.visible !== undefined) {
+            light.visible = data.visible;
+            if (light.userData?.bulbMesh) light.userData.bulbMesh.visible = data.visible;
+        }
+        if (data.distance !== undefined) light.distance = data.distance;
+        if (data.angle !== undefined) light.angle = THREE.MathUtils.degToRad(data.angle);
+        if (data.penumbra !== undefined) light.penumbra = data.penumbra;
+        if (data.decay !== undefined) light.decay = data.decay;
+        if (data.width !== undefined) light.width = data.width;
+        if (data.height !== undefined) light.height = data.height;
+        if (data.groundColor !== undefined && light.groundColor) light.groundColor.set(data.groundColor);
+        if (data.castShadow !== undefined) light.castShadow = Boolean(data.castShadow);
+
+        if (entry.helper && typeof entry.helper.update === 'function') {
+            entry.helper.update();
+        }
+
+        // ── Règle demandée : mise à jour du panneau UNIQUEMENT si la personne a sélectionné la même lumière ──
+        if (this.ambiancePanel.selectedEntry && this.ambiancePanel.selectedEntry.id === id) {
+            this.ambiancePanel._syncInspectorDisplays();
+            if (this.ambiancePanel.ctrlPosX) this.ambiancePanel.ctrlPosX.setValue(light.position.x);
+            if (this.ambiancePanel.ctrlPosY) this.ambiancePanel.ctrlPosY.setValue(light.position.y);
+            if (this.ambiancePanel.ctrlPosZ) this.ambiancePanel.ctrlPosZ.setValue(light.position.z);
+            if (light.target && this.ambiancePanel.ctrlTargetX) {
+                this.ambiancePanel.ctrlTargetX.setValue(light.target.position.x);
+                this.ambiancePanel.ctrlTargetY.setValue(light.target.position.y);
+                this.ambiancePanel.ctrlTargetZ.setValue(light.target.position.z);
+            }
+            if (this.ambiancePanel.transformControls && (this.ambiancePanel.transformControls.object === light || this.ambiancePanel.transformControls.object === light.target)) {
+                this.ambiancePanel.transformControls.updateMatrixWorld(true);
+            }
+        }
+    }
+
+    _applyLightAdd(data) {
+        if (!data || !this.ambiancePanel) return;
+
+        // Éviter tout doublon si la lumière existe déjà
+        const existing = this.ambiancePanel.lights.find(e => e.id === data.id);
+        if (existing) return;
+
+        const color = new THREE.Color(data.color || '#ffffff');
+        const intensity = data.intensity !== undefined ? data.intensity : 2.0;
+        let light = null;
+
+        switch (data.type) {
+            case 'SpotLight':
+                light = new THREE.SpotLight(color, intensity);
+                if (data.distance !== undefined) light.distance = data.distance;
+                if (data.angle !== undefined) light.angle = THREE.MathUtils.degToRad(data.angle);
+                if (data.penumbra !== undefined) light.penumbra = data.penumbra;
+                if (data.decay !== undefined) light.decay = data.decay;
+                if (data.target) {
+                    light.target.position.set(data.target.x, data.target.y, data.target.z);
+                    this.scene.add(light.target);
+                }
+                break;
+            case 'DirectionalLight':
+                light = new THREE.DirectionalLight(color, intensity);
+                if (data.target) {
+                    light.target.position.set(data.target.x, data.target.y, data.target.z);
+                    this.scene.add(light.target);
+                }
+                break;
+            case 'AmbientLight':
+                light = new THREE.AmbientLight(color, intensity);
+                break;
+            case 'HemisphereLight':
+                light = new THREE.HemisphereLight(color, data.groundColor || 0x444444, intensity);
+                break;
+            case 'RectAreaLight':
+                light = new THREE.RectAreaLight(color, intensity, data.width || 4, data.height || 2);
+                break;
+            default:
+                light = new THREE.PointLight(color, intensity, data.distance || 25);
+                if (data.decay !== undefined) light.decay = data.decay;
+                break;
+        }
+
+        if (data.position) {
+            light.position.set(data.position.x, data.position.y, data.position.z);
+        }
+        if (data.visible !== undefined) light.visible = Boolean(data.visible);
+        if (data.castShadow !== undefined) light.castShadow = Boolean(data.castShadow);
+
+        this.scene.add(light);
+        this.ambiancePanel.registerLight(light, Boolean(data.isBuiltin), data.name, data.id);
+
+        if (this.ambiancePanel.isOpen) {
+            this.ambiancePanel._rebuildInspectorGui();
+        }
+    }
+
+    _applyLightRemove(id) {
+        if (!this.ambiancePanel || !id) return;
+        const entry = this.ambiancePanel.lights.find(e => e.id === id);
+        if (entry) {
+            this.ambiancePanel.removeLight(entry);
+        }
+    }
+
+    _applyLightReset(id) {
+        if (!this.ambiancePanel || !id) return;
+        const entry = this.ambiancePanel.lights.find(e => e.id === id);
+        if (entry) {
+            this.ambiancePanel.resetLight(entry);
+            if (this.ambiancePanel.selectedEntry && this.ambiancePanel.selectedEntry.id === id) {
+                this.ambiancePanel._syncInspectorDisplays();
+            }
+        }
+    }
+
+    _applyLaserTransform(id, data) {
+        if (!this.laserManager || id === undefined || id === null || !data) return;
+
+        const numId = typeof id === 'number' ? id : parseInt(id, 10);
+
+        // Protection anti-conflit : ne pas écraser si le joueur local est en train de manipuler ce laser au Gizmo
+        if (this.ambiancePanel && this.ambiancePanel.isDraggingGizmo && this.ambiancePanel.selectedLaser) {
+            const curSelId = this.ambiancePanel.selectedLaser.laserId;
+            const curSelNumId = typeof curSelId === 'number' ? curSelId : parseInt(curSelId, 10);
+            if (curSelId === id || curSelNumId === numId) {
+                return;
+            }
+        }
+
+        const laser = this.laserManager.getLaser(numId) || this.laserManager.getLaser(id);
+        if (!laser) return;
+
+        const housing = laser.getHousingGroup();
+
+        if (data.position) {
+            laser.setPosition(data.position.x, data.position.y, data.position.z);
+            if (housing) {
+                housing.position.set(data.position.x, data.position.y, data.position.z);
+                housing.updateMatrixWorld(true);
+            }
+        }
+
+        if (data.rotation) {
+            const { angle = 0, tilt = 0, roll = 0 } = data.rotation;
+            laser.setParam('angle', angle);
+            laser.setParam('tilt', tilt);
+            laser.setParam('roll', roll);
+            if (housing) {
+                housing.rotation.set(-tilt * (Math.PI / 180), angle * (Math.PI / 180), roll * (Math.PI / 180), 'YXZ');
+                housing.updateMatrixWorld(true);
+            }
+        }
+
+        // ── Règle : mise à jour du panneau si le même laser est sélectionné ──
+        if (this.ambiancePanel && this.ambiancePanel.selectedLaser) {
+            const selId = this.ambiancePanel.selectedLaser.laserId;
+            const selNumId = typeof selId === 'number' ? selId : parseInt(selId, 10);
+            if (selId === id || selNumId === numId) {
+                if (this.ambiancePanel._laserPosControllers && data.position) {
+                    this.ambiancePanel._laserPosControllers.posState.x = data.position.x;
+                    this.ambiancePanel._laserPosControllers.posState.y = data.position.y;
+                    this.ambiancePanel._laserPosControllers.posState.z = data.position.z;
+                    try {
+                        this.ambiancePanel._laserPosControllers.posX.updateDisplay();
+                        this.ambiancePanel._laserPosControllers.posY.updateDisplay();
+                        this.ambiancePanel._laserPosControllers.posZ.updateDisplay();
+                    } catch (_) {}
+                }
+                if (this.ambiancePanel._laserRotControllers && data.rotation) {
+                    this.ambiancePanel._laserRotControllers.rotState.angle = data.rotation.angle || 0;
+                    this.ambiancePanel._laserRotControllers.rotState.tilt = data.rotation.tilt || 0;
+                    this.ambiancePanel._laserRotControllers.rotState.roll = data.rotation.roll || 0;
+                    try {
+                        this.ambiancePanel._laserRotControllers.ctrlAngle.updateDisplay();
+                        this.ambiancePanel._laserRotControllers.ctrlTilt.updateDisplay();
+                        if (this.ambiancePanel._laserRotControllers.ctrlRoll) {
+                            this.ambiancePanel._laserRotControllers.ctrlRoll.updateDisplay();
+                        }
+                    } catch (_) {}
+                }
+                if (this.ambiancePanel.transformControls && this.ambiancePanel.transformControls.object === housing) {
+                    this.ambiancePanel.transformControls.updateMatrixWorld(true);
+                }
+            }
+        }
+
+        // ── Règle : synchroniser l'inspecteur laser individuel s'il est ouvert sur ce laser ──
+        const curInspId = this.ambiancePanel?._laserInspectorPanel?._currentLaserId;
+        const curInspNumId = typeof curInspId === 'number' ? curInspId : parseInt(curInspId, 10);
+        if (this.ambiancePanel?._laserInspectorPanel?.isOpen && (curInspId === id || curInspNumId === numId)) {
+            this.ambiancePanel._laserInspectorPanel.syncFromLaser();
+        }
+    }
+
+    _applyLaserParam(id, param, value, animTime, pausedOffset) {
+        if (!this.laserManager || id === undefined || param === undefined) return;
+
+        const numId = typeof id === 'number' ? id : parseInt(id, 10);
+        const laser = this.laserManager.getLaser(numId) || this.laserManager.getLaser(id);
+        if (!laser) {
+            console.warn('[LightingSync] Laser introuvable pour param:', id, param, value);
+            return;
+        }
+
+        laser.setParam(param, value);
+        if (param === 'angle' || param === 'tilt' || param === 'roll') {
+            const housing = laser.getHousingGroup();
+            if (housing) {
+                const angle = laser.params.angle || 0;
+                const tilt = laser.params.tilt || 0;
+                const roll = laser.params.roll || 0;
+                housing.rotation.set(-tilt * (Math.PI / 180), angle * (Math.PI / 180), roll * (Math.PI / 180), 'YXZ');
+                housing.updateMatrixWorld(true);
+            }
+            if (this.ambiancePanel?._laserRotControllers && this.ambiancePanel?.selectedLaser?.laserId === id) {
+                this.ambiancePanel._laserRotControllers.rotState[param] = value;
+                try {
+                    if (param === 'angle' && this.ambiancePanel._laserRotControllers.ctrlAngle) this.ambiancePanel._laserRotControllers.ctrlAngle.updateDisplay();
+                    if (param === 'tilt' && this.ambiancePanel._laserRotControllers.ctrlTilt) this.ambiancePanel._laserRotControllers.ctrlTilt.updateDisplay();
+                    if (param === 'roll' && this.ambiancePanel._laserRotControllers.ctrlRoll) this.ambiancePanel._laserRotControllers.ctrlRoll.updateDisplay();
+                } catch (_) {}
+            }
+        }
+
+        if (param === 'pauseMotion') {
+            laser.isPaused = Boolean(value);
+            if (value === true) {
+                laser._frozenAnimTime = (animTime !== undefined && animTime !== null) ? animTime : laser._animTime;
+            } else {
+                if (pausedOffset !== undefined && pausedOffset !== null) {
+                    laser.setPausedOffset(pausedOffset);
+                }
+                laser._frozenAnimTime = null;
+            }
+        }
+
+        // ── Règle : synchroniser si le même menu de personnalisation laser est ouvert ──
+        const curInspId = this.ambiancePanel?._laserInspectorPanel?._currentLaserId;
+        const curInspNumId = typeof curInspId === 'number' ? curInspId : parseInt(curInspId, 10);
+        if (this.ambiancePanel?._laserInspectorPanel?.isOpen && (curInspId === id || curInspNumId === numId)) {
+            this.ambiancePanel._laserInspectorPanel.syncFromLaser();
+        }
+    }
+
+    _applyLaserAdd(data) {
+        if (!data || !this.laserManager) return;
+
+        const id = parseInt(data.id, 10);
+        if (this.laserManager.getLaser(id)) return; // Déjà présent
+
+        const pos = data.position ? new THREE.Vector3(data.position.x, data.position.y, data.position.z) : new THREE.Vector3(0, 12, -4);
+        const { laserShow } = this.laserManager.addLaser(pos, data.params || {}, id);
+
+        if (data.pausedOffset !== undefined && data.pausedOffset !== null) {
+            laserShow.setPausedOffset(data.pausedOffset);
+        }
+        if (data.params?.pauseMotion) {
+            laserShow.isPaused = true;
+            if (data.animTime !== undefined && data.animTime !== null) {
+                laserShow._frozenAnimTime = data.animTime;
+            }
+        }
+
+        if (data.rotation) {
+            const { angle = 0, tilt = 0, roll = 0 } = data.rotation;
+            laserShow.setParam('angle', angle);
+            laserShow.setParam('tilt', tilt);
+            laserShow.setParam('roll', roll);
+            const housing = laserShow.getHousingGroup();
+            if (housing) {
+                housing.rotation.set(-tilt * (Math.PI / 180), angle * (Math.PI / 180), roll * (Math.PI / 180), 'YXZ');
+                housing.updateMatrixWorld();
+            }
+        }
+
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) {
+            this.ambiancePanel._rebuildInspectorGui();
+        }
+    }
+
+    _applyLaserRemove(id) {
+        if (!this.laserManager || id === undefined || id === null) return;
+        const laserId = parseInt(id, 10);
+
+        if (this.ambiancePanel) {
+            if (this.ambiancePanel.selectedLaser && this.ambiancePanel.selectedLaser.laserId === laserId) {
+                this.ambiancePanel.deselectLaser();
+            }
+            if (this.ambiancePanel._laserInspectorPanel && this.ambiancePanel._laserInspectorPanel._currentLaserId === laserId) {
+                this.ambiancePanel._laserInspectorPanel.close();
+            }
+        }
+
+        this.laserManager.removeLaser(laserId);
+
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) {
+            this.ambiancePanel._rebuildInspectorGui();
+        }
+    }
+
+    _applyLaserResetAll(id) {
+        if (!this.laserManager || id === undefined || id === null) return;
+        const numId = typeof id === 'number' ? id : parseInt(id, 10);
+        const laser = this.laserManager.getLaser(numId) || this.laserManager.getLaser(id);
+        if (!laser) return;
+
+        // ── Règle : toujours reset les données 3D indépendamment de l'état du panel ──
+        for (const [k, schema] of Object.entries(LASER_PARAMS_SCHEMA)) {
+            laser.setParam(k, schema.value);
+        }
+
+        // ── Règle : rafraîchir l'UI seulement si le panel est DÉJÀ ouvert sur ce laser ──
+        const insp = this.ambiancePanel?._laserInspectorPanel;
+        if (insp?.isOpen) {
+            const inspId = typeof insp._currentLaserId === 'number' ? insp._currentLaserId : parseInt(insp._currentLaserId, 10);
+            if (inspId === numId) {
+                insp.syncFromLaser();
+            }
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Brouillard de salle
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _applyHaze(data) {
+        const haze = this.ambiancePanel && this.ambiancePanel.hazeVolume;
+        if (!haze || !data) return;
+        const shared = {};
+        for (const [k, v] of Object.entries(data)) if (!HAZE_LOCAL_KEYS.has(k)) shared[k] = v; // qualité : réglage local
+        haze.setParams(shared);
+        const panel = this.ambiancePanel.hazePanel;
+        if (panel && panel.isOpen) panel.syncFromVolume();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Stroboscopes
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _strobeManager() {
+        return this.ambiancePanel ? this.ambiancePanel.strobeManager : null;
+    }
+
+    _applyStrobeAdd(data) {
+        const sm = this._strobeManager();
+        if (!sm || !data || data.id === undefined || data.id === null) return;
+        const id = parseInt(data.id, 10);
+        if (sm.getStrobe(id)) return;
+        const p = data.params || {};
+        const pos = new THREE.Vector3(p.posX ?? 0, p.posY ?? 8, p.posZ ?? -5);
+        sm.addStrobe(pos, p, id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyStrobeUpdate(id, data) {
+        const sm = this._strobeManager();
+        const strobe = sm && sm.getStrobe(id);
+        if (!strobe || !data) return;
+        const ap = this.ambiancePanel;
+        // Ne pas écraser un stroboscope que le joueur local est en train de déplacer au gizmo
+        if (ap && ap.isDraggingGizmo && ap.selectedStrobe === strobe) return;
+        for (const [k, v] of Object.entries(data)) {
+            if (k === 'posX' || k === 'posY' || k === 'posZ' || k === 'angle' || k === 'tilt' || k === 'roll') continue;
+            strobe.setParam(k, v);
+        }
+        if (data.posX !== undefined || data.posY !== undefined || data.posZ !== undefined) {
+            const p = strobe.params;
+            strobe.setPosition(data.posX ?? p.posX, data.posY ?? p.posY, data.posZ ?? p.posZ);
+        }
+        if (data.angle !== undefined || data.tilt !== undefined || data.roll !== undefined) {
+            const p = strobe.params;
+            strobe.setRotation(data.angle ?? p.angle, data.tilt ?? p.tilt, data.roll ?? p.roll);
+        }
+        const insp = ap && ap._strobeInspectorPanel;
+        if (insp && insp.isOpen && insp._currentStrobe === strobe) insp.syncAllFromStrobe();
+        if (ap && ap.selectedStrobe === strobe && ap.transformControls) ap.transformControls.updateMatrixWorld(true);
+    }
+
+    _applyStrobeRemove(id) {
+        const sm = this._strobeManager();
+        if (!sm || id === undefined || id === null) return;
+        const strobe = sm.getStrobe(id);
+        if (!strobe) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedStrobe === strobe) this.ambiancePanel.deselectStrobe();
+        sm.removeStrobe(strobe.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyStrobesFullState(strobes) {
+        const sm = this._strobeManager();
+        if (!sm || !strobes || typeof strobes !== 'object') return;
+        const serverIds = new Set(Object.keys(strobes).map(k => parseInt(k, 10)));
+        for (const s of sm.getAllStrobes()) {
+            if (!serverIds.has(s.id)) this._applyStrobeRemove(s.id);
+        }
+        for (const [idStr, s] of Object.entries(strobes)) {
+            if (!s) continue;
+            const id = parseInt(idStr, 10);
+            if (sm.getStrobe(id)) this._applyStrobeUpdate(id, s.params || {});
+            else this._applyStrobeAdd({ id, params: s.params || {} });
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Lyres Spot
+    // ─────────────────────────────────────────────────────────────────────────
+
+    _spotManager() {
+        return this.ambiancePanel ? this.ambiancePanel.spotManager : null;
+    }
+
+    _ledBarManager() {
+        return this.ambiancePanel ? this.ambiancePanel.ledBarManager : null;
+    }
+
+    _applyLedBarAdd(data) {
+        const lm = this._ledBarManager();
+        if (!lm || !data || !data.id || lm.getBar(data.id)) return;
+        lm.addBar(null, data.params || {}, data.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLedBarUpdate(id, data) {
+        const lm = this._ledBarManager();
+        const bar = lm && lm.getBar(id);
+        if (!bar || !data) return;
+        // Ne pas écraser une barre que le joueur local est en train de déplacer au gizmo
+        if (this.ambiancePanel?.isDraggingGizmo && this.ambiancePanel.selectedSpot === bar) return;
+        bar.setParams(data);
+        const insp = this.ambiancePanel?._ledBarInspectorPanel;
+        if (insp && insp.isOpen && insp.currentBarId === id) insp.syncFromBar();
+        if (this.ambiancePanel?.selectedSpot === bar && this.ambiancePanel.transformControls) {
+            this.ambiancePanel.transformControls.updateMatrixWorld(true);
+        }
+    }
+
+    _applyLedBarRemove(id) {
+        const lm = this._ledBarManager();
+        if (!lm || !id) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedSpot && this.ambiancePanel.selectedSpot.id === id) {
+            this.ambiancePanel.deselectSpot();
+        }
+        lm.removeBar(id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLedBarsFullState(bars) {
+        const lm = this._ledBarManager();
+        if (!lm || !bars || typeof bars !== 'object') return;
+        const serverIds = new Set(Object.keys(bars));
+        for (const bar of lm.getAllBars()) {
+            if (!serverIds.has(bar.id)) this._applyLedBarRemove(bar.id);
+        }
+        for (const [id, b] of Object.entries(bars)) {
+            if (!b) continue;
+            if (lm.getBar(id)) this._applyLedBarUpdate(id, b.params || {});
+            else this._applyLedBarAdd({ id, params: b.params || {} });
+        }
+    }
+
+    _laser2Manager() {
+        return this.ambiancePanel ? this.ambiancePanel.laser2Manager : null;
+    }
+
+    _applyLaser2Add(data) {
+        const lm = this._laser2Manager();
+        if (!lm || !data || !data.id || lm.getLaser(data.id)) return;
+        lm.addLaser(null, data.params || {}, data.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLaser2Update(id, data) {
+        const lm = this._laser2Manager();
+        const laser = lm && lm.getLaser(id);
+        if (!laser || !data) return;
+        // Ne pas écraser un laser que le joueur local est en train de déplacer au gizmo
+        if (this.ambiancePanel?.isDraggingGizmo && this.ambiancePanel.selectedSpot === laser) return;
+        laser.setParams(data);
+        const insp = this.ambiancePanel?._laser2InspectorPanel;
+        if (insp && insp.isOpen && insp.currentLaserId === id) insp.syncFromLaser();
+        if (this.ambiancePanel?.selectedSpot === laser && this.ambiancePanel.transformControls) {
+            this.ambiancePanel.transformControls.updateMatrixWorld(true);
+        }
+    }
+
+    _applyLaser2Remove(id) {
+        const lm = this._laser2Manager();
+        if (!lm || !id) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedSpot && this.ambiancePanel.selectedSpot.id === id) {
+            this.ambiancePanel.deselectSpot();
+        }
+        lm.removeLaser(id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applyLaser2FullState(lasers) {
+        const lm = this._laser2Manager();
+        if (!lm || !lasers || typeof lasers !== 'object') return;
+        const serverIds = new Set(Object.keys(lasers));
+        for (const l of lm.getAllLasers()) {
+            if (!serverIds.has(l.id)) this._applyLaser2Remove(l.id);
+        }
+        for (const [id, l] of Object.entries(lasers)) {
+            if (!l) continue;
+            if (lm.getLaser(id)) this._applyLaser2Update(id, l.params || {});
+            else this._applyLaser2Add({ id, params: l.params || {} });
+        }
+    }
+
+    _spotPanelIsOn(id) {
+        const insp = this.ambiancePanel?._spotInspectorPanel;
+        return Boolean(insp && insp.isOpen && insp.currentSpotId === id);
+    }
+
+    _applySpotAdd(data) {
+        const sm = this._spotManager();
+        if (!sm || !data || !data.id || sm.getSpot(data.id)) return;
+        sm.addSpot(null, data.params || {}, data.id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applySpotUpdate(id, data) {
+        const sm = this._spotManager();
+        const spot = sm && sm.getSpot(id);
+        if (!spot || !data) return;
+        // Ne pas écraser une lyre que le joueur local est en train de déplacer au gizmo
+        if (this.ambiancePanel?.isDraggingGizmo && this.ambiancePanel.selectedSpot === spot) return;
+        spot.setParams(data);
+        if (this._spotPanelIsOn(id)) this.ambiancePanel._spotInspectorPanel.syncFromSpot();
+        if (this.ambiancePanel?.selectedSpot === spot && this.ambiancePanel.transformControls) {
+            this.ambiancePanel.transformControls.updateMatrixWorld(true);
+        }
+    }
+
+    _applySpotRemove(id) {
+        const sm = this._spotManager();
+        if (!sm || !id) return;
+        if (this.ambiancePanel && this.ambiancePanel.selectedSpot && this.ambiancePanel.selectedSpot.id === id) {
+            this.ambiancePanel.deselectSpot();
+        }
+        sm.removeSpot(id);
+        if (this.ambiancePanel && this.ambiancePanel.isOpen) this.ambiancePanel._rebuildInspectorGui();
+    }
+
+    _applySpotGlobal(data) {
+        const sm = this._spotManager();
+        if (!sm || !data) return;
+        for (const [k, v] of Object.entries(data)) if (!SPOT_LOCAL_GLOBALS.has(k)) sm.setGlobal(k, v); // qualité : réglage local
+        const insp = this.ambiancePanel?._spotInspectorPanel;
+        if (insp && insp.isOpen) insp.syncFromSpot();
+    }
+
+    _applySpotsFullState(spots, globals) {
+        const sm = this._spotManager();
+        if (!sm) return;
+        if (globals) this._applySpotGlobal(globals);
+        if (!spots || typeof spots !== 'object') return;
+        const serverIds = new Set(Object.keys(spots));
+        // Serveur qui ne déclare pas les lyres du spawn (ancienne version) : on les garde
+        const serverKnowsSpawn = [...serverIds].some(id => id.startsWith('spot-stage-'));
+        for (const spot of sm.getAllSpots()) {
+            if (!serverKnowsSpawn && String(spot.id).startsWith('spot-stage-')) continue;
+            if (!serverIds.has(spot.id)) this._applySpotRemove(spot.id);
+        }
+        for (const [id, s] of Object.entries(spots)) {
+            if (!s) continue;
+            if (sm.getSpot(id)) this._applySpotUpdate(id, s.params || {});
+            else this._applySpotAdd({ id, params: s.params || {} });
+        }
+    }
+
+    // ═════════════════════════════════════════════════════════════════════════
+    // Synchronisation de l'état complet à la connexion (ROOM_CREATED / ROOM_JOINED)
+    // ═════════════════════════════════════════════════════════════════════════
+
+    /**
+     * Applique l'état complet de la pièce (Ambiance, GI, Post-laser, Lumières, Lasers)
+     * @param {object} state
+     */
+    applyFullState(state) {
+        if (!state) return;
+        this._isApplyingRemote = true;
+        if (this.ambiancePanel) this.ambiancePanel._isRemoteUpdate = true;
+
+        try {
+            // 1. Ambiance & Ciel
+            if (state.env) {
+                this._applyEnvUpdate(state.env);
+            }
+
+            // 2. GI Statique
+            if (state.gi) {
+                this._applyGIUpdate(state.gi);
+            }
+
+            // 3. Post-traitement Laser
+            if (state.laserPost) {
+                this._applyLaserPostUpdate(state.laserPost);
+            }
+
+            // 4. Lumières de la scène
+            if (state.lights && typeof state.lights === 'object') {
+                for (const [lightId, lightData] of Object.entries(state.lights)) {
+                    const existing = this.ambiancePanel?.lights.find(e => e.id === lightId);
+                    if (existing) {
+                        this._applyLightUpdate(lightId, lightData);
+                    } else if (lightData && lightData.type) {
+                        this._applyLightAdd(lightData);
+                    }
+                }
+            }
+
+            // 5. Lasers de la scène
+            if (state.lasers && typeof state.lasers === 'object') {
+                const serverLaserIds = new Set(Object.keys(state.lasers).map(k => parseInt(k, 10)));
+
+                // Supprimer les lasers locaux orphelins (ex: doublon ou supprimé sur le serveur)
+                if (this.laserManager) {
+                    for (const laser of this.laserManager.getAllLasers()) {
+                        if (!serverLaserIds.has(laser.laserId)) {
+                            this.laserManager.removeLaser(laser.laserId);
+                        }
+                    }
+                }
+
+                for (const [laserIdStr, laserData] of Object.entries(state.lasers)) {
+                    const laserId = parseInt(laserIdStr, 10);
+                    const existing = this.laserManager?.getLaser(laserId);
+                    if (existing) {
+                        if (laserData.position || laserData.rotation) {
+                            this._applyLaserTransform(laserId, laserData);
+                        }
+                        if (laserData.params) {
+                            for (const [p, v] of Object.entries(laserData.params)) {
+                                existing.setParam(p, v);
+                            }
+                        }
+                        if (laserData.pausedOffset !== undefined && laserData.pausedOffset !== null) {
+                            existing.setPausedOffset(laserData.pausedOffset);
+                        }
+                        if (laserData.params?.pauseMotion) {
+                            existing.isPaused = true;
+                            if (laserData.animTime !== undefined && laserData.animTime !== null) {
+                                existing._frozenAnimTime = laserData.animTime;
+                            }
+                        } else {
+                            existing.isPaused = false;
+                            existing._frozenAnimTime = null;
+                        }
+                    } else if (laserData) {
+                        this._applyLaserAdd({ id: laserId, ...laserData });
+                    }
+                }
+            }
+
+            // Brouillard de salle
+            if (state.haze) {
+                this._applyHaze(state.haze);
+            }
+
+            // 6. Stroboscopes
+            if (state.strobes) {
+                this._applyStrobesFullState(state.strobes);
+            }
+
+            // 7. Lyres Spot
+            if (state.spots || state.spotGlobals) {
+                this._applySpotsFullState(state.spots, state.spotGlobals);
+            }
+            // 8. Barres LED (serveur d'une ancienne version : pas de clé → barres locales conservées)
+            if (state.ledBars) {
+                this._applyLedBarsFullState(state.ledBars);
+            }
+            // 9. Nouveaux lasers (salle sauvegardée avant leur arrivée : pas de clé → lasers locaux conservés)
+            if (state.laser2s) {
+                this._applyLaser2FullState(state.laser2s);
+            }
+            if (state.spotFx && this._spotManager()) {
+                this._spotManager().effects.setAll(state.spotFx);
+            }
+
+            if (this.ambiancePanel) {
+                // ── Règle : ne JAMAIS ouvrir un menu fermé à cause d'une synchro réseau ──
+                // Mettre à jour les contrôleurs seulement si le menu est déjà ouvert
+                if (this.ambiancePanel.selectedEntry) {
+                    // Rafraîchir les curseurs de la lumière sélectionnée si le panel est ouvert
+                    if (this.ambiancePanel.isOpen) {
+                        this.ambiancePanel._syncInspectorDisplays();
+                    }
+                }
+                // Rafraîchir l'inspecteur laser seulement s'il est déjà ouvert (ne pas l'ouvrir)
+                if (this.ambiancePanel._laserInspectorPanel?.isOpen) {
+                    this.ambiancePanel._laserInspectorPanel.syncFromLaser();
+                }
+            }
+        } catch (err) {
+            console.error('[LightingSync] Erreur lors de applyFullState :', err);
+        } finally {
+            this._isApplyingRemote = false;
+            if (this.ambiancePanel) this.ambiancePanel._isRemoteUpdate = false;
+        }
+    }
+}

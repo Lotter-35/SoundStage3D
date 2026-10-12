@@ -1,0 +1,192 @@
+/**
+ * speakerModels.js — Chargement et instanciation des modèles 3D réels d'enceintes de scène :
+ * - Subwoofers (subwoofer.glb) : tournés de 90° sur X, empilés par 2 par position, le long du nez de scène
+ * - Line Arrays (line-array.glb) : grappes suspendues à gauche et à droite orientées vers le public
+ */
+import * as THREE from 'three';
+import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+
+export async function loadStageSpeakers(scene) {
+    const stageSpeakersGroup = new THREE.Group();
+    stageSpeakersGroup.name = 'stage-speakers-group';
+    scene.add(stageSpeakersGroup);
+
+    const gltfLoader = new GLTFLoader();
+    // Version fixe (à incrémenter quand un modèle change) : un horodatage forçait le re-téléchargement de ~17 Mo à chaque chargement
+    const cacheBust = 1;
+
+    // ─────────────────────────────────────────────────────────────────
+    // 1. SUBWOOFERS (subwoofer.glb)
+    // ─────────────────────────────────────────────────────────────────
+    try {
+        const gltfSub = await gltfLoader.loadAsync(`src/assets/models/subwoofer.glb?t=${cacheBust}`);
+        const subTemplate = gltfSub.scene;
+
+        // Préparation des matériaux et ombres
+        subTemplate.traverse(child => {
+            if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+                if (child.material) {
+                    // Correction cruciale : désactiver la transmission de Blender qui rendait le caisson transparent
+                    if ('transmission' in child.material) {
+                        child.material.transmission = 0;
+                    }
+                    child.material.transparent = false;
+                    child.material.opacity = 1.0;
+                    child.material.roughness = 0.75;
+                    child.material.metalness = 0.15;
+                    if (child.material.map) {
+                        child.material.map.colorSpace = THREE.SRGBColorSpace;
+                        child.material.needsUpdate = true;
+                    }
+                    if (child.material.normalMap) {
+                        child.material.normalMap.colorSpace = THREE.LinearSRGBColorSpace;
+                    }
+                    child.material.needsUpdate = true;
+                }
+            }
+        });
+
+        // Échelle du subwoofer pour correspondre aux dimensions réalistes d'un double 18" de festival (~1.8m de large, ~0.74m de haut)
+        const subScale = 1.35;
+        subTemplate.scale.setScalar(subScale);
+
+        // Rotation demandée : 90° sur l'axe X (grille dressée face aux spectateurs, haut vers le ciel)
+        subTemplate.rotation.x = Math.PI;
+        subTemplate.rotation.y = Math.PI;
+        subTemplate.rotation.z = Math.PI;
+        subTemplate.updateMatrixWorld(true);
+
+        // Calcul précis de la boîte englobante après rotation et échelle
+        const subBox = new THREE.Box3().setFromObject(subTemplate);
+        const subSize = new THREE.Vector3();
+        subBox.getSize(subSize);
+
+        // Décalages géométriques pour l'alignement au sol et contre la scène
+        const groundOffsetY = -subBox.min.y; // Hauteur du centre du premier caisson pour que le bas soit à y = 0
+        const subHeight = subSize.y;         // Hauteur unitaire d'un caisson (~0.74m)
+        const backAlignZ = -subBox.min.z;    // Z du centre pour que l'arrière du caisson soit aligné avec le bord avant de la scène (z = 0)
+
+        // 7 positions de subwoofers au sol (identiques à SUB_DEFS dans speakers.js : -9, -6, -3, 0, 3, 6, 9)
+        const subXPositions = [-9, -6, -3, 0, 3, 6, 9];
+        const totalInstances = subXPositions.length * 3; // 21 caissons (7 x 3)
+
+        // Récupération de tous les meshs du modèle (ex: corps du caisson et grille avant)
+        const subMeshes = [];
+        subTemplate.traverse(child => {
+            if (child.isMesh) {
+                subMeshes.push(child);
+            }
+        });
+
+        const dummy = new THREE.Object3D();
+
+        for (const mesh of subMeshes) {
+            const instancedMesh = new THREE.InstancedMesh(
+                mesh.geometry,
+                mesh.material,
+                totalInstances
+            );
+            instancedMesh.name = `instanced-subwoofer-${mesh.name || 'mesh'}`;
+            instancedMesh.castShadow = true;
+            instancedMesh.receiveShadow = true;
+
+            let instanceIdx = 0;
+            for (const xPos of subXPositions) {
+                // Pile de 3 caissons superposés
+                for (let stackIndex = 0; stackIndex < 3; stackIndex++) {
+                    // Léger chevauchement (sol, caisson du dessus, face avant de la scène) : pas de fente de lumière
+                    const posY = groundOffsetY - 0.01 + stackIndex * (subHeight - 0.012);
+                    dummy.position.set(xPos, posY, backAlignZ - 0.02);
+                    dummy.rotation.set(Math.PI, Math.PI, Math.PI);
+                    dummy.scale.setScalar(subScale);
+                    dummy.updateMatrix();
+
+                    instancedMesh.setMatrixAt(instanceIdx++, dummy.matrix);
+                }
+            }
+
+            instancedMesh.instanceMatrix.needsUpdate = true;
+            if (instancedMesh.computeBoundingBox) instancedMesh.computeBoundingBox();
+            if (instancedMesh.computeBoundingSphere) instancedMesh.computeBoundingSphere();
+
+            stageSpeakersGroup.add(instancedMesh);
+        }
+
+        console.log(`[StageSpeakers] 7 piles de 3 subwoofers instanciées via InstancedMesh (21 caissons, ${subMeshes.length} draw calls au lieu de ${totalInstances * subMeshes.length}), hauteur totale : ${(subHeight * 3).toFixed(2)}m`);
+    } catch (err) {
+        console.error('[StageSpeakers] Erreur lors du chargement de subwoofer.glb :', err);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // 2. LINE ARRAYS (line-array.glb)
+    // ─────────────────────────────────────────────────────────────────
+    try {
+        const gltfArray = await gltfLoader.loadAsync(`src/assets/models/line-array.glb?t=${cacheBust}`);
+        const arrayTemplate = gltfArray.scene;
+
+        // Préparation des matériaux et ombres
+        arrayTemplate.traverse(child => {
+            if (child.isMesh) {
+                child.castShadow = true;
+                child.receiveShadow = true;
+                if (child.material) {
+                    if ('transmission' in child.material) {
+                        child.material.transmission = 0;
+                    }
+                    child.material.transparent = false;
+                    child.material.opacity = 1.0;
+                    if (child.material.map) {
+                        child.material.map.colorSpace = THREE.SRGBColorSpace;
+                        child.material.needsUpdate = true;
+                    }
+                    if (child.material.normalMap) {
+                        child.material.normalMap.colorSpace = THREE.LinearSRGBColorSpace;
+                    }
+                    child.material.needsUpdate = true;
+                }
+            }
+        });
+
+        // Échelle pour une grappe complète de festival (~3.8m de haut)
+        const arrayScale = 1.35;
+        arrayTemplate.scale.setScalar(arrayScale);
+
+        // Boîte englobante pour calculer l'élévation : le bas du line array doit arriver au niveau de l'émission sonore (y = 8.0)
+        const arrayBox = new THREE.Box3().setFromObject(arrayTemplate);
+        const soundEmitterY = 8.0;
+        const targetPosY = soundEmitterY - arrayBox.min.y; // le bas arrive exactement à y = 8.0
+
+        // Positions et orientations des 2 grappes suspendues (bien droites, pas de pivot vers le centre)
+        const arrayConfigs = [
+            {
+                name: 'line-array-left',
+                x: -12,
+                y: targetPosY,
+                z: 0,
+            },
+            {
+                name: 'line-array-right',
+                x: 12,
+                y: targetPosY,
+                z: 0,
+            }
+        ];
+
+        for (const config of arrayConfigs) {
+            const arrayClone = arrayTemplate.clone(true);
+            arrayClone.name = config.name;
+            arrayClone.position.set(config.x, config.y, config.z);
+            // Rotation de 180° sur l'axe Y pour faire face au public
+            arrayClone.rotation.set(0, Math.PI, 0);
+            stageSpeakersGroup.add(arrayClone);
+        }
+
+        console.log('[StageSpeakers] Grappes Line Array gauche et droite chargées et suspendues avec succès');
+    } catch (err) {
+        console.error('[StageSpeakers] Erreur lors du chargement de line-array.glb :', err);
+    }
+
+    return stageSpeakersGroup;
+}
