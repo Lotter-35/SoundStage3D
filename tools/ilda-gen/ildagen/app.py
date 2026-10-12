@@ -14,6 +14,8 @@ from .ui.main_window import APP_NAME, MainWindow
 def main(argv=None):
     argv = sys.argv if argv is None else argv
     QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
+    # Menus Fichier, Édition… dans la fenêtre (en haut à gauche), pas dans la barre de menus du Mac
+    QApplication.setAttribute(Qt.ApplicationAttribute.AA_DontUseNativeMenuBar)
     app = QApplication(argv)
     app.setApplicationName(APP_NAME)
     app.setOrganizationName("IldaGen")

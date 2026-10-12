@@ -50,7 +50,7 @@ class TopBar(QWidget):
         lay.setContentsMargins(4, 0, 6, 0)
         lay.setSpacing(6)
 
-        self.menu_bar = QMenuBar()
+        self.menu_bar = QMenuBar(self)              # avec un parent : jamais la barre de menus globale du Mac
         self.menu_bar.setNativeMenuBar(False)       # les menus restent dans la fenêtre, aussi sur Mac
         lay.addWidget(self.menu_bar)
         lay.addStretch(1)
