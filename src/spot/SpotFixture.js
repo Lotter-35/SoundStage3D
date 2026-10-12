@@ -245,7 +245,10 @@ export class SpotFixture {
         r[4] = m.colorB[0]; r[5] = m.colorB[1]; r[6] = m.colorB[2]; r[7] = m.split;
         r[8] = tanHalf; r[9] = m.iris; r[10] = m.frost; r[11] = this.focusDist;
         r[12] = m.goboFixedPos; r[13] = m.goboRotPos; r[14] = m.goboAngle; r[15] = m.animSlot;
-        r[16] = m.animIn; r[17] = m.animAngle; r[18] = (1 - this.poolWeight) * (p.beamIntensity > 1e-3 ? Math.min(4, p.lightOutput / p.beamIntensity) : 0); // tache au sol ∝ lumière émise r[19] = LENS_RADIUS;
+        r[16] = m.animIn; r[17] = m.animAngle;
+        // Tache au sol ∝ lumière émise ; rayon de la lentille (pénombre douce, éblouissement, faisceaux regroupés)
+        r[18] = (1 - this.poolWeight) * (p.beamIntensity > 1e-3 ? Math.min(4, p.lightOutput / p.beamIntensity) : 0);
+        r[19] = LENS_RADIUS;
         r[20] = m.blades[0]; r[21] = m.bladeAngles[0]; r[22] = m.blades[1]; r[23] = m.bladeAngles[1];
         r[24] = m.blades[2]; r[25] = m.bladeAngles[2]; r[26] = m.blades[3]; r[27] = m.bladeAngles[3];
         // Apex à LENS / tan(zoom/2) : le faisceau visible (bord du zoom) a le diamètre de la lentille à la sortie
@@ -262,7 +265,9 @@ export class SpotFixture {
         const detail = m.goboFixedPos > 0.001 || m.goboRotPos > 0.001 || (m.animIn > 0.001 && m.animSlot > 0.5) || blades || half;
         this.needsGate = this.flux > 1e-4 && detail && !(m.frost >= 0.7 && !blades && !half);
         r[48] = this.needsGate && this.gateTile >= 0 ? this.gateTile + 1 : 0;
-        r[49] = p.beamLength > 0 && p.beamLength < SPOT_BEAM_RANGE ? p.beamLength : 0; // longueur visible du faisceau (0 : toute la portée) r[50] = 0; r[51] = 0;
+        // longueur visible du faisceau (0 : toute la portée)
+        r[49] = p.beamLength > 0 && p.beamLength < SPOT_BEAM_RANGE ? p.beamLength : 0;
+        r[50] = 0; r[51] = 0;
 
         // Lentille : s'illumine de la couleur du faisceau (bloom 3x plus puissant)
         const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 15.0;
