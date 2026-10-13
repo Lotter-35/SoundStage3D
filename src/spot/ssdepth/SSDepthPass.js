@@ -11,8 +11,9 @@
  *   3. retouche des bords en pleine résolution (pixels dont les voisins réduits diffèrent : faisceaux
  *      recalculés exactement, seulement dans les tuiles où passent peu de cônes ; ailleurs remontée
  *      bilatérale) ;
- *   4. faisceaux FLOUS (frost ≥ 60 %, liste à part : SSDepthLights) calculés en 1/8 de résolution — que des
- *      dégradés, l'agrandissement (bilinéaire guidé par la profondeur) ne se voit pas ; 16 × moins de pixels
+ *   4. faisceaux FLOUS (frost ≥ 60 % et flou d’au moins 8 pixels à l’écran, liste à part : SSDepthLights)
+ *      calculés en ¼ de résolution — que des
+ *      dégradés, l'agrandissement (bilinéaire guidé par la profondeur) ne se voit pas ; 4 × moins de pixels
  *      qu'en ½ pour des cônes immenses (grand zoom + frost) qui couvraient tout l'écran ;
  *   5. sortie différée { kind: 'ss', full: true } lue par la passe finale (1 lecture par pixel).
  * ─────────────────────────────────────────────────────────────
@@ -27,7 +28,7 @@ import { gpuPassTimer } from '../../render/GpuPassTimer.js';
  *  (recalculer des centaines de cônes sur chaque bord coûtait plusieurs ms ; le détail ne s'y voit pas) */
 const REFINE_MAX_CONES = 24;
 /** Diviseur de résolution des faisceaux flous */
-const SOFT_DIV = 8;
+const SOFT_DIV = 4;
 const _clearColor = new THREE.Color();
 
 export class SSDepthPass extends Pass {
@@ -101,6 +102,7 @@ export class SSDepthPass extends Pass {
     setSize(width, height) {
         this._width = width;
         this._height = height;
+        this.lights.viewHeight = height;
         const w = Math.max(1, Math.ceil(width / this.div));
         const h = Math.max(1, Math.ceil(height / this.div));
         this.beamTarget.setSize(w, h);
@@ -159,7 +161,7 @@ export class SSDepthPass extends Pass {
         }
         if (timer) timer.end();
 
-        // Faisceaux flous : 1/8 de résolution, leurs propres listes de tuiles
+        // Faisceaux flous : ¼ de résolution, leurs propres listes de tuiles
         const soft = this.lights.softVisible > 0;
         if (soft) {
             if (timer) timer.begin('Faisceaux SS flous');

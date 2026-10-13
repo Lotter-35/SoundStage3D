@@ -62,8 +62,11 @@ export const SS_FLAG_BEAM = 1;
 const GEO = SS_GEO;
 const FLAG_BEAM = SS_FLAG_BEAM, FLAG_POOL = 2, FLAG_SOFT = 4;
 /** Faisceau « flou » (frost ≥ 60 % : flou de fenêtre ≥ 0,25) : que des dégradés, calculé à part en très basse
- *  résolution (SSDepthPass, 1/8) — l'agrandissement d'un dégradé ne se voit pas */
+ *  résolution (SSDepthPass, ¼) — l'agrandissement d'un dégradé ne se voit pas… si le flou est assez large À
+ *  L'ÉCRAN : au moins SS_SOFT_MIN_PX pixels là où le faisceau est le plus proche de la caméra. De loin, un faisceau
+ *  étroit reste un trait fin : il garde la passe nette (sinon blocs de 4 × 4 pixels) */
 export const SS_SOFT_BLUR = 0.25;
+const SS_SOFT_MIN_PX = 8;
 
 const OCT = 8;
 const OCT_K = 1 / Math.cos(Math.PI / OCT);   // octogone circonscrit au cercle
@@ -126,6 +129,7 @@ export class SSDepthLights {
         this.softTilesTexture.needsUpdate = true;
         this._softCount = new Uint16Array(SS_TILE_COUNT);
         this.softVisible = 0;      // faisceaux flous présents dans au moins une tuile
+        this.viewHeight = 1080;    // hauteur de l'image (pixels), pour la largeur du flou à l'écran
         this.beamCones = 0;        // cônes à faisceau SS Depth
         this.poolCones = 0;        // cônes à tache de lumière
         this.poolVisible = 0;
@@ -345,6 +349,22 @@ export class SSDepthLights {
         return true;
     }
 
+    /** Flou du faisceau li assez large à l'écran (≥ SS_SOFT_MIN_PX) au point de son axe le plus proche de la caméra ? */
+    _softOnScreen(li, cx, cy, cz, pxPerRad) {
+        const g = li * GEO, o = li * SS_LIGHT_TEXELS * 4;
+        const d = this.lightsTexture.image.data, geo = this._geo;
+        const ax = geo[g], ay = geo[g + 1], az = geo[g + 2];
+        let ux = geo[g + 4] - ax, uy = geo[g + 5] - ay, uz = geo[g + 6] - az;
+        const len = Math.hypot(ux, uy, uz) || 1;
+        ux /= len; uy /= len; uz /= len;
+        const t = Math.max(0, Math.min(len, (cx - ax) * ux + (cy - ay) * uy + (cz - az) * uz));
+        const px = ax + ux * t - cx, py = ay + uy * t - cy, pz = az + uz * t - cz;
+        const dist = Math.max(0.5, Math.hypot(px, py, pz));
+        // Largeur du flou : flou de fenêtre × tan(zoom/2) × distance depuis l'apex (lentille + t)
+        const blur = d[o + 22] * d[o + 20] * (d[o + 7] + t);
+        return blur / dist * pxPerRad >= SS_SOFT_MIN_PX;
+    }
+
     /** Ajoute le cône li aux tuiles couvertes par la projection courante ; vrai si au moins une tuile */
     _raster(li, counts, data) {
         const seg = this._seg, ns = this._ns;
@@ -435,6 +455,8 @@ export class SSDepthLights {
         const sorted = order.subarray(0, this.count);
         sorted.sort((a, b) => score[b] - score[a]);
         let visible = 0, poolVisible = 0, softVisible = 0;
+        // Pixels par radian (hauteur) : largeur à l'écran du flou des faisceaux candidats à la passe floue
+        const pxPerRad = p[5] * this.viewHeight * 0.5;
         for (let oi = 0; oi < this.count; oi++) {
             const li = sorted[oi];
             const g = li * GEO;
@@ -444,7 +466,9 @@ export class SSDepthLights {
             if (flags & FLAG_BEAM) {
                 if (this._project(li, 4, v, p, near)) {
                     projected = 4;
-                    if (flags & FLAG_SOFT) { if (this._raster(li, sCounts, sData)) softVisible++; }
+                    if ((flags & FLAG_SOFT) && this._softOnScreen(li, cx, cy, cz, pxPerRad)) {
+                        if (this._raster(li, sCounts, sData)) softVisible++;
+                    }
                     else if (this._raster(li, counts, data)) visible++;
                 } else projected = 0;
             }

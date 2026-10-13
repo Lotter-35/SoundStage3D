@@ -56,7 +56,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
         defines: refine ? { REFINE: 1 } : {},
         uniforms: {
             tBeamLow:    { value: null },   // retouche : faisceaux réduits (a = profondeur du pixel réduit)
-            tSoft:       { value: null },   // faisceaux flous (1/8 de résolution, a = profondeur)
+            tSoft:       { value: null },   // faisceaux flous (¼ de résolution, a = profondeur)
             uSoftScale:  { value: new THREE.Vector2(1, 1) },
             uSoftOn:     { value: 0 },
             uSat:        { value: 3 },      // lumière au-delà de laquelle le pixel est blanc (voir SpotManager.setRoomFog)
@@ -250,7 +250,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
 
             float lum(vec3 c) { return c.r + c.g + c.b; }
 
-            // Faisceaux flous (1/8) : interpolation bilinéaire pondérée par la profondeur (pas de fuite sur un objet
+            // Faisceaux flous (¼) : interpolation bilinéaire pondérée par la profondeur (pas de fuite sur un objet
             // au premier plan) ; aucun texel à la bonne profondeur : le plus proche en profondeur
             vec3 softUp(ivec2 p, float cz) {
                 if (uSoftOn == 0) return vec3(0.0);
