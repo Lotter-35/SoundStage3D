@@ -53,7 +53,10 @@ export class SSDepthPass extends Pass {
         };
         this.beamTarget = new THREE.WebGLRenderTarget(1, 1, opts);
         this.haloTarget = new THREE.WebGLRenderTarget(1, 1, opts);
-        this.haloSrcTarget = new THREE.WebGLRenderTarget(1, 1, opts);   // scène + classiques + taches réduits
+        // Scène + faisceaux + taches réduits, avec mipmaps (lecture floutée par le halo)
+        this.haloSrcTarget = new THREE.WebGLRenderTarget(1, 1, {
+            ...opts, minFilter: THREE.LinearMipmapLinearFilter, generateMipmaps: true,
+        });
         this.beamMaterial = createSSBeamMaterial(shadowUniforms);
         this.haloMaterial = createSSHaloMaterial();
         this.haloSrcMaterial = createHaloSourceMaterial();
@@ -148,6 +151,7 @@ export class SSDepthPass extends Pass {
             if (pool) hs.uPoolScale.value.copy(pool.scale);
             hs.uFull.value.copy(this._fullSize);
             hs.uDiv.value = this.div;
+            hs.tSS.value = this.beamTarget.texture;
             const h = this.haloMaterial.uniforms;
             h.tSrc.value = this.haloSrcTarget.texture;
             h.tSS.value = this.beamTarget.texture;

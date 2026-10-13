@@ -24,9 +24,11 @@
  *    par pixel) de l'image de la scène + faisceaux, occultation ASYMÉTRIQUE par la profondeur (un objet au
  *    premier plan bloque la lumière de derrière, une lumière devant un mur diffuse librement son halo).
  *    Sortie = faisceaux + halo (tout est additif) : une seule remontée dans la passe finale.
- *    La scène, les faisceaux classiques et les taches sont d'abord réduits à la résolution des faisceaux
- *    (createHaloSourceMaterial, 4 lectures bilinéaires par pixel réduit) : le halo ne lit plus l'image
- *    pleine résolution à 8 endroits éloignés par pixel (très coûteux en 4K : le cache ne suit pas).
+ *    La scène, les faisceaux (SS et classiques) et les taches sont d'abord réduits à la résolution des
+ *    faisceaux (createHaloSourceMaterial, 4 lectures bilinéaires par pixel réduit) puis en mipmaps : le halo
+ *    lit le niveau dont le flou correspond à l'écart entre ses échantillons (halo lisse, sans grain ; le motif
+ *    tourné d'un pixel à l'autre donnait des points avec un grand rayon), et plus l'image pleine résolution
+ *    à 8 endroits éloignés par pixel (très coûteux en 4K : le cache ne suit pas).
  *
  * 3. La remontée bilatérale 3×3 guidée par la profondeur est faite par FinalCompositePass (avant le
  *    brouillard : transmittance et bloom s'appliquent aux faisceaux SS comme aux faisceaux classiques).
@@ -229,12 +231,14 @@ export function createHaloSourceMaterial() {
             tPool:      { value: null },
             uPoolOn:    { value: 0 },
             uPoolScale: { value: new THREE.Vector2(1, 1) },
+            tSS:        { value: null },
             uFull:      { value: new THREE.Vector2(1, 1) },
             uDiv:       { value: 3 },
         },
         vertexShader: VERT,
         fragmentShader: /* glsl */`
             precision highp float;
+            uniform sampler2D tSS;
             uniform sampler2D tScene;
             uniform sampler2D tClassic;
             uniform int uClassicOn;
@@ -251,6 +255,7 @@ export function createHaloSourceMaterial() {
                                  + texture2D(tScene, uv + vec2(-o.x, o.y)).rgb + texture2D(tScene, uv + vec2(o.x, o.y)).rgb);
                 if (uClassicOn == 1) col += texture2D(tClassic, uv).rgb;
                 if (uPoolOn == 1) col += texture2D(tPool, uv * uPoolScale).rgb;
+                col += texelFetch(tSS, ivec2(gl_FragCoord.xy), 0).rgb;   // faisceaux SS (même résolution)
                 gl_FragColor = vec4(col, 1.0);
             }
         `,
@@ -296,17 +301,17 @@ export function createSSHaloMaterial() {
                 vec2 toLow = uFull / (uDiv * uLow);              // uv plein écran → uv de l'image réduite
                 float rad = uRadius * 0.022 / clamp(cd * 0.06, 0.45, 2.5);
                 vec2 st = vec2(rad * uFull.y / uFull.x, rad);
-                // Disque tourné d'un pixel à l'autre (motif fixe dans le temps) : pas d'images fantômes des points brillants
-                float a = 6.2831853 * fract(52.9829189 * fract(dot(vec2(lo), vec2(0.06711056, 0.00583715))));
-                mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
+                // Niveau de mipmap : flou de la taille de l'écart entre échantillons (pas de grain ni de copies
+                // des points brillants, motif identique pour tous les pixels)
+                float lod = log2(max(1.0, rad * uLow.y * 0.6));
                 vec3 accum = vec3(0.0);
                 float wSum = 0.0;
                 for (int i = 0; i < 8; i++) {
-                    vec2 tuv = clamp(uv + rot * POISSON[i] * st, vec2(0.001), vec2(0.999));
-                    vec4 b = texture2D(tSS, tuv * toLow);
-                    // Image réduite (scène + faisceaux classiques + taches) : moins de scintillement des petits points
-                    vec3 col = texture2D(tSrc, tuv * toLow).rgb + b.rgb;
-                    float dz = max(b.a, 0.1) - cd;
+                    vec2 tuv = clamp(uv + POISSON[i] * st, vec2(0.001), vec2(0.999));
+                    float bz = textureLod(tSS, tuv * toLow, 0.0).a;
+                    // Image réduite et floutée : scène + faisceaux (SS et classiques) + taches
+                    vec3 col = textureLod(tSrc, tuv * toLow, lod).rgb;
+                    float dz = max(bz, 0.1) - cd;
                     // Occultation asymétrique : un objet au premier plan bloque la lumière de derrière ;
                     // une lumière devant un mur diffuse librement son halo
                     float wOcc = dz > 0.3 ? exp(-dz * dz * 1.8) : exp(-dz * dz * 0.03);
