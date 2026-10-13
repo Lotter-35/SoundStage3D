@@ -4,12 +4,13 @@
  * Orchestrateur des lyres Spot :
  *   - ajout / suppression / duplication / recherche (identifiants uniques réseau)
  *   - boucle de mise à jour : DMX → mécanique → batch GPU → ombres statiques → cônes (faisceaux SS, taches)
- *   - réglages globaux (fumée, qualité, taches de lumière, reflets)
+ *   - réglages globaux (fumée, qualité, taches de lumière, reflets, lumière indirecte)
  *   - point d'entrée DMX : applyDmxFrame(univers, octets)
  *
  * Coût GPU : 1 draw call de faisceaux + 1 d'éblouissements + ~10 de boîtiers quel que soit le nombre de
  * lyres ; aucune lumière three.js : l'éclairage du décor est une passe à l'écran (LightPoolPass, toutes
- * les lyres, ombres statiques cuites par SpotShadowAtlas).
+ * les lyres, ombres statiques cuites par SpotShadowAtlas) ; lumière indirecte (GI) et reflets des faisceaux :
+ * SpotLightingFX.
  *
  * Rendu des faisceaux choisi PAR LYRE (paramètre « Rendu du faisceau » : Global / Classique / SS Depth ;
  * Global = réglage synchronisé « Rendu des faisceaux (défaut) ») : les lyres classiques passent par
@@ -24,6 +25,7 @@ import { SSDepthPass } from './ssdepth/SSDepthPass.js';
 import { LENS_RADIUS } from './SpotHousing.js?v=2';
 import { SpotShadowAtlas } from './lighting/SpotShadowAtlas.js';
 import { LightPoolPass } from './lighting/LightPoolPass.js';
+import { SpotLightingFX } from './SpotLightingFX.js';
 import { getSpotHousingInstancer } from './SpotHousing.js?v=2';
 import { DmxPatch } from '../dmx/DmxPatch.js';
 import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
@@ -76,8 +78,13 @@ export class SpotManager {
 
         // Cônes des lyres (faisceaux SS Depth et taches de lumière), triés par tuile d'écran
         this.ssLights = new SSDepthLights(this.batch);
+        // Lumière indirecte (grille de GI, passe insérée avant les taches qui la lisent) et reflets des faisceaux
+        this.fx = new SpotLightingFX({
+            lights: this.ssLights, batch: this.batch, camera, shadowUniforms: this.shadows.uniforms,
+            laserManager: this._hasPass ? laserManager : null,
+        });
         // Taches de lumière de toutes les lyres : passe insérée avant les faisceaux SS Depth (le halo les lit)
-        this.poolPass = new LightPoolPass(this.ssLights, this.batch, camera, this.shadows.uniforms);
+        this.poolPass = new LightPoolPass(this.ssLights, this.batch, camera, this.shadows.uniforms, this.fx.giUniforms);
         this.poolPass.enabled = false;
         this._hasPoolPass = this._hasPass && laserManager.addScenePass(this.poolPass);
         if (this._hasPoolPass) this.poolPass.sceneDepth = laserManager.sceneDepth;
@@ -89,6 +96,7 @@ export class SpotManager {
         this.ssPass.poolPass = this.poolPass;
         this._hasSSPass = this._hasPass && laserManager.addScenePass(this.ssPass);
         if (this._hasSSPass) this.ssPass.sceneDepth = laserManager.sceneDepth;
+        this.fx.addReflectPass();
 
         this._compiled = false;
         this._time = 0;
@@ -308,6 +316,7 @@ export class SpotManager {
         const pu = this.poolPass.material.uniforms;
         pu.uGain.value = POOL_GAIN * g.lightPoolIntensity;
         pu.uSpecOn.value = g.specular ? 1 : 0;
+        this.fx.applyGlobals(g, { haze: u.uHaze.value, phaseG: g.scattering, poolGain: pu.uGain.value });
     }
 
     _poolsOn() {
@@ -336,6 +345,7 @@ export class SpotManager {
         const map = ground && ground.material && ground.material.map;
         if (map) {
             this.poolPass.setGrassTexture(map);
+            this.fx.setGrassTexture(map);
             this._grassFound = true;
         }
     }
@@ -378,6 +388,7 @@ export class SpotManager {
             this.ssLights.collect(this._spots.values());
             this.ssPass.enabled = this._haloOn();
             this.poolPass.enabled = false;
+            this.fx.update(this.poolPass);
             this.batch.glareMesh.visible = false;
             return;
         }
@@ -406,11 +417,15 @@ export class SpotManager {
         // Ombres statiques : emplacements, invalidations (lyre déplacée, décor modifié), quelques cuissons
         this.shadows.update(this._spots.values());
         // Cônes : faisceaux des lyres SS Depth + taches de toutes les lyres (triés par tuile au rendu)
+        // (taches décrites aussi pour la GI : sa grille est éclairée par les taches)
         const pools = this._poolsOn();
-        this.ssLights.collect(this._spots.values(), pools);
+        const gi = this.fx.giWanted();
+        this.ssLights.collect(this._spots.values(), pools || gi);
         this.ssPass.enabled = this._hasSSPass && (this.ssLights.beamCones > 0 || this._haloOn());
-        this.poolPass.enabled = pools && this.ssLights.poolCones > 0;
-        if (pools) this._findGrass();
+        this.poolPass.pools = pools;
+        this.fx.update(this.poolPass);
+        this.poolPass.enabled = this._hasPoolPass && ((pools && this.ssLights.poolCones > 0) || this.poolPass.giGain > 0);
+        if (pools || gi) this._findGrass();
 
         // Résolution réduite tant que la caméra est dans un faisceau (maintenue 0,5 s : pas de va-et-vient)
         if (this.volumePass.enabled && this._cameraInsideBeam()) this._insideHold = 0.5;
@@ -430,6 +445,7 @@ export class SpotManager {
         this._spots.clear();
         this.shadows.dispose();
         this.poolPass.dispose();
+        this.fx.dispose();
         this.volumePass.dispose();
         this.ssPass.dispose();
         this.ssLights.dispose();

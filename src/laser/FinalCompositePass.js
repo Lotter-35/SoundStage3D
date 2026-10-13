@@ -8,7 +8,8 @@
  * plus elles-mêmes : cette passe lit l'image de la scène UNE fois et applique, dans le même ordre
  * qu'avant et avec les mêmes formules :
  *   1. + nappes et faisceaux (sur-échantillonnage sensible à la profondeur)
- *      + taches de lumière des lyres (pleine résolution, ou ½ + remontée bilatérale)
+ *      + taches de lumière des lyres (pleine résolution, ou ½ + remontée bilatérale ; rebond de la GI inclus)
+ *      + reflets des faisceaux sur le plateau (¼ ou ⅛, remontée bilatérale)
  *      + faisceaux SS Depth et halo atmosphérique (remontée bilatérale 3×3 guidée par la profondeur)
  *   2. × transmittance + lumière diffusée du brouillard (bilatéral)
  *   3. + bloom lasers + bloom lampes
@@ -47,6 +48,11 @@ function createFinalCompositeMaterial(dummy) {
             uPoolScale: { value: new THREE.Vector2(1, 1) },
             uPoolDiv:  { value: 1 },
             uPoolSharp: { value: 1.5 },
+            // reflets des faisceaux : image réduite, a = profondeur linéaire
+            uReflOn:   { value: 0 },
+            tRefl:     { value: dummy },
+            uReflScale: { value: new THREE.Vector2(1, 1) },
+            uReflSharp: { value: 1.5 },
             // brouillard
             uHazeOn:   { value: 0 },
             tHaze:     { value: dummy },
@@ -91,6 +97,10 @@ function createFinalCompositeMaterial(dummy) {
             uniform vec2 uPoolScale;
             uniform int uPoolDiv;
             uniform float uPoolSharp;
+            uniform int uReflOn;
+            uniform sampler2D tRefl;
+            uniform vec2 uReflScale;
+            uniform float uReflSharp;
             uniform int uHazeOn;
             uniform sampler2D tHaze;
             uniform vec2 uHazeSize;
@@ -186,6 +196,16 @@ function createFinalCompositeMaterial(dummy) {
                     }
                 }
 
+                // 1 bis'. Reflets des faisceaux sur le plateau (même remontée bilatérale)
+                if (uReflOn == 1) {
+                    vec2 ruv = vUv * uReflScale;
+                    vec3 quick = texture2D(tRefl, ruv).rgb;
+                    if (quick.r + quick.g + quick.b > 0.0) {
+                        if (z0 < 0.0) z0 = linZ(vUv);
+                        col += bilateralUp(tRefl, ruv, quick, max(z0, 0.1), uReflSharp);
+                    }
+                }
+
                 // 1 ter. Faisceaux SS Depth (+ halo) : remontée bilatérale jointe 3×3 guidée par la profondeur
                 if (uSSOn == 1) {
                     vec2 suv = vUv * uSSScale;
@@ -277,6 +297,7 @@ export class FinalCompositePass extends Pass {
         u.uHazeOn.value = 0;
         u.uSSOn.value = 0;
         u.uPoolOn.value = 0;
+        u.uReflOn.value = 0;
         for (const p of this.producers) {
             if (!p.enabled || typeof p.deferredOutput !== 'function') continue;
             const o = p.deferredOutput();
@@ -300,6 +321,11 @@ export class FinalCompositePass extends Pass {
                 u.uPoolScale.value.copy(o.scale);
                 u.uPoolDiv.value = o.div;
                 u.uPoolSharp.value = o.sharpness;
+            } else if (o.kind === 'refl') {
+                u.uReflOn.value = 1;
+                u.tRefl.value = o.texture;
+                u.uReflScale.value.copy(o.scale);
+                u.uReflSharp.value = o.sharpness;
             } else if (o.kind === 'haze') {
                 u.uHazeOn.value = 1;
                 u.tHaze.value = o.texture;

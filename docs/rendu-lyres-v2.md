@@ -147,4 +147,121 @@ three.js + textures de projection), `createGateMapMaterial`, les réglages « É
 - Origine de l'ombre = pivot de la tête (lentille à 22 cm) : léger décalage tout près de la lyre.
 - 128² par face : texel de 1,6 cm à 1 m, 1,6 m à 100 m → bords d'ombre doux / crénelés au loin (256 conseillé si
   la VRAM le permet : 44 Mo pour 50 lyres, 11 Mo en 128).
-- Éclairage direct seulement : le rebond (GI) arrive en phase C.
+- Éclairage direct seulement : le rebond (GI) arrive en phase C (voir plus bas).
+
+## Phase C — faite (branche `lyres-v2-c`)
+
+**Fichiers** : `src/spot/gi/` (`GIGridPass.js` grille et mise à jour, `GIShaders.js` lumières virtuelles et
+grille, `giGLSL.js` lecture), `src/spot/reflect/` (`BeamReflectPass.js`, `BeamReflectShaders.js`,
+`SSReflectBins.js` tri des cônes en miroir), `src/spot/SpotLightingFX.js` (branchement et réglages),
+GLSL partagé : `src/spot/ssdepth/SSBeamGLSL.js` (intersection rayon / cône, quadrature 3 points, ombres, phase —
+sorti de `SSDepthShaders.js`, image identique), `src/spot/lighting/surfaceGLSL.js` (profondeur → position,
+normale, matériau — sorti de `LightPoolShaders.js`). Modifiés : `LightPoolShaders/Pass` (rebond de la GI),
+`HazeShaders/HazePass` (brume éclairée), `FinalCompositePass` (reflets), `shadowGLSL` (`shadowDepth`).
+
+### R5 — Lumière indirecte (GI) en grille 3D
+
+- **Grille** : texture 3D RGBA16F posée sur la salle (x −24…24, y −0,5…21,5, z −12…52 : plateau, mur, toit et
+  50 m de public). Haute : 48 × 16 × 64 (comme le banc C++), Basse : 32 × 12 × 40.
+  Texture 3D plutôt qu'atlas 2D : la **lecture** est le chemin chaud (chaque pixel du décor, chaque tranche du
+  brouillard) et le filtrage trilinéaire matériel la fait en 1 lecture (atlas : 2 lectures + interpolation en z) ;
+  l'écriture se fait couche par couche (`setRenderTarget(cible, couche)`), 16 dessins minuscules par image au plus.
+- **Ce qui l'éclaire** (une passe de « lumières virtuelles », texture 48 × cônes) :
+  1. **rebond sur le décor** : K rayons par cône (spirale de Vogel dans l'iris, tournée à chaque image) arrêtés
+     sur le décor par la **cubemap de distances** de la lyre (ombres de la phase B ; repli : le sol), normale
+     par 2 rayons voisins, albédo par le classement des taches ; lumière virtuelle diffuse de flux
+     albédo × intensité × angle solide (gobos, couleurs, prisme compris) ;
+  2. **faisceaux dans la fumée** : M points le long de chaque faisceau jusqu'au décor (tirés au hasard à chaque
+     image), source isotrope de flux densité × longueur × flux du faisceau. Sur un plateau et un mur en lino noir
+     (albédo ≈ 0,07) le vrai rebond est presque invisible : dans un vrai concert, c'est surtout la lumière des
+     faisceaux diffusée par la fumée qui « allume » la salle.
+  Budget fixe de lumières virtuelles (Basse 192, Haute 512 ; ⅗ décor, ⅖ faisceaux ; 2 à 16 + 1 à 8 par cône).
+- **Mise à jour** par tranches : 1/8 des couches par image en Basse, 1/4 en Haute ; chaque cellule additionne
+  toutes les lumières virtuelles (Φ/π × cos / (r² + r0²), demi-espace devant la surface seulement : pas de fuite
+  sous le plateau ni derrière le mur ; pas de visibilité entre lumière virtuelle et cellule). **Lissage temporel**
+  par mélange alpha (α = 0,6 / 0,5 par mise à jour : ≈ 8 images) — pas de double tampon, une lyre qui bouge ne
+  fait pas scintiller la GI ; premier cycle sans lissage ; grille vidée quand plus aucune lyre n'est allumée.
+- **Décor** : la passe des taches de lumière ajoute albédo / π × grille (lue 0,7 m devant la surface) pour tous
+  les pixels du décor (elle tourne même si « Taches de lumière » est désactivé : GI seule).
+- **Brume** : `HazeShaders` ajoute la grille lue au milieu de chaque tranche (1 lecture par tranche, diffusion
+  isotrope) × densité × transmittance.
+- **Intensité 1** = rendu de concert lisible : ≈ 12 × la valeur physique sur le décor (0,08 ≈ physique), ≈ 4 ×
+  dans la brume (plus fort : voile gris sur toute la salle avec beaucoup de faisceaux).
+
+### R6 — Reflets
+
+- **Spéculaire des taches** : phase B (Cook-Torrance), inchangé.
+- **Reflets des faisceaux** sur le dessus brillant du plateau (lino noir, rugosité 0,3) : passe en ¼ (défaut) ou ⅛
+  de résolution ; pour chaque pixel du plateau, rayon de vue réfléchi autour de la normale reconstruite, diffusion
+  des faisceaux SS Depth le long de ce rayon avec **exactement** le code des faisceaux (intersection exacte,
+  3 échantillons, gobos, prisme, ombres statiques), × Fresnel de Schlick (F0 = 0,04) × brillance 1,5 × intensité ;
+  flou de rugosité 3 × 3 guidé par la profondeur ; remontée bilatérale par la passe finale, avant le brouillard.
+- **Liste des cônes** : un rayon réfléchi ne passe pas par les tuiles de l'écran. Le reflet dans un plan y = h est
+  le rayon de vue prolongé sous le plan : les cônes sont triés par tuile avec la vue « caméra × miroir du plan »
+  (même code CPU que le tri des faisceaux, 0,1 à 0,3 ms pour 50 lyres). Mesuré : boucle sur tous les faisceaux
+  dans chaque tuile 1,55 × plus lente (9 lyres sur le plateau) et tronquée à 128 cônes → tri en miroir retenu.
+- Lasers et barres LED : **non reflétés** (pas de description en cônes ; leur rendu n'est pas un tracé de rayon) ;
+  faisceaux des lyres en rendu Classique non reflétés non plus.
+
+### Réglages
+
+- Globaux synchronisés (🌫️ Rendu global des lyres) : **Lumière indirecte (GI)** (oui), **Lumière indirecte
+  (intensité)** (1, 0 à 4), **Brume éclairée par la GI** (oui), **Reflets des faisceaux** (oui), **Reflets des
+  faisceaux (intensité)** (1, 0 à 3).
+- Locaux (⚙️ Options › Effets › Lyres) : **Qualité GI** (Désactivée / **Basse** / Haute ; Désactivée = aucun
+  coût), **Résolution des reflets** (**¼** / ⅛).
+- Mesures GPU par passe : sections « GI (lumières virtuelles) », « GI (grille) », « Reflets des faisceaux » ;
+  lignes « GI : grille, couches / image, lumières virtuelles » et « Reflets : cônes, résolution ».
+
+### Mesures (rendu logiciel SwiftShader, 1280 × 720, relatives, ±10 % de bruit — ±20 % sur la passe de scène)
+
+Passes ajoutées (même image, variantes activées / désactivées sur la même page) :
+
+| Scène | Scène (passe) | GI (lumières virtuelles) | GI (grille) Basse / Haute | Reflets ¼ / ⅛ | Reflets ¼ sans tri en miroir | Taches (GI off → on) |
+|---|---|---|---|---|---|---|
+| 50 lyres (`many`) | ≈ 1600 | 1,3 | 6 / 69 | 26 / 6 | 32 | ≈ +5 % |
+| plateau brillant, 9 lyres (`gloss`) | ≈ 1700 | 1,3 | 5 / 36 | 45 / 11 | 70 | ≈ +4 % |
+
+- Par défaut (GI Basse, reflets ¼) la phase C coûte **≈ 1 à 3 % de la passe de scène** ; GI Haute ≈ 2 à 4 % ;
+  reflets ⅛ ≈ 4 × moins chers que ¼. Le rebond sur le décor ajoute la normale et 1 lecture 3D à chaque pixel de
+  la passe des taches (½ résolution en 4K). Brume éclairée : 1 lecture par tranche, dans le bruit de mesure.
+- Totaux avant (phase B) / après (phase C, défaut) : gobos 3430 / 3387, 50 lyres 3484 / 3463, plateau brillant
+  3506 / 3748 (bruit ±10 %). À confirmer sur la GTX 1080 avec « Mesures GPU par passe ».
+- Captures (scratchpad de la session) : `cmp_gloss` (reflets des faisceaux sur le plateau), `cmp_wall_gi`
+  (lyres rouge et bleue sur le mur : désactivé / GI sur le décor / + brume éclairée), `cmp_gobos_haze` (brume
+  éclairée par la GI). Aucune erreur de shader ni de console, tout activé et chaque option désactivée.
+
+### Limites / à savoir
+
+- GI : grille fixe sur le plateau et le public proche (hors grille : pas de GI) ; pas de visibilité entre une
+  lumière virtuelle et une cellule (lumière qui passe à travers un poteau ou une enceinte) ; grille scalaire
+  (pas de direction) : une surface éclairée reçoit aussi un peu de sa propre lumière (halo coloré doux autour des
+  taches, comme le banc C++) ; matériaux classés par position / normale (pas d'albédo réel) ; une cellule de
+  1 à 1,8 m : pas de détail fin, c'est une lumière d'ambiance. Sans ombres statiques, les rayons s'arrêtent sur le
+  sol seulement.
+- Brume éclairée : une lecture par tranche du brouillard (2 tranches par défaut) : variations lentes seulement.
+- Reflets : seulement le dessus du plateau (plan y = 3 m ; marches, table DJ et sol non reflétés), seulement les
+  faisceaux SS Depth ; le rayon réfléchi n'a pas de profondeur : un faisceau caché derrière un objet peut se
+  refléter (le toit et le mur coupent déjà les faisceaux par leurs ombres) ; caméra sous le plateau : passe
+  sautée. En ⅛ les reflets sont plus flous / plus grossiers.
+
+## Résumé de tous les réglages des lyres v2 (phases A, B, C)
+
+| Réglage | Où | Défaut | Effet / coût |
+|---|---|---|---|
+| Rendu du faisceau (par lyre) | ✨ Rendu de la lyre | Global | Classique / SS Depth |
+| Rendu des faisceaux (défaut) | 🌫️ global | SS Depth | faisceaux en basse résolution, coût ∝ pixels touchés |
+| Halo atmosphérique (intensité / rayon) | 🌫️ global | 0,5 / 1 | halo autour des sources ; 0 = passe sautée |
+| Taches de lumière (+ intensité) | 🌫️ global | oui / 1 | éclairage du décor par toutes les lyres |
+| Reflets spéculaires | 🌫️ global | oui | reflets des taches (Cook-Torrance) |
+| Lumière indirecte (GI) (+ intensité) | 🌫️ global | oui / 1 | rebond sur le décor + lumière des faisceaux dans la salle |
+| Brume éclairée par la GI | 🌫️ global | oui | la fumée de la salle prend la couleur des lyres |
+| Reflets des faisceaux (+ intensité) | 🌫️ global | oui / 1 | faisceaux reflétés dans le plateau brillant |
+| Résolution des faisceaux SS | ⚙️ local | ⅓ | ½ / ⅓ / ¼ |
+| Netteté des bords | ⚙️ local | 1,5 | remontée bilatérale des faisceaux |
+| Ombres des lyres | ⚙️ local | 128 | Désactivées / 128 / 256 (cubemaps cuites une fois) |
+| Ombres dans les faisceaux classiques | ⚙️ local | oui | |
+| Résolution des taches | ⚙️ local | Auto | pleine jusqu'en 1080p, ½ au-delà |
+| Qualité GI | ⚙️ local | Basse | Désactivée / Basse / Haute |
+| Résolution des reflets | ⚙️ local | ¼ | ¼ / ⅛ |
+| Mesures GPU par passe | ⚙️ Affichage | non | tableau des temps par passe |

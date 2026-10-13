@@ -16,6 +16,7 @@
  *   5. phase de Mie (Henyey-Greenstein) : plus lumineux en regardant vers la source
  *   6. atténuation (loi de Beer-Lambert) : le décor s'efface dans la fumée
  *   7. ombres de la structure de la scène (mêmes obstacles que les lasers et les lyres)
+ *   8. lumière indirecte des lyres (grille de GI, spot/gi/) : 1 lecture par tranche, diffusion isotrope
  *
  * Sortie : rgb = lumière diffusée, a = transmittance ; la composition fait scène × a + rgb.
  * ─────────────────────────────────────────────────────────────
@@ -23,6 +24,7 @@
 
 import * as THREE from 'three';
 import { SMOKE_NOISE_UVW_SCALE } from '../laser/LaserSmokeNoise.js';
+import { GI_GLSL, createGIUniforms } from '../spot/gi/giGLSL.js';
 
 export const HAZE_MAX_LIGHTS = 8;
 
@@ -57,6 +59,8 @@ export function createHazeMaterial(noiseTexture) {
             uLPos:         { value: v4() },   // xyz, portée
             uLCol:         { value: v4() },   // rgb × puissance, cos du cône intérieur (pénombre)
             uLDir:         { value: v4() },   // direction, cos du cône (< −0.5 = omnidirectionnelle)
+            ...createGIUniforms(),            // grille de GI des lyres (valeurs recopiées par HazePass)
+            uGIHaze:       { value: 0 },      // gain de la GI dans la fumée (0 = rien)
         },
         vertexShader: /* glsl */`
             varying vec2 vUv;
@@ -94,6 +98,8 @@ export function createHazeMaterial(noiseTexture) {
             uniform vec4 uLPos[${HAZE_MAX_LIGHTS}];
             uniform vec4 uLCol[${HAZE_MAX_LIGHTS}];
             uniform vec4 uLDir[${HAZE_MAX_LIGHTS}];
+            uniform float uGIHaze;
+            ${GI_GLSL}
             varying vec2 vUv;
 
             const float NOISE_UVW = ${SMOKE_NOISE_UVW_SCALE.toFixed(8)};
@@ -202,6 +208,14 @@ export function createHazeMaterial(noiseTexture) {
                 for (int s = 0; s < MAXS; s++) {
                     if (s >= N) break;
                     L += dirTerm * dens[s] * tcam[s] * segLen;
+                }
+
+                // Lumière indirecte des lyres (grille de GI) : diffusion isotrope, lue au milieu de chaque tranche
+                if (uGIHaze > 0.0) {
+                    for (int s = 0; s < MAXS; s++) {
+                        if (s >= N) break;
+                        L += giAt(ro + rd * (tIn + (float(s) + 0.5) * segLen)) * (uGIHaze * dens[s] * tcam[s] * segLen);
+                    }
                 }
 
                 // Lumières ponctuelles / projecteurs

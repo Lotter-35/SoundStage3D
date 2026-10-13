@@ -55,9 +55,11 @@ export const SS_MAX_LIGHTS = 1024;
  *      (lumière émise × poids / (π tan²)) , emplacement de l'ombre statique (−1 = aucune, voir lighting/)
  */
 
-/** Flottants de géométrie de projection par cône (bin) */
-const GEO = 20;
-const FLAG_BEAM = 1, FLAG_POOL = 2;
+/** Flottants de géométrie de projection par cône (bin) ; drapeaux (faisceau SS Depth, tache) */
+export const SS_GEO = 20;
+export const SS_FLAG_BEAM = 1;
+const GEO = SS_GEO;
+const FLAG_BEAM = SS_FLAG_BEAM, FLAG_POOL = 2;
 
 const OCT = 8;
 const OCT_K = 1 / Math.cos(Math.PI / OCT);   // octogone circonscrit au cercle

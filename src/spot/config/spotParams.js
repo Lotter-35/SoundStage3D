@@ -177,6 +177,11 @@ export const SPOT_GLOBAL_SCHEMA = {
     lightPools:   { value: true, label: 'Taches de lumière' },
     lightPoolIntensity: { value: 1.0, min: 0, max: 3, step: 0.01, label: 'Taches de lumière (intensité)' },
     specular:     { value: true, label: 'Reflets spéculaires' },
+    gi:           { value: true, label: 'Lumière indirecte (GI)' },
+    giIntensity:  { value: 1.0, min: 0, max: 4, step: 0.01, label: 'Lumière indirecte (intensité)' },
+    giHaze:       { value: true, label: 'Brume éclairée par la GI' },
+    beamReflections: { value: true, label: 'Reflets des faisceaux' },
+    beamReflectionIntensity: { value: 1.0, min: 0, max: 3, step: 0.01, label: 'Reflets des faisceaux (intensité)' },
 };
 
 /** Réglages de rendu propres à chaque joueur (menu ⚙️ Options, jamais synchronisés) */
