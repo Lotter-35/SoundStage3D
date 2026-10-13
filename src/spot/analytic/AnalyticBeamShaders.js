@@ -12,6 +12,9 @@
  *     répartis en 1/z quand le rayon remonte le faisceau (l'éclairement en 1/z² est alors intégré exactement) :
  *     nombre de calculs FIXE par pixel et par facette, sans bruit ni grain ;
  *   - cône coupé au sol (y = 0) dans le shader de sommets : rien n'est calculé sous la surface ;
+ *   - prisme + frost fort (≥ 60 %) : les facettes se fondent dans le flou → UN cône (l'enveloppe) et 4 points
+ *     le long du rayon, l'image des facettes lue d'un coup à chaque point (1 lecture d'atlas par facette) ;
+ *     ombre, diffusion et fondu une fois par point. Sans frost fort, le prisme net garde un cône par facette ;
  *   - image de la fenêtre lue dans l'atlas (gobos, couteaux, frost) au niveau de flou correspondant à l'écart
  *     entre les points dans la fenêtre : un rayon qui traverse le motif en voit la moyenne, sans copies ;
  *   - ombre statique (cubemap de la lyre, sinon boîtes d'obstacles) : 2 lectures par facette (une par moitié
@@ -252,8 +255,8 @@ export function createAnalyticBeamMaterial(uniforms) {
                 bool hasCube = SH.w > 0.5;
                 bool hasOcc = !hasCube && T8.x >= 0.0;
                 gSH = SH; gT8 = T8; gLens = lens; gSlot = shSlot; gHasCube = hasCube; gHasOcc = hasOcc;
-                // Faisceau ouvert : profil lisse, 2 points suffisent ; motif (gobo, couteaux…) : 4
-                int NQ = aPlain ? 2 : 4;
+                // Faisceau ouvert, ou motif noyé dans un frost fort : profil lisse, 2 points suffisent ; motif net : 4
+                int NQ = (aPlain || aFrostBlur >= 0.25) ? 2 : 4;
 
                 // Prisme : faisceau central (poids T9.z, 1 sans prisme) + facettes (décalage v en unités de fenêtre)
                 int pCount = int(T9.x + 0.5);
@@ -267,7 +270,75 @@ export function createAnalyticBeamMaterial(uniforms) {
                 vec3 sum = vec3(0.0);
                 float hazeK = -1.0;
                 float work = 0.2;   // vue du coût : un fragment du cône
+
+                // ── Prisme dans un frost fort : un seul cône (l'enveloppe), image de toutes les facettes par point ──
+                bool envMode = pCount > 0 && aFrostBlur >= 0.25;
+                if (envMode) {
+                    float tanE = T9.y;
+                    float envDist = T7.z * T7.w / tanE;    // apex de l'enveloppe (rayon à la lentille = celui des facettes)
+                    vec3 envApex = lens - W * envDist;
+                    float tin, tout;
+                    work += 0.3;
+                    if (coneSeg(ro, rd, envApex, W, W, tanE * 1.02, envDist + T11.z, envDist + beamEnd, uNear, t1, tin, tout)) {
+                        float zIn = max(zc0 + dz * tin, 1e-3), zOut = max(zc0 + dz * tout, 1e-3);
+                        bool imp = abs(dz) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
+                        float uIn = 1.0 / zIn, uOut = 1.0 / zOut;
+                        // Flou d'intégration : écart entre 2 points dans la fenêtre du faisceau central
+                        vec3 Pa = ro + rd * tin, Pb = ro + rd * tout;
+                        vec3 la = Pa - apexC, lb = Pb - apexC;
+                        float za = max(dot(la, W), 1e-3), zb = max(dot(lb, W), 1e-3);
+                        vec2 ga = vec2(dot(la - W * za, R), dot(la - W * za, U)) / (za * tanHalf);
+                        vec2 gb = vec2(dot(lb - W * zb, R), dot(lb - W * zb, U)) / (zb * tanHalf);
+                        float sweep = length(gb - ga);
+                        float extraBlur = sweep < 8.0 ? sweep * 0.12 : 0.96;
+                        vec3 acc = vec3(0.0);
+                        bool has0 = false, has1 = false, lit0 = true, lit1 = true;
+                        for (int s = 0; s < 4; s++) {
+                            float x = GX[s];
+                            float t = imp ? (1.0 / mix(uIn, uOut, x) - zc0) / dz : mix(tin, tout, x);
+                            vec3 P = ro + rd * t;
+                            vec3 lp = P - apexC;
+                            float zA = max(dot(lp, W), 1e-3);
+                            vec3 radv = lp - W * zA;
+                            float zl = max(dot(P - lens, W), 0.0);
+                            float k = zl / zA;
+                            vec2 g0 = vec2(dot(radv, R), dot(radv, U)) / (zA * tanHalf);
+                            float blur = aFrostBlur + min(0.14, abs(log(zl + 0.5) - aLogFocus) * 0.035) + extraBlur;
+                            // Image de toutes les facettes en ce point (faisceau central + facettes décalées)
+                            vec3 gate = mainW > 0.0 ? gateAt(g0, blur) * mainW : vec3(0.0);
+                            vec2 fv = T10.xy;
+                            for (int i = 0; i < 8; i++) {
+                                if (i >= pCount) break;
+                                gate += gateAt(g0 - fv * k, blur) * T9.w;
+                                fv = vec2(vRot.x * fv.x - vRot.y * fv.y, vRot.y * fv.x + vRot.x * fv.y) + vD;
+                            }
+                            work += 1.0 + 0.25 * float(pCount);
+                            if (gate.r + gate.g + gate.b < 1e-5) continue;
+                            bool lit;
+                            if (s < 2) {
+                                if (!has0) { lit0 = litAt(P); has0 = true; if (hasCube || hasOcc) work += 1.0; }
+                                lit = lit0;
+                            } else {
+                                if (!has1) { lit1 = litAt(P); has1 = true; if (hasCube || hasOcc) work += 1.0; }
+                                lit = lit1;
+                            }
+                            if (!lit) continue;
+                            float fade = 1.0 - smoothstep(fadeStart, beamEnd, zl);
+                            float cosT = dot(lp, -rd) / max(1e-4, length(lp));
+                            float e = imp ? 1.0 : 1.0 / (zA * zA);
+                            acc += gate * (GW[s] * e * fade * phase(cosT));
+                        }
+                        float span = imp ? abs(uIn - uOut) / abs(dz) : (tout - tin);
+                        vec3 Pm = ro + rd * (0.5 * (tin + tout));
+                        float n = texture(uNoise, (Pm * (0.075 / uHazeScale) + uWind * 0.35) * NOISE_UVW).r * 1.12;
+                        hazeK = uHaze * max(0.05, 1.0 + uHazeContrast * n);
+                        sum = acc * span;
+                    }
+                }
+
+                // ── Cas général : un cône par facette ──
                 for (int f = 0; f < 9; f++) {
+                    if (envMode) break;
                     if (f > pCount) break;
                     float w;
                     vec2 off;
