@@ -660,6 +660,9 @@ export class LaserManager {
             const bloomH = Math.max(1, Math.round(bloomSize.y * bloomPR * BLOOM_RESOLUTION_SCALE));
             const makeBloomTarget = () => new THREE.WebGLRenderTarget(bloomW, bloomH, { type: THREE.HalfFloatType });
             this._laserBloomComposer = new EffectComposer(this.renderer, makeBloomTarget());
+            // Tailles déjà en pixels réels : sans ceci, EffectComposer les multiplie encore par le pixelRatio
+            // (écran zoomé à 150 % : cibles et passes 1,5 × trop grandes, faisceaux SS tronqués)
+            this._laserBloomComposer.setPixelRatio(1);
             this._laserBloomComposer.renderToScreen = false;
             this._laserBloomComposer.addPass(renderLaserScene);
 
@@ -717,6 +720,7 @@ export class LaserManager {
             const renderLightsScene = new SelectiveLayerPass(this.scene, this.camera, BLOOM_LIGHTS_LAYER, [BLOOM_LIGHTS_LAYER, BLOOM_LASER_LAYER], this._darkMaterial);
             renderLightsScene.depthSource = this._bloomDepth;
             this._lightsBloomComposer = new EffectComposer(this.renderer, makeBloomTarget());
+            this._lightsBloomComposer.setPixelRatio(1);
             this._lightsBloomComposer.renderToScreen = false;
             this._lightsBloomComposer.addPass(renderLightsScene);
 
@@ -758,6 +762,7 @@ export class LaserManager {
                 samples: 0
             });
             this._finalComposer = new EffectComposer(this.renderer, finalRT);
+            this._finalComposer.setPixelRatio(1);   // pixels réels (voir le bloom laser)
             this._scenePass = new SceneMSAAPass(this.scene, this.camera, this._sceneRT);
             this._scenePass.profileName = 'Scène';
             this._finalComposer.addPass(this._scenePass);

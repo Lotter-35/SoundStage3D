@@ -194,7 +194,7 @@ laserManager.addLaser(new THREE.Vector3(-12, 14, 0.19), { ...SPAWN_LASER_PARAMS 
 laserManager.addLaser(new THREE.Vector3(12, 14, 0.19), { ...SPAWN_LASER_PARAMS }, 1);
 
 // Poignée de debug / benchmark (console : __SS3D.laserManager, __SS3D.renderer.info...)
-window.__SS3D = { scene, camera, renderer, laserManager, ambiancePanel };
+window.__SS3D = { scene, camera, renderer, laserManager, ambiancePanel, listener };
 
 // ─── Strobe System ────────────────────────────────────────────────
 const strobeManager = new StrobeManager({ scene, camera, renderer });
