@@ -24,7 +24,8 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { LaserShow } from './LaserShow.js?v=29';
 import { LaserBatch } from './LaserBatch.js';
 import { LaserFanPass } from './LaserFanPass.js';
-import { FinalCompositePass } from './FinalCompositePass.js?v=2';
+import { FinalCompositePass } from './FinalCompositePass.js?v=3';
+import { gpuPassTimer } from '../render/GpuPassTimer.js';
 import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
@@ -758,22 +759,26 @@ export class LaserManager {
             });
             this._finalComposer = new EffectComposer(this.renderer, finalRT);
             this._scenePass = new SceneMSAAPass(this.scene, this.camera, this._sceneRT);
+            this._scenePass.profileName = 'Scène';
             this._finalComposer.addPass(this._scenePass);
 
             // Passe finale unique : nappes + faisceaux + brouillard + mélange des deux blooms + sortie écran
             // (les passes d'effets calculent leur image réduite, elle seule les recompose)
             this._mixPass = new FinalCompositePass(this.camera, null);
+            this._mixPass.profileName = 'Composition finale';
             this._mixPass.material.uniforms.uLaserBloomEnabled.value = globalLaserPostParams.laserBloomEnabled ? 1.0 : 0.0;
             this._mixPass.material.uniforms.uLightsBloomEnabled.value = globalLaserPostParams.lightsBloomEnabled ? 1.0 : 0.0;
             this._finalComposer.addPass(this._mixPass);
 
             // SMAA Antialiasing (optionnel sur le composite, subpixel net)
             this._smaaPass = new SMAAPass(width, height);
+            this._smaaPass.profileName = 'SMAA';
             this._smaaPass.enabled = false;
             this._finalComposer.addPass(this._smaaPass);
 
             // FXAA Antialiasing (optionnel sur le composite, rapide)
             this._fxaaPass = new ShaderPass(FXAAShader);
+            this._fxaaPass.profileName = 'FXAA';
             this._fxaaPass.material.uniforms['resolution'].value.x = 1 / width;
             this._fxaaPass.material.uniforms['resolution'].value.y = 1 / height;
             this._fxaaPass.enabled = false;
@@ -781,6 +786,7 @@ export class LaserManager {
 
             // Netteté (accentuation des contours, désactivée à 0)
             this._sharpenPass = new ShaderPass(SHARPEN_SHADER);
+            this._sharpenPass.profileName = 'Netteté';
             this._sharpenPass.material.uniforms.uTexel.value.set(1 / width, 1 / height);
             this._sharpenPass.enabled = false;
             this._finalComposer.addPass(this._sharpenPass);
@@ -788,6 +794,7 @@ export class LaserManager {
             // OutputPass (Tone mapping & Color space de Three.js) : seulement si FXAA, SMAA ou la netteté
             // suivent la passe finale (sinon la passe finale écrit elle-même à l'écran en sRGB)
             this._outputPass = new OutputPass();
+            this._outputPass.profileName = 'Sortie (OutputPass)';
             this._finalComposer.addPass(this._outputPass);
 
             this._composer = this._finalComposer;
@@ -795,6 +802,7 @@ export class LaserManager {
             // Nappes PAN : rendu demi-résolution + fumée calculée une fois par pixel (LaserFanPass).
             // Première passe de scène (avant lyres et brouillard, comme lorsqu'elles étaient dans la scène).
             const fanPass = new LaserFanPass(this._batch, this.camera, null);
+            fanPass.profileName = 'Nappes laser';
             if (this.addScenePass(fanPass)) {
                 fanPass.sceneDepth = this.sceneDepth;
                 this._fanPass = fanPass;
@@ -840,6 +848,7 @@ export class LaserManager {
                 constructor() { super(); this.needsSwap = false; }
                 render() { shared.texture = sceneRT().depthTexture || null; }
             })();
+            this._sceneDepthTap.profileSkip = true;
             composer.insertPass(this._sceneDepthTap, 1);
             this._scenePassCount = 0;
             if (this._mixPass) this._mixPass.sceneDepth = this.sceneDepth;
@@ -1244,7 +1253,9 @@ export class LaserManager {
             // Aucun effet actif : rendu direct à l'écran (même image, beaucoup moins de travail GPU)
             if (this._canRenderDirect(renderLaser, renderLights)) {
                 this.renderer.setRenderTarget(null);
+                if (gpuPassTimer.enabled) gpuPassTimer.begin('Scène (rendu direct)');
                 this.renderer.render(this.scene, this.camera);
+                if (gpuPassTimer.enabled) gpuPassTimer.end();
                 return;
             }
 
@@ -1255,7 +1266,11 @@ export class LaserManager {
 
             // Fumée des nappes : masque partagé calculé une fois par pixel, AVANT le bloom (qui le relit)
             if (this._fanPass && this._fanPass.enabled) {
-                if (this._sharedSmoke !== false) this._fanPass.renderMask(this.renderer);
+                if (this._sharedSmoke !== false) {
+                    if (gpuPassTimer.enabled) gpuPassTimer.begin('Masque des nappes');
+                    this._fanPass.renderMask(this.renderer);
+                    if (gpuPassTimer.enabled) gpuPassTimer.end();
+                }
                 else this._batch.fanMaterial.uniforms.uUseMask.value = 0;
             }
 
@@ -1286,13 +1301,17 @@ export class LaserManager {
 
                 // Bloom Laser (Layer 1) avec aberration chromatique
                 if (renderLaser) {
+                    if (gpuPassTimer.enabled) gpuPassTimer.begin('Bloom lasers');
                     this._laserBloomComposer.render();
+                    if (gpuPassTimer.enabled) gpuPassTimer.end();
                     this._mixPass.material.uniforms.laserBloomTexture.value = this._laserBloomComposer.readBuffer.texture;
                     this._mixPass.material.uniforms.uLaserBloomEnabled.value = 1.0;
                 }
                 // Bloom Lampes & Scène (Layer 2) pur, sans aberration chromatique
                 if (renderLights) {
+                    if (gpuPassTimer.enabled) gpuPassTimer.begin('Bloom lampes');
                     this._lightsBloomComposer.render();
+                    if (gpuPassTimer.enabled) gpuPassTimer.end();
                     this._mixPass.material.uniforms.lightsBloomTexture.value = this._lightsBloomComposer.readBuffer.texture;
                     this._mixPass.material.uniforms.uLightsBloomEnabled.value = 1.0;
                 }
@@ -1350,11 +1369,16 @@ export class LaserManager {
         const rtB = composer.renderTarget2;
         let read = this._chainRead;
         let write = this._chainWrite;
+        const timer = gpuPassTimer.enabled ? gpuPassTimer : null;
         for (let i = from; i < to; i++) {
             const pass = passes[i];
             if (!pass.enabled) continue;
             pass.renderToScreen = (i === this._chainLast);
+            // Mesure GPU par passe (option locale) ; une passe qui se mesure elle-même (SS Depth) n'est pas enveloppée
+            const timed = timer && !pass.profileSelf && !pass.profileSkip;
+            if (timed) timer.begin(pass.profileName || pass.constructor.name || 'Passe');
             pass.render(renderer, write, read, 0, false);
+            if (timed) timer.end();
             if (pass === this._scenePass) {
                 read = this._sceneRT;
             } else if (pass.needsSwap) {

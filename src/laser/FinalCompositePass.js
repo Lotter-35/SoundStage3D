@@ -8,6 +8,7 @@
  * plus elles-mêmes : cette passe lit l'image de la scène UNE fois et applique, dans le même ordre
  * qu'avant et avec les mêmes formules :
  *   1. + nappes et faisceaux (sur-échantillonnage sensible à la profondeur)
+ *      + faisceaux SS Depth et halo atmosphérique (remontée bilatérale 3×3 guidée par la profondeur)
  *   2. × transmittance + lumière diffusée du brouillard (bilatéral)
  *   3. + bloom lasers + bloom lampes
  *   4. conversion sRGB quand elle écrit directement à l'écran (équivalent de OutputPass)
@@ -33,6 +34,12 @@ function createFinalCompositeMaterial(dummy) {
             tAdd1:     { value: dummy },
             uAdd1Res:  { value: new THREE.Vector2(1, 1) },
             uAdd1Depth: { value: 0 },
+            // faisceaux SS Depth (+ halo) : image réduite, a = profondeur linéaire du pixel réduit
+            uSSOn:     { value: 0 },
+            tSS:       { value: dummy },
+            uSSScale:  { value: new THREE.Vector2(1, 1) },
+            uSSTexel:  { value: new THREE.Vector2(1, 1) },
+            uSSSharp:  { value: 1.5 },
             // brouillard
             uHazeOn:   { value: 0 },
             tHaze:     { value: dummy },
@@ -67,6 +74,11 @@ function createFinalCompositeMaterial(dummy) {
             uniform sampler2D tAdd1;
             uniform vec2 uAdd1Res;
             uniform int uAdd1Depth;
+            uniform int uSSOn;
+            uniform sampler2D tSS;
+            uniform vec2 uSSScale;
+            uniform vec2 uSSTexel;
+            uniform float uSSSharp;
             uniform int uHazeOn;
             uniform sampler2D tHaze;
             uniform vec2 uHazeSize;
@@ -118,6 +130,41 @@ function createFinalCompositeMaterial(dummy) {
                 // 1. Effets additifs (nappes laser, faisceaux des lyres)
                 if (uAdd0On == 1) col += additive(tAdd0, uAdd0Res, uAdd0Depth, z0);
                 if (uAdd1On == 1) col += additive(tAdd1, uAdd1Res, uAdd1Depth, z0);
+
+                // 1 bis. Faisceaux SS Depth (+ halo) : remontée bilatérale jointe 3×3 guidée par la profondeur.
+                // Poids spatial = tente bilinéaire (net) + un plancher sur l'anneau 3×3 (repli quand les 2×2 texels
+                // les plus proches sont à une autre profondeur) ; poids de profondeur = exp(−écart relatif² × netteté).
+                // Aucun texel à la bonne profondeur : texel de profondeur la plus proche (bord net sur les objets).
+                if (uSSOn == 1) {
+                    vec2 suv = vUv * uSSScale;
+                    vec3 quick = texture2D(tSS, suv).rgb;
+                    if (quick.r + quick.g + quick.b > 0.0) {
+                        if (z0 < 0.0) z0 = linZ(vUv);
+                        float cz = max(z0, 0.1);
+                        float sharp = 35.0 * uSSSharp;
+                        ivec2 size = textureSize(tSS, 0);
+                        vec2 pos = suv * vec2(size) - 0.5;
+                        ivec2 c0 = ivec2(floor(pos + 0.5));
+                        vec2 f = pos - vec2(c0);
+                        vec3 sum = vec3(0.0);
+                        float wSum = 0.0;
+                        vec3 best = quick;
+                        float bestRel = 1e9;
+                        for (int dy = -1; dy <= 1; dy++) {
+                            for (int dx = -1; dx <= 1; dx++) {
+                                vec4 s = texelFetch(tSS, clamp(c0 + ivec2(dx, dy), ivec2(0), size - 1), 0);
+                                vec2 d = abs(vec2(float(dx), float(dy)) - f);
+                                float ws = max(0.0, 1.0 - d.x) * max(0.0, 1.0 - d.y) + 0.02;
+                                float rel = abs(cz - s.a) / max(cz, 0.5);
+                                float w = ws * exp(-rel * rel * sharp);
+                                sum += s.rgb * w;
+                                wSum += w;
+                                if (rel < bestRel) { bestRel = rel; best = s.rgb; }
+                            }
+                        }
+                        col += wSum > 1e-3 ? sum / wSum : best;
+                    }
+                }
 
                 // 2. Brouillard de salle : sur-échantillonnage bilatéral (même profondeur que le pixel)
                 if (uHazeOn == 1) {
@@ -198,6 +245,7 @@ export class FinalCompositePass extends Pass {
         u.uAdd0On.value = 0;
         u.uAdd1On.value = 0;
         u.uHazeOn.value = 0;
+        u.uSSOn.value = 0;
         for (const p of this.producers) {
             if (!p.enabled || typeof p.deferredOutput !== 'function') continue;
             const o = p.deferredOutput();
@@ -209,6 +257,12 @@ export class FinalCompositePass extends Pass {
                 u[`u${k}Res`].value.copy(o.res);
                 u[`u${k}Depth`].value = o.useDepth ? 1 : 0;
                 add++;
+            } else if (o.kind === 'ss') {
+                u.uSSOn.value = 1;
+                u.tSS.value = o.texture;
+                u.uSSScale.value.copy(o.scale);
+                u.uSSTexel.value.copy(o.texel);
+                u.uSSSharp.value = o.sharpness;
             } else if (o.kind === 'haze') {
                 u.uHazeOn.value = 1;
                 u.tHaze.value = o.texture;

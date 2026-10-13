@@ -9,11 +9,17 @@
  *
  * Coût GPU : 1 draw call de faisceaux + 1 d'éblouissements + ~10 de boîtiers
  * quel que soit le nombre de lyres ; 8 lumières réelles au maximum.
+ *
+ * Rendu des faisceaux choisi PAR LYRE (paramètre « Rendu du faisceau » : Global / Classique / SS Depth ;
+ * Global = réglage synchronisé « Rendu des faisceaux (défaut) ») : les lyres classiques passent par
+ * SpotBatch / SpotVolumePass, les lyres SS Depth par SSDepthLights / SSDepthPass ; les deux coexistent.
  * ─────────────────────────────────────────────────────────────
  */
 
-import { SpotBatch, SpotVolumePass } from './SpotBatch.js?v=4';
-import { SpotFixture, SPOT_BEAM_RANGE } from './SpotFixture.js?v=2';
+import { SpotBatch, SpotVolumePass } from './SpotBatch.js?v=5';
+import { SpotFixture, SPOT_BEAM_RANGE } from './SpotFixture.js?v=3';
+import { SSDepthLights } from './ssdepth/SSDepthLights.js';
+import { SSDepthPass } from './ssdepth/SSDepthPass.js';
 import { LENS_RADIUS } from './SpotHousing.js?v=2';
 import { SpotLightPool } from './SpotLightPool.js?v=2';
 import { getSpotHousingInstancer } from './SpotHousing.js?v=2';
@@ -62,6 +68,14 @@ export class SpotManager {
         // Profondeur de la SCÈNE (et non celle de l'image précédente : une passe placée avant peut échanger les cibles)
         if (this._hasPass) this.volumePass.sceneDepth = laserManager.sceneDepth;
         if (!this._hasPass) console.warn('[SpotManager] Pas de chaîne de post-traitement : faisceaux volumétriques désactivés.');
+
+        // Faisceaux SS Depth (+ halo atmosphérique) : passe insérée après celle des faisceaux classiques
+        this.ssLights = new SSDepthLights(this.batch);
+        this.ssPass = new SSDepthPass(this.ssLights, this.batch, camera);
+        this.ssPass.enabled = false;
+        this.ssPass.classicPass = this.volumePass;
+        this._hasSSPass = this._hasPass && laserManager.addScenePass(this.ssPass);
+        if (this._hasSSPass) this.ssPass.sceneDepth = laserManager.sceneDepth;
 
         this._compiled = false;
         this._time = 0;
@@ -263,6 +277,11 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
+        // Faisceaux SS Depth : même fumée (sans volutes) et même diffusion ; halo atmosphérique
+        this.ssPass.haze = u.uHaze.value;
+        this.ssPass.phaseG = g.scattering;
+        this.ssPass.haloIntensity = g.haloIntensity;
+        this.ssPass.haloRadius = g.haloRadius;
         // Calcul des faisceaux : rapide (moins d'échantillons, même énergie) ou précis (ancien rendu)
         const fast = g.beamRender !== 'Précis';
         u.uFast.value = fast ? 1 : 0;
@@ -270,6 +289,29 @@ export class SpotManager {
         this.volumePass.temporal = false;
         this._applyVolumeResolution();
         this.pool.setShadows(g.lightShadows);
+    }
+
+    /** Résolution de la passe SS Depth : diviseur de l'image (2 = ½, 3 = ⅓, 4 = ¼) — option locale */
+    setSSResolution(div) {
+        this.ssPass.setDivisor(div);
+    }
+
+    /** Netteté de la remontée bilatérale des faisceaux SS Depth — option locale */
+    setSSSharpness(v) {
+        this.ssPass.sharpness = v;
+    }
+
+    /** Vrai si la lyre est rendue en SS Depth (réglage de la lyre, sinon réglage global) */
+    _isSSDepth(spot) {
+        if (!this._hasSSPass) return false;
+        const m = spot.params.beamRenderMode;
+        if (m === 'SS Depth') return true;
+        if (m === 'Classique') return false;
+        return this.globals.beamRenderDefault === 'SS Depth';
+    }
+
+    _haloOn() {
+        return this._hasSSPass && this.globals.haloIntensity > 0.005;
     }
 
     // ── DMX ───────────────────────────────────────────────────────────────
@@ -284,6 +326,8 @@ export class SpotManager {
     update(dt) {
         if (this._spots.size === 0 && !this._sourcesActive()) {
             this.volumePass.enabled = false;
+            this.ssLights.collect(this._spots.values());
+            this.ssPass.enabled = this._haloOn();
             this.batch.glareMesh.visible = false;
             this.pool.update(this._spots.values(), this.camera, false, dt);
             return;
@@ -292,7 +336,10 @@ export class SpotManager {
         for (const hook of this._updateHooks) hook(dt);
         this.patch.update();
         this.effects.apply(this._spots, this.clock());
-        for (const s of this._spots.values()) s.update(dt);
+        for (const s of this._spots.values()) {
+            s.update(dt);
+            s.ssDepth = this._isSSDepth(s);
+        }
         for (const src of this._sources) src.update(dt);
         this.batch.assemble(this._spots.values(), this._sources, this.camera);
         getSpotHousingInstancer(this.scene).flush();
@@ -307,6 +354,9 @@ export class SpotManager {
         u.uTime.value = this._time;
 
         this.volumePass.enabled = this._hasPass && this.batch.volumeCount > 0;
+        // Cônes des lyres SS Depth (triés par tuile au moment du rendu, avec la caméra de l'image)
+        this.ssLights.collect(this._spots.values());
+        this.ssPass.enabled = this._hasSSPass && (this.ssLights.count > 0 || this._haloOn());
 
         // Résolution réduite tant que la caméra est dans un faisceau (maintenue 0,5 s : pas de va-et-vient)
         if (this.volumePass.enabled && this._cameraInsideBeam()) this._insideHold = 0.5;
@@ -327,5 +377,7 @@ export class SpotManager {
         this._spots.clear();
         this.pool.dispose();
         this.volumePass.dispose();
+        this.ssPass.dispose();
+        this.ssLights.dispose();
     }
 }

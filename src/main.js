@@ -34,13 +34,13 @@ import { PlayerAvatars } from './multiplayer/PlayerAvatars.js?v=5';
 import { LightingSync } from './multiplayer/LightingSync.js?v=11';
 import { DanceManager } from './scene/DanceManager.js';
 import { loadStageSpeakers } from './scene/speakerModels.js?v=186';
-import { LaserManager } from './laser/LaserManager.js?v=308';
+import { LaserManager } from './laser/LaserManager.js?v=309';
 import { StaticGlobalIllumination } from './scene/staticGI.js?v=233';
 import { initModelDropLoader, isModelGizmoDragging, consumeModelPick, shouldKeepCursorForModel } from './scene/modelDropLoader.js?v=235';
 import { PlayerLaserCollider } from './scene/PlayerLaserCollider.js?v=4';
 import { registerPlayerCollider } from './laser/LaserSceneIntersector.js?v=9';
 import { StrobeManager } from './strobe/StrobeManager.js?v=17';
-import { SpotManager } from './spot/SpotManager.js?v=6';
+import { SpotManager } from './spot/SpotManager.js?v=7';
 import { LedBarManager } from './ledbar/LedBarManager.js';
 import { Laser2Manager } from './laser2/Laser2Manager.js';
 import { ildaLibrary } from './laser2/ilda/IldaLibrary.js';
@@ -49,11 +49,12 @@ import { HazeVolume } from './haze/HazeVolume.js?v=2';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
 import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
-import { clientOptions, RES_QUALITY } from './ui/ClientOptions.js';
+import { clientOptions, RES_QUALITY, SS_RESOLUTIONS } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
 import { DynamicResolution } from './render/DynamicResolution.js';
+import { gpuPassTimer } from './render/GpuPassTimer.js';
 import { installGizmoSnap } from './ui/gizmoSnap.js';
 import { FixtureSelection } from './ui/FixtureSelection.js';
 import { setDynamicResolutionFactor } from './render/resolutionScale.js';
@@ -2332,6 +2333,39 @@ clientOptions.bind('hazeMaxLights', (v) => hazeVolume.setParam('maxLights', v));
 clientOptions.bind('spotBeamQuality', (v) => spotManager.setGlobal('beamQuality', v));
 clientOptions.bind('spotRealLights', (v) => spotManager.setGlobal('realLights', v));
 clientOptions.bind('spotShadows', (v) => spotManager.setGlobal('lightShadows', v));
+clientOptions.bind('spotSSResolution', (v) => spotManager.setSSResolution(SS_RESOLUTIONS[v] || 3));
+clientOptions.bind('spotSSSharpness', (v) => spotManager.setSSSharpness(v));
+// Mesures GPU par passe : petit tableau en haut à droite ; la résolution dynamique est figée pendant la mesure
+gpuPassTimer.init(renderer);
+window.__SS3D.gpuPassTimer = gpuPassTimer;
+let _gpuPassEl = null;
+let _gpuPassShown = 0;
+clientOptions.bind('gpuPassTimings', (v) => {
+    gpuPassTimer.setEnabled(v);
+    dynamicResolution.paused = Boolean(v);
+    if (v && !_gpuPassEl) {
+        _gpuPassEl = document.createElement('pre');
+        _gpuPassEl.id = 'gpu-pass-overlay';
+        _gpuPassEl.style.cssText = 'position:fixed;top:8px;right:8px;z-index:160;margin:0;padding:6px 9px;background:rgba(8,10,16,0.78);color:#cfe8ff;font:11px/1.4 ui-monospace,Consolas,monospace;border-radius:6px;pointer-events:none;white-space:pre;';
+        document.body.appendChild(_gpuPassEl);
+    }
+    if (_gpuPassEl) _gpuPassEl.style.display = v ? 'block' : 'none';
+});
+function updateGpuPassOverlay(now) {
+    if (!gpuPassTimer.enabled) return;
+    gpuPassTimer.frame(now);
+    if (!_gpuPassEl || now - _gpuPassShown < 500) return;
+    _gpuPassShown = now;
+    const lines = [`GPU par passe (${gpuPassTimer.mode})`];
+    for (const r of gpuPassTimer.results) lines.push(`${r.name.padEnd(22)} ${r.ms.toFixed(2).padStart(6)} ms`);
+    lines.push(`${'Total'.padEnd(22)} ${gpuPassTimer.total.toFixed(2).padStart(6)} ms`);
+    const ss = spotManager && spotManager.ssLights;
+    if (ss) {
+        const p = spotManager.ssPass;
+        lines.push(`SS Depth : ${ss.fixtures} lyres, ${ss.count} cônes (${ss.visible} à l'écran), ${p.lowWidth}×${p.lowHeight}`);
+    }
+    _gpuPassEl.textContent = lines.join('\n');
+}
 clientOptions.bind('laserRange', (v) => laserManager && laserManager.setPostProcessingParam('laserRange', v));
 clientOptions.bind('laserFanQuality', (v) => laserManager && laserManager.setFanQuality(RES_QUALITY[v] || 0.5));
 clientOptions.bind('laserSharedSmoke', (v) => laserManager && laserManager.setSharedSmoke(v));
@@ -4074,6 +4108,7 @@ function renderFrame() {
     dynamicResolution.end();
     const renderTime = performance.now() - t0;
     dynamicResolution.update(now);
+    updateGpuPassOverlay(now);
     // Faisceaux des lyres : résolution baissée seule tant que l'image dépasse le budget des FPS visés
     if (dynamicResolution.enabled && spotManager) spotManager.setFrameLoad(dynamicResolution.gpuMs, 1000 / dynamicResolution.targetHz, now);
 

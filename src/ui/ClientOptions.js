@@ -33,6 +33,9 @@ export const RES_QUALITY = {
 };
 const RES_QUALITY_NAMES = Object.keys(RES_QUALITY);
 
+/** Résolution de la passe des faisceaux SS Depth → diviseur de l'image (par axe) */
+export const SS_RESOLUTIONS = { '½': 2, '⅓': 3, '¼': 4 };
+
 
 export const OPTION_FOLDERS = [
     { id: 'display', title: '🖥️ Affichage' },
@@ -66,6 +69,7 @@ export const CLIENT_OPTIONS_SCHEMA = {
     dynamicResolutionTarget: num(100, 30, 100, 5, 'FPS visés (% écran)', 'display', '100 % = fréquence de l’écran (ex. 120 Hz → 120 FPS, 50 % → 60 FPS). Mise à jour quand la fenêtre change d’écran'),
     sharpness:        num(0, 0, 1, 0.01, 'Netteté', 'display', 'Accentuation des contours en post-traitement'),
     antialiasing:     opt(AA_MODES, AA_MODES[0], 'Anticrénelage', 'display'),
+    gpuPassTimings:   bool(false, 'Mesures GPU par passe', 'display', 'Affiche le temps GPU de chaque passe (scène, faisceaux classiques / SS Depth, halo, brouillard, blooms, composition). La résolution dynamique est figée pendant la mesure'),
 
     // ── Effets & performance ──
     hazeResolution:   sub('res', opt([RES_AUTO, '1/16 de résolution', '1/8 de résolution', 'Quart de résolution', 'Demi-résolution', 'Pleine résolution'], RES_AUTO, 'Brouillard', 'effects', 'Résolution du brouillard. Auto : pleine résolution jusqu’en 1080p, ½ en 4K')),
@@ -75,6 +79,8 @@ export const CLIENT_OPTIONS_SCHEMA = {
     hazeMaxLights:    sub('haze', num(6, 1, 8, 1, 'Lumières max', 'effects', 'Nombre maximal de lumières qui éclairent le brouillard')),
     spotRealLights:   sub('spot', bool(true, 'Éclairage réel', 'effects', 'Les lyres éclairent réellement la scène')),
     spotShadows:      sub('spot', bool(false, 'Ombres (2 max)', 'effects', 'Ombres portées des lyres (2 au maximum)')),
+    spotSSResolution: sub('spot', opt(Object.keys(SS_RESOLUTIONS), '⅓', 'Résolution des faisceaux SS', 'effects', 'Faisceaux des lyres en rendu SS Depth : calculés à cette fraction de l’image (par axe) puis remontés en pleine résolution en suivant la profondeur. ⅓ conseillé en 4K')),
+    spotSSSharpness:  sub('spot', num(1.5, 0.2, 4, 0.05, 'Netteté des bords', 'effects', 'Faisceaux SS Depth : plus la valeur est haute, plus les bords des faisceaux devant ou derrière les objets sont nets (filtre bilatéral guidé par la profondeur)')),
     laserRange:       sub('laser', num(300, 20, 3000, 10, 'Distance (m)', 'effects', 'Distance d’affichage des lasers')),
     laserSharedSmoke: sub('laser', bool(true, 'Fumée partagée', 'effects', 'La fumée des nappes superposées n’est calculée qu’une fois par pixel')),
     grassDistance:    sub('grass', num(0, 0, 60, 1, 'Distance (m)', 'effects', 'Distance d’affichage de l’herbe (0 = pas d’herbe)')),

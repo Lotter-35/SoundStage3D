@@ -18,10 +18,11 @@ import { getSmokeNoiseTexture } from '../laser/LaserSmokeNoise.js';
 import { resolveResolutionScale } from '../render/resolutionScale.js';
 import { enableLightsBloom } from '../laser/LaserManager.js';
 import { getGoboTexture } from './SpotGoboLibrary.js';
+import { gpuPassTimer } from '../render/GpuPassTimer.js';
 import {
     SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial,
     createGateAtlasMaterial, GATE_ATLAS_SIDE, GATE_ATLAS_TILE, createBeamResolveMaterial
-} from './SpotShaders.js?v=4';
+} from './SpotShaders.js?v=5';
 
 const GATE_TILES = GATE_ATLAS_SIDE * GATE_ATLAS_SIDE;
 
@@ -235,8 +236,10 @@ export class SpotBatch {
         const prev = renderer.getRenderTarget();
         const auto = renderer.autoClear;
         renderer.autoClear = false;
+        if (gpuPassTimer.enabled) gpuPassTimer.begin('Atlas des gobos');
         renderer.setRenderTarget(this.gateAtlas);
         renderer.render(this._gateScene, this._gateCamera);
+        if (gpuPassTimer.enabled) gpuPassTimer.end();
         renderer.setRenderTarget(prev);
         renderer.autoClear = auto;
     }
@@ -294,7 +297,7 @@ export class SpotBatch {
         out.clear();
         this.clusterCount = 0;
         if (!camera) return out;
-        const list = fixtures.filter(f => f.flux > 1e-4 && !f.isBeingDragged && f.lensPos);
+        const list = fixtures.filter(f => f.flux > 1e-4 && !f.isBeingDragged && f.lensPos && !f.ssDepth);
         if (list.length < 2) return out;
         const used = new Uint8Array(list.length);
         const cam = camera.position;
@@ -427,6 +430,7 @@ export class SpotVolumePass extends Pass {
         this.batch = batch;
         this.camera = camera;
         this.needsSwap = true;
+        this.profileName = 'Faisceaux classiques';
         this.resolutionScale = 0.5;
         this.resolutionSetting = this.resolutionScale;
         this.resolutionFactor = 1;

@@ -37,6 +37,7 @@ export class DynamicResolution {
         this.ext = this.gl.getExtension('EXT_disjoint_timer_query_webgl2');
         this.apply = apply;
         this.enabled = false;
+        this.paused = false;      // mesure GPU par passe en cours (GpuPassTimer) : une seule requête active à la fois
         this.targetPercent = 100; // FPS visés, en % de la fréquence de l'écran
         this._screenKey = '';
         this._lastScreenCheck = 0;
@@ -84,7 +85,7 @@ export class DynamicResolution {
 
     /** À appeler juste avant le rendu de l'image */
     begin() {
-        if (!this.enabled || !this.ext || this._active) return;
+        if (!this.enabled || !this.ext || this._active || this.paused) return;
         const q = this._free.pop() || this.gl.createQuery();
         this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, q);
         this._active = q;

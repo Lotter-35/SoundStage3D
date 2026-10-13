@@ -23,6 +23,7 @@ export class HazePass extends Pass {
     constructor(hazeMaterial, camera, sceneDepth) {
         super();
         this.material = hazeMaterial;
+        this.profileName = 'Brouillard';
         this.camera = camera;
         this.sceneDepth = sceneDepth;
         this.needsSwap = true;

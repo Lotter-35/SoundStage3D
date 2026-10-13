@@ -83,7 +83,7 @@ export const GATE_ATLAS_R = 1.6;         // la tuile couvre g ∈ [−R, R] (iri
 // ─────────────────────────────────────────────────────────────────────────────
 // GLSL commun : lecture des paramètres + image de la fenêtre optique
 // ─────────────────────────────────────────────────────────────────────────────
-const GATE_GLSL = /* glsl */`
+export const GATE_GLSL = /* glsl */`
 uniform highp sampler2D uSpotParams;
 uniform highp sampler2DArray uGobos;
 

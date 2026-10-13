@@ -52,6 +52,11 @@ export const MOUNT_MODES = ['Posé au sol', 'Suspendu'];
 
 export const DMX_MODES = ['Standard (24 canaux)', 'Étendu (34 canaux)'];
 
+/** Rendu du faisceau d'une lyre : réglage global, faisceau classique (cône ray-marché) ou SS Depth */
+export const BEAM_RENDER_MODES = ['Global', 'Classique', 'SS Depth'];
+/** Rendu des faisceaux par défaut (lyres en « Global ») */
+export const BEAM_RENDER_DEFAULTS = ['Classique', 'SS Depth'];
+
 /** Limites mécaniques */
 export const PAN_RANGE = 540;
 export const TILT_RANGE = 270;
@@ -148,6 +153,7 @@ export const SPOT_PARAMS_SCHEMA = {
     lightOutput:   num(1, 0, 4, 0.05, 'Lumière émise sur la scène', 'render', false),
     lensGlare:     num(1, 0, 3, 0.05, 'Éblouissement lentille', 'render', false),
     beamLength:    num(140, 1, 140, 0.5, 'Longueur du faisceau (m)', 'render', false),
+    beamRenderMode: opt(BEAM_RENDER_MODES, 'Global', 'Rendu du faisceau', 'render', false),
 };
 
 /** Paramètres par défaut d'une lyre */
@@ -164,6 +170,9 @@ export const SPOT_GLOBAL_SCHEMA = {
     hazeScale:    { value: 1.0,  min: 0.2, max: 4, step: 0.05, label: 'Taille des volutes' },
     scattering:   { value: 0.72, min: 0, max: 0.95, step: 0.01, label: 'Diffusion avant (Mie)' },
     beamRender:   { value: 'Rapide', options: ['Rapide', 'Précis'], label: 'Calcul des faisceaux' },
+    beamRenderDefault: { value: 'SS Depth', options: BEAM_RENDER_DEFAULTS, label: 'Rendu des faisceaux (défaut)' },
+    haloIntensity: { value: 0.5, min: 0, max: 2.5, step: 0.01, label: 'Halo atmosphérique (intensité)' },
+    haloRadius:   { value: 1.0, min: 0.2, max: 3, step: 0.05, label: 'Halo atmosphérique (rayon)' },
     beamQuality:  { value: RES_AUTO, options: [RES_AUTO, 'Pleine résolution', 'Demi-résolution', 'Quart de résolution', '1/8 de résolution', '1/16 de résolution'], label: 'Qualité des faisceaux' },
     realLights:   { value: true, label: 'Éclairage réel de la scène' },
     lightShadows: { value: false, label: 'Ombres portées (2 lyres max)' },

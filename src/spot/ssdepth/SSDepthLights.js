@@ -1,0 +1,347 @@
+/**
+ * SSDepthLights.js
+ * ─────────────────────────────────────────────────────────────
+ * Côté CPU du rendu des faisceaux « SS Depth » (Screen-Space Depth, mode 5 du banc LightBench) :
+ *
+ * 1. collect() — une fois par image, après la mise à jour des lyres : chaque lyre en mode SS Depth donne
+ *    un CÔNE par facette du prisme (faisceau central + facettes), décrit dans une texture de paramètres
+ *    (SS_LIGHT_TEXELS texels RGBA32F par cône). Lyres éteintes / noires : aucun cône.
+ * 2. bin() — au moment du rendu (matrices de la caméra à jour) : chaque cône est projeté à l'écran
+ *    (octogone circonscrit aux deux bouts, découpé par le plan proche) et ajouté aux listes des tuiles
+ *    qu'il touche réellement (étendue de chaque ligne de tuiles : coût ∝ tuiles touchées).
+ *    Listes envoyées dans une texture entière RGBA16UI : une ligne par tuile (nombre, puis 4 indices par texel).
+ *
+ * Cône d'une facette : les facettes sortent toutes de la lentille. Dans le repère du faisceau central
+ * (W axe, R/U fenêtre), la facette est un cône OBLIQUE : sections perpendiculaires à W circulaires, centre
+ * décalé de V·z (V = décalage de la facette × tan(zoom/2)). Son intersection avec un rayon reste une
+ * équation du 2e degré (cisaillement linéaire), voir SSDepthShaders.js.
+ *
+ * Aucune allocation par image : tableaux typés et vecteurs réutilisés.
+ * ─────────────────────────────────────────────────────────────
+ */
+
+import * as THREE from 'three';
+
+/** Tuiles de l'écran (listes de cônes) */
+export const SS_TILES_X = 32;
+export const SS_TILES_Y = 18;
+export const SS_TILE_COUNT = SS_TILES_X * SS_TILES_Y;
+/** Cônes au plus par tuile (au-delà : ignorés) */
+export const SS_MAX_PER_TILE = 64;
+/** Texels par ligne de tuile : nombre (texel 0), puis 4 indices par texel */
+export const SS_TILE_TEXELS = 1 + SS_MAX_PER_TILE / 4;
+/** Texels RGBA32F par cône (voir le format ci-dessous) */
+export const SS_LIGHT_TEXELS = 9;
+/** Cônes au plus (50 lyres × 9 facettes = 450) */
+export const SS_MAX_LIGHTS = 1024;
+
+/*
+ * Format d'un cône (ligne de la texture uSSLights) :
+ * L0 : apex du cône oblique (xyz)          , ligne de paramètres de la lyre (texture uSpotParams)
+ * L1 : axe central W (xyz)                 , distance apex → lentille (LENS_RADIUS / tan(zoom/2))
+ * L2 : droite de la fenêtre R (xyz)        , tan du demi-angle du cône (iris + marges de flou)
+ * L3 : décalage V (R, U) de la facette     , z de début (lentille) , z de fin de la diffusion (z depuis l'apex)
+ * L4 : sphère englobante (centre xyz)      , rayon
+ * L5 : couleur A (rgb)                     , éclairement à 1 m de l'apex (flux × poids / (π tan²))
+ * L6 : tan(zoom/2) , iris , flou du frost , log(distance de mise au point)
+ * L7 : image de fenêtre (0 disque, 1 disque × transmission moyenne, 2 atlas, 3 calculée) , tuile de l'atlas ,
+ *      poids de la tache au sol , obstacles (0/1)
+ * L8 : longueur visible , début du fondu de la diffusion , portée , début du fondu de la tache
+ */
+
+const OCT = 8;
+const OCT_K = 1 / Math.cos(Math.PI / OCT);   // octogone circonscrit au cercle
+const COS = new Float32Array(OCT), SIN = new Float32Array(OCT);
+for (let k = 0; k < OCT; k++) { COS[k] = Math.cos(k * 2 * Math.PI / OCT); SIN[k] = Math.sin(k * 2 * Math.PI / OCT); }
+
+// Arêtes du tronc octogonal : 8 latérales, 8 de chaque anneau
+const EDGES = new Uint8Array(OCT * 3 * 2);
+for (let k = 0; k < OCT; k++) {
+    EDGES[k * 2] = k; EDGES[k * 2 + 1] = OCT + k;
+    EDGES[(OCT + k) * 2] = k; EDGES[(OCT + k) * 2 + 1] = (k + 1) % OCT;
+    EDGES[(2 * OCT + k) * 2] = OCT + k; EDGES[(2 * OCT + k) * 2 + 1] = OCT + (k + 1) % OCT;
+}
+const MAX_CROSS = OCT * 3;
+const MAX_SEG = OCT * 3 + (MAX_CROSS * (MAX_CROSS - 1)) / 2;
+
+const _W = new THREE.Vector3();
+const _Vw = new THREE.Vector3();
+const _A = new THREE.Vector3();
+const _P0 = new THREE.Vector3();
+const _P1 = new THREE.Vector3();
+const _WV = new THREE.Vector3();
+
+export class SSDepthLights {
+    /** @param {import('../SpotBatch.js').SpotBatch} batch */
+    constructor(batch) {
+        this.batch = batch;
+        this.count = 0;            // cônes décrits cette image
+        this.visible = 0;          // cônes présents dans au moins une tuile (dernier bin)
+        this.fixtures = 0;         // lyres SS Depth allumées
+        this._capacity = 0;
+        this.lightsTexture = null;
+        this._allocLights(64);
+
+        // Listes des tuiles (entiers 16 bits)
+        this._tileData = new Uint16Array(SS_TILE_COUNT * SS_TILE_TEXELS * 4);
+        this.tilesTexture = new THREE.DataTexture(this._tileData, SS_TILE_TEXELS, SS_TILE_COUNT, THREE.RGBAIntegerFormat, THREE.UnsignedShortType);
+        this.tilesTexture.internalFormat = 'RGBA16UI';
+        this.tilesTexture.minFilter = THREE.NearestFilter;
+        this.tilesTexture.magFilter = THREE.NearestFilter;
+        this.tilesTexture.generateMipmaps = false;
+        this.tilesTexture.needsUpdate = true;
+        this._tileCount = new Uint16Array(SS_TILE_COUNT);
+        this._dirtyTiles = true;
+
+        // Géométrie de projection de chaque cône (pour bin) : bouts de l'axe, rayons, base R/U
+        this._geo = new Float32Array(SS_MAX_LIGHTS * 14);
+        // Sommets (vue) et segments projetés (en unités de tuiles), réutilisés
+        this._vx = new Float32Array(OCT * 2); this._vy = new Float32Array(OCT * 2); this._vz = new Float32Array(OCT * 2);
+        this._cx = new Float32Array(MAX_CROSS); this._cy = new Float32Array(MAX_CROSS);
+        this._seg = new Float32Array(MAX_SEG * 4);
+    }
+
+    _allocLights(n) {
+        const cap = Math.min(SS_MAX_LIGHTS, Math.max(16, THREE.MathUtils.ceilPowerOfTwo(n)));
+        if (cap <= this._capacity) return;
+        const data = new Float32Array(SS_LIGHT_TEXELS * cap * 4);
+        if (this.lightsTexture) data.set(this.lightsTexture.image.data.subarray(0, data.length));
+        const tex = new THREE.DataTexture(data, SS_LIGHT_TEXELS, cap, THREE.RGBAFormat, THREE.FloatType);
+        tex.minFilter = THREE.NearestFilter;
+        tex.magFilter = THREE.NearestFilter;
+        tex.generateMipmaps = false;
+        tex.needsUpdate = true;
+        const old = this.lightsTexture;
+        this.lightsTexture = tex;
+        this._capacity = cap;
+        if (this.onTexture) this.onTexture(tex);
+        if (old) old.dispose();
+    }
+
+    /**
+     * Décrit les cônes des lyres en mode SS Depth (après SpotFixture.update : ligne de paramètres à jour).
+     * @param {Iterable<import('../SpotFixture.js').SpotFixture>} fixtures
+     */
+    collect(fixtures) {
+        let n = 0;
+        let nf = 0;
+        let d = this.lightsTexture.image.data;
+        const geo = this._geo;
+        for (const f of fixtures) {
+            if (!f.ssDepth || !(f.flux > 1e-4) || !f.lensPos) continue;
+            const r = this.batch.paramsRow(f.row);
+            const half = r[7] < 1.9;
+            // Lyre noire (couleur nulle) : rien à dessiner
+            if (r[0] + r[1] + r[2] + (half ? r[4] + r[5] + r[6] : 0) < 1e-4) continue;
+            const tanHalf = r[8];
+            if (!(tanHalf > 0)) continue;
+            const iris = Math.min(r[9], 1);
+            const frostBlur = r[10] * 0.42;
+            const apexDist = r[31];
+            const range = f.beamRange || 140;
+            const beamEnd = r[49] > 0 ? Math.min(r[49], range) : range;
+            const fadeB = beamEnd < range ? beamEnd * 0.75 : range * 0.7;
+            const splashW = r[18];
+            const hasOcc = r[32] >= 0 ? 1 : 0;
+            // Image de la fenêtre : disque (cas courant), disque × transmission moyenne (frost fort),
+            // atlas (gobos, couteaux, demi-couleurs : 1 lecture), ou calculée dans le shader (atlas plein)
+            const blades = r[20] >= 0.001 || r[22] >= 0.001 || r[24] >= 0.001 || r[26] >= 0.001;
+            const detail = r[12] > 0.001 || r[13] > 0.001 || (r[16] > 0.001 && r[15] > 0.5) || blades || half;
+            let kind = 0;
+            if (detail) {
+                if (r[10] >= 0.7 && !blades && !half) kind = 1;
+                else if (r[48] > 0) kind = 2;
+                else kind = 3;
+            }
+            const outR = iris + 0.012 + frostBlur + 0.14 + 0.01;
+            const tanO = tanHalf * outR;
+            const zS = apexDist;
+            const zEsc = apexDist + beamEnd;
+            const zEnd = apexDist + (splashW > 0.001 ? range : beamEnd);
+            const irr0 = r[3] / (Math.PI * tanHalf * tanHalf);
+            const W = f.axis, R = f.right, U = f.up;
+            let any = false;
+            for (let i = 0; i < f.facetCount; i++) {
+                const fc = f.facets[i];
+                if (!(fc.weight > 1e-4)) continue;
+                if (n >= this._capacity) {
+                    if (this._capacity >= SS_MAX_LIGHTS) break;
+                    this._allocLights(n + 1);
+                    d = this.lightsTexture.image.data;
+                }
+                any = true;
+                const vx = fc.gx * tanHalf, vy = fc.gy * tanHalf;
+                _Vw.copy(R).multiplyScalar(vx).addScaledVector(U, vy);
+                _WV.copy(W).add(_Vw);                                  // direction du centre des sections
+                _A.copy(f.lensPos).addScaledVector(_WV, -apexDist);    // apex du cône oblique
+                _P0.copy(_A).addScaledVector(_WV, zS);
+                _P1.copy(_A).addScaledVector(_WV, zEnd);
+                const r0 = tanO * zS, r1 = tanO * zEnd;
+                const o = n * SS_LIGHT_TEXELS * 4;
+                d[o] = _A.x; d[o + 1] = _A.y; d[o + 2] = _A.z; d[o + 3] = f.row;
+                d[o + 4] = W.x; d[o + 5] = W.y; d[o + 6] = W.z; d[o + 7] = apexDist;
+                d[o + 8] = R.x; d[o + 9] = R.y; d[o + 10] = R.z; d[o + 11] = tanO;
+                d[o + 12] = vx; d[o + 13] = vy; d[o + 14] = zS; d[o + 15] = zEsc;
+                d[o + 16] = (_P0.x + _P1.x) * 0.5; d[o + 17] = (_P0.y + _P1.y) * 0.5; d[o + 18] = (_P0.z + _P1.z) * 0.5;
+                d[o + 19] = 0.5 * _P0.distanceTo(_P1) + Math.max(r0, r1) * OCT_K;
+                d[o + 20] = r[0]; d[o + 21] = r[1]; d[o + 22] = r[2]; d[o + 23] = irr0 * fc.weight;
+                d[o + 24] = tanHalf; d[o + 25] = iris; d[o + 26] = frostBlur; d[o + 27] = Math.log(Math.max(1e-3, r[11]));
+                d[o + 28] = kind; d[o + 29] = r[48] - 1; d[o + 30] = splashW; d[o + 31] = hasOcc;
+                d[o + 32] = beamEnd; d[o + 33] = fadeB; d[o + 34] = range; d[o + 35] = range * 0.7;
+                const g = n * 14;
+                geo[g] = _P0.x; geo[g + 1] = _P0.y; geo[g + 2] = _P0.z; geo[g + 3] = r0 * OCT_K;
+                geo[g + 4] = _P1.x; geo[g + 5] = _P1.y; geo[g + 6] = _P1.z; geo[g + 7] = r1 * OCT_K;
+                geo[g + 8] = R.x; geo[g + 9] = R.y; geo[g + 10] = R.z;
+                geo[g + 11] = U.x; geo[g + 12] = U.y; geo[g + 13] = U.z;
+                n++;
+            }
+            if (any) nf++;
+        }
+        this.count = n;
+        this.fixtures = nf;
+        if (n > 0) this.lightsTexture.needsUpdate = true;
+    }
+
+    /**
+     * Listes de cônes par tuile pour la caméra courante (matrices du rendu de la scène).
+     * @param {THREE.PerspectiveCamera} camera
+     */
+    bin(camera) {
+        const counts = this._tileCount;
+        const data = this._tileData;
+        if (this.count === 0) {
+            this.visible = 0;
+            if (this._dirtyTiles) {
+                counts.fill(0);
+                for (let t = 0; t < SS_TILE_COUNT; t++) data[t * SS_TILE_TEXELS * 4] = 0;
+                this.tilesTexture.needsUpdate = true;
+                this._dirtyTiles = false;
+            }
+            return;
+        }
+        counts.fill(0);
+        const v = camera.matrixWorldInverse.elements;
+        const p = camera.projectionMatrix.elements;
+        const near = camera.near;
+        const geo = this._geo;
+        const vx = this._vx, vy = this._vy, vz = this._vz;
+        const cx = this._cx, cy = this._cy;
+        const seg = this._seg;
+        const TX = SS_TILES_X, TY = SS_TILES_Y;
+        // NDC → unités de tuiles
+        const sx = 0.5 * TX, sy = 0.5 * TY;
+        const zc = -near * 1.0001;
+        let visible = 0;
+
+        for (let li = 0; li < this.count; li++) {
+            const g = li * 14;
+            const Rx = geo[g + 8], Ry = geo[g + 9], Rz = geo[g + 10];
+            const Ux = geo[g + 11], Uy = geo[g + 12], Uz = geo[g + 13];
+            // 16 sommets du tronc octogonal, en repère caméra
+            for (let e = 0; e < 2; e++) {
+                const cX = geo[g + e * 4], cY = geo[g + e * 4 + 1], cZ = geo[g + e * 4 + 2], rad = geo[g + e * 4 + 3];
+                for (let k = 0; k < OCT; k++) {
+                    const c = COS[k] * rad, s = SIN[k] * rad;
+                    const x = cX + Rx * c + Ux * s, y = cY + Ry * c + Uy * s, z = cZ + Rz * c + Uz * s;
+                    const j = e * OCT + k;
+                    vx[j] = v[0] * x + v[4] * y + v[8] * z + v[12];
+                    vy[j] = v[1] * x + v[5] * y + v[9] * z + v[13];
+                    vz[j] = v[2] * x + v[6] * y + v[10] * z + v[14];
+                }
+            }
+            // Segments projetés (arêtes découpées par le plan proche) + points de coupe
+            let ns = 0, nc = 0;
+            let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+            for (let e = 0; e < OCT * 3; e++) {
+                const a = EDGES[e * 2], b = EDGES[e * 2 + 1];
+                let ax = vx[a], ay = vy[a], az = vz[a];
+                let bx = vx[b], by = vy[b], bz = vz[b];
+                const aIn = az <= zc, bIn = bz <= zc;
+                if (!aIn && !bIn) continue;
+                if (!aIn || !bIn) {
+                    const t = (zc - az) / (bz - az);
+                    const ix = ax + (bx - ax) * t, iy = ay + (by - ay) * t;
+                    if (!aIn) { ax = ix; ay = iy; az = zc; } else { bx = ix; by = iy; bz = zc; }
+                    if (nc < MAX_CROSS) { cx[nc] = ix; cy[nc] = iy; nc++; }
+                }
+                // Projection (perspective, centre éventuellement décalé)
+                const pax = Math.max(-1e4, Math.min(1e4, (p[0] * ax + p[8] * az) / -az * sx + sx));
+                const pay = Math.max(-1e4, Math.min(1e4, (p[5] * ay + p[9] * az) / -az * sy + sy));
+                const pbx = Math.max(-1e4, Math.min(1e4, (p[0] * bx + p[8] * bz) / -bz * sx + sx));
+                const pby = Math.max(-1e4, Math.min(1e4, (p[5] * by + p[9] * bz) / -bz * sy + sy));
+                const o = ns * 4;
+                seg[o] = pax; seg[o + 1] = pay; seg[o + 2] = pbx; seg[o + 3] = pby;
+                ns++;
+            }
+            if (ns === 0) continue;
+            // Cône coupé par le plan proche : bord de la section de coupe (toutes les paires de points de coupe)
+            if (nc > 1) {
+                for (let i = 0; i < nc; i++) {
+                    const ix = Math.max(-1e4, Math.min(1e4, (p[0] * cx[i] + p[8] * zc) / -zc * sx + sx));
+                    const iy = Math.max(-1e4, Math.min(1e4, (p[5] * cy[i] + p[9] * zc) / -zc * sy + sy));
+                    cx[i] = ix; cy[i] = iy;
+                }
+                for (let i = 0; i < nc; i++) {
+                    for (let j = i + 1; j < nc; j++) {
+                        const o = ns * 4;
+                        seg[o] = cx[i]; seg[o + 1] = cy[i]; seg[o + 2] = cx[j]; seg[o + 3] = cy[j];
+                        ns++;
+                    }
+                }
+            }
+            for (let s = 0; s < ns; s++) {
+                const o = s * 4;
+                const x0 = seg[o], y0 = seg[o + 1], x1 = seg[o + 2], y1 = seg[o + 3];
+                if (x0 < minX) minX = x0; if (x0 > maxX) maxX = x0;
+                if (x1 < minX) minX = x1; if (x1 > maxX) maxX = x1;
+                if (y0 < minY) minY = y0; if (y0 > maxY) maxY = y0;
+                if (y1 < minY) minY = y1; if (y1 > maxY) maxY = y1;
+            }
+            if (maxX < 0 || minX >= TX || maxY < 0 || minY >= TY) continue;
+            const row0 = Math.max(0, Math.floor(minY)), row1 = Math.min(TY - 1, Math.floor(maxY));
+            let hit = false;
+            for (let ty = row0; ty <= row1; ty++) {
+                // Étendue en x de la projection (polygone convexe) dans la bande [ty, ty + 1]
+                let bx0 = Infinity, bx1 = -Infinity;
+                for (let s = 0; s < ns; s++) {
+                    const o = s * 4;
+                    const x0 = seg[o], y0 = seg[o + 1], x1 = seg[o + 2], y1 = seg[o + 3];
+                    const ylo = Math.min(y0, y1), yhi = Math.max(y0, y1);
+                    if (yhi < ty || ylo > ty + 1) continue;
+                    const dy = y1 - y0;
+                    if (Math.abs(dy) < 1e-9) {
+                        const lo = Math.min(x0, x1), hi = Math.max(x0, x1);
+                        if (lo < bx0) bx0 = lo; if (hi > bx1) bx1 = hi;
+                        continue;
+                    }
+                    let ta = (ty - y0) / dy, tb = (ty + 1 - y0) / dy;
+                    if (ta > tb) { const tmp = ta; ta = tb; tb = tmp; }
+                    ta = Math.max(0, ta); tb = Math.min(1, tb);
+                    const xa = x0 + (x1 - x0) * ta, xb = x0 + (x1 - x0) * tb;
+                    const lo = Math.min(xa, xb), hi = Math.max(xa, xb);
+                    if (lo < bx0) bx0 = lo; if (hi > bx1) bx1 = hi;
+                }
+                if (bx1 < 0 || bx0 >= TX) continue;
+                const tx0 = Math.max(0, Math.floor(bx0 - 0.02)), tx1 = Math.min(TX - 1, Math.floor(bx1 + 0.02));
+                for (let tx = tx0; tx <= tx1; tx++) {
+                    const t = ty * TX + tx;
+                    const c = counts[t];
+                    if (c >= SS_MAX_PER_TILE) continue;
+                    data[(t * SS_TILE_TEXELS + 1 + (c >> 2)) * 4 + (c & 3)] = li;
+                    counts[t] = c + 1;
+                    hit = true;
+                }
+            }
+            if (hit) visible++;
+        }
+        for (let t = 0; t < SS_TILE_COUNT; t++) data[t * SS_TILE_TEXELS * 4] = counts[t];
+        this.visible = visible;
+        this.tilesTexture.needsUpdate = true;
+        this._dirtyTiles = true;
+    }
+
+    dispose() {
+        this.lightsTexture.dispose();
+        this.tilesTexture.dispose();
+    }
+}
