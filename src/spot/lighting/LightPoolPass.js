@@ -15,8 +15,8 @@ import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { createLightPoolMaterial } from './LightPoolShaders.js';
 import { gpuPassTimer } from '../../render/GpuPassTimer.js';
 
-/** « Auto » : pleine résolution jusqu'à cette hauteur d'image, ½ au-delà (4K) */
-const AUTO_FULL_MAX_HEIGHT = 1500;
+/** « Auto » : pleine résolution jusqu'en 1080p, ½ au-delà (1440p, 4K) */
+const AUTO_FULL_MAX_HEIGHT = 1100;
 
 export class LightPoolPass extends Pass {
     /**

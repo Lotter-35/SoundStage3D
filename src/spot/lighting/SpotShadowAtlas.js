@@ -23,6 +23,7 @@
 
 import * as THREE from 'three';
 import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { gpuPassTimer } from '../../render/GpuPassTimer.js';
 import {
     SHADOW_MAX_SLOTS, SHADOW_BLOCKS_PER_ROW, SHADOW_FAR, SHADOW_FACES,
     createShadowUniforms, createShadowInfoTexture,
@@ -293,6 +294,8 @@ export class SpotShadowAtlas {
         r.getClearColor(this._clear);
         const prevAlpha = r.getClearAlpha();
         const proxy = this._proxy;
+        const timer = gpuPassTimer.enabled ? gpuPassTimer : null;
+        if (timer) timer.begin('Cuisson des ombres');
         try {
             r.shadowMap.autoUpdate = false;
             r.autoClear = false;
@@ -337,6 +340,7 @@ export class SpotShadowAtlas {
             rt.scissorTest = false;
             rt.viewport.set(0, 0, rt.width, rt.height);
         } finally {
+            if (timer) timer.end();
             proxy.children = [];
             r.setClearColor(this._clear, prevAlpha);
             r.shadowMap.autoUpdate = prevShadowAuto;

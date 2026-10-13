@@ -25,9 +25,11 @@ import { CONE_GLSL } from '../ssdepth/SSConeGLSL.js';
 import { SS_TILES_X, SS_TILES_Y, SS_MAX_PER_TILE } from '../ssdepth/SSDepthLights.js';
 import { SHADOW_GLSL, createShadowUniforms } from './shadowGLSL.js';
 
-/** Albédo moyen (linéaire) des textures de stage.js : pelouse, lino noir */
+/** Albédo moyen (linéaire) de la pelouse de stage.js */
 const GRASS_ALBEDO = [0.073, 0.141, 0.026];
-const LINO_ALBEDO = [0.025, 0.024, 0.03];
+/** Lino noir : 0,025 en moyenne dans la texture, relevé (poussière, micro-rayures d'un plateau réel) pour que les
+ *  taches restent lisibles sur le plateau comme avec les anciennes lumières (+35 % de stage.js en plus) */
+const LINO_ALBEDO = [0.05, 0.048, 0.056];
 
 /** @param {object} [shadowUniforms] uniformes partagés des ombres statiques */
 export function createLightPoolMaterial(shadowUniforms = createShadowUniforms()) {
@@ -154,9 +156,13 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms())
                         haveN = true;
                         vec3 pl = viewPos(max(c - ivec2(1, 0), ivec2(0))), pr = viewPos(min(c + ivec2(1, 0), fullI - 1));
                         vec3 pd = viewPos(max(c - ivec2(0, 1), ivec2(0))), pu = viewPos(min(c + ivec2(0, 1), fullI - 1));
-                        vec3 dx = abs(pr.z - vp.z) < abs(vp.z - pl.z) ? pr - vp : vp - pl;
-                        vec3 dy = abs(pu.z - vp.z) < abs(vp.z - pd.z) ? pu - vp : vp - pd;
-                        vec3 nv = normalize(cross(dx, dy));
+                        // Bord de l'image : seul le voisin intérieur existe
+                        bool useR = c.x == 0 || (c.x < fullI.x - 1 && abs(pr.z - vp.z) < abs(vp.z - pl.z));
+                        bool useU = c.y == 0 || (c.y < fullI.y - 1 && abs(pu.z - vp.z) < abs(vp.z - pd.z));
+                        vec3 dx = useR ? pr - vp : vp - pl;
+                        vec3 dy = useU ? pu - vp : vp - pd;
+                        vec3 cr = cross(dx, dy);
+                        vec3 nv = dot(cr, cr) > 1e-20 ? normalize(cr) : -normalize(vp);
                         if (dot(nv, vp) > 0.0) nv = -nv;
                         N = normalize(uCamRot * nv);
                         surface(P, N, albedo, rough, specK);
@@ -200,6 +206,8 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms())
                     }
                     acc += gate * brdf * E;
                 }
+                // Garde-fou : une valeur invalide se propagerait au halo et au bloom
+                if (any(isnan(acc)) || any(isinf(acc))) acc = vec3(0.0);
                 gl_FragColor = vec4(min(acc, vec3(60000.0)), depth);
             }
         `,
