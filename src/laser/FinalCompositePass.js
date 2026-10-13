@@ -19,6 +19,7 @@
 
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { costDebug } from '../render/costDebug.js';
 
 function createFinalCompositeMaterial(dummy) {
     return new THREE.ShaderMaterial({
@@ -65,6 +66,10 @@ function createFinalCompositeMaterial(dummy) {
             uLightsBloomEnabled: { value: 0 },
             // sortie écran
             uToScreen: { value: 0 },
+            // vue « coût des lyres » (render/costDebug.js) : effets producteurs de coût (1) ou non (0)
+            uCostOn:   { value: 0 },
+            uAdd0Cost: { value: 0 },
+            uAdd1Cost: { value: 0 },
         },
         vertexShader: /* glsl */`
             varying vec2 vUv;
@@ -175,14 +180,29 @@ function createFinalCompositeMaterial(dummy) {
                 return wSum > 1e-3 ? sum / wSum : best;
             }
 
+            uniform int uCostOn;
+            uniform int uAdd0Cost;
+            uniform int uAdd1Cost;
+
+            // Carte de chaleur du travail par pixel, échelle logarithmique : ≈ 2 bleu, 10 vert, 40 jaune, 200 rouge,
+            // 1000 blanc (unités : voir render/costDebug.js)
+            vec3 heat(float w) {
+                float x = clamp(log2(1.0 + w) / 10.0, 0.0, 1.0);
+                vec3 c = mix(vec3(0.0, 0.1, 0.6), vec3(0.0, 0.8, 0.2), smoothstep(0.0, 0.2, x));
+                c = mix(c, vec3(1.0, 0.9, 0.0), smoothstep(0.2, 0.45, x));
+                c = mix(c, vec3(1.0, 0.1, 0.0), smoothstep(0.45, 0.75, x));
+                c = mix(c, vec3(1.0), smoothstep(0.75, 1.0, x));
+                return w > 0.05 ? c : vec3(0.0);
+            }
+
             void main() {
                 vec4 base = texture2D(tDiffuse, vUv);
-                vec3 col = base.rgb;
+                vec3 col = uCostOn == 1 ? vec3(0.0) : base.rgb;
                 float z0 = -1.0;
 
                 // 1. Effets additifs (nappes laser, faisceaux des lyres)
-                if (uAdd0On == 1) col += additive(tAdd0, uAdd0Res, uAdd0Depth, z0);
-                if (uAdd1On == 1) col += additive(tAdd1, uAdd1Res, uAdd1Depth, z0);
+                if (uAdd0On == 1 && (uCostOn == 0 || uAdd0Cost == 1)) col += additive(tAdd0, uAdd0Res, uAdd0Depth, z0);
+                if (uAdd1On == 1 && (uCostOn == 0 || uAdd1Cost == 1)) col += additive(tAdd1, uAdd1Res, uAdd1Depth, z0);
 
                 // 1 bis. Taches de lumière des lyres (avant le brouillard : la transmittance s'applique)
                 if (uPoolOn == 1) {
@@ -199,7 +219,7 @@ function createFinalCompositeMaterial(dummy) {
                 }
 
                 // 1 bis'. Reflets des faisceaux sur le plateau (même remontée bilatérale)
-                if (uReflOn == 1) {
+                if (uReflOn == 1 && uCostOn == 0) {
                     vec2 ruv = vUv * uReflScale;
                     vec3 quick = texture2D(tRefl, ruv).rgb;
                     if (quick.r + quick.g + quick.b > 0.0) {
@@ -218,6 +238,15 @@ function createFinalCompositeMaterial(dummy) {
                         if (z0 < 0.0) z0 = linZ(vUv);
                         col += bilateralUp(tSS, suv, quick, max(z0, 0.1), uSSSharp);
                     }
+                }
+
+                // Vue « coût des lyres » : travail cumulé (× 100) en carte de chaleur sur la scène assombrie
+                if (uCostOn == 1) {
+                    vec3 gray = vec3(dot(base.rgb, vec3(0.3, 0.6, 0.1))) * 0.15;
+                    vec3 o = heat(col.r * 100.0) + gray;
+                    gl_FragColor = vec4(o, 1.0);
+                    if (uToScreen == 1) gl_FragColor = sRGBTransferOETF(gl_FragColor);
+                    return;
                 }
 
                 // 2. Brouillard de salle : sur-échantillonnage bilatéral (même profondeur que le pixel)
@@ -312,6 +341,7 @@ export class FinalCompositePass extends Pass {
                 u[`t${k}`].value = o.texture;
                 u[`u${k}Res`].value.copy(o.res);
                 u[`u${k}Depth`].value = o.useDepth ? 1 : 0;
+                u[`u${k}Cost`].value = p.costProducer ? 1 : 0;
                 add++;
             } else if (o.kind === 'ss') {
                 u.uSSOn.value = 1;
@@ -338,6 +368,7 @@ export class FinalCompositePass extends Pass {
             }
         }
 
+        u.uCostOn.value = costDebug.on ? 1 : 0;
         const toScreen = this.renderToScreen;
         u.uToScreen.value = toScreen && THREE.ColorManagement.getTransfer(renderer.outputColorSpace) === THREE.SRGBTransfer ? 1 : 0;
         renderer.setRenderTarget(toScreen ? null : writeBuffer);

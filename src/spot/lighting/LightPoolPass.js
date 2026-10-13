@@ -18,6 +18,7 @@ import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { createLightPoolMaterial } from './LightPoolShaders.js';
 import { gpuPassTimer } from '../../render/GpuPassTimer.js';
+import { costDebug } from '../../render/costDebug.js';
 
 /** « Auto » : pleine résolution jusqu'en 1080p, ½ au-delà (1440p, 4K) */
 const AUTO_FULL_MAX_HEIGHT = 1100;
@@ -62,6 +63,7 @@ export class LightPoolPass extends Pass {
             if (!['tLow', 'uLowScale', 'uSharp'].includes(k)) this.refineMaterial.uniforms[k] = this.material.uniforms[k];
         }
         this._refineQuad = new FullScreenQuad(this.refineMaterial);
+        this.costProducer = true;   // vue « coût des lyres »
         this._out = { kind: 'pool', texture: null, scale: new THREE.Vector2(1, 1), div: 1, sharpness: 1.5 };
         this._hasOut = false;
     }
@@ -120,6 +122,7 @@ export class LightPoolPass extends Pass {
         u.uFar.value = cam.far;
         u.uPoolsOn.value = pools ? 1 : 0;
         u.uGIGain.value = this.giGain;
+        u.uDebugCost.value = costDebug.on ? 1 : 0;
 
         const timer = gpuPassTimer.enabled ? gpuPassTimer : null;
         const oldAutoClear = renderer.autoClear;

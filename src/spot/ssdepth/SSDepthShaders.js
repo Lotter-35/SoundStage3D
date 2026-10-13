@@ -59,7 +59,8 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
             tSoft:       { value: null },   // faisceaux flous (¼ de résolution, a = profondeur)
             uSoftScale:  { value: new THREE.Vector2(1, 1) },
             uSoftOn:     { value: 0 },
-            uSat:        { value: 3 },      // lumière au-delà de laquelle le pixel est blanc (voir SpotManager.setRoomFog)
+            uSat:        { value: 3 },
+            uDebugCost:  { value: 0 },      // vue « coût des lyres » : travail du pixel au lieu de la lumière      // lumière au-delà de laquelle le pixel est blanc (voir SpotManager.setRoomFog)
             uRefineMax:  { value: 24 },     // retouche : nombre de cônes de la tuile au-delà duquel on ne recalcule pas
             uLowScale:   { value: new THREE.Vector2(1, 1) },
             uSharp:      { value: 1.5 },
@@ -108,6 +109,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
             const ivec2 TILES = ivec2(${SS_TILES_X}, ${SS_TILES_Y});
             // Pixel saturé : au-delà de uSat, l'écran (sans tone mapping : max 1) reste blanc, fumée de salle comprise
             uniform float uSat;
+            uniform float uDebugCost;
             // Cônes dont la diffusion est calculée au plus par pixel (les plus lumineux : listes triées par importance)
             const int MAX_HITS = 48;
 
@@ -145,6 +147,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                     int i = int(idx4[k & 3]);
 
                     // ── Test d'intersection : 3 lectures seulement (un cône que le pixel ne touche pas ne coûte que ça) ──
+                    gWork += 0.3;
                     vec4 A0 = LT(i, 0), A1 = LT(i, 1), A2 = LT(i, 2);
                     vec3 apex = A0.xyz;
                     float tanO = A0.w;
@@ -237,7 +240,8 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                 // profondeur moyenne, sinon le damier se verrait (écart que la remontée bilatérale ne sépare pas)
                 float viewDepth = (dMax - dMin) < 0.1 * max(dMin, 0.5) ? 0.5 * (dMin + dMax)
                                 : (((lo.x + lo.y) & 1) == 0 ? dMin : dMax);
-                gl_FragColor = vec4(shadeBeams(vec2(b) + 1.0, viewDepth, b, d00, d10, d01), viewDepth);
+                vec3 beams = shadeBeams(vec2(b) + 1.0, viewDepth, b, d00, d10, d01);
+                gl_FragColor = vec4(uDebugCost > 0.5 ? vec3(gWork * 0.01) : beams, viewDepth);
             }
         #else
             uniform sampler2D tBeamLow;
@@ -329,7 +333,8 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                 // Bord : faisceaux recalculés pour ce pixel
                 ivec2 b = min(p, fullI - 2);
                 float d10 = linZ(b + ivec2(1, 0)), d01 = linZ(b + ivec2(0, 1));
-                gl_FragColor = vec4(shadeBeams(vec2(p) + 0.5, linZ(p), b, linZ(b), d10, d01) + softUp(p, cz), 1.0);
+                vec3 beams = shadeBeams(vec2(p) + 0.5, linZ(p), b, linZ(b), d10, d01);
+                gl_FragColor = vec4((uDebugCost > 0.5 ? vec3(gWork * 0.01) : beams) + softUp(p, cz), 1.0);
             }
         #endif
         `,

@@ -23,6 +23,7 @@ import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { createSSBeamMaterial } from './SSDepthShaders.js';
 import { gpuPassTimer } from '../../render/GpuPassTimer.js';
+import { costDebug } from '../../render/costDebug.js';
 
 /** Retouche des bords : au-delà de ce nombre de cônes dans la tuile, remontée bilatérale seulement
  *  (recalculer des centaines de cônes sur chaque bord coûtait plusieurs ms ; le détail ne s'y voit pas) */
@@ -78,6 +79,7 @@ export class SSDepthPass extends Pass {
         this.refineMaterial.uniforms.uRefineMax.value = REFINE_MAX_CONES;
         this._beamQuad = new FullScreenQuad(this.beamMaterial);
         this._refineQuad = new FullScreenQuad(this.refineMaterial);
+        this.costProducer = true;   // vue « coût des lyres »
         this._out = { kind: 'ss', texture: null, scale: new THREE.Vector2(1, 1), texel: new THREE.Vector2(1, 1), sharpness: 1.5, full: true };
         this._hasOut = false;
         this._fullSize = new THREE.Vector2(1, 1);
@@ -143,6 +145,7 @@ export class SSDepthPass extends Pass {
         u.uHazeK.value = this.haze * 0.035;
         u.uPhaseG.value = this.phaseG;
         u.uSplashOn.value = this.splash ? 1 : 0;
+        u.uDebugCost.value = costDebug.on ? 1 : 0;
 
         const oldAutoClear = renderer.autoClear;
         renderer.autoClear = false;

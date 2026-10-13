@@ -32,6 +32,7 @@ import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
 import { SpotEffects } from './console/SpotEffects.js';
 import { RES_QUALITY } from '../ui/ClientOptions.js';
 import { nextBusyState, BUSY_RES_FACTOR } from '../render/resolutionScale.js';
+import { costDebug } from '../render/costDebug.js';
 
 /** Résolution des faisceaux quand la caméra est dans l'un d'eux (× la qualité choisie) */
 const INSIDE_RES_FACTOR = 0.5;
@@ -416,6 +417,7 @@ export class SpotManager {
         if (smoke && smoke.wind) u.uWind.value.copy(smoke.wind);
         else u.uWind.value.set(this._time * 0.18, this._time * 0.04, this._time * 0.13);
         u.uTime.value = this._time;
+        u.uDebugCost.value = costDebug.on ? 1 : 0;   // vue « coût des lyres » (faisceaux classiques et analytiques)
 
         this.volumePass.enabled = this._hasPass && this.batch.volumeCount > 0;
         // Ombres statiques : emplacements, invalidations (lyre déplacée, décor modifié), quelques cuissons

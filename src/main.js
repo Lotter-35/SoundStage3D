@@ -55,6 +55,7 @@ import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
 import { DynamicResolution } from './render/DynamicResolution.js';
 import { gpuPassTimer } from './render/GpuPassTimer.js';
+import { costDebug } from './render/costDebug.js';
 import { installGizmoSnap } from './ui/gizmoSnap.js';
 import { FixtureSelection } from './ui/FixtureSelection.js';
 import { setDynamicResolutionFactor } from './render/resolutionScale.js';
@@ -2343,6 +2344,7 @@ gpuPassTimer.init(renderer);
 window.__SS3D.gpuPassTimer = gpuPassTimer;
 let _gpuPassEl = null;
 let _gpuPassShown = 0;
+clientOptions.bind('costView', (v) => { costDebug.on = Boolean(v); });
 clientOptions.bind('gpuPassTimings', (v) => {
     gpuPassTimer.setEnabled(v);
     dynamicResolution.paused = Boolean(v);

@@ -82,6 +82,7 @@ export function createAnalyticBeamMaterial(uniforms) {
             uniform vec3 uBoxMin[${MAX_OCCLUDERS}];
             uniform vec3 uBoxMax[${MAX_OCCLUDERS}];
             uniform sampler2D uGateAtlas;
+            uniform float uDebugCost;   // vue « coût des lyres » : travail du pixel au lieu de la lumière
             flat varying vec4 vLens;
             flat varying vec4 vAxis;
             flat varying vec4 vRight;
@@ -237,6 +238,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                 float t1 = min(tScene, 1e5);
                 vec3 sum = vec3(0.0);
                 float hazeK = -1.0;
+                float work = 0.2;   // vue du coût : un fragment du cône
                 for (int f = 0; f < 9; f++) {
                     if (f > pCount) break;
                     float w;
@@ -252,6 +254,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                     vec3 WV = W + V;
                     vec3 A = lens - WV * apexDist;
                     float tin, tout;
+                    work += 0.3;
                     if (!coneSeg(ro, rd, A, W, WV, tanO, zS, zE, uNear, t1, tin, tout)) continue;
 
                     // Quadrature : en 1/z quand le rayon remonte le faisceau (1/z² intégré exactement)
@@ -280,7 +283,9 @@ export function createAnalyticBeamMaterial(uniforms) {
                         vec2 g = vec2(dot(radv, R), dot(radv, U)) / (zA * tanHalf) - off * (zl / zA);
                         float blur = aFrostBlur + min(0.14, abs(log(zl + 0.5) - aLogFocus) * 0.035) + extraBlur;
                         vec3 gate = gateAt(g, blur);
+                        work += 1.0;
                         if (gate.r + gate.g + gate.b < 1e-5) continue;
+                        if (hasCube || hasOcc) work += 1.0;
                         if (hasCube) {
                             if (shadowHard(shSlot, SH.xyz, P, 0.06 + shadowTexelSize(length(P - SH.xyz))) < 0.5) continue;
                         } else if (hasOcc) {
@@ -301,6 +306,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                     }
                     sum += acc * (span * w);
                 }
+                if (uDebugCost > 0.5) { gl_FragColor = vec4(vec3(work * 0.01), 1.0); return; }
                 if (hazeK < 0.0) discard;
                 vec3 col = sum * (irr0 * hazeK * 0.035);
                 if (any(isnan(col)) || any(isinf(col))) discard;

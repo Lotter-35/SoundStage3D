@@ -64,6 +64,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
             uGain:       { value: 60 },    // lumière émise → éclairement (même échelle que les anciennes SpotLight)
             uSpecOn:     { value: 1 },
             uSat:        { value: 3 },     // éclairement au-delà duquel la surface est blanche
+            uDebugCost:  { value: 0 },     // vue « coût des lyres »
         },
         vertexShader: /* glsl */`
             void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }
@@ -87,6 +88,8 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
             uniform float uGIOffset;
             uniform float uPoolsOn;
             uniform float uSat;
+            uniform float uDebugCost;
+            float gWork = 0.0;
 
             const float PI = 3.14159265;
             const ivec2 TILES = ivec2(${SS_TILES_X}, ${SS_TILES_Y});
@@ -129,6 +132,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     int i = int(idx4[k & 3]);
 
                     // ── Le point est-il dans le cône ? (3 lectures) ──
+                    gWork += 0.3;
                     vec4 A0 = LT(i, 0), A1 = LT(i, 1), A2 = LT(i, 2);
                     vec3 apex = A0.xyz;
                     cW = A1.xyz;
@@ -157,6 +161,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     hits++;
                     float zA; vec3 lp;
                     vec3 gate = gateAtPoint(P, true, zA, lp);
+                    gWork += 2.0;   // image de la fenêtre, ombre PCF, BRDF
                     if (gate.r + gate.g + gate.b < 1e-5) continue;
                     float dl = length(lp);
                     vec3 L = -lp / max(dl, 1e-4);
@@ -202,7 +207,8 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                 ivec2 c = min(ivec2((vec2(lo) + 0.5) * uDiv), fullI - 1);
                 float depth = linZ(c);
                 if (depth > uFar * 0.98) { gl_FragColor = vec4(0.0, 0.0, 0.0, depth); return; }
-                gl_FragColor = vec4(shadePool(c, depth), depth);
+                vec3 pool = shadePool(c, depth);
+                gl_FragColor = vec4(uDebugCost > 0.5 ? vec3(gWork * 0.01) : pool, depth);
             }
         #else
             // Retouche des bords en pleine résolution : pixels dont les 3×3 voisins réduits diffèrent (bord d'une
@@ -248,7 +254,8 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     if (n > 24) edge = false;
                 }
                 if (!edge) { gl_FragColor = vec4(wSum > 1e-3 ? sum / wSum : vec3(0.0), 1.0); return; }
-                gl_FragColor = vec4(shadePool(p, depth), 1.0);
+                vec3 pool = shadePool(p, depth);
+                gl_FragColor = vec4(uDebugCost > 0.5 ? vec3(gWork * 0.01) : pool, 1.0);
             }
         #endif
         `,

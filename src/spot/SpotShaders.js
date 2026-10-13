@@ -309,6 +309,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
             ${GATE_GLSL}
             ${SHADOW_GLSL}
             uniform float uClassicShadow;
+            uniform float uDebugCost;   // vue « coût des lyres » (render/costDebug.js)
             uniform highp sampler3D uNoise;
             uniform highp sampler2D uDepth;
             uniform vec2 uInvRes;
@@ -750,6 +751,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                          : (weight < 0.99 || pCount > 0) ? clamp(ceil(span * 1.6), 4.0, imp ? 6.0 : 11.0)
                                                          : clamp(ceil(span * 2.6), 6.0, imp ? 8.0 : 18.0);
                 if (!scatter) nS = 0.0;   // faisceau raccourci : rien à intégrer sur ce pixel (tache au sol seule)
+                float dbgWork = 0.2 + nS * (hasCube || hasOcc ? 2.0 : 1.0);   // vue « coût des lyres »
                 float dt = span / max(nS, 1.0);
                 float invIn = 1.0 / zIn;
                 float invOut = 1.0 / zOut;
@@ -888,7 +890,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     col += prismImage(G, g, zl / max(zA, 1e-3), blur) * (E * ndl * splashW * 0.06 * (1.0 - smoothstep(fadeStart, L, zl)));
                 }
 
-                gl_FragColor = vec4(col, 1.0);
+                gl_FragColor = uDebugCost > 0.5 ? vec4(vec3(dbgWork * 0.01), 1.0) : vec4(col, 1.0);
             }
         `,
         defines: bar ? { BAR_MODE: 1 } : prism ? { PRISM: 1 } : {},

@@ -77,6 +77,7 @@ export const CLIENT_OPTIONS_SCHEMA = {
     dynamicResolutionTarget: num(100, 30, 100, 5, 'FPS visés (% écran)', 'display', '100 % = fréquence de l’écran (ex. 120 Hz → 120 FPS, 50 % → 60 FPS). Mise à jour quand la fenêtre change d’écran'),
     sharpness:        num(0, 0, 1, 0.01, 'Netteté', 'display', 'Accentuation des contours en post-traitement'),
     antialiasing:     opt(AA_MODES, AA_MODES[0], 'Anticrénelage', 'display', 'Modes MSAA : géométrie de la scène (MSAA) + image finale entière (SMAA : faisceaux, lasers, brouillard, personnage devant une lumière)'),
+    costView:         bool(false, 'Vue du coût des lyres', 'display', 'Carte de chaleur du travail fait par pixel par les faisceaux et les taches des lyres : bleu ≈ 2, vert ≈ 10, jaune ≈ 40, rouge ≈ 200, blanc ≈ 1000 unités (1 unité ≈ un point de faisceau calculé). Pour voir ce qui coûte cher'),
     gpuPassTimings:   bool(false, 'Mesures GPU par passe', 'display', 'Affiche le temps GPU de chaque passe (scène, faisceaux classiques / SS Depth, halo, brouillard, blooms, composition). La résolution dynamique est figée pendant la mesure'),
 
     // ── Effets & performance ──

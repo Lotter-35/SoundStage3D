@@ -142,6 +142,7 @@ export class SpotBatch {
         this._plain = this._makeVolumeLayer(this.volumeMaterial, 64);
         this._prism = this._makeVolumeLayer(variant({ prism: true }), 16);
         this._bars = this._makeVolumeLayer(variant({ bar: true }), 8);
+        this.volumeMaterial.uniforms.uDebugCost = { value: 0 };   // vue « coût des lyres » (render/costDebug.js)
         // Rendu « Analytique » (sans marche dans la fumée) : mêmes uniformes, même passe
         this._analytic = this._makeVolumeLayer(createAnalyticBeamMaterial(this.volumeMaterial.uniforms), 64);
         this._layers = [this._plain, this._prism, this._bars, this._analytic];
@@ -441,6 +442,7 @@ export class SpotVolumePass extends Pass {
         this.camera = camera;
         this.needsSwap = true;
         this.profileName = 'Faisceaux classiques + analytiques';
+        this.costProducer = true;   // vue « coût des lyres »
         this.resolutionScale = 0.5;
         this.resolutionSetting = this.resolutionScale;
         this.resolutionFactor = 1;

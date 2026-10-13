@@ -25,6 +25,7 @@ export const BEAM_RAY_GLSL = /* glsl */`
 uniform vec3 uBoxMin[${MAX_OCCLUDERS}];
 uniform vec3 uBoxMax[${MAX_OCCLUDERS}];
 uniform float uPhaseG;
+float gWork = 0.0;   // vue « coût des lyres » : travail du pixel (render/costDebug.js)
 
 // Le segment a → a + d·t (t < tMax) traverse-t-il un des obstacles de la lyre ? (comme le rendu classique)
 bool segBlocked(vec3 a, vec3 d, float tMax, vec4 idx) {
@@ -149,6 +150,7 @@ vec3 beamScatter(vec3 ro, vec3 rd, float tin, float tout, float dz, float apexDi
         vec3 P = ro + rd * t;
         float zA; vec3 lp;
         vec3 gate = gateAtPoint(P, s == mid, extraBlur, zA, lp);
+        gWork += (hasCube || hasOcc) ? 2.0 : 1.0;
         if (gate.r + gate.g + gate.b < 1e-5) continue;
         if (hasCube) {
             float dl = length(P - SH.xyz);
