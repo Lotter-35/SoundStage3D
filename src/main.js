@@ -2366,6 +2366,7 @@ function updateGpuPassOverlay(now) {
     if (ss) {
         const p = spotManager.ssPass;
         lines.push(`SS Depth : ${ss.fixtures} lyres, ${ss.beamCones} cônes (${ss.visible} à l'écran), ${p.lowWidth}×${p.lowHeight}`);
+        if (p.refine) lines.push(`Bords SS : qualité ${Math.round(p.refineQuality * 100)} % (budget ${p.refineBudget} ms)`);
         const pp = spotManager.poolPass;
         if (pp.enabled) lines.push(`Taches : ${ss.poolCones} cônes (${ss.poolVisible} à l'écran), ${pp.target.width}×${pp.target.height}`);
         const sh = spotManager.shadows;

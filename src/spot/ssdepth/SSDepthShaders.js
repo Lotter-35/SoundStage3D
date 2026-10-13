@@ -57,6 +57,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
         uniforms: {
             tBeamLow:    { value: null },   // retouche : faisceaux réduits (a = profondeur du pixel réduit)
             uRefineMax:  { value: 24 },     // retouche : nombre de cônes de la tuile au-delà duquel on ne recalcule pas
+            uEdgeK:      { value: 0.15 },   // retouche : écart relatif de lumière entre voisins qui fait un bord
             uLowScale:   { value: new THREE.Vector2(1, 1) },
             uSharp:      { value: 1.5 },
             ...shadowUniforms,
@@ -228,6 +229,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
         #else
             uniform sampler2D tBeamLow;
             uniform int uRefineMax;
+            uniform float uEdgeK;
             uniform vec2 uLowScale;
             uniform float uSharp;
 
@@ -252,7 +254,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                     lMax = max(lMax, l);
                     if (abs(s.a - cz) > 0.1 * cz) depthEdge = true;
                 }
-                bool edge = depthEdge || (lMax > 0.003 && lMax - lMin > 0.15 * lMax);
+                bool edge = uRefineMax > 0 && (depthEdge || (lMax > 0.003 && lMax - lMin > uEdgeK * lMax));
                 if (edge) {
                     // Tuile chargée (prismes, dizaines de lyres) : remontée seule
                     vec2 pc = vec2(p) + 0.5;
