@@ -29,6 +29,16 @@ Tout est décrit dans **`docs/rendu-lyres-v2.md`** (décisions R1–R7, bilans d
 Fichiers principaux : `src/spot/ssdepth/`, `src/spot/lighting/`, `src/laser/FinalCompositePass.js`,
 `src/spot/gi/`, `src/spot/reflect/`, `src/spot/SpotLightingFX.js`, `src/render/GpuPassTimer.js`, `src/spot/config/spotParams.js`, `src/ui/ClientOptions.js`.
 
+## Premiers essais sur la GTX 1080 (2026-10-13)
+
+- **Bug corrigé** (`305a4ec`) : les `EffectComposer` reprenaient le pixelRatio du renderer alors que les tailles
+  leur sont déjà données en pixels réels. Écran zoomé à 150 % (4K Windows) : post-traitement en 5760 × 3240,
+  faisceaux SS limités à un rectangle des ⅔ de l'écran, pointillés, gros lag. Désormais `setPixelRatio(1)`.
+- Halo SS (`0a7bea2`) : lit une image réduite au lieu de l'image 4K (1,7 → 0,7 ms).
+- 4K (3840 × 2160), scène par défaut, 13 à 20 lyres : ≈ 10 à 12 ms. Postes principaux : Scène 4 à 5 ms
+  (MSAA, déjà là avant les lyres v2), Brouillard ≈ 1,7 ms (constant, déjà là avant), Composition finale ≈ 1,4 ms.
+- Les ombres statiques sont limitées à 64 lyres (la salle SPECTACLE du serveur en a 138).
+
 ## Prochaine étape : mesurer sur la vraie carte graphique
 
 Les mesures faites jusqu'ici l'ont été en rendu logiciel (pas de GPU dans le cloud) : elles ne sont que relatives.
