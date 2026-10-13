@@ -164,6 +164,10 @@ export class HazeVolume {
         this.handle.position.set(p.boxX, p.boxY, p.boxZ);
         this.handle.updateMatrixWorld();
 
+        // Seuil de saturation des lyres (le brouillard assombrit ce qu'on voit à travers lui)
+        if (this.spotManager && typeof this.spotManager.setRoomFog === 'function') {
+            this.spotManager.setRoomFog(p.enabled ? p.density : 0);
+        }
         // Fumée des faisceaux des lyres : indépendante ou liée à la densité du brouillard
         if (this.spotManager && typeof this.spotManager.setHazeOverride === 'function') {
             const linked = p.beamLink === 'Liée au brouillard de salle' && p.enabled;

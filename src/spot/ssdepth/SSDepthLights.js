@@ -126,6 +126,8 @@ export class SSDepthLights {
         this._cx = new Float32Array(MAX_CROSS); this._cy = new Float32Array(MAX_CROSS);
         this._seg = new Float32Array(MAX_SEG * 4);
         this._ns = 0;
+        this._order = new Uint16Array(SS_MAX_LIGHTS);
+        this._score = new Float32Array(SS_MAX_LIGHTS);
     }
 
     _allocLights(n) {
@@ -397,8 +399,23 @@ export class SSDepthLights {
         const p = camera.projectionMatrix.elements;
         const near = camera.near;
         const geo = this._geo;
-        let visible = 0, poolVisible = 0;
+        // Ordre d'importance : flux du cône (éclairement × section) atténué par la distance à la caméra. Les
+        // shaders s'arrêtent quand le pixel est saturé ou après 48 cônes : ce sont alors les moins lumineux qui sautent
+        const order = this._order, score = this._score, d = this.lightsTexture.image.data;
+        const cx = camera.matrixWorld.elements[12], cy = camera.matrixWorld.elements[13], cz = camera.matrixWorld.elements[14];
         for (let li = 0; li < this.count; li++) {
+            const o = li * SS_LIGHT_TEXELS * 4, g = li * GEO;
+            const t = d[o + 20];
+            const flux = Math.max(d[o + 19], d[o + 34]) * t * t;
+            const dx = geo[g] - cx, dy = geo[g + 1] - cy, dz = geo[g + 2] - cz;
+            score[li] = flux / (1 + (dx * dx + dy * dy + dz * dz) / 400);
+            order[li] = li;
+        }
+        const sorted = order.subarray(0, this.count);
+        sorted.sort((a, b) => score[b] - score[a]);
+        let visible = 0, poolVisible = 0;
+        for (let oi = 0; oi < this.count; oi++) {
+            const li = sorted[oi];
             const g = li * GEO;
             const flags = geo[g + 18];
             // Bout déjà projeté : 4 (faisceau), 0 (faisceau hors écran), −1 (rien)

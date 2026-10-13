@@ -259,6 +259,17 @@ export class SpotManager {
      * Densité de fumée imposée par le brouillard de salle (option « Liée au brouillard ») ;
      * null = densité propre aux lyres (réglage « Densité de la fumée »)
      */
+    /**
+     * Brouillard de salle (densité m⁻¹, 0 = éteint) : il assombrit les faisceaux et taches vus à travers lui, le
+     * seuil de saturation (lumière au-delà de laquelle un pixel est blanc, arrêt des calculs) monte d'autant
+     */
+    setRoomFog(density) {
+        const t = Math.exp(-Math.min(Math.max(density, 0) * 60, 3));   // transmittance sur 60 m au pire
+        const sat = 3 / t;
+        this.ssPass.beamMaterial.uniforms.uSat.value = sat;   // (matériau de retouche : uniforme partagé)
+        this.poolPass.material.uniforms.uSat.value = sat;
+    }
+
     setHazeOverride(density) {
         this._hazeOverride = (density === null || density === undefined) ? null : density;
         this._applyGlobals();

@@ -56,6 +56,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
         defines: refine ? { REFINE: 1 } : {},
         uniforms: {
             tBeamLow:    { value: null },   // retouche : faisceaux réduits (a = profondeur du pixel réduit)
+            uSat:        { value: 3 },      // lumière au-delà de laquelle le pixel est blanc (voir SpotManager.setRoomFog)
             uRefineMax:  { value: 24 },     // retouche : nombre de cônes de la tuile au-delà duquel on ne recalcule pas
             uLowScale:   { value: new THREE.Vector2(1, 1) },
             uSharp:      { value: 1.5 },
@@ -102,6 +103,10 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
 
             const float PI = 3.14159265;
             const ivec2 TILES = ivec2(${SS_TILES_X}, ${SS_TILES_Y});
+            // Pixel saturé : au-delà de uSat, l'écran (sans tone mapping : max 1) reste blanc, fumée de salle comprise
+            uniform float uSat;
+            // Cônes dont la diffusion est calculée au plus par pixel (les plus lumineux : listes triées par importance)
+            const int MAX_HITS = 48;
 
             float linZ(ivec2 p) { return -perspectiveDepthToViewZ(texelFetch(uDepth, p, 0).r, uNear, uFar); }
             vec3 rayView(vec2 px) {
@@ -127,9 +132,12 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                 bool haveN = false;
 
                 vec3 acc = vec3(0.0);
+                int hits = 0;
                 uvec4 idx4 = uvec4(0u);
                 for (int k = 0; k < ${SS_MAX_PER_TILE}; k++) {
-                    if (k >= n) break;
+                    if (k >= n || hits >= MAX_HITS) break;
+                    // Pixel déjà blanc : les cônes suivants (moins lumineux) ne changeraient rien
+                    if (all(greaterThanEqual(acc, vec3(uSat)))) break;
                     if ((k & 3) == 0) idx4 = texelFetch(uSSTiles, ivec2(1 + (k >> 2), tIdx), 0);
                     int i = int(idx4[k & 3]);
 
@@ -167,6 +175,9 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                     // ── Réglages du cône ──
                     float apexDist = zS;
                     loadCone(i, apex, WV, apexDist, A6);
+                    // Couleur qui n'ajouterait qu'à des canaux déjà saturés (ex. vert sur vert saturé) : rien à voir
+                    if (dot(step(vec3(1e-4), cCol), step(acc, vec3(uSat))) < 0.5) continue;
+                    hits++;
                     float irr = LT(i, 4).w;
                     // OMBRE : cubemap statique de la lyre si elle est cuite, sinon obstacles (boîtes) de la lyre
                     vec4 SH = cSlot >= 0 && uShadowSize > 0.5 ? shadowInfo(cSlot) : vec4(0.0);

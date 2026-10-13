@@ -63,6 +63,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
             uFar:        { value: 5000 },
             uGain:       { value: 60 },    // lumière émise → éclairement (même échelle que les anciennes SpotLight)
             uSpecOn:     { value: 1 },
+            uSat:        { value: 3 },     // éclairement au-delà duquel la surface est blanche
         },
         vertexShader: /* glsl */`
             void main() { gl_Position = vec4(position.xy, 0.0, 1.0); }
@@ -85,6 +86,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
             uniform float uGIGain;
             uniform float uGIOffset;
             uniform float uPoolsOn;
+            uniform float uSat;
 
             const float PI = 3.14159265;
             const ivec2 TILES = ivec2(${SS_TILES_X}, ${SS_TILES_Y});
@@ -118,8 +120,11 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     acc += albedo * (uGIGain / PI) * giAt(P + N * uGIOffset);
                 }
                 uvec4 idx4 = uvec4(0u);
+                int hits = 0;
                 for (int k = 0; k < ${SS_MAX_PER_TILE}; k++) {
-                    if (k >= n) break;
+                    // Surface déjà blanche (uSat) ou 48 taches calculées (les plus lumineuses : listes triées par
+                    // importance) : les suivantes ne se verraient pas
+                    if (k >= n || hits >= 48 || all(greaterThanEqual(acc, vec3(uSat)))) break;
                     if ((k & 3) == 0) idx4 = texelFetch(uPoolTiles, ivec2(1 + (k >> 2), tIdx), 0);
                     int i = int(idx4[k & 3]);
 
@@ -148,6 +153,8 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     }
 
                     loadCone(i, apex, WV, zS, A6);
+                    if (dot(step(vec3(1e-4), cCol), step(acc, vec3(uSat))) < 0.5) continue;
+                    hits++;
                     float zA; vec3 lp;
                     vec3 gate = gateAtPoint(P, true, zA, lp);
                     if (gate.r + gate.g + gate.b < 1e-5) continue;
