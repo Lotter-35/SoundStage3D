@@ -51,8 +51,7 @@ export const HAZE_PARAMS_SCHEMA = {
     laserGain:    num(1, 0, 5, 0.05, 'Gain lasers', 'light'),
     sceneGain:    num(1, 0, 10, 0.05, 'Gain lampes posées', 'light'),
 
-    // ── Boîte (scène + public par défaut : x −30…30, y 0…25, z −15…65) ; c'est aussi le volume de la
-    //    lumière indirecte des lyres (grille de GI) ──
+    // ── Boîte (scène + public par défaut : x −30…30, y 0…25, z −15…65) ──
     boxX:         num(0, -150, 150, 0.5, 'Centre X', 'box'),
     boxY:         num(12.5, -10, 80, 0.5, 'Centre Y', 'box'),
     boxZ:         num(25, -150, 150, 0.5, 'Centre Z', 'box'),

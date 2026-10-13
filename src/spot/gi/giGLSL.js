@@ -29,12 +29,13 @@ uniform vec3 uGIMin;
 uniform vec3 uGISize;
 uniform vec3 uGIEdge;
 
-// Éclairement indirect au point P (monde)
+// Éclairement indirect au point P (monde) ; fondu doux sur 2 cellules aux bords horizontaux de la grille
+// (½ cellule en hauteur : le sol est toujours à plus d'une cellule du bas, voir GIGridPass._autoBounds)
 vec3 giAt(vec3 P) {
     vec3 uvw = (P - uGIMin) / uGISize;
-    vec3 e = min(uvw, 1.0 - uvw) / uGIEdge;
+    vec3 e = min(uvw, 1.0 - uvw) / (uGIEdge * vec3(4.0, 1.0, 4.0));
     float m = min(min(e.x, e.y), e.z);
     if (m <= 0.0) return vec3(0.0);
-    return texture(uGI, uvw).rgb * min(m, 1.0);
+    return texture(uGI, uvw).rgb * smoothstep(0.0, 1.0, min(m, 1.0));
 }
 `;

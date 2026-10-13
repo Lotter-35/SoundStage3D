@@ -163,13 +163,6 @@ export class HazeVolume {
         this.boxHelper.updateMatrixWorld();
         this.handle.position.set(p.boxX, p.boxY, p.boxZ);
         this.handle.updateMatrixWorld();
-        // Lumière indirecte des lyres (grille de GI) : même volume que la fumée
-        const gi = this.spotManager && this.spotManager.fx && this.spotManager.fx.gi;
-        if (gi && typeof gi.setBounds === 'function') {
-            _pos.set(p.boxX - p.sizeX / 2, p.boxY - p.sizeY / 2, p.boxZ - p.sizeZ / 2);
-            _tgt.set(p.sizeX, p.sizeY, p.sizeZ);
-            gi.setBounds(_pos, _tgt);
-        }
 
         // Fumée des faisceaux des lyres : indépendante ou liée à la densité du brouillard
         if (this.spotManager && typeof this.spotManager.setHazeOverride === 'function') {

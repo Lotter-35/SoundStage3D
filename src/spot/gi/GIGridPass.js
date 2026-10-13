@@ -22,7 +22,7 @@ import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { createVPLMaterial, createGIGridMaterial, GI_MAX_VPL_PER_CONE, GI_MAX_BEAM_PTS } from './GIShaders.js';
 import { createGIUniforms } from './giGLSL.js';
-import { SS_MAX_LIGHTS } from '../ssdepth/SSDepthLights.js';
+import { SS_MAX_LIGHTS, SS_GEO } from '../ssdepth/SSDepthLights.js';
 import { gpuPassTimer } from '../../render/GpuPassTimer.js';
 
 /** Qualités (option locale « Qualité GI ») : taille de la grille, couches par image (1/div), budget de
@@ -32,9 +32,13 @@ export const GI_QUALITIES = {
     high: { dims: [48, 16, 64], div: 4, vpl: 512, alpha: 0.5 },
 };
 
-/** Volume couvert par défaut (m) ; ensuite celui de la boîte du brouillard de salle (setBounds) */
+/** Volume couvert au départ (m) ; ensuite placé automatiquement autour des lyres et de leurs taches
+ *  (_autoBounds) : la GI fonctionne n'importe où sur la carte */
 export const GI_BOUNDS_MIN = [-30, 0, -15];
 export const GI_BOUNDS_SIZE = [60, 25, 80];
+
+const _bMin = new THREE.Vector3();
+const _bSize = new THREE.Vector3();
 
 export class GIGridPass extends Pass {
     /**
@@ -64,6 +68,9 @@ export class GIGridPass extends Pass {
         this.vplCount = 0;
         this.layersPerFrame = 0;
         this._frame = 0;
+        this._bmin = new THREE.Vector3();
+        this._bmax = new THREE.Vector3();
+        this._smallSince = 0;
         this._fill = 0;
         this._hasLight = false;
         this.vplTarget = new THREE.WebGLRenderTarget(2 * (GI_MAX_VPL_PER_CONE + GI_MAX_BEAM_PTS), SS_MAX_LIGHTS, {
@@ -121,6 +128,55 @@ export class GIGridPass extends Pass {
         this._cleared = false;
     }
 
+    /**
+     * Grille placée autour des lyres allumées et des points où leurs cônes touchent le sol (+ marge pour le
+     * rebond), arrondie à 4 m. Grandit tout de suite ; rétrécit seulement si le volume utile reste plus petit
+     * d'un quart pendant 3 s (chaque déplacement efface la lumière accumulée : pas de clignotement en show).
+     */
+    _autoBounds(n, now) {
+        const geo = this.lights._geo;
+        const G = SS_GEO;
+        const lo = this._bmin.set(Infinity, Infinity, Infinity);
+        const hi = this._bmax.set(-Infinity, -Infinity, -Infinity);
+        for (let i = 0; i < n; i++) {
+            const g = i * G;
+            const sx = geo[g], sy = geo[g + 1], sz = geo[g + 2];
+            // Bout du cône le plus lointain (taches) et sa section
+            const e = geo[g + 19] > 0.5 ? 14 : 4;
+            const ex = geo[g + e], ey = geo[g + e + 1], ez = geo[g + e + 2], er = geo[g + e + 3];
+            let dx = ex - sx, dy = ey - sy, dz = ez - sz;
+            const len = Math.hypot(dx, dy, dz) || 1;
+            dx /= len; dy /= len; dz /= len;
+            // Jusqu'au sol (ou 40 m au plus pour un cône qui ne le touche pas)
+            const t = dy < -0.02 ? Math.min(len, sy / -dy) : Math.min(len, 40);
+            const k = t / len;
+            const r = geo[g + 3] + (er - geo[g + 3]) * k;
+            const px = sx + dx * t, py = sy + dy * t, pz = sz + dz * t;
+            lo.x = Math.min(lo.x, sx, px - r); hi.x = Math.max(hi.x, sx, px + r);
+            lo.y = Math.min(lo.y, sy, py); hi.y = Math.max(hi.y, sy, py);
+            lo.z = Math.min(lo.z, sz, pz - r); hi.z = Math.max(hi.z, sz, pz + r);
+        }
+        if (!(lo.x <= hi.x)) return;
+        const S = 4;
+        const minX = Math.floor((lo.x - 6) / S) * S, maxX = Math.ceil((hi.x + 6) / S) * S;
+        const minZ = Math.floor((lo.z - 6) / S) * S, maxZ = Math.ceil((hi.z + 6) / S) * S;
+        const minY = Math.min(-1.5, Math.floor(lo.y) - 1.5);
+        const maxY = Math.max(8, Math.ceil(hi.y + 3));
+        const cur = this._min, cs = this._size;
+        const fits = minX >= cur.x && minZ >= cur.z && minY >= cur.y - 0.01
+            && maxX <= cur.x + cs.x && maxZ <= cur.z + cs.z && maxY <= cur.y + cs.y + 0.01;
+        const small = (maxX - minX) * (maxZ - minZ) < 0.75 * cs.x * cs.z;
+        if (fits && !small) { this._smallSince = 0; return; }
+        if (fits && small) {
+            if (!this._smallSince) this._smallSince = now;
+            if (now - this._smallSince < 3000) return;
+        }
+        this._smallSince = 0;
+        _bMin.set(minX, minY, minZ);
+        _bSize.set(maxX - minX, maxY - minY, maxZ - minZ);
+        this.setBounds(_bMin, _bSize);
+    }
+
     _applyCells() {
         if (!this.quality) return;
         const [nx, ny, nz] = this.quality.dims;
@@ -170,6 +226,7 @@ export class GIGridPass extends Pass {
             renderer.autoClear = oldAutoClear;
             return;
         }
+        this._autoBounds(n, performance.now());
         if (!this._hasLight) {
             // Première lumière (ou grille neuve) : un cycle complet sans lissage
             this._fill = Q.div;
@@ -190,7 +247,9 @@ export class GIGridPass extends Pass {
         v.uK.value = K;
         v.uM.value = M;
         v.uHazeK.value = this.hazeK;
-        v.uSpin.value = (this._frame * 0.618034 % 1) * 6.2831853;
+        // Rayons fixes (pas de rotation d'une image à l'autre) : lumières immobiles → GI immobile
+        // (la rotation faisait glisser des traits sur le sol)
+        v.uSpin.value = 0;
         v.uGain.value = this.gain;
         if (timer) timer.begin('GI (lumières virtuelles)');
         this.vplTarget.viewport.set(0, 0, 2 * (K + M), n);
