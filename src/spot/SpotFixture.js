@@ -59,6 +59,7 @@ export class SpotFixture {
         this.beamRange = SPOT_BEAM_RANGE;
         this.needsGate = false;
         this.ssDepth = false;      // faisceau rendu par la passe SS Depth (choisi par SpotManager chaque image)
+        this.analytic = false;     // faisceau en rendu « Analytique » (choisi par SpotManager chaque image)
 
         // Groupe manipulé par le gizmo (position + orientation) ; le montage est un enfant
         this.group = new THREE.Group();
@@ -339,7 +340,7 @@ export class SpotFixture {
         if (this.flux <= 1e-4) return;
         // skipVolume : faisceau regroupé avec ses voisins (SpotBatch._clusterBeams) ;
         // lyre en mode SS Depth : faisceau dessiné par SSDepthPass (seul l'éblouissement reste ici)
-        if (!skipVolume && !this.ssDepth) batch.pushVolume(this.lensPos, this.row, this.axis, SPOT_BEAM_RANGE, this.right, 1, this.prism.count > 0);
+        if (!skipVolume && !this.ssDepth) batch.pushVolume(this.lensPos, this.row, this.axis, SPOT_BEAM_RANGE, this.right, 1, this.prism.count > 0, this.analytic);
         // Un seul éblouissement (toutes les facettes sortent de la même lentille ; son cône est l'enveloppe du prisme)
         batch.pushGlare(this.lensPos, this.row, this.axis, 1);
     }

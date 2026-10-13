@@ -19,6 +19,7 @@ import { resolveResolutionScale } from '../render/resolutionScale.js';
 import { enableLightsBloom } from '../laser/LaserManager.js';
 import { getGoboTexture } from './SpotGoboLibrary.js';
 import { gpuPassTimer } from '../render/GpuPassTimer.js';
+import { createAnalyticBeamMaterial } from './analytic/AnalyticBeamShaders.js';
 import {
     SPOT_TEXELS, createVolumeMaterial, createCompositeMaterial, createGlareMaterial,
     createGateAtlasMaterial, GATE_ATLAS_SIDE, GATE_ATLAS_TILE, createBeamResolveMaterial
@@ -141,7 +142,9 @@ export class SpotBatch {
         this._plain = this._makeVolumeLayer(this.volumeMaterial, 64);
         this._prism = this._makeVolumeLayer(variant({ prism: true }), 16);
         this._bars = this._makeVolumeLayer(variant({ bar: true }), 8);
-        this._layers = [this._plain, this._prism, this._bars];
+        // Rendu « Analytique » (sans marche dans la fumée) : mêmes uniformes, même passe
+        this._analytic = this._makeVolumeLayer(createAnalyticBeamMaterial(this.volumeMaterial.uniforms), 64);
+        this._layers = [this._plain, this._prism, this._bars, this._analytic];
 
         // ── Atlas de l'image de fenêtre (gobos, animation, couteaux, couleurs) : une tuile par lyre ──
         const size = GATE_ATLAS_SIDE * GATE_ATLAS_TILE;
@@ -275,7 +278,7 @@ export class SpotBatch {
 
     /** Nombre de volumes à dessiner (lyres + barres LED) */
     get volumeCount() {
-        return this._plain.stream.count + this._prism.stream.count + this._bars.stream.count;
+        return this._plain.stream.count + this._prism.stream.count + this._bars.stream.count + this._analytic.stream.count;
     }
 
     /** Deux lyres dont les faisceaux peuvent être calculés ensemble */
@@ -303,7 +306,7 @@ export class SpotBatch {
         out.clear();
         this.clusterCount = 0;
         if (!camera) return out;
-        const list = fixtures.filter(f => f.flux > 1e-4 && !f.isBeingDragged && f.lensPos && !f.ssDepth);
+        const list = fixtures.filter(f => f.flux > 1e-4 && !f.isBeingDragged && f.lensPos && !f.ssDepth && !f.analytic);
         if (list.length < 2) return out;
         const used = new Uint8Array(list.length);
         const cam = camera.position;
@@ -397,9 +400,10 @@ export class SpotBatch {
         this.glareMesh.visible = this.glares.count > 0;
     }
 
-    /** weight < 0 : volume d'une barre LED (voir LedBarFixture.pushInstances) ; prism : lyre à prisme */
-    pushVolume(lens, row, axis, length, right, weight, prism = false) {
-        const stream = weight < 0 ? this._bars.stream : prism ? this._prism.stream : this._plain.stream;
+    /** weight < 0 : volume d'une barre LED (voir LedBarFixture.pushInstances) ; prism : lyre à prisme ;
+     *  analytic : rendu « Analytique » (AnalyticBeamShaders.js, prisme compris) */
+    pushVolume(lens, row, axis, length, right, weight, prism = false, analytic = false) {
+        const stream = weight < 0 ? this._bars.stream : analytic ? this._analytic.stream : prism ? this._prism.stream : this._plain.stream;
         const o = stream.push();
         const a = stream.array;
         a[o] = lens.x; a[o + 1] = lens.y; a[o + 2] = lens.z; a[o + 3] = row;
@@ -436,7 +440,7 @@ export class SpotVolumePass extends Pass {
         this.batch = batch;
         this.camera = camera;
         this.needsSwap = true;
-        this.profileName = 'Faisceaux classiques';
+        this.profileName = 'Faisceaux classiques + analytiques';
         this.resolutionScale = 0.5;
         this.resolutionSetting = this.resolutionScale;
         this.resolutionFactor = 1;

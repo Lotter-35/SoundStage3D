@@ -367,13 +367,12 @@ export class SpotManager {
         this.ssPass.sharpness = v;
     }
 
-    /** Vrai si la lyre est rendue en SS Depth (réglage de la lyre, sinon réglage global) */
-    _isSSDepth(spot) {
-        if (!this._hasSSPass) return false;
+    /** Rendu du faisceau de la lyre : 'Classique' | 'SS Depth' | 'Analytique' (réglage de la lyre, sinon global) */
+    _renderMode(spot) {
         const m = spot.params.beamRenderMode;
-        if (m === 'SS Depth') return true;
-        if (m === 'Classique') return false;
-        return this.globals.beamRenderDefault === 'SS Depth';
+        const mode = m && m !== 'Global' ? m : this.globals.beamRenderDefault;
+        if (mode === 'SS Depth' && !this._hasSSPass) return 'Classique';
+        return mode;
     }
 
     // ── DMX ───────────────────────────────────────────────────────────────
@@ -401,7 +400,9 @@ export class SpotManager {
         this.effects.apply(this._spots, this.clock());
         for (const s of this._spots.values()) {
             s.update(dt);
-            s.ssDepth = this._isSSDepth(s);
+            const mode = this._renderMode(s);
+            s.ssDepth = mode === 'SS Depth';
+            s.analytic = mode === 'Analytique';
         }
         for (const src of this._sources) src.update(dt);
         this.batch.assemble(this._spots.values(), this._sources, this.camera);

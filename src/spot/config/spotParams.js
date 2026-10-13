@@ -53,9 +53,9 @@ export const MOUNT_MODES = ['Posé au sol', 'Suspendu'];
 export const DMX_MODES = ['Standard (24 canaux)', 'Étendu (34 canaux)'];
 
 /** Rendu du faisceau d'une lyre : réglage global, faisceau classique (cône ray-marché) ou SS Depth */
-export const BEAM_RENDER_MODES = ['Global', 'Classique', 'SS Depth'];
+export const BEAM_RENDER_MODES = ['Global', 'Classique', 'SS Depth', 'Analytique'];
 /** Rendu des faisceaux par défaut (lyres en « Global ») */
-export const BEAM_RENDER_DEFAULTS = ['Classique', 'SS Depth'];
+export const BEAM_RENDER_DEFAULTS = ['Classique', 'SS Depth', 'Analytique'];
 
 /** Limites mécaniques */
 export const PAN_RANGE = 540;
