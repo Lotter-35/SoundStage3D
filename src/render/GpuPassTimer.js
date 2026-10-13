@@ -70,8 +70,11 @@ class GpuPassTimer {
     }
 
     setEnabled(v) {
-        this.enabled = Boolean(v) && Boolean(this.gl);
         if (this._cur) this.end();
+        this.enabled = Boolean(v) && Boolean(this.gl);
+        // Mesures en attente : abandonnées (requêtes réutilisables)
+        for (const e of this._pending) { this._free.push(e.q); e.q = null; this._pool.push(e); }
+        this._pending.length = 0;
         this._sums.clear();
         this._order.length = 0;
         this.results = [];
