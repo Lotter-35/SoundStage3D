@@ -8,11 +8,14 @@
  *   - pour chaque facette du prisme (une seule sans prisme), intersection EXACTE du rayon de vue avec le cône
  *     oblique de la facette, bornée par la lentille, la longueur visible et la profondeur de la scène ;
  *   - lumière diffusée = ∫ image de la fenêtre × phase × fondu × ombre / z² dt, calculée par une quadrature de
- *     Gauss-Legendre à 4 points répartis en 1/z quand le rayon remonte le faisceau (l'éclairement en 1/z² est
- *     alors intégré exactement) : nombre de calculs FIXE par pixel et par facette, sans bruit ni grain ;
+ *     Gauss-Legendre (2 points pour un faisceau ouvert, profil lisse ; 4 avec gobo, couteaux, demi-couleur)
+ *     répartis en 1/z quand le rayon remonte le faisceau (l'éclairement en 1/z² est alors intégré exactement) :
+ *     nombre de calculs FIXE par pixel et par facette, sans bruit ni grain ;
+ *   - cône coupé au sol (y = 0) dans le shader de sommets : rien n'est calculé sous la surface ;
  *   - image de la fenêtre lue dans l'atlas (gobos, couteaux, frost) au niveau de flou correspondant à l'écart
  *     entre les points dans la fenêtre : un rayon qui traverse le motif en voit la moyenne, sans copies ;
- *   - ombre statique (cubemap de la lyre) à chaque point, sinon boîtes d'obstacles ;
+ *   - ombre statique (cubemap de la lyre, sinon boîtes d'obstacles) : 2 lectures par facette (une par moitié
+ *     du segment), réutilisées par les points de cette moitié ;
  *   - fumée uniforme, volutes lues une fois au milieu du segment.
  * Pas d'image réduite propre, pas de tri par tuile sur le CPU, pas de passe de bords : la résolution est celle
  * de la passe des faisceaux classiques (⚙️ Options › Résolution des effets › Lyres).
@@ -52,6 +55,14 @@ export function createAnalyticBeamMaterial(uniforms) {
                 vec3 U = cross(W, R);   // repère direct : faces arrière = intérieur du cône
                 float L = iAxis.w;
                 float sEnd = T11.w > 0.0 ? min(T11.w, L) : L;
+                // Coupe au sol (y = 0) : le bord le plus haut du cône enveloppe l'atteint à cette distance (+ 1 m) ;
+                // au-delà, tout est sous la surface (le fragment n'aurait rien à ajouter mais coûterait quand même)
+                float tanE = T9.y;
+                float down = asin(clamp(-W.y, -1.0, 1.0)) - atan(tanE);   // angle sous l'horizontale du bord haut
+                if (iLens.y > 0.0 && down > 0.02) {
+                    float sGround = (iLens.y + T7.z * T7.w) / sin(down) * cos(atan(tanE)) + 1.0;
+                    sEnd = min(sEnd, sGround);
+                }
                 float s = mix(T11.z, sEnd, position.z);
                 // Cône enveloppe (toutes les facettes) + 3,5 % : le polygone contient le cercle
                 float rad = (T7.z * T7.w + s * T9.y) * 1.035;
@@ -121,6 +132,20 @@ export function createAnalyticBeamMaterial(uniforms) {
 
             // ── Réglages de la lyre (lus une fois par pixel) ──
             Gate G;
+            vec4 gSH, gT8;
+            vec3 gLens;
+            int gSlot;
+            bool gHasCube, gHasOcc;
+
+            // Point P éclairé par la lyre (ombre statique, sinon boîtes d'obstacles) ?
+            bool litAt(vec3 P) {
+                if (gHasCube) return shadowHard(gSlot, gSH.xyz, P, 0.06 + shadowTexelSize(length(P - gSH.xyz))) >= 0.5;
+                if (gHasOcc) {
+                    vec3 sd = P - gLens;
+                    return !segBlocked(gLens, sd, 1.0 - 0.03 / max(length(sd), 0.05), gT8);
+                }
+                return true;
+            }
             bool aPlain;
             float aTile, aFrostBlur, aIris, aOutR2, aPlainR2, aLogFocus;
 
@@ -226,6 +251,9 @@ export function createAnalyticBeamMaterial(uniforms) {
                 vec4 SH = (uClassicShadow > 0.5 && shSlot >= 0 && uShadowSize > 0.5) ? shadowInfo(shSlot) : vec4(0.0);
                 bool hasCube = SH.w > 0.5;
                 bool hasOcc = !hasCube && T8.x >= 0.0;
+                gSH = SH; gT8 = T8; gLens = lens; gSlot = shSlot; gHasCube = hasCube; gHasOcc = hasOcc;
+                // Faisceau ouvert : profil lisse, 2 points suffisent ; motif (gobo, couteaux…) : 4
+                int NQ = aPlain ? 2 : 4;
 
                 // Prisme : faisceau central (poids T9.z, 1 sans prisme) + facettes (décalage v en unités de fenêtre)
                 int pCount = int(T9.x + 0.5);
@@ -272,8 +300,11 @@ export function createAnalyticBeamMaterial(uniforms) {
                     if (aPlain) extraBlur = 0.0;
 
                     vec3 acc = vec3(0.0);
+                    bool has0 = false, has1 = false, lit0 = true, lit1 = true;
                     for (int s = 0; s < 4; s++) {
-                        float x = GX[s];
+                        if (s >= NQ) break;
+                        float x = NQ == 2 ? (s == 0 ? 0.2113249 : 0.7886751) : GX[s];
+                        float wq = NQ == 2 ? 0.5 : GW[s];
                         float t = imp ? (1.0 / mix(uIn, uOut, x) - zc0) / dz : mix(tin, tout, x);
                         vec3 P = ro + rd * t;
                         vec3 lp = P - apexC;
@@ -285,17 +316,20 @@ export function createAnalyticBeamMaterial(uniforms) {
                         vec3 gate = gateAt(g, blur);
                         work += 1.0;
                         if (gate.r + gate.g + gate.b < 1e-5) continue;
-                        if (hasCube || hasOcc) work += 1.0;
-                        if (hasCube) {
-                            if (shadowHard(shSlot, SH.xyz, P, 0.06 + shadowTexelSize(length(P - SH.xyz))) < 0.5) continue;
-                        } else if (hasOcc) {
-                            vec3 sd = P - lens;
-                            if (segBlocked(lens, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8)) continue;
+                        // Ombre : une lecture par moitié du segment, réutilisée par les autres points de la moitié
+                        bool lit;
+                        if (s < NQ / 2) {
+                            if (!has0) { lit0 = litAt(P); has0 = true; if (hasCube || hasOcc) work += 1.0; }
+                            lit = lit0;
+                        } else {
+                            if (!has1) { lit1 = litAt(P); has1 = true; if (hasCube || hasOcc) work += 1.0; }
+                            lit = lit1;
                         }
+                        if (!lit) continue;
                         float fade = 1.0 - smoothstep(fadeStart, beamEnd, zl);
                         float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                         float e = imp ? 1.0 : 1.0 / (zA * zA);
-                        acc += gate * (GW[s] * e * fade * phase(cosT));
+                        acc += gate * (wq * e * fade * phase(cosT));
                     }
                     float span = imp ? abs(uIn - uOut) / abs(dz) : (tout - tin);
                     if (hazeK < 0.0) {
