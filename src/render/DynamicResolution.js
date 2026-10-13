@@ -86,10 +86,6 @@ export class DynamicResolution {
     /** À appeler juste avant le rendu de l'image */
     begin() {
         if (!this.enabled || !this.ext || this._active || this.paused) return;
-        // Une image sur 4 non mesurée : la requête de minuterie reste libre pour les mesures d'une passe
-        // (budget de la retouche des bords des faisceaux SS ; WebGL n'autorise qu'une requête active)
-        this._frameN = (this._frameN || 0) + 1;
-        if ((this._frameN & 3) === 0) return;
         const q = this._free.pop() || this.gl.createQuery();
         this.gl.beginQuery(this.ext.TIME_ELAPSED_EXT, q);
         this._active = q;

@@ -10,10 +10,7 @@
  *   2. passe des faisceaux en basse résolution (image / div, div = 2, 3 ou 4) ;
  *   3. retouche des bords en pleine résolution (pixels dont les voisins réduits diffèrent : faisceaux
  *      recalculés exactement, seulement dans les tuiles où passent peu de cônes ; ailleurs remontée
- *      bilatérale), avec un BUDGET de temps GPU : son temps est mesuré (requête de minuterie, ou mesures par
- *      passe quand elles sont affichées) et une qualité 0…1 s'ajuste en continu — seuil de contraste d'un
- *      bord et nombre de cônes par tuile au-delà duquel on ne recalcule plus. Au-dessus du budget la qualité
- *      baisse en proportion ; en dessous de 70 % elle remonte doucement ;
+ *      bilatérale) ;
  *   4. sortie différée { kind: 'ss', full: true } lue par la passe finale (1 lecture par pixel).
  * ─────────────────────────────────────────────────────────────
  */
@@ -26,8 +23,6 @@ import { gpuPassTimer } from '../../render/GpuPassTimer.js';
 /** Retouche des bords : au-delà de ce nombre de cônes dans la tuile, remontée bilatérale seulement
  *  (recalculer des centaines de cônes sur chaque bord coûtait plusieurs ms ; le détail ne s'y voit pas) */
 const REFINE_MAX_CONES = 24;
-/** Budget de temps GPU de la retouche des bords (ms) */
-const REFINE_BUDGET_MS = 5;
 
 export class SSDepthPass extends Pass {
     /**
@@ -69,14 +64,6 @@ export class SSDepthPass extends Pass {
             if (!['tBeamLow', 'uLowScale', 'uSharp', 'uRefineMax'].includes(k)) this.refineMaterial.uniforms[k] = this.beamMaterial.uniforms[k];
         }
         this.refineMaterial.uniforms.uRefineMax.value = REFINE_MAX_CONES;
-        // Budget de la retouche : qualité 0…1, dernier temps mesuré (ms), requêtes de minuterie en attente
-        this.refineBudget = REFINE_BUDGET_MS;
-        this.refineQuality = 1;
-        this.refineMs = 0;
-        this._gl = null;
-        this._ext = undefined;
-        this._queries = [];
-        this._freeQueries = [];
         this._beamQuad = new FullScreenQuad(this.beamMaterial);
         this._refineQuad = new FullScreenQuad(this.refineMaterial);
         this._out = { kind: 'ss', texture: null, scale: new THREE.Vector2(1, 1), texel: new THREE.Vector2(1, 1), sharpness: 1.5, full: true };
@@ -152,16 +139,13 @@ export class SSDepthPass extends Pass {
         this._out.full = this.refine;
         this._out.texture = this.beamTarget.texture;
         if (this.refine) {
-            this._applyBudget(renderer, timer);
             const r = this.refineMaterial.uniforms;
             r.tBeamLow.value = this.beamTarget.texture;
             r.uLowScale.value.copy(this._out.scale);
             r.uSharp.value = this.sharpness;
             if (timer) timer.begin('Bords des faisceaux SS');
-            const q = timer ? null : this._beginQuery();
             renderer.setRenderTarget(this.refineTarget);
             this._refineQuad.render(renderer);
-            if (q) this._gl.endQuery(this._ext.TIME_ELAPSED_EXT);
             if (timer) timer.end();
             this._out.texture = this.refineTarget.texture;
         }
@@ -172,59 +156,6 @@ export class SSDepthPass extends Pass {
         this._hasOut = this.deferred;
     }
 
-    /** Requête de minuterie autour de la retouche, si aucune autre n'est active (WebGL : une seule à la fois) */
-    _beginQuery() {
-        const gl = this._gl;
-        if (!this._ext || this._queries.length > 8) return null;
-        if (gl.getQuery(this._ext.TIME_ELAPSED_EXT, gl.CURRENT_QUERY)) return null;
-        const q = this._freeQueries.pop() || gl.createQuery();
-        gl.beginQuery(this._ext.TIME_ELAPSED_EXT, q);
-        this._queries.push(q);
-        return q;
-    }
-
-    /** Dernier temps mesuré de la retouche → qualité (seuil de contraste, cônes par tuile) */
-    _applyBudget(renderer, timer) {
-        if (this._ext === undefined) {
-            this._gl = renderer.getContext();
-            this._ext = this._gl.getExtension('EXT_disjoint_timer_query_webgl2') || null;
-        }
-        let ms = -1;
-        if (timer) {
-            // Mesures par passe affichées : leur moyenne (mise à jour toutes les 0,5 s)
-            const e = timer.results.find(x => x.name === 'Bords des faisceaux SS');
-            if (e && e !== this._lastTimerEntry) { ms = e.ms; this._lastTimerEntry = e; }
-        } else if (this._ext) {
-            const gl = this._gl;
-            const disjoint = gl.getParameter(this._ext.GPU_DISJOINT_EXT);
-            while (this._queries.length) {
-                const q = this._queries[0];
-                if (!gl.getQueryParameter(q, gl.QUERY_RESULT_AVAILABLE)) break;
-                this._queries.shift();
-                if (!disjoint) ms = gl.getQueryParameter(q, gl.QUERY_RESULT) / 1e6;
-                this._freeQueries.push(q);
-            }
-        }
-        if (ms >= 0) {
-            this.refineMs = ms;
-            const B = this.refineBudget;
-            let Q = this.refineQuality;
-            if (ms > B) {
-                Q *= Math.max(0.6, B / ms);                             // au-dessus : baisse proportionnelle
-                if (Q < 0.02) Q = 0;
-            } else if (ms < 0.7 * B) {
-                Q = Math.min(1, Q * 1.02 + 0.01);                       // marge : remontée douce
-            }
-            this.refineQuality = Q;
-        }
-        const Q = this.refineQuality;
-        const r = this.refineMaterial.uniforms;
-        // Qualité 1 : bords dès 15 % d'écart, 24 cônes par tuile ; vers 0 : seuls les bords très marqués, peu de
-        // cônes par tuile ; 0 : remontée bilatérale seule
-        r.uEdgeK.value = 0.15 + (1 - Q) * 0.75;
-        r.uRefineMax.value = Q <= 0 ? 0 : Math.max(1, Math.round(REFINE_MAX_CONES * Q));
-    }
-
     dispose() {
         this.beamTarget.dispose();
         this.refineTarget.dispose();
@@ -232,6 +163,5 @@ export class SSDepthPass extends Pass {
         this.refineMaterial.dispose();
         this._beamQuad.dispose();
         this._refineQuad.dispose();
-        if (this._gl) for (const q of [...this._queries, ...this._freeQueries]) this._gl.deleteQuery(q);
     }
 }
