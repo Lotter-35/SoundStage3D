@@ -20,8 +20,8 @@
 import * as THREE from 'three';
 import { getSmokeNoiseTexture } from '../laser/LaserSmokeNoise.js';
 import { getStageObstacles } from '../laser/LaserSceneIntersector.js';
-import { createHazeMaterial, HAZE_MAX_LIGHTS } from './HazeShaders.js?v=2';
-import { HazePass } from './HazePass.js?v=2';
+import { createHazeMaterial, HAZE_MAX_LIGHTS } from './HazeShaders.js?v=3';
+import { HazePass } from './HazePass.js?v=3';
 import { defaultHazeParams, HAZE_PARAMS_SCHEMA, migrateHazeBox } from './hazeParams.js';
 import { RES_AUTO } from '../render/resolutionScale.js';
 

@@ -45,7 +45,7 @@ import { LedBarManager } from './ledbar/LedBarManager.js';
 import { Laser2Manager } from './laser2/Laser2Manager.js';
 import { ildaLibrary } from './laser2/ilda/IldaLibrary.js';
 import { SpotConsolePanel } from './spot/console/SpotConsolePanel.js?v=2';
-import { HazeVolume } from './haze/HazeVolume.js?v=2';
+import { HazeVolume } from './haze/HazeVolume.js?v=3';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
 import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
