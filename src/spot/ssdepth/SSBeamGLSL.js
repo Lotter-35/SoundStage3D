@@ -10,7 +10,10 @@
  *   - clipBeamEnd : arrêt à la longueur visible du faisceau ;
  *   - beamScatter : quadrature de Gauss à 3 points (en 1/z quand le rayon remonte le faisceau), image de
  *     fenêtre complète sur l'échantillon du milieu, ombre à chaque échantillon (cubemap statique, sinon
- *     boîtes de SpotOcclusion), phase de Mie identique au rendu classique.
+ *     boîtes de SpotOcclusion), phase de Mie identique au rendu classique. Lyre à gobo (atlas ou image
+ *     calculée) : 4 à 12 échantillons réguliers (pas en 1/z) selon la portion du motif que le rayon traverse,
+ *     décalés d'un pixel à l'autre et légèrement floutés : rais droits du gobo comme le rendu classique, au
+ *     lieu de copies nettes et décalées (3 échantillons fixes donnaient des spirales en double et des arcs).
  *
  * À inclure après GATE_GLSL, CONE_GLSL et SHADOW_GLSL ; déclare uBoxMin / uBoxMax, uPhaseG.
  * ─────────────────────────────────────────────────────────────
@@ -102,19 +105,38 @@ bool clipBeamEnd(float zS, float beamEnd, float z0, float dz, inout float tin, i
     return tout > tin;
 }
 
-// Diffusion du cône chargé (loadCone) sur [tin, tout] : quadrature de Gauss à 3 points, × longueur du segment
+// Diffusion du cône chargé (loadCone) sur [tin, tout] : quadrature de Gauss à 3 points (gobo : 4 à 12 points
+// réguliers décalés par pixel), × longueur du segment
 // (à multiplier par l'éclairement du faisceau et la densité de la fumée)
 vec3 beamScatter(vec3 ro, vec3 rd, float tin, float tout, float dz, float apexDist, float fadeB, float beamEnd,
                  vec4 SH, bool hasCube, bool hasOcc, vec4 T8) {
     float zc0 = dot(ro - cApexC, cW);
     float zIn = max(zc0 + dz * tin, 1e-3);
     float zOut = max(zc0 + dz * tout, 1e-3);
-    bool imp = abs(dz) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
+    // Répartition en 1/z (échantillons serrés près de la lentille) : pas pour les gobos, dont le motif doit être
+    // échantillonné régulièrement sur toute la traversée (sinon la partie lointaine montre des arcs du gobo)
+    bool imp = cKind < 1.5 && abs(dz) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
     float uIn = 1.0 / zIn, uOut = 1.0 / zOut;
+    // Portion du motif (en unités de fenêtre) que le rayon traverse dans le cône
+    float sweep = length(gateCoord(ro + rd * tout) - gateCoord(ro + rd * tin));
+    if (!(sweep < 1e3)) sweep = 1e3;   // infini ou NaN
+    int N = 3;
+    bool gauss = true;
+    if (cKind > 1.5) {
+        // Toujours décalés d'un pixel à l'autre : un sous-échantillonnage donne un grain fin, pas des arcs
+        N = int(clamp(ceil(sweep * 6.0), 4.0, 12.0));
+        gauss = false;
+    }
+    // Flou d'intégration : le quart de l'écart entre 2 échantillons, mesuré dans la fenêtre ; échantillons
+    // décalés d'un pixel à l'autre (comme le rendu classique) : les rais du gobo restent nets, sans copies
+    float extraBlur = gauss ? 0.0 : min(0.4, sweep / float(N) * 0.25);
+    float jit = gauss ? 0.5 : fract(52.9829189 * fract(dot(gl_FragCoord.xy, vec2(0.06711056, 0.00583715))));
+    int mid = N / 2;
     vec3 sum = vec3(0.0);
-    for (int s = 0; s < 3; s++) {
-        float x = s == 0 ? 0.2113 : (s == 1 ? 0.5 : 0.7887);
-        float w = s == 1 ? 0.44 : 0.28;
+    for (int s = 0; s < 12; s++) {
+        if (s >= N) break;
+        float x = gauss ? (s == 0 ? 0.2113 : (s == 1 ? 0.5 : 0.7887)) : (float(s) + jit) / float(N);
+        float w = gauss ? (s == 1 ? 0.44 : 0.28) : 1.0 / float(N);
         float t;
         if (imp) {
             float z = 1.0 / mix(uIn, uOut, x);
@@ -124,7 +146,7 @@ vec3 beamScatter(vec3 ro, vec3 rd, float tin, float tout, float dz, float apexDi
         }
         vec3 P = ro + rd * t;
         float zA; vec3 lp;
-        vec3 gate = gateAtPoint(P, s == 1, zA, lp);
+        vec3 gate = gateAtPoint(P, s == mid, extraBlur, zA, lp);
         if (gate.r + gate.g + gate.b < 1e-5) continue;
         if (hasCube) {
             float dl = length(P - SH.xyz);

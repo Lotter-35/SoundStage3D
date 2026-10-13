@@ -39,18 +39,29 @@ vec3 atlasGate(vec2 g, float blur) {
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
     vec2 cell = vec2(mod(cTile, ${GATE_ATLAS_SIDE.toFixed(1)}), floor(cTile / ${GATE_ATLAS_SIDE.toFixed(1)}));
     float texelG = ${(2 * GATE_ATLAS_R / GATE_ATLAS_TILE).toFixed(6)};
-    float lod = clamp(log2(max(1.0, (blur - cFrostBlur) / texelG)), 0.0, 3.0);
+    // Jusqu'au niveau 5 (4 × 4 texels par tuile) : flou d'intégration le long des rayons (voir beamScatter)
+    float lod = clamp(log2(max(1.0, (blur - cFrostBlur) / texelG)), 0.0, 5.0);
     return textureLod(uGateAtlas, (cell + uv) / ${GATE_ATLAS_SIDE.toFixed(1)}, lod).rgb;
 }
 
-// Image de la fenêtre au point P ; full : image complète (sinon disque ou atlas)
-vec3 gateAtPoint(vec3 P, bool full, out float zA, out vec3 lp) {
+// Coordonnées de fenêtre du point P (|g| = 1 : bord du zoom)
+vec2 gateCoord(vec3 P) {
+    vec3 lp = P - cApexC;
+    float zA = max(dot(lp, cW), 1e-3);
+    vec3 rad = lp - cW * zA;
+    float zl = max(dot(P - cLens, cW), 0.0);
+    return vec2(dot(rad, cR), dot(rad, cU)) / (zA * cTanHalf) - cV * (zl / zA);
+}
+
+// Image de la fenêtre au point P ; full : image complète (sinon disque ou atlas) ;
+// extraBlur : flou ajouté au motif (moyenne du gobo sur la portion de rayon que l'échantillon représente)
+vec3 gateAtPoint(vec3 P, bool full, float extraBlur, out float zA, out vec3 lp) {
     lp = P - cApexC;
     zA = max(dot(lp, cW), 1e-3);
     vec3 rad = lp - cW * zA;
     float zl = max(dot(P - cLens, cW), 0.0);   // distance à la lentille le long de l'axe
     vec2 g = vec2(dot(rad, cR), dot(rad, cU)) / (zA * cTanHalf) - cV * (zl / zA);
-    float blur = cFrostBlur + min(0.14, abs(log(zl + 0.5) - cLogFocus) * 0.035);
+    float blur = cFrostBlur + min(0.14, abs(log(zl + 0.5) - cLogFocus) * 0.035) + extraBlur;
     if (cKind > 1.5) {
         if (cKind < 2.5) return atlasGate(g, blur);
         if (full) {
@@ -58,7 +69,11 @@ vec3 gateAtPoint(vec3 P, bool full, out float zA, out vec3 lp) {
             return gateImage(cG, g, blur);
         }
     }
-    return plainGate(g, blur);
+    return plainGate(g, blur - extraBlur);
+}
+
+vec3 gateAtPoint(vec3 P, bool full, out float zA, out vec3 lp) {
+    return gateAtPoint(P, full, 0.0, zA, lp);
 }
 
 // Réglages complets du cône i (après le test d'intersection : apex, centre des sections WV, z de la lentille)

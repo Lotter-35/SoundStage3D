@@ -91,6 +91,10 @@ export function createVPLMaterial(shadowUniforms) {
 
             // Point du décor touché dans la direction d (depuis le pivot de la tête : origine de la cubemap)
             bool hitDecor(vec3 o, vec3 d, vec4 SH, out vec3 X, out vec3 N) {
+                // Sorties toujours écrites : sinon Direct3D (ANGLE) rejette le shader à la validation et le
+                // recompile sans optimisation (chargement « Préparation du rendu » très long, shader plus lent)
+                X = o;
+                N = vec3(0.0, 1.0, 0.0);
                 if (SH.w > 0.5) {
                     float dist = shadowDepth(cSlot, d);
                     if (dist > ${(SHADOW_FAR * 0.5).toFixed(1)}) return false;
@@ -132,7 +136,7 @@ export function createVPLMaterial(shadowUniforms) {
                 float rDisc = min(cIris, 1.0);
                 float range = A7.z, fadeS = A7.w;
                 vec4 SH = cSlot >= 0 && uShadowSize > 0.5 ? shadowInfo(cSlot) : vec4(0.0);
-                vec3 X, N;
+                vec3 X = vec3(0.0), N = vec3(0.0, 1.0, 0.0);
 
                 if (k >= uK) {
                     // ── Point le long du faisceau (lumière diffusée par la fumée), jusqu'au décor ──
