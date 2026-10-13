@@ -70,10 +70,17 @@ const server = http.createServer((req, res) => {
             res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Introuvable');
             return;
         }
+        // Revalidation à chaque chargement : 304 si le fichier n'a pas changé, sinon la nouvelle version
+        const etag = `"${st.size.toString(16)}-${Math.floor(st.mtimeMs).toString(16)}"`;
+        if (req.headers['if-none-match'] === etag) {
+            res.writeHead(304, { ETag: etag, 'Cache-Control': 'no-cache' }).end();
+            return;
+        }
         res.writeHead(200, {
             'Content-Type': TYPES[path.extname(file).toLowerCase()] || 'application/octet-stream',
             'Content-Length': st.size,
             'Cache-Control': 'no-cache',
+            ETag: etag,
         });
         if (req.method === 'HEAD') { res.end(); return; }
         fs.createReadStream(file).pipe(res);
