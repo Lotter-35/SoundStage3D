@@ -56,6 +56,9 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
         defines: refine ? { REFINE: 1 } : {},
         uniforms: {
             tBeamLow:    { value: null },   // retouche : faisceaux réduits (a = profondeur du pixel réduit)
+            tSoft:       { value: null },   // faisceaux flous (1/8 de résolution, a = profondeur)
+            uSoftScale:  { value: new THREE.Vector2(1, 1) },
+            uSoftOn:     { value: 0 },
             uSat:        { value: 3 },      // lumière au-delà de laquelle le pixel est blanc (voir SpotManager.setRoomFog)
             uRefineMax:  { value: 24 },     // retouche : nombre de cônes de la tuile au-delà duquel on ne recalcule pas
             uLowScale:   { value: new THREE.Vector2(1, 1) },
@@ -238,11 +241,39 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
             }
         #else
             uniform sampler2D tBeamLow;
+            uniform sampler2D tSoft;
+            uniform vec2 uSoftScale;
+            uniform int uSoftOn;
             uniform int uRefineMax;
             uniform vec2 uLowScale;
             uniform float uSharp;
 
             float lum(vec3 c) { return c.r + c.g + c.b; }
+
+            // Faisceaux flous (1/8) : interpolation bilinéaire pondérée par la profondeur (pas de fuite sur un objet
+            // au premier plan) ; aucun texel à la bonne profondeur : le plus proche en profondeur
+            vec3 softUp(ivec2 p, float cz) {
+                if (uSoftOn == 0) return vec3(0.0);
+                vec2 suv = (vec2(p) + 0.5) / uFull * uSoftScale;
+                ivec2 size = textureSize(tSoft, 0);
+                vec2 pos = suv * vec2(size) - 0.5;
+                ivec2 i0 = ivec2(floor(pos));
+                vec2 f = pos - vec2(i0);
+                vec3 sum = vec3(0.0);
+                float wSum = 0.0, best = 1e9;
+                vec3 bestC = vec3(0.0);
+                for (int k = 0; k < 4; k++) {
+                    ivec2 o = ivec2(k & 1, k >> 1);
+                    vec4 s = texelFetch(tSoft, clamp(i0 + o, ivec2(0), size - 1), 0);
+                    vec2 wv = mix(1.0 - f, f, vec2(o));
+                    float rel = abs(cz - s.a) / max(cz, 0.5);
+                    float w = wv.x * wv.y * exp(-rel * rel * 35.0) + 1e-5;
+                    sum += s.rgb * w;
+                    wSum += w;
+                    if (rel < best) { best = rel; bestC = s.rgb; }
+                }
+                return best > 0.5 ? bestC : sum / wSum;
+            }
 
             void main() {
                 ivec2 p = ivec2(gl_FragCoord.xy);
@@ -292,13 +323,13 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                             wSum += w;
                         }
                     }
-                    gl_FragColor = vec4(wSum > 1e-3 ? sum / wSum : vec3(0.0), 1.0);
+                    gl_FragColor = vec4((wSum > 1e-3 ? sum / wSum : vec3(0.0)) + softUp(p, cz), 1.0);
                     return;
                 }
                 // Bord : faisceaux recalculés pour ce pixel
                 ivec2 b = min(p, fullI - 2);
                 float d10 = linZ(b + ivec2(1, 0)), d01 = linZ(b + ivec2(0, 1));
-                gl_FragColor = vec4(shadeBeams(vec2(p) + 0.5, linZ(p), b, linZ(b), d10, d01), 1.0);
+                gl_FragColor = vec4(shadeBeams(vec2(p) + 0.5, linZ(p), b, linZ(b), d10, d01) + softUp(p, cz), 1.0);
             }
         #endif
         `,

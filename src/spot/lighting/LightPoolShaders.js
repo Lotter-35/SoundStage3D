@@ -239,6 +239,14 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     wSum += w;
                 }
                 bool edge = depthEdge || (lMax > 0.003 && lMax - lMin > 0.15 * lMax);
+                if (edge) {
+                    // Tuile chargée (plus de 24 taches) : remontée seule (recalculer des centaines de cônes sur
+                    // chaque pixel de bord coûtait plus de 10 ms ; le détail ne s'y voit pas)
+                    vec2 pc = vec2(p) + 0.5;
+                    ivec2 tile = min(ivec2(pc / uFull * vec2(TILES)), TILES - 1);
+                    int n = int(texelFetch(uPoolTiles, ivec2(0, tile.y * TILES.x + tile.x), 0).x);
+                    if (n > 24) edge = false;
+                }
                 if (!edge) { gl_FragColor = vec4(wSum > 1e-3 ? sum / wSum : vec3(0.0), 1.0); return; }
                 gl_FragColor = vec4(shadePool(p, depth), 1.0);
             }

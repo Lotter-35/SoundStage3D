@@ -11,7 +11,10 @@
  *   3. retouche des bords en pleine résolution (pixels dont les voisins réduits diffèrent : faisceaux
  *      recalculés exactement, seulement dans les tuiles où passent peu de cônes ; ailleurs remontée
  *      bilatérale) ;
- *   4. sortie différée { kind: 'ss', full: true } lue par la passe finale (1 lecture par pixel).
+ *   4. faisceaux FLOUS (frost ≥ 60 %, liste à part : SSDepthLights) calculés en 1/8 de résolution — que des
+ *      dégradés, l'agrandissement (bilinéaire guidé par la profondeur) ne se voit pas ; 16 × moins de pixels
+ *      qu'en ½ pour des cônes immenses (grand zoom + frost) qui couvraient tout l'écran ;
+ *   5. sortie différée { kind: 'ss', full: true } lue par la passe finale (1 lecture par pixel).
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -23,6 +26,9 @@ import { gpuPassTimer } from '../../render/GpuPassTimer.js';
 /** Retouche des bords : au-delà de ce nombre de cônes dans la tuile, remontée bilatérale seulement
  *  (recalculer des centaines de cônes sur chaque bord coûtait plusieurs ms ; le détail ne s'y voit pas) */
 const REFINE_MAX_CONES = 24;
+/** Diviseur de résolution des faisceaux flous */
+const SOFT_DIV = 8;
+const _clearColor = new THREE.Color();
 
 export class SSDepthPass extends Pass {
     /**
@@ -52,6 +58,11 @@ export class SSDepthPass extends Pass {
             type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
             minFilter: THREE.LinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: false,
         });
+        this.softTarget = new THREE.WebGLRenderTarget(1, 1, {
+            type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
+            minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false,
+        });
+        this._softScale = new THREE.Vector2(1, 1);
         // Retouche des bords en pleine résolution (sortie lue par la passe finale)
         this.refineTarget = new THREE.WebGLRenderTarget(1, 1, {
             type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
@@ -61,7 +72,7 @@ export class SSDepthPass extends Pass {
         // Même code de faisceaux, en pleine résolution sur les bords ; uniformes communs partagés
         this.refineMaterial = createSSBeamMaterial(shadowUniforms, { refine: true });
         for (const k of Object.keys(this.beamMaterial.uniforms)) {
-            if (!['tBeamLow', 'uLowScale', 'uSharp', 'uRefineMax'].includes(k)) this.refineMaterial.uniforms[k] = this.beamMaterial.uniforms[k];
+            if (!['tBeamLow', 'uLowScale', 'uSharp', 'uRefineMax', 'tSoft', 'uSoftScale', 'uSoftOn'].includes(k)) this.refineMaterial.uniforms[k] = this.beamMaterial.uniforms[k];
         }
         this.refineMaterial.uniforms.uRefineMax.value = REFINE_MAX_CONES;
         this._beamQuad = new FullScreenQuad(this.beamMaterial);
@@ -93,6 +104,9 @@ export class SSDepthPass extends Pass {
         const w = Math.max(1, Math.ceil(width / this.div));
         const h = Math.max(1, Math.ceil(height / this.div));
         this.beamTarget.setSize(w, h);
+        const sw = Math.max(1, Math.ceil(width / SOFT_DIV)), sh = Math.max(1, Math.ceil(height / SOFT_DIV));
+        this.softTarget.setSize(sw, sh);
+        this._softScale.set(width / (SOFT_DIV * sw), height / (SOFT_DIV * sh));
         this.refineTarget.setSize(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
         this._fullSize.set(width, height);
         this._out.scale.set(width / (this.div * w), height / (this.div * h));
@@ -132,23 +146,48 @@ export class SSDepthPass extends Pass {
         renderer.autoClear = false;
         if (timer) timer.begin('Faisceaux SS');
         renderer.setRenderTarget(this.beamTarget);
-        this._beamQuad.render(renderer);
+        const sharp = this.lights.visible > 0;
+        if (sharp) {
+            this._beamQuad.render(renderer);
+        } else {
+            // Que des faisceaux flous : image nette vide (noir)
+            renderer.getClearColor(_clearColor);
+            const oldA = renderer.getClearAlpha();
+            renderer.setClearColor(0x000000, 0);
+            renderer.clear(true, false, false);
+            renderer.setClearColor(_clearColor, oldA);
+        }
         if (timer) timer.end();
 
-        // Retouche des bords en pleine résolution
-        this._out.full = this.refine;
-        this._out.texture = this.beamTarget.texture;
-        if (this.refine) {
-            const r = this.refineMaterial.uniforms;
-            r.tBeamLow.value = this.beamTarget.texture;
-            r.uLowScale.value.copy(this._out.scale);
-            r.uSharp.value = this.sharpness;
-            if (timer) timer.begin('Bords des faisceaux SS');
-            renderer.setRenderTarget(this.refineTarget);
-            this._refineQuad.render(renderer);
+        // Faisceaux flous : 1/8 de résolution, leurs propres listes de tuiles
+        const soft = this.lights.softVisible > 0;
+        if (soft) {
+            if (timer) timer.begin('Faisceaux SS flous');
+            u.uSSTiles.value = this.lights.softTilesTexture;
+            u.uDiv.value = SOFT_DIV;
+            renderer.setRenderTarget(this.softTarget);
+            this._beamQuad.render(renderer);
+            u.uSSTiles.value = this.lights.tilesTexture;
+            u.uDiv.value = this.div;
             if (timer) timer.end();
-            this._out.texture = this.refineTarget.texture;
         }
+
+        // Pleine résolution : remontée (faisceaux nets + flous) et retouche des bords des faisceaux nets
+        const r = this.refineMaterial.uniforms;
+        r.tBeamLow.value = this.beamTarget.texture;
+        r.uLowScale.value.copy(this._out.scale);
+        r.uSharp.value = this.sharpness;
+        // −1 : aucun recalcul (pas de faisceau net, ou retouche désactivée)
+        r.uRefineMax.value = this.refine && sharp ? REFINE_MAX_CONES : -1;
+        r.tSoft.value = this.softTarget.texture;
+        r.uSoftScale.value.copy(this._softScale);
+        r.uSoftOn.value = soft ? 1 : 0;
+        if (timer) timer.begin('Bords des faisceaux SS');
+        renderer.setRenderTarget(this.refineTarget);
+        this._refineQuad.render(renderer);
+        if (timer) timer.end();
+        this._out.full = true;
+        this._out.texture = this.refineTarget.texture;
         renderer.autoClear = oldAutoClear;
 
         this._out.sharpness = this.sharpness;
@@ -159,6 +198,7 @@ export class SSDepthPass extends Pass {
     dispose() {
         this.beamTarget.dispose();
         this.refineTarget.dispose();
+        this.softTarget.dispose();
         this.beamMaterial.dispose();
         this.refineMaterial.dispose();
         this._beamQuad.dispose();

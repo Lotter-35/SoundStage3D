@@ -60,7 +60,10 @@ export const SS_MAX_LIGHTS = 1024;
 export const SS_GEO = 20;
 export const SS_FLAG_BEAM = 1;
 const GEO = SS_GEO;
-const FLAG_BEAM = SS_FLAG_BEAM, FLAG_POOL = 2;
+const FLAG_BEAM = SS_FLAG_BEAM, FLAG_POOL = 2, FLAG_SOFT = 4;
+/** Faisceau « flou » (frost ≥ 60 % : flou de fenêtre ≥ 0,25) : que des dégradés, calculé à part en très basse
+ *  résolution (SSDepthPass, 1/8) — l'agrandissement d'un dégradé ne se voit pas */
+export const SS_SOFT_BLUR = 0.25;
 
 const OCT = 8;
 const OCT_K = 1 / Math.cos(Math.PI / OCT);   // octogone circonscrit au cercle
@@ -113,6 +116,16 @@ export class SSDepthLights {
         this.poolTilesTexture.generateMipmaps = false;
         this.poolTilesTexture.needsUpdate = true;
         this._poolCount = new Uint16Array(SS_TILE_COUNT);
+        // Listes des faisceaux flous (passe à part en très basse résolution)
+        this._softData = new Uint16Array(SS_TILE_COUNT * SS_TILE_TEXELS * 4);
+        this.softTilesTexture = new THREE.DataTexture(this._softData, SS_TILE_TEXELS, SS_TILE_COUNT, THREE.RGBAIntegerFormat, THREE.UnsignedShortType);
+        this.softTilesTexture.internalFormat = 'RGBA16UI';
+        this.softTilesTexture.minFilter = THREE.NearestFilter;
+        this.softTilesTexture.magFilter = THREE.NearestFilter;
+        this.softTilesTexture.generateMipmaps = false;
+        this.softTilesTexture.needsUpdate = true;
+        this._softCount = new Uint16Array(SS_TILE_COUNT);
+        this.softVisible = 0;      // faisceaux flous présents dans au moins une tuile
         this.beamCones = 0;        // cônes à faisceau SS Depth
         this.poolCones = 0;        // cônes à tache de lumière
         this.poolVisible = 0;
@@ -194,7 +207,7 @@ export class SSDepthLights {
             const zPool = apexDist + range;
             const irr0 = r[3] / (Math.PI * tanHalf * tanHalf);
             const irrL = (f.lightFlux || 0) / (Math.PI * tanHalf * tanHalf);
-            const flags = (beam ? FLAG_BEAM : 0) | (pool ? FLAG_POOL : 0);
+            const flags = (beam ? FLAG_BEAM : 0) | (pool ? FLAG_POOL : 0) | (frostBlur >= SS_SOFT_BLUR ? FLAG_SOFT : 0);
             const slot = f.shadowSlot >= 0 ? f.shadowSlot : -1;
             const W = f.axis, R = f.right, U = f.up;
             let any = false;
@@ -380,21 +393,29 @@ export class SSDepthLights {
     bin(camera) {
         const counts = this._tileCount, data = this._tileData;
         const pCounts = this._poolCount, pData = this._poolData;
+        const sCounts = this._softCount, sData = this._softData;
         if (this.count === 0) {
             this.visible = 0;
             this.poolVisible = 0;
+            this.softVisible = 0;
             if (this._dirtyTiles) {
                 counts.fill(0);
                 pCounts.fill(0);
-                for (let t = 0; t < SS_TILE_COUNT; t++) { data[t * SS_TILE_TEXELS * 4] = 0; pData[t * SS_TILE_TEXELS * 4] = 0; }
+                sCounts.fill(0);
+                for (let t = 0; t < SS_TILE_COUNT; t++) {
+                    const o = t * SS_TILE_TEXELS * 4;
+                    data[o] = 0; pData[o] = 0; sData[o] = 0;
+                }
                 this.tilesTexture.needsUpdate = true;
                 this.poolTilesTexture.needsUpdate = true;
+                this.softTilesTexture.needsUpdate = true;
                 this._dirtyTiles = false;
             }
             return;
         }
         counts.fill(0);
         pCounts.fill(0);
+        sCounts.fill(0);
         const v = camera.matrixWorldInverse.elements;
         const p = camera.projectionMatrix.elements;
         const near = camera.near;
@@ -413,7 +434,7 @@ export class SSDepthLights {
         }
         const sorted = order.subarray(0, this.count);
         sorted.sort((a, b) => score[b] - score[a]);
-        let visible = 0, poolVisible = 0;
+        let visible = 0, poolVisible = 0, softVisible = 0;
         for (let oi = 0; oi < this.count; oi++) {
             const li = sorted[oi];
             const g = li * GEO;
@@ -423,7 +444,8 @@ export class SSDepthLights {
             if (flags & FLAG_BEAM) {
                 if (this._project(li, 4, v, p, near)) {
                     projected = 4;
-                    if (this._raster(li, counts, data)) visible++;
+                    if (flags & FLAG_SOFT) { if (this._raster(li, sCounts, sData)) softVisible++; }
+                    else if (this._raster(li, counts, data)) visible++;
                 } else projected = 0;
             }
             if (flags & FLAG_POOL) {
@@ -436,13 +458,17 @@ export class SSDepthLights {
             }
         }
         for (let t = 0; t < SS_TILE_COUNT; t++) {
-            data[t * SS_TILE_TEXELS * 4] = counts[t];
-            pData[t * SS_TILE_TEXELS * 4] = pCounts[t];
+            const o = t * SS_TILE_TEXELS * 4;
+            data[o] = counts[t];
+            pData[o] = pCounts[t];
+            sData[o] = sCounts[t];
         }
         this.visible = visible;
         this.poolVisible = poolVisible;
+        this.softVisible = softVisible;
         this.tilesTexture.needsUpdate = true;
         this.poolTilesTexture.needsUpdate = true;
+        this.softTilesTexture.needsUpdate = true;
         this._dirtyTiles = true;
     }
 
@@ -450,5 +476,6 @@ export class SSDepthLights {
         this.lightsTexture.dispose();
         this.tilesTexture.dispose();
         this.poolTilesTexture.dispose();
+        this.softTilesTexture.dispose();
     }
 }
