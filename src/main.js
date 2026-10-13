@@ -49,7 +49,7 @@ import { HazeVolume } from './haze/HazeVolume.js?v=2';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
 import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
-import { clientOptions, RES_QUALITY, SS_RESOLUTIONS, SPOT_SHADOW_SIZES, POOL_RESOLUTIONS } from './ui/ClientOptions.js';
+import { clientOptions, RES_QUALITY, SS_RESOLUTIONS, SPOT_SHADOW_SIZES, POOL_RESOLUTIONS, REFLECT_RESOLUTIONS } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
@@ -316,6 +316,8 @@ ambiancePanel.hazeVolume = hazeVolume;
 hazeVolume.ambiancePanel = ambiancePanel;
 ambiancePanel.setHazePanel(new HazePanel({ haze: hazeVolume, ambiancePanel }));
 window.__SS3D.hazeVolume = hazeVolume;
+// Brume éclairée par la lumière indirecte des lyres (grille de GI)
+hazeVolume.pass.gi = spotManager.fx;
 
 // ─── Soleil : lens flare (post-traitement, réglages locaux) · Nuit : lune ───
 const sunFlare = new SunLensFlarePass(camera, laserManager.sceneDepth || null);
@@ -2332,6 +2334,8 @@ clientOptions.bind('spotBeamQuality', (v) => spotManager.setGlobal('beamQuality'
 clientOptions.bind('spotShadowRes', (v) => spotManager.setShadowResolution(SPOT_SHADOW_SIZES[v] ?? 128));
 clientOptions.bind('spotClassicShadows', (v) => spotManager.setClassicBeamShadows(v));
 clientOptions.bind('spotPoolResolution', (v) => spotManager.setPoolResolution(POOL_RESOLUTIONS[v] ?? 'auto'));
+clientOptions.bind('spotGIQuality', (v) => spotManager.fx.setGIQuality(v));
+clientOptions.bind('spotReflectResolution', (v) => spotManager.fx.setReflectDivisor(REFLECT_RESOLUTIONS[v] || 8));
 clientOptions.bind('spotSSResolution', (v) => spotManager.setSSResolution(SS_RESOLUTIONS[v] || 3));
 clientOptions.bind('spotSSSharpness', (v) => spotManager.setSSSharpness(v));
 // Mesures GPU par passe : petit tableau en haut à droite ; la résolution dynamique est figée pendant la mesure
@@ -2366,6 +2370,10 @@ function updateGpuPassOverlay(now) {
         if (pp.enabled) lines.push(`Taches : ${ss.poolCones} cônes (${ss.poolVisible} à l'écran), ${pp.target.width}×${pp.target.height}`);
         const sh = spotManager.shadows;
         if (sh.size > 0) lines.push(`Ombres : ${sh.slotCount} lyres, faces ${sh.size}², ${sh.bakedCount} cuissons`);
+        const gi = spotManager.fx.gi;
+        if (gi.enabled && gi.quality) lines.push(`GI : grille ${gi.quality.dims.join('×')}, ${gi.layersPerFrame} couches / image, ${gi.vplCount} lumières virtuelles`);
+        const rf = spotManager.fx.reflect;
+        if (rf && rf.enabled) lines.push(`Reflets : ${rf.bins.visible} cônes, ${rf.target.width}×${rf.target.height}`);
     }
     _gpuPassEl.textContent = lines.join('\n');
 }

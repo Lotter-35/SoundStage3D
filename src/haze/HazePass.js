@@ -38,6 +38,8 @@ export class HazePass extends Pass {
         this._composite = createHazeCompositeMaterial();
         this._compQuad = new FullScreenQuad(this._composite);
         this._fwd = new THREE.Vector3();
+        /** Lumière indirecte des lyres (SpotLightingFX : gi.uniforms, hazeGain) — brume éclairée par la GI */
+        this.gi = null;
 
         // Recomposition différée : le brouillard est appliqué par la passe finale unique
         this.deferred = false;
@@ -76,6 +78,16 @@ export class HazePass extends Pass {
         u.uCamFwd.value.copy(this._fwd);
         u.uNear.value = cam.near;
         u.uFar.value = cam.far;
+        const gi = this.gi;
+        const giGain = gi && gi.hazeGain > 0 && gi.gi.uniforms.uGI.value ? gi.hazeGain : 0;
+        u.uGIHaze.value = giGain;
+        if (giGain > 0) {
+            const g = gi.gi.uniforms;
+            u.uGI.value = g.uGI.value;
+            u.uGIMin.value.copy(g.uGIMin.value);
+            u.uGISize.value.copy(g.uGISize.value);
+            u.uGIEdge.value.copy(g.uGIEdge.value);
+        }
 
         renderer.setRenderTarget(this.target);
         this._quad.render(renderer);

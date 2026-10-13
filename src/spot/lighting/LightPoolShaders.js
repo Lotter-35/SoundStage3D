@@ -14,6 +14,9 @@
  * - Matériaux : pas de G-buffer d'albédo → classement par la position / la normale, comme le banc C++ :
  *   sol (herbe : texture de la pelouse, mat), dessus du plateau et des praticables (lino noir brillant),
  *   reste du décor (lino, satiné). Rugosité et albédo proches des matériaux de stage.js.
+ * - LUMIÈRE INDIRECTE (GI, phase C) : quand la grille de GI est active (gi/GIGridPass.js), chaque pixel du
+ *   décor reçoit aussi le rebond lu dans la grille un peu devant la surface : albédo / π × éclairement
+ *   indirect × gain (normale et matériau calculés pour tous les pixels, même hors des cônes).
  * - Sortie : rgb + profondeur linéaire (a) pour la remontée bilatérale en ½ résolution (FinalCompositePass),
  *   ajoutée à l'image AVANT le brouillard et le bloom (comme les faisceaux).
  * ─────────────────────────────────────────────────────────────
@@ -24,18 +27,21 @@ import { GATE_GLSL } from '../SpotShaders.js?v=5';
 import { CONE_GLSL } from '../ssdepth/SSConeGLSL.js';
 import { SS_TILES_X, SS_TILES_Y, SS_MAX_PER_TILE } from '../ssdepth/SSDepthLights.js';
 import { SHADOW_GLSL, createShadowUniforms } from './shadowGLSL.js';
+import { SCREEN_GLSL, SURFACE_GLSL } from './surfaceGLSL.js';
+import { GI_GLSL, createGIUniforms } from '../gi/giGLSL.js';
 
-/** Albédo moyen (linéaire) de la pelouse de stage.js */
-const GRASS_ALBEDO = [0.073, 0.141, 0.026];
-/** Lino noir : 0,025 en moyenne dans la texture, relevé (poussière, micro-rayures d'un plateau réel) pour que les
- *  taches restent lisibles sur le plateau comme avec les anciennes lumières (+35 % de stage.js en plus) */
-const LINO_ALBEDO = [0.05, 0.048, 0.056];
-
-/** @param {object} [shadowUniforms] uniformes partagés des ombres statiques */
-export function createLightPoolMaterial(shadowUniforms = createShadowUniforms()) {
+/**
+ * @param {object} [shadowUniforms] uniformes partagés des ombres statiques
+ * @param {object} [giUniforms] uniformes partagés de la grille de GI
+ */
+export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(), giUniforms = createGIUniforms()) {
     return new THREE.ShaderMaterial({
         uniforms: {
             ...shadowUniforms,
+            ...giUniforms,
+            uGIGain:     { value: 0 },     // 0 = pas de lumière indirecte
+            uGIOffset:   { value: 0.7 },   // lecture de la grille devant la surface (m)
+            uPoolsOn:    { value: 1 },     // 0 = GI seule (taches de lumière désactivées)
             uDepth:      { value: null },
             uSpotParams: { value: null },
             uGobos:      { value: null },
@@ -64,49 +70,20 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms())
             ${GATE_GLSL}
             ${CONE_GLSL}
             ${SHADOW_GLSL}
-            uniform highp sampler2D uDepth;
+            ${SCREEN_GLSL}
+            ${SURFACE_GLSL}
+            ${GI_GLSL}
             uniform highp usampler2D uPoolTiles;
-            uniform sampler2D uGrass;
-            uniform float uGrassOn;
-            uniform vec2 uFull;
             uniform float uDiv;
             uniform vec3 uCamPos;
-            uniform mat3 uCamRot;
-            uniform vec4 uProjK;
-            uniform float uNear;
-            uniform float uFar;
             uniform float uGain;
             uniform float uSpecOn;
+            uniform float uGIGain;
+            uniform float uGIOffset;
+            uniform float uPoolsOn;
 
             const float PI = 3.14159265;
             const ivec2 TILES = ivec2(${SS_TILES_X}, ${SS_TILES_Y});
-
-            float linZ(ivec2 p) { return -perspectiveDepthToViewZ(texelFetch(uDepth, p, 0).r, uNear, uFar); }
-            vec3 rayView(vec2 px) {
-                vec2 ndc = px / uFull * 2.0 - 1.0;
-                return vec3((ndc.x + uProjK.z) * uProjK.x, (ndc.y + uProjK.w) * uProjK.y, -1.0);
-            }
-            vec3 viewPos(ivec2 p) { return rayView(vec2(p) + 0.5) * linZ(p); }
-
-            // Matériau de la surface (pas de G-buffer) : sol, plateau, décor
-            void surface(vec3 P, vec3 N, out vec3 albedo, out float rough, out float specK) {
-                if (P.y < 0.35 && N.y > 0.6) {
-                    // Pelouse (stage.js : texture répétée tous les 5 m), mate
-                    albedo = uGrassOn > 0.5 ? texture(uGrass, P.xz * 0.2).rgb : vec3(${GRASS_ALBEDO.join(', ')});
-                    rough = 0.9;
-                    specK = 0.4;
-                } else if (N.y > 0.75) {
-                    // Dessus du plateau, des marches, de la table : lino noir brillant (piste de danse)
-                    albedo = vec3(${LINO_ALBEDO.join(', ')}) * 1.35;
-                    rough = 0.3;
-                    specK = 1.5;
-                } else {
-                    // Reste du décor : lino satiné (mur, poteaux, toit, enceintes…)
-                    albedo = vec3(${LINO_ALBEDO.join(', ')}) * 1.35;
-                    rough = 0.6;
-                    specK = 1.0;
-                }
-            }
 
             void main() {
                 ivec2 lo = ivec2(gl_FragCoord.xy);
@@ -118,8 +95,9 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms())
                 vec2 pc = vec2(c) + 0.5;
                 ivec2 tile = min(ivec2(pc / uFull * vec2(TILES)), TILES - 1);
                 int tIdx = tile.y * TILES.x + tile.x;
-                int n = int(texelFetch(uPoolTiles, ivec2(0, tIdx), 0).x);
-                if (n == 0) { gl_FragColor = vec4(0.0, 0.0, 0.0, depth); return; }
+                int n = uPoolsOn > 0.5 ? int(texelFetch(uPoolTiles, ivec2(0, tIdx), 0).x) : 0;
+                bool gi = uGIGain > 0.0;
+                if (n == 0 && !gi) { gl_FragColor = vec4(0.0, 0.0, 0.0, depth); return; }
 
                 vec3 vp = rayView(pc) * depth;
                 vec3 P = uCamPos + uCamRot * vp;
@@ -130,6 +108,15 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms())
                 float rough = 1.0, specK = 0.0, a2 = 1.0;
 
                 vec3 acc = vec3(0.0);
+                // Lumière indirecte : normale et matériau pour tous les pixels, grille lue devant la surface
+                if (gi) {
+                    haveN = true;
+                    N = screenNormal(c, vp);
+                    surface(P, N, albedo, rough, specK);
+                    float a = rough * rough;
+                    a2 = a * a;
+                    acc += albedo * (uGIGain / PI) * giAt(P + N * uGIOffset);
+                }
                 uvec4 idx4 = uvec4(0u);
                 for (int k = 0; k < ${SS_MAX_PER_TILE}; k++) {
                     if (k >= n) break;
@@ -154,17 +141,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms())
                     // Normale et matériau : une seule fois, au premier cône qui touche le pixel
                     if (!haveN) {
                         haveN = true;
-                        vec3 pl = viewPos(max(c - ivec2(1, 0), ivec2(0))), pr = viewPos(min(c + ivec2(1, 0), fullI - 1));
-                        vec3 pd = viewPos(max(c - ivec2(0, 1), ivec2(0))), pu = viewPos(min(c + ivec2(0, 1), fullI - 1));
-                        // Bord de l'image : seul le voisin intérieur existe
-                        bool useR = c.x == 0 || (c.x < fullI.x - 1 && abs(pr.z - vp.z) < abs(vp.z - pl.z));
-                        bool useU = c.y == 0 || (c.y < fullI.y - 1 && abs(pu.z - vp.z) < abs(vp.z - pd.z));
-                        vec3 dx = useR ? pr - vp : vp - pl;
-                        vec3 dy = useU ? pu - vp : vp - pd;
-                        vec3 cr = cross(dx, dy);
-                        vec3 nv = dot(cr, cr) > 1e-20 ? normalize(cr) : -normalize(vp);
-                        if (dot(nv, vp) > 0.0) nv = -nv;
-                        N = normalize(uCamRot * nv);
+                        N = screenNormal(c, vp);
                         surface(P, N, albedo, rough, specK);
                         float a = rough * rough;
                         a2 = a * a;

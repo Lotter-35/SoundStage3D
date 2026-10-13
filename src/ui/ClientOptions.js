@@ -39,6 +39,10 @@ export const SS_RESOLUTIONS = { '½': 2, '⅓': 3, '¼': 4 };
 export const SPOT_SHADOW_SIZES = { 'Désactivées': 0, '128': 128, '256': 256 };
 /** Résolution des taches de lumière → diviseur ('auto' : pleine jusqu'en 1080p, ½ au-delà) */
 export const POOL_RESOLUTIONS = { 'Auto': 'auto', 'Pleine': 1, '½': 2 };
+/** Qualité de la lumière indirecte (grille de GI) des lyres */
+export const GI_QUALITIES = ['Désactivée', 'Basse', 'Haute'];
+/** Résolution des reflets des faisceaux → diviseur de l'image (par axe) */
+export const REFLECT_RESOLUTIONS = { '¼': 4, '⅛': 8 };
 
 
 export const OPTION_FOLDERS = [
@@ -84,6 +88,8 @@ export const CLIENT_OPTIONS_SCHEMA = {
     spotShadowRes:    sub('spot', opt(Object.keys(SPOT_SHADOW_SIZES), '128', 'Ombres des lyres', 'effects', 'Ombres du décor dans les faisceaux et les taches de lumière de toutes les lyres : une carte de distances par lyre (6 faces de 128² ou 256²), calculée une fois puis seulement quand une lyre est déplacée ou que le décor change')),
     spotClassicShadows: sub('spot', bool(true, 'Ombres dans les faisceaux classiques', 'effects', 'Les lyres en rendu Classique utilisent aussi la carte d’ombres (sinon : boîtes simplifiées de la scène)')),
     spotPoolResolution: sub('spot', opt(Object.keys(POOL_RESOLUTIONS), 'Auto', 'Résolution des taches', 'effects', 'Taches de lumière des lyres sur le décor : pleine résolution ou ½ (remontée guidée par la profondeur). Auto : pleine jusqu’en 1080p, ½ au-delà')),
+    spotGIQuality:    sub('spot', opt(GI_QUALITIES, 'Basse', 'Qualité GI', 'effects', 'Lumière indirecte des lyres (rebond sur le décor, brume éclairée) : grille 3D de la salle. Basse : 32 × 12 × 40 cellules, ⅛ mise à jour par image ; Haute : 48 × 16 × 64, ¼ par image. Désactivée : aucun coût')),
+    spotReflectResolution: sub('spot', opt(Object.keys(REFLECT_RESOLUTIONS), '⅛', 'Résolution des reflets', 'effects', 'Reflets des faisceaux sur le plateau brillant : calculés à cette fraction de l’image (par axe), floutés puis remontés en suivant la profondeur')),
     spotSSResolution: sub('spot', opt(Object.keys(SS_RESOLUTIONS), '⅓', 'Résolution des faisceaux SS', 'effects', 'Faisceaux des lyres en rendu SS Depth : calculés à cette fraction de l’image (par axe) puis remontés en pleine résolution en suivant la profondeur. ⅓ conseillé en 4K')),
     spotSSSharpness:  sub('spot', num(1.5, 0.2, 4, 0.05, 'Netteté des bords', 'effects', 'Faisceaux SS Depth : plus la valeur est haute, plus les bords des faisceaux devant ou derrière les objets sont nets (filtre bilatéral guidé par la profondeur)')),
     laserRange:       sub('laser', num(300, 20, 3000, 10, 'Distance (m)', 'effects', 'Distance d’affichage des lasers')),

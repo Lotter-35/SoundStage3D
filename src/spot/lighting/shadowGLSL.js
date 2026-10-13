@@ -76,6 +76,14 @@ float shadowHard(int slot, vec3 origin, vec3 P, float bias) {
     return length(v) - bias <= texelFetch(uShadowAtlas, f0 + p, 0).r ? 1.0 : 0.0;
 }
 
+// Distance (m) de la surface du décor vue dans la direction v (1 lecture, sans filtre) ; SHADOW_FAR = rien
+float shadowDepth(int slot, vec3 v) {
+    ivec2 f0;
+    vec2 t = shadowTexel(slot, v, f0);
+    int S = int(uShadowSize);
+    return texelFetch(uShadowAtlas, f0 + clamp(ivec2(t), ivec2(0), ivec2(S - 1)), 0).r;
+}
+
 // Ombre filtrée (PCF 2 × 2 bilinéaire, 4 lectures, sans déborder sur la face voisine) : 0…1
 float shadowPCF(int slot, vec3 origin, vec3 P, float bias) {
     vec3 v = P - origin;
