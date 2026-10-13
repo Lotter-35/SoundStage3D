@@ -2335,7 +2335,7 @@ clientOptions.bind('spotShadowRes', (v) => spotManager.setShadowResolution(SPOT_
 clientOptions.bind('spotClassicShadows', (v) => spotManager.setClassicBeamShadows(v));
 clientOptions.bind('spotPoolResolution', (v) => spotManager.setPoolResolution(POOL_RESOLUTIONS[v] ?? 'auto'));
 clientOptions.bind('spotGIQuality', (v) => spotManager.fx.setGIQuality(v));
-clientOptions.bind('spotReflectResolution', (v) => spotManager.fx.setReflectDivisor(REFLECT_RESOLUTIONS[v] || 8));
+clientOptions.bind('spotReflectResolution', (v) => spotManager.fx.setReflectDivisor(REFLECT_RESOLUTIONS[v] || 4));
 clientOptions.bind('spotSSResolution', (v) => spotManager.setSSResolution(SS_RESOLUTIONS[v] || 3));
 clientOptions.bind('spotSSSharpness', (v) => spotManager.setSSSharpness(v));
 // Mesures GPU par passe : petit tableau en haut à droite ; la résolution dynamique est figée pendant la mesure

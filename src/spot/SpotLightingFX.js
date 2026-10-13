@@ -23,8 +23,9 @@ const GI_ARTISTIC = 12;
 /** Rebond sur le décor : éclairement de la grille → éclairement d'une surface (cosinus moyen ≈ ½) */
 const GI_DECOR_GAIN = 0.5 * GI_ARTISTIC;
 /** Brume : éclairement de la grille → lumière diffusée par la fumée (phase isotrope 1 / 4π, × 6 : la fumée
- *  de la salle est plus dense que celle des faisceaux) */
-const GI_HAZE_GAIN = 6 / (4 * Math.PI) * GI_ARTISTIC;
+ *  de la salle est plus dense que celle des faisceaux) ; gain artistique plus faible que sur le décor (au-delà,
+ *  voile gris sur toute la salle avec beaucoup de faisceaux) */
+const GI_HAZE_GAIN = 6 / (4 * Math.PI) * 4;
 
 export class SpotLightingFX {
     /**

@@ -7,9 +7,10 @@
  * avant le brouillard) — sortie différée { kind: 'refl' }.
  *
  * Choix des cônes : un rayon réfléchi peut toucher n'importe quel faisceau, les listes des tuiles de l'écran
- * ne servent pas. Mesuré (SwiftShader, 50 lyres) : boucle sur tous les cônes ≈ 3 × plus lente que des listes
- * triées en miroir du plan du plateau (SSReflectBins, même code CPU que le tri des faisceaux, ≈ 0,1 ms) →
- * tri en miroir.
+ * ne servent pas. Mesuré (SwiftShader, ¼) : boucle sur tous les faisceaux dans chaque tuile 1,55 × plus lente
+ * que des listes triées en miroir du plan du plateau (9 lyres vues sur le plateau ; 1,2 × avec 50 lyres et peu
+ * de plateau à l'écran), et une liste globale serait tronquée à 128 cônes (50 lyres à prisme = 450 cônes) →
+ * tri en miroir (SSReflectBins, même code CPU que le tri des faisceaux, 0,1 à 0,3 ms pour 50 lyres).
  * ─────────────────────────────────────────────────────────────
  */
 
