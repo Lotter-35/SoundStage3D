@@ -17,7 +17,7 @@
 
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { createSSBeamMaterial, createSSHaloMaterial } from './SSDepthShaders.js';
+import { createSSBeamMaterial, createSSHaloMaterial, createHaloSourceMaterial } from './SSDepthShaders.js';
 import { gpuPassTimer } from '../../render/GpuPassTimer.js';
 
 export class SSDepthPass extends Pass {
@@ -53,8 +53,11 @@ export class SSDepthPass extends Pass {
         };
         this.beamTarget = new THREE.WebGLRenderTarget(1, 1, opts);
         this.haloTarget = new THREE.WebGLRenderTarget(1, 1, opts);
+        this.haloSrcTarget = new THREE.WebGLRenderTarget(1, 1, opts);   // scène + classiques + taches réduits
         this.beamMaterial = createSSBeamMaterial(shadowUniforms);
         this.haloMaterial = createSSHaloMaterial();
+        this.haloSrcMaterial = createHaloSourceMaterial();
+        this._haloSrcQuad = new FullScreenQuad(this.haloSrcMaterial);
         this._beamQuad = new FullScreenQuad(this.beamMaterial);
         this._haloQuad = new FullScreenQuad(this.haloMaterial);
         this._black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
@@ -88,6 +91,7 @@ export class SSDepthPass extends Pass {
         const h = Math.max(1, Math.ceil(height / this.div));
         this.beamTarget.setSize(w, h);
         this.haloTarget.setSize(w, h);
+        this.haloSrcTarget.setSize(w, h);
         this._fullSize.set(width, height);
         this._lowSize.set(w, h);
         this._out.scale.set(width / (this.div * w), height / (this.div * h));
@@ -132,23 +136,29 @@ export class SSDepthPass extends Pass {
 
         let out = this.beamTarget.texture;
         if (this.haloIntensity > 0.005) {
-            const h = this.haloMaterial.uniforms;
-            h.tScene.value = readBuffer.texture;
-            h.tSS.value = this.beamTarget.texture;
+            const hs = this.haloSrcMaterial.uniforms;
+            hs.tScene.value = readBuffer.texture;
             const classic = this.classicPass && this.classicPass.enabled && this.classicPass.deferredOutput
                 ? this.classicPass.deferredOutput() : null;
-            h.tClassic.value = classic ? classic.texture : this._black;
-            h.uClassicOn.value = classic ? 1 : 0;
+            hs.tClassic.value = classic ? classic.texture : this._black;
+            hs.uClassicOn.value = classic ? 1 : 0;
             const pool = this.poolPass && this.poolPass.enabled ? this.poolPass.deferredOutput() : null;
-            h.tPool.value = pool ? pool.texture : this._black;
-            h.uPoolOn.value = pool ? 1 : 0;
-            if (pool) h.uPoolScale.value.copy(pool.scale);
+            hs.tPool.value = pool ? pool.texture : this._black;
+            hs.uPoolOn.value = pool ? 1 : 0;
+            if (pool) hs.uPoolScale.value.copy(pool.scale);
+            hs.uFull.value.copy(this._fullSize);
+            hs.uDiv.value = this.div;
+            const h = this.haloMaterial.uniforms;
+            h.tSrc.value = this.haloSrcTarget.texture;
+            h.tSS.value = this.beamTarget.texture;
             h.uFull.value.copy(this._fullSize);
             h.uLow.value.copy(this._lowSize);
             h.uDiv.value = this.div;
             h.uIntensity.value = this.haloIntensity;
             h.uRadius.value = this.haloRadius;
             if (timer) timer.begin('Halo SS');
+            renderer.setRenderTarget(this.haloSrcTarget);
+            this._haloSrcQuad.render(renderer);
             renderer.setRenderTarget(this.haloTarget);
             this._haloQuad.render(renderer);
             if (timer) timer.end();
@@ -168,6 +178,9 @@ export class SSDepthPass extends Pass {
     dispose() {
         this.beamTarget.dispose();
         this.haloTarget.dispose();
+        this.haloSrcTarget.dispose();
+        this.haloSrcMaterial.dispose();
+        this._haloSrcQuad.dispose();
         this.beamMaterial.dispose();
         this.haloMaterial.dispose();
         this._beamQuad.dispose();

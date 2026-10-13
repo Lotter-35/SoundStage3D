@@ -24,6 +24,9 @@
  *    par pixel) de l'image de la scène + faisceaux, occultation ASYMÉTRIQUE par la profondeur (un objet au
  *    premier plan bloque la lumière de derrière, une lumière devant un mur diffuse librement son halo).
  *    Sortie = faisceaux + halo (tout est additif) : une seule remontée dans la passe finale.
+ *    La scène, les faisceaux classiques et les taches sont d'abord réduits à la résolution des faisceaux
+ *    (createHaloSourceMaterial, 4 lectures bilinéaires par pixel réduit) : le halo ne lit plus l'image
+ *    pleine résolution à 8 endroits éloignés par pixel (très coûteux en 4K : le cache ne suit pas).
  *
  * 3. La remontée bilatérale 3×3 guidée par la profondeur est faite par FinalCompositePass (avant le
  *    brouillard : transmittance et bloom s'appliquent aux faisceaux SS comme aux faisceaux classiques).
@@ -216,16 +219,51 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms()) {
     });
 }
 
-export function createSSHaloMaterial() {
+/** Image source du halo à la résolution des faisceaux : scène (moyenne du bloc de pixels) + classiques + taches */
+export function createHaloSourceMaterial() {
     return new THREE.ShaderMaterial({
         uniforms: {
             tScene:     { value: null },
-            tSS:        { value: null },
             tClassic:   { value: null },
             uClassicOn: { value: 0 },
             tPool:      { value: null },
             uPoolOn:    { value: 0 },
             uPoolScale: { value: new THREE.Vector2(1, 1) },
+            uFull:      { value: new THREE.Vector2(1, 1) },
+            uDiv:       { value: 3 },
+        },
+        vertexShader: VERT,
+        fragmentShader: /* glsl */`
+            precision highp float;
+            uniform sampler2D tScene;
+            uniform sampler2D tClassic;
+            uniform int uClassicOn;
+            uniform sampler2D tPool;
+            uniform int uPoolOn;
+            uniform vec2 uPoolScale;
+            uniform vec2 uFull;
+            uniform float uDiv;
+            void main() {
+                vec2 uv = gl_FragCoord.xy * uDiv / uFull;        // centre du bloc de pixels pleine résolution
+                // 4 lectures bilinéaires (2×2 texels chacune) réparties sur le bloc : moyenne d'environ div × div pixels
+                vec2 o = vec2(0.25 * uDiv) / uFull;
+                vec3 col = 0.25 * (texture2D(tScene, uv + vec2(-o.x, -o.y)).rgb + texture2D(tScene, uv + vec2(o.x, -o.y)).rgb
+                                 + texture2D(tScene, uv + vec2(-o.x, o.y)).rgb + texture2D(tScene, uv + vec2(o.x, o.y)).rgb);
+                if (uClassicOn == 1) col += texture2D(tClassic, uv).rgb;
+                if (uPoolOn == 1) col += texture2D(tPool, uv * uPoolScale).rgb;
+                gl_FragColor = vec4(col, 1.0);
+            }
+        `,
+        depthTest: false,
+        depthWrite: false,
+    });
+}
+
+export function createSSHaloMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            tSrc:       { value: null },
+            tSS:        { value: null },
             uFull:      { value: new THREE.Vector2(1, 1) },
             uLow:       { value: new THREE.Vector2(1, 1) },
             uDiv:       { value: 3 },
@@ -235,13 +273,8 @@ export function createSSHaloMaterial() {
         vertexShader: VERT,
         fragmentShader: /* glsl */`
             precision highp float;
-            uniform sampler2D tScene;
+            uniform sampler2D tSrc;
             uniform sampler2D tSS;
-            uniform sampler2D tClassic;
-            uniform int uClassicOn;
-            uniform sampler2D tPool;
-            uniform int uPoolOn;
-            uniform vec2 uPoolScale;
             uniform vec2 uFull;
             uniform vec2 uLow;
             uniform float uDiv;
@@ -266,16 +299,13 @@ export function createSSHaloMaterial() {
                 // Disque tourné d'un pixel à l'autre (motif fixe dans le temps) : pas d'images fantômes des points brillants
                 float a = 6.2831853 * fract(52.9829189 * fract(dot(vec2(lo), vec2(0.06711056, 0.00583715))));
                 mat2 rot = mat2(cos(a), sin(a), -sin(a), cos(a));
-                // Lecture bilinéaire à cheval sur 2×2 pixels de la scène (moins de scintillement des petits points)
-                vec2 pxHalf = 0.5 / uFull;
                 vec3 accum = vec3(0.0);
                 float wSum = 0.0;
                 for (int i = 0; i < 8; i++) {
                     vec2 tuv = clamp(uv + rot * POISSON[i] * st, vec2(0.001), vec2(0.999));
                     vec4 b = texture2D(tSS, tuv * toLow);
-                    vec3 col = texture2D(tScene, tuv + pxHalf).rgb + b.rgb;
-                    if (uClassicOn == 1) col += texture2D(tClassic, tuv).rgb;
-                    if (uPoolOn == 1) col += texture2D(tPool, tuv * uPoolScale).rgb;
+                    // Image réduite (scène + faisceaux classiques + taches) : moins de scintillement des petits points
+                    vec3 col = texture2D(tSrc, tuv * toLow).rgb + b.rgb;
                     float dz = max(b.a, 0.1) - cd;
                     // Occultation asymétrique : un objet au premier plan bloque la lumière de derrière ;
                     // une lumière devant un mur diffuse librement son halo
