@@ -775,6 +775,14 @@ export class LaserManager {
             this._mixPass.material.uniforms.uLightsBloomEnabled.value = globalLaserPostParams.lightsBloomEnabled ? 1.0 : 0.0;
             this._finalComposer.addPass(this._mixPass);
 
+            // OutputPass (Tone mapping & Color space de Three.js) : seulement si FXAA, SMAA ou la netteté
+            // suivent la passe finale (sinon la passe finale écrit elle-même à l'écran en sRGB). AVANT eux :
+            // l'anticrénelage travaille sur l'image finale à l'écran (un bord sombre devant une lumière très forte,
+            // lissé avant la conversion, redevenait crénelé) ; SMAA / FXAA ne convertissent pas les couleurs.
+            this._outputPass = new OutputPass();
+            this._outputPass.profileName = 'Sortie (OutputPass)';
+            this._finalComposer.addPass(this._outputPass);
+
             // SMAA Antialiasing (optionnel sur le composite, subpixel net)
             this._smaaPass = new SMAAPass(width, height);
             this._smaaPass.profileName = 'SMAA';
@@ -796,11 +804,6 @@ export class LaserManager {
             this._sharpenPass.enabled = false;
             this._finalComposer.addPass(this._sharpenPass);
 
-            // OutputPass (Tone mapping & Color space de Three.js) : seulement si FXAA, SMAA ou la netteté
-            // suivent la passe finale (sinon la passe finale écrit elle-même à l'écran en sRGB)
-            this._outputPass = new OutputPass();
-            this._outputPass.profileName = 'Sortie (OutputPass)';
-            this._finalComposer.addPass(this._outputPass);
 
             this._composer = this._finalComposer;
 
@@ -1511,17 +1514,24 @@ export class LaserManager {
         let enableSmaa = false;
         this._aaAuto = mode.includes('auto');
 
+        // Modes MSAA : + SMAA sur l'image finale. Le MSAA ne lisse que la géométrie de la scène ; les faisceaux des
+        // lyres, lasers, taches, brouillard et blooms sont ajoutés ensuite (bords du personnage devant un faisceau
+        // ou un laser non lissés sans SMAA)
         if (this._aaAuto) {
             samples = this._autoSamples();
+            enableSmaa = true;
         } else if (mode.includes('8x')) {
             samples = 8;
+            enableSmaa = true;
         } else if (mode.includes('MSAA 2x')) {
             samples = 2;
+            enableSmaa = true;
         } else if (mode.includes('MSAA 4x + FXAA')) {
             samples = 4;
             enableFxaa = true;
         } else if (mode.includes('MSAA')) {
             samples = 4;
+            enableSmaa = true;
         } else if (mode.includes('SMAA')) {
             enableSmaa = true;
         } else if (mode.includes('FXAA')) {
