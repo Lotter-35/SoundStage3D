@@ -26,8 +26,8 @@ import * as THREE from 'three';
 export const SS_TILES_X = 32;
 export const SS_TILES_Y = 18;
 export const SS_TILE_COUNT = SS_TILES_X * SS_TILES_Y;
-/** Cônes au plus par tuile (au-delà : ignorés) */
-export const SS_MAX_PER_TILE = 64;
+/** Cônes au plus par tuile (au-delà : ignorés) — 50 lyres à prisme 8 facettes convergentes en remplissent ~100 */
+export const SS_MAX_PER_TILE = 128;
 /** Texels par ligne de tuile : nombre (texel 0), puis 4 indices par texel */
 export const SS_TILE_TEXELS = 1 + SS_MAX_PER_TILE / 4;
 /** Texels RGBA32F par cône (voir le format ci-dessous) */
@@ -36,17 +36,18 @@ export const SS_LIGHT_TEXELS = 9;
 export const SS_MAX_LIGHTS = 1024;
 
 /*
- * Format d'un cône (ligne de la texture uSSLights) :
- * L0 : apex du cône oblique (xyz)          , ligne de paramètres de la lyre (texture uSpotParams)
- * L1 : axe central W (xyz)                 , distance apex → lentille (LENS_RADIUS / tan(zoom/2))
- * L2 : droite de la fenêtre R (xyz)        , tan du demi-angle du cône (iris + marges de flou)
- * L3 : décalage V (R, U) de la facette     , z de début (lentille) , z de fin de la diffusion (z depuis l'apex)
- * L4 : sphère englobante (centre xyz)      , rayon
- * L5 : couleur A (rgb)                     , éclairement à 1 m de l'apex (flux × poids / (π tan²))
- * L6 : tan(zoom/2) , iris , flou du frost , log(distance de mise au point)
- * L7 : image de fenêtre (0 disque, 1 disque × transmission moyenne, 2 atlas, 3 calculée) , tuile de l'atlas ,
+ * Format d'un cône (ligne de la texture uSSLights). Les 3 premiers texels suffisent au test d'intersection
+ * (rayon et tache au sol) : un cône que le pixel ne touche pas ne coûte que 3 lectures.
+ * L0 : apex du cône oblique (xyz)          , tan du demi-angle (iris + marges de flou)
+ * L1 : axe central W (xyz)                 , z de la lentille depuis l'apex (= LENS_RADIUS / tan(zoom/2))
+ * L2 : décalage des sections V (monde)     , z de fin (diffusion ou tache au sol, la plus lointaine)
+ * L3 : droite de la fenêtre R (xyz)        , ligne de paramètres de la lyre (texture uSpotParams)
+ * L4 : couleur A (rgb)                     , éclairement à 1 m de l'apex (flux × poids / (π tan²))
+ * L5 : tan(zoom/2) , iris , flou du frost , log(distance de mise au point)
+ * L6 : image de fenêtre (0 disque, 1 disque × transmission moyenne, 2 atlas, 3 calculée) , tuile de l'atlas ,
  *      poids de la tache au sol , obstacles (0/1)
- * L8 : longueur visible , début du fondu de la diffusion , portée , début du fondu de la tache
+ * L7 : longueur visible , début du fondu de la diffusion , portée , début du fondu de la tache
+ * L8 : décalage de la facette en unités de fenêtre (xy) , – , –
  */
 
 const OCT = 8;
@@ -156,7 +157,6 @@ export class SSDepthLights {
             const outR = iris + 0.012 + frostBlur + 0.14 + 0.01;
             const tanO = tanHalf * outR;
             const zS = apexDist;
-            const zEsc = apexDist + beamEnd;
             const zEnd = apexDist + (splashW > 0.001 ? range : beamEnd);
             const irr0 = r[3] / (Math.PI * tanHalf * tanHalf);
             const W = f.axis, R = f.right, U = f.up;
@@ -178,16 +178,15 @@ export class SSDepthLights {
                 _P1.copy(_A).addScaledVector(_WV, zEnd);
                 const r0 = tanO * zS, r1 = tanO * zEnd;
                 const o = n * SS_LIGHT_TEXELS * 4;
-                d[o] = _A.x; d[o + 1] = _A.y; d[o + 2] = _A.z; d[o + 3] = f.row;
-                d[o + 4] = W.x; d[o + 5] = W.y; d[o + 6] = W.z; d[o + 7] = apexDist;
-                d[o + 8] = R.x; d[o + 9] = R.y; d[o + 10] = R.z; d[o + 11] = tanO;
-                d[o + 12] = vx; d[o + 13] = vy; d[o + 14] = zS; d[o + 15] = zEsc;
-                d[o + 16] = (_P0.x + _P1.x) * 0.5; d[o + 17] = (_P0.y + _P1.y) * 0.5; d[o + 18] = (_P0.z + _P1.z) * 0.5;
-                d[o + 19] = 0.5 * _P0.distanceTo(_P1) + Math.max(r0, r1) * OCT_K;
-                d[o + 20] = r[0]; d[o + 21] = r[1]; d[o + 22] = r[2]; d[o + 23] = irr0 * fc.weight;
-                d[o + 24] = tanHalf; d[o + 25] = iris; d[o + 26] = frostBlur; d[o + 27] = Math.log(Math.max(1e-3, r[11]));
-                d[o + 28] = kind; d[o + 29] = r[48] - 1; d[o + 30] = splashW; d[o + 31] = hasOcc;
-                d[o + 32] = beamEnd; d[o + 33] = fadeB; d[o + 34] = range; d[o + 35] = range * 0.7;
+                d[o] = _A.x; d[o + 1] = _A.y; d[o + 2] = _A.z; d[o + 3] = tanO;
+                d[o + 4] = W.x; d[o + 5] = W.y; d[o + 6] = W.z; d[o + 7] = zS;
+                d[o + 8] = _Vw.x; d[o + 9] = _Vw.y; d[o + 10] = _Vw.z; d[o + 11] = zEnd;
+                d[o + 12] = R.x; d[o + 13] = R.y; d[o + 14] = R.z; d[o + 15] = f.row;
+                d[o + 16] = r[0]; d[o + 17] = r[1]; d[o + 18] = r[2]; d[o + 19] = irr0 * fc.weight;
+                d[o + 20] = tanHalf; d[o + 21] = iris; d[o + 22] = frostBlur; d[o + 23] = Math.log(Math.max(1e-3, r[11]));
+                d[o + 24] = kind; d[o + 25] = r[48] - 1; d[o + 26] = splashW; d[o + 27] = hasOcc;
+                d[o + 28] = beamEnd; d[o + 29] = fadeB; d[o + 30] = range; d[o + 31] = range * 0.7;
+                d[o + 32] = fc.gx; d[o + 33] = fc.gy; d[o + 34] = 0; d[o + 35] = 0;
                 const g = n * 14;
                 geo[g] = _P0.x; geo[g + 1] = _P0.y; geo[g + 2] = _P0.z; geo[g + 3] = r0 * OCT_K;
                 geo[g + 4] = _P1.x; geo[g + 5] = _P1.y; geo[g + 6] = _P1.z; geo[g + 7] = r1 * OCT_K;

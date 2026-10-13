@@ -198,24 +198,16 @@ export function createSSBeamMaterial() {
                     if ((k & 3) == 0) idx4 = texelFetch(uSSTiles, ivec2(1 + (k >> 2), tIdx), 0);
                     int i = int(idx4[k & 3]);
 
-                    // Rejet rapide : sphère englobante
-                    vec4 S = LT(i, 4);
-                    vec3 oc = S.xyz - ro;
-                    float tp = dot(oc, rd);
-                    float d2 = dot(oc, oc) - tp * tp;
-                    if (d2 > S.w * S.w || tp + S.w < 0.0 || tp - S.w > surfDist) continue;
-
-                    vec4 A0 = LT(i, 0), A1 = LT(i, 1), A2 = LT(i, 2), A3 = LT(i, 3);
+                    // ── Test d'intersection : 3 lectures seulement (un cône que le pixel ne touche pas ne coûte que ça) ──
+                    vec4 A0 = LT(i, 0), A1 = LT(i, 1), A2 = LT(i, 2);
                     vec3 apex = A0.xyz;
+                    float tanO = A0.w;
                     cW = A1.xyz;
-                    float apexDist = A1.w;
-                    cR = A2.xyz;
-                    float tanO = A2.w;
-                    cU = cross(cR, cW);
-                    vec3 Vw = cR * A3.x + cU * A3.y;
-                    vec3 WV = cW + Vw;
+                    float zS = A1.w;            // lentille (z depuis l'apex) = distance apex → lentille
+                    vec3 WV = cW + A2.xyz;      // centre des sections : apex + WV·z
+                    float zE = A2.w;
 
-                    // ── Intersection rayon ↔ cône oblique, bornée par les plans z ∈ [zS, zE] (z depuis l'apex) ──
+                    // Intersection rayon ↔ cône oblique, bornée par les plans z ∈ [zS, zE]
                     vec3 q = ro - apex;
                     float z0 = dot(q, cW), dz = dot(rd, cW);
                     vec3 qa = q - WV * z0;
@@ -227,9 +219,9 @@ export function createSSBeamMaterial() {
                     float tin = -1e9, tout = 1e9;
                     bool hit = true;
                     if (abs(dz) > 1e-6) {
-                        float ta = (A3.z - z0) / dz, tb = (A3.w - z0) / dz;
+                        float ta = (zS - z0) / dz, tb = (zE - z0) / dz;
                         tin = min(ta, tb); tout = max(ta, tb);
-                    } else if (z0 < A3.z || z0 > A3.w) hit = false;
+                    } else if (z0 < zS || z0 > zE) hit = false;
                     if (hit) {
                         float disc = QB * QB - QA * QC;
                         if (abs(QA) < 1e-9) {
@@ -256,25 +248,48 @@ export function createSSBeamMaterial() {
                         tout = min(tout, surfDist);
                         hit = tout > tin;
                     }
+                    // Surface du pixel dans le cône (tache au sol possible) ?
+                    bool inSurf = false;
+                    if (!sky) {
+                        vec3 qs = sceneP - apex;
+                        float zs = dot(qs, cW);
+                        vec3 rs = qs - WV * zs;
+                        inSurf = zs > zS && zs < zE && dot(rs, rs) < k2 * zs * zs;
+                    }
+                    if (!hit && !inSurf) continue;
 
-                    vec4 A7 = LT(i, 7);
-                    float splashW = A7.z;
-                    if (!hit && (splashW <= 0.001 || sky)) continue;
+                    vec4 A6 = LT(i, 6), A7 = LT(i, 7);
+                    float splashW = A6.z;
+                    float beamEnd = A7.x, fadeB = A7.y, range = A7.z, fadeS = A7.w;
+                    // Diffusion arrêtée à la longueur visible (le cône va plus loin quand la tache au sol porte plus loin)
+                    if (hit) {
+                        float zEnd = zS + beamEnd;
+                        if (abs(dz) > 1e-6) {
+                            float tl = (zEnd - z0) / dz;
+                            if (dz > 0.0) tout = min(tout, tl); else tin = max(tin, tl);
+                        } else if (z0 > zEnd) tout = tin;
+                        hit = tout > tin;
+                    }
+                    bool splash = inSurf && splashW > 0.001;
+                    if (!hit && !splash) continue;
 
                     // ── Réglages du cône ──
-                    vec4 A5 = LT(i, 5), A6 = LT(i, 6), A8 = LT(i, 8);
-                    int row = int(A0.w + 0.5);
+                    vec4 A3 = LT(i, 3), A4 = LT(i, 4), A5 = LT(i, 5), A8 = LT(i, 8);
+                    float apexDist = zS;
+                    cR = A3.xyz;
+                    cU = cross(cR, cW);
+                    int row = int(A3.w + 0.5);
                     cLens = apex + WV * apexDist;
                     cApexC = cLens - cW * apexDist;
-                    cCol = A5.rgb;
-                    float irr = A5.w;
-                    cTanHalf = A6.x;
-                    cIris = A6.y;
-                    cFrostBlur = A6.z;
-                    cLogFocus = A6.w;
-                    cV = A3.xy / cTanHalf;
-                    cKind = A7.x;
-                    cTile = A7.y;
+                    cCol = A4.rgb;
+                    float irr = A4.w;
+                    cTanHalf = A5.x;
+                    cIris = A5.y;
+                    cFrostBlur = A5.z;
+                    cLogFocus = A5.w;
+                    cV = A8.xy;
+                    cKind = A6.x;
+                    cTile = A6.y;
                     float outR = cIris + 0.012 + cFrostBlur + 0.14;
                     cOutR2 = outR * outR;
                     float plainR = cIris - (0.012 + cFrostBlur + 0.14);
@@ -291,9 +306,8 @@ export function createSSBeamMaterial() {
                         cG = loadGate(row);
                     }
                     // OMBRE : obstacles (boîtes) de la lyre ; phase B → cubemap d'ombre statique de la lyre
-                    bool hasOcc = A7.w > 0.5;
+                    bool hasOcc = A6.w > 0.5;
                     vec4 T8 = hasOcc ? spotParam(row, 8) : vec4(-1.0);
-                    float beamEnd = A8.x, fadeB = A8.y, range = A8.z, fadeS = A8.w;
 
                     // ── Diffusion : quadrature de Gauss à 3 points ──
                     if (hit) {
@@ -333,7 +347,7 @@ export function createSSBeamMaterial() {
                     }
 
                     // ── Tache de lumière sur la surface (lyres sans lumière réelle) ──
-                    if (splashW > 0.001 && !sky) {
+                    if (splash) {
                         float zA; vec3 lp;
                         vec3 gate = gateAtPoint(sceneP, true, zA, lp);
                         float zl = zA - apexDist;
