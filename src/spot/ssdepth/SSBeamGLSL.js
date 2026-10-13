@@ -135,8 +135,10 @@ vec3 beamScatter(vec3 ro, vec3 rd, float tin, float tout, float dz, float apexDi
     vec3 sum = vec3(0.0);
     for (int s = 0; s < 12; s++) {
         if (s >= N) break;
-        float x = gauss ? (s == 0 ? 0.2113 : (s == 1 ? 0.5 : 0.7887)) : (float(s) + jit) / float(N);
-        float w = gauss ? (s == 1 ? 0.44 : 0.28) : 1.0 / float(N);
+        // Gauss-Legendre à 3 points sur [0, 1] : nœuds 0,1127 / 0,5 / 0,8873, poids 5/18, 8/18, 5/18
+        // (les nœuds à 2 points 0,2113 / 0,7887 avec ces poids surestimaient le faisceau de 20 à 40 %)
+        float x = gauss ? (s == 0 ? 0.1127017 : (s == 1 ? 0.5 : 0.8872983)) : (float(s) + jit) / float(N);
+        float w = gauss ? (s == 1 ? 0.4444444 : 0.2777778) : 1.0 / float(N);
         float t;
         if (imp) {
             float z = 1.0 / mix(uIn, uOut, x);

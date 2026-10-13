@@ -10,8 +10,9 @@
  *   2. passe des faisceaux en basse résolution (image / div, div = 2, 3 ou 4) ;
  *   3. halo atmosphérique (si intensité > 0) à la même résolution, ajouté aux faisceaux (il lit aussi les
  *      taches de lumière de LightPoolPass) ;
- *   4. sortie différée { kind: 'ss' } lue par la passe finale.
- * Aucune passe plein écran supplémentaire : la seule lecture en pleine résolution est dans la passe finale.
+ *   4. retouche des bords en pleine résolution (pixels dont les voisins réduits diffèrent : faisceaux
+ *      recalculés exactement ; ailleurs remontée bilatérale) ;
+ *   5. sortie différée { kind: 'ss', full: true } lue par la passe finale (1 lecture par pixel).
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -41,6 +42,7 @@ export class SSDepthPass extends Pass {
         this.splash = true;            // tache simple sur la surface (passe des taches désactivée)
         this.div = 3;
         this.sharpness = 1.5;
+        this.refine = true;            // retouche des bords en pleine résolution
         this.haloIntensity = 0.5;
         this.haloRadius = 1.0;
         this.haze = 0.6;
@@ -54,10 +56,21 @@ export class SSDepthPass extends Pass {
         this.beamTarget = new THREE.WebGLRenderTarget(1, 1, opts);
         this.haloTarget = new THREE.WebGLRenderTarget(1, 1, opts);
         // Scène + faisceaux + taches réduits, avec mipmaps (lecture floutée par le halo)
+        // Retouche des bords en pleine résolution (sortie lue par la passe finale)
+        this.refineTarget = new THREE.WebGLRenderTarget(1, 1, {
+            type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
+            minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false,
+        });
         this.haloSrcTarget = new THREE.WebGLRenderTarget(1, 1, {
             ...opts, minFilter: THREE.LinearMipmapLinearFilter, generateMipmaps: true,
         });
         this.beamMaterial = createSSBeamMaterial(shadowUniforms);
+        // Même code de faisceaux, en pleine résolution sur les bords ; uniformes communs partagés
+        this.refineMaterial = createSSBeamMaterial(shadowUniforms, { refine: true });
+        for (const k of Object.keys(this.beamMaterial.uniforms)) {
+            if (!['tLow', 'tBeamLow', 'uLowScale', 'uSharp'].includes(k)) this.refineMaterial.uniforms[k] = this.beamMaterial.uniforms[k];
+        }
+        this._refineQuad = new FullScreenQuad(this.refineMaterial);
         this.haloMaterial = createSSHaloMaterial();
         this.haloSrcMaterial = createHaloSourceMaterial();
         this._haloSrcQuad = new FullScreenQuad(this.haloSrcMaterial);
@@ -65,7 +78,7 @@ export class SSDepthPass extends Pass {
         this._haloQuad = new FullScreenQuad(this.haloMaterial);
         this._black = new THREE.DataTexture(new Uint8Array([0, 0, 0, 0]), 1, 1, THREE.RGBAFormat);
         this._black.needsUpdate = true;
-        this._out = { kind: 'ss', texture: null, scale: new THREE.Vector2(1, 1), texel: new THREE.Vector2(1, 1), sharpness: 1.5 };
+        this._out = { kind: 'ss', texture: null, scale: new THREE.Vector2(1, 1), texel: new THREE.Vector2(1, 1), sharpness: 1.5, full: true };
         this._hasOut = false;
         this._fullSize = new THREE.Vector2(1, 1);
         this._lowSize = new THREE.Vector2(1, 1);
@@ -95,6 +108,7 @@ export class SSDepthPass extends Pass {
         this.beamTarget.setSize(w, h);
         this.haloTarget.setSize(w, h);
         this.haloSrcTarget.setSize(w, h);
+        this.refineTarget.setSize(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
         this._fullSize.set(width, height);
         this._lowSize.set(w, h);
         this._out.scale.set(width / (this.div * w), height / (this.div * h));
@@ -168,9 +182,23 @@ export class SSDepthPass extends Pass {
             if (timer) timer.end();
             out = this.haloTarget.texture;
         }
+        // Retouche des bords en pleine résolution
+        this._out.full = this.refine;
+        this._out.texture = out;
+        if (this.refine) {
+            const r = this.refineMaterial.uniforms;
+            r.tLow.value = out;
+            r.tBeamLow.value = this.beamTarget.texture;
+            r.uLowScale.value.copy(this._out.scale);
+            r.uSharp.value = this.sharpness;
+            if (timer) timer.begin('Bords des faisceaux SS');
+            renderer.setRenderTarget(this.refineTarget);
+            this._refineQuad.render(renderer);
+            if (timer) timer.end();
+            this._out.texture = this.refineTarget.texture;
+        }
         renderer.autoClear = oldAutoClear;
 
-        this._out.texture = out;
         this._out.sharpness = this.sharpness;
         this._hasOut = true;
         if (!this.deferred) {
@@ -183,6 +211,9 @@ export class SSDepthPass extends Pass {
         this.beamTarget.dispose();
         this.haloTarget.dispose();
         this.haloSrcTarget.dispose();
+        this.refineTarget.dispose();
+        this.refineMaterial.dispose();
+        this._refineQuad.dispose();
         this.haloSrcMaterial.dispose();
         this._haloSrcQuad.dispose();
         this.beamMaterial.dispose();

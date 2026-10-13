@@ -9,7 +9,7 @@
  *    - rayon de vue reconstruit, liste des cônes de la tuile (SSDepthLights.bin) ;
  *    - par cône : rejet par sphère englobante, intersection EXACTE rayon / cône oblique (facette du prisme)
  *      bornée par la lentille, la longueur visible et la profondeur de la scène ;
- *    - diffusion intégrée par QUADRATURE DE GAUSS à 3 points (0,2113 / 0,5 / 0,7887, poids 0,28 / 0,44 / 0,28),
+ *    - diffusion intégrée par QUADRATURE DE GAUSS à 3 points (0,1127 / 0,5 / 0,8873, poids 5/18, 8/18, 5/18),
  *      répartis en 1/z quand le rayon remonte le faisceau (éclairement en 1/z² intégré exactement) ;
  *      image de fenêtre complète (gobos, couteaux, demi-couleurs, animation) sur l'échantillon du milieu,
  *      lue dans l'atlas (1 lecture) aux 2 autres quand la lyre en a une ; phase de Mie (Henyey-Greenstein,
@@ -30,8 +30,13 @@
  *    tourné d'un pixel à l'autre donnait des points avec un grand rayon), et plus l'image pleine résolution
  *    à 8 endroits éloignés par pixel (très coûteux en 4K : le cache ne suit pas).
  *
- * 3. La remontée bilatérale 3×3 guidée par la profondeur est faite par FinalCompositePass (avant le
- *    brouillard : transmittance et bloom s'appliquent aux faisceaux SS comme aux faisceaux classiques).
+ * 3. RETOUCHE DES BORDS en pleine résolution (même matériau, define REFINE) : pour chaque pixel, les 2×2 pixels
+ *    réduits voisins ; s'ils sont tous semblables (intérieur d'un faisceau, fond vide), remontée bilatérale 3×3
+ *    guidée par la profondeur ; sinon (bord d'un faisceau, faisceau plus fin qu'un pixel réduit près de la
+ *    lentille, bord d'objet) les faisceaux de CE pixel sont recalculés exactement. Plus de tache étalée autour
+ *    des faisceaux fins, même en ¼. Le halo (basse résolution) est ajouté par interpolation bilinéaire.
+ *    La passe finale (FinalCompositePass) lit cette image en pleine résolution (1 lecture), avant le brouillard
+ *    (transmittance et bloom s'appliquent aux faisceaux SS comme aux faisceaux classiques).
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -49,11 +54,20 @@ const VERT = /* glsl */`
     }
 `;
 
-/** @param {object} [shadowUniforms] uniformes partagés des ombres statiques (SpotShadowAtlas.uniforms) */
-export function createSSBeamMaterial(shadowUniforms = createShadowUniforms()) {
+/**
+ * @param {object} [shadowUniforms] uniformes partagés des ombres statiques (SpotShadowAtlas.uniforms)
+ * @param {object} [o]
+ * @param {boolean} [o.refine] variante de retouche des bords en pleine résolution (voir 3. plus haut)
+ */
+export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { refine = false } = {}) {
     const occ = occluderUniforms();
     return new THREE.ShaderMaterial({
+        defines: refine ? { REFINE: 1 } : {},
         uniforms: {
+            tLow:        { value: null },   // retouche : image réduite finale (faisceaux + halo)
+            tBeamLow:    { value: null },   // retouche : faisceaux seuls (a = profondeur du pixel réduit)
+            uLowScale:   { value: new THREE.Vector2(1, 1) },
+            uSharp:      { value: 1.5 },
             ...shadowUniforms,
             uDepth:      { value: null },
             uSpotParams: { value: null },
@@ -104,24 +118,13 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms()) {
                 return vec3((ndc.x + uProjK.z) * uProjK.x, (ndc.y + uProjK.w) * uProjK.y, -1.0);
             }
 
-            void main() {
-                ivec2 lo = ivec2(gl_FragCoord.xy);
-                ivec2 fullI = ivec2(uFull);
-                // Profondeur réduite en damier min / max sur 2×2 texels au centre du bloc
-                ivec2 b = clamp(ivec2(floor((vec2(lo) + 0.5) * uDiv - 0.5)), ivec2(0), fullI - 2);
-                float d00 = linZ(b), d10 = linZ(b + ivec2(1, 0)), d01 = linZ(b + ivec2(0, 1)), d11 = linZ(b + ivec2(1, 1));
-                float dMin = min(min(d00, d10), min(d01, d11));
-                float dMax = max(max(d00, d10), max(d01, d11));
-                // Damier seulement sur une vraie discontinuité (silhouette) ; surface continue (même de biais) :
-                // profondeur moyenne, sinon le damier se verrait (écart que la remontée bilatérale ne sépare pas)
-                float viewDepth = (dMax - dMin) < 0.1 * max(dMin, 0.5) ? 0.5 * (dMin + dMax)
-                                : (((lo.x + lo.y) & 1) == 0 ? dMin : dMax);
-
-                vec2 pc = vec2(b) + 1.0;
+            // Faisceaux (et tache simple) vus par le rayon du point pc (pixels pleine résolution), surface à la
+            // profondeur viewDepth ; b, d00, d10, d01 : texels de profondeur pour la normale de la surface
+            vec3 shadeBeams(vec2 pc, float viewDepth, ivec2 b, float d00, float d10, float d01) {
                 ivec2 tile = min(ivec2(pc / uFull * vec2(TILES)), TILES - 1);
                 int tIdx = tile.y * TILES.x + tile.x;
                 int n = int(texelFetch(uSSTiles, ivec2(0, tIdx), 0).x);
-                if (n == 0) { gl_FragColor = vec4(0.0, 0.0, 0.0, viewDepth); return; }
+                if (n == 0) return vec3(0.0);
 
                 vec3 rv = rayView(pc);
                 vec3 rd = normalize(uCamRot * rv);
@@ -199,7 +202,7 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms()) {
                             }
                             if (!blocked) {
                                 if (!haveN) {
-                                    // Normale de la surface : 3 des 4 texels de profondeur lus plus haut
+                                    // Normale de la surface : 3 texels de profondeur voisins
                                     vec3 p00 = uCamRot * (rayView(vec2(b) + 0.5) * d00);
                                     vec3 p10 = uCamRot * (rayView(vec2(b) + vec2(1.5, 0.5)) * d10);
                                     vec3 p01 = uCamRot * (rayView(vec2(b) + vec2(0.5, 1.5)) * d01);
@@ -213,8 +216,82 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms()) {
                         }
                     }
                 }
-                gl_FragColor = vec4(min(acc, vec3(60000.0)), viewDepth);
+                return min(acc, vec3(60000.0));
             }
+
+        #ifndef REFINE
+            void main() {
+                ivec2 lo = ivec2(gl_FragCoord.xy);
+                ivec2 fullI = ivec2(uFull);
+                // Profondeur réduite en damier min / max sur 2×2 texels au centre du bloc
+                ivec2 b = clamp(ivec2(floor((vec2(lo) + 0.5) * uDiv - 0.5)), ivec2(0), fullI - 2);
+                float d00 = linZ(b), d10 = linZ(b + ivec2(1, 0)), d01 = linZ(b + ivec2(0, 1)), d11 = linZ(b + ivec2(1, 1));
+                float dMin = min(min(d00, d10), min(d01, d11));
+                float dMax = max(max(d00, d10), max(d01, d11));
+                // Damier seulement sur une vraie discontinuité (silhouette) ; surface continue (même de biais) :
+                // profondeur moyenne, sinon le damier se verrait (écart que la remontée bilatérale ne sépare pas)
+                float viewDepth = (dMax - dMin) < 0.1 * max(dMin, 0.5) ? 0.5 * (dMin + dMax)
+                                : (((lo.x + lo.y) & 1) == 0 ? dMin : dMax);
+                gl_FragColor = vec4(shadeBeams(vec2(b) + 1.0, viewDepth, b, d00, d10, d01), viewDepth);
+            }
+        #else
+            uniform sampler2D tLow;
+            uniform sampler2D tBeamLow;
+            uniform vec2 uLowScale;
+            uniform float uSharp;
+
+            float lum(vec3 c) { return c.r + c.g + c.b; }
+
+            void main() {
+                ivec2 p = ivec2(gl_FragCoord.xy);
+                ivec2 fullI = ivec2(uFull);
+                float cz = max(linZ(p), 0.1);
+                vec2 suv = (vec2(p) + 0.5) / uFull * uLowScale;
+                ivec2 size = textureSize(tBeamLow, 0);
+                vec2 pos = suv * vec2(size) - 0.5;
+                ivec2 i0 = ivec2(floor(pos));
+                // Pixels réduits voisins (empreinte bilinéaire 2×2) : semblables ou non ?
+                float lMin = 1e9, lMax = 0.0;
+                bool depthEdge = false;
+                for (int k = 0; k < 4; k++) {
+                    vec4 s = texelFetch(tBeamLow, clamp(i0 + ivec2(k & 1, k >> 1), ivec2(0), size - 1), 0);
+                    float l = lum(s.rgb);
+                    lMin = min(lMin, l);
+                    lMax = max(lMax, l);
+                    if (abs(s.a - cz) > 0.1 * cz) depthEdge = true;
+                }
+                vec3 halo = vec3(0.0);
+                bool edge = depthEdge || (lMax > 0.003 && lMax - lMin > 0.2 * lMax);
+                if (!edge) {
+                    // Remontée bilatérale 3×3 guidée par la profondeur (comme la passe finale)
+                    float sharp = 35.0 * uSharp;
+                    ivec2 c0 = ivec2(floor(pos + 0.5));
+                    vec2 f = pos - vec2(c0);
+                    vec3 sum = vec3(0.0);
+                    float wSum = 0.0;
+                    for (int dy = -1; dy <= 1; dy++) {
+                        for (int dx = -1; dx <= 1; dx++) {
+                            ivec2 q = clamp(c0 + ivec2(dx, dy), ivec2(0), size - 1);
+                            vec3 c = texelFetch(tLow, q, 0).rgb;
+                            float za = texelFetch(tBeamLow, q, 0).a;
+                            vec2 d = abs(vec2(float(dx), float(dy)) - f);
+                            float ws = max(0.0, 1.0 - d.x) * max(0.0, 1.0 - d.y) + 0.02;
+                            float rel = abs(cz - za) / max(cz, 0.5);
+                            float w = ws * exp(-rel * rel * sharp);
+                            sum += c * w;
+                            wSum += w;
+                        }
+                    }
+                    gl_FragColor = vec4(wSum > 1e-3 ? sum / wSum : vec3(0.0), 1.0);
+                    return;
+                }
+                // Bord : faisceaux recalculés pour ce pixel ; halo (doux) interpolé depuis l'image réduite
+                halo = max(texture2D(tLow, suv).rgb - texture2D(tBeamLow, suv).rgb, vec3(0.0));
+                ivec2 b = min(p, fullI - 2);
+                float d10 = linZ(b + ivec2(1, 0)), d01 = linZ(b + ivec2(0, 1));
+                gl_FragColor = vec4(shadeBeams(vec2(p) + 0.5, linZ(p), b, linZ(b), d10, d01) + halo, 1.0);
+            }
+        #endif
         `,
         depthTest: false,
         depthWrite: false,

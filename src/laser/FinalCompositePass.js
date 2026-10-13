@@ -42,6 +42,7 @@ function createFinalCompositeMaterial(dummy) {
             uSSScale:  { value: new THREE.Vector2(1, 1) },
             uSSTexel:  { value: new THREE.Vector2(1, 1) },
             uSSSharp:  { value: 1.5 },
+            uSSFull:   { value: 0 },        // image SS déjà en pleine résolution (retouche des bords)
             // taches de lumière des lyres : a = profondeur linéaire ; div 1 = pleine résolution
             uPoolOn:   { value: 0 },
             tPool:     { value: dummy },
@@ -92,6 +93,7 @@ function createFinalCompositeMaterial(dummy) {
             uniform vec2 uSSScale;
             uniform vec2 uSSTexel;
             uniform float uSSSharp;
+            uniform int uSSFull;
             uniform int uPoolOn;
             uniform sampler2D tPool;
             uniform vec2 uPoolScale;
@@ -207,7 +209,9 @@ function createFinalCompositeMaterial(dummy) {
                 }
 
                 // 1 ter. Faisceaux SS Depth (+ halo) : remontée bilatérale jointe 3×3 guidée par la profondeur
-                if (uSSOn == 1) {
+                if (uSSOn == 1 && uSSFull == 1) {
+                    col += texelFetch(tSS, ivec2(gl_FragCoord.xy), 0).rgb;
+                } else if (uSSOn == 1) {
                     vec2 suv = vUv * uSSScale;
                     vec3 quick = texture2D(tSS, suv).rgb;
                     if (quick.r + quick.g + quick.b > 0.0) {
@@ -315,6 +319,7 @@ export class FinalCompositePass extends Pass {
                 u.uSSScale.value.copy(o.scale);
                 u.uSSTexel.value.copy(o.texel);
                 u.uSSSharp.value = o.sharpness;
+                u.uSSFull.value = o.full ? 1 : 0;
             } else if (o.kind === 'pool') {
                 u.uPoolOn.value = 1;
                 u.tPool.value = o.texture;
