@@ -100,7 +100,7 @@ export class SpotManager {
     _cameraInsideBeam() {
         const c = this.camera.position;
         for (const s of this._spots.values()) {
-            if (s.flux <= 1e-4) continue;
+            if (s.flux <= 1e-4 || s.ssDepth) continue;   // faisceau SS Depth : coût indépendant de la passe classique
             const dx = c.x - s.lensPos.x, dy = c.y - s.lensPos.y, dz = c.z - s.lensPos.z;
             const z = dx * s.axis.x + dy * s.axis.y + dz * s.axis.z;
             if (z <= 0 || z > SPOT_BEAM_RANGE) continue;
