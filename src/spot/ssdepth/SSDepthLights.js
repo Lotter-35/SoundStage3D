@@ -175,14 +175,14 @@ export class SSDepthLights {
             const fadeB = beamEnd < range ? beamEnd * 0.75 : range * 0.7;
             const splashW = r[18];
             const hasOcc = r[32] >= 0 ? 1 : 0;
-            // Image de la fenêtre : disque (cas courant), disque × transmission moyenne (frost fort),
-            // atlas (gobos, couteaux, demi-couleurs : 1 lecture), ou calculée dans le shader (atlas plein)
+            // Image de la fenêtre : disque (cas courant), atlas (gobos, couteaux, demi-couleurs, frost compris :
+            // 1 lecture), ou, atlas plein : disque × transmission moyenne (frost fort) ou calculée dans le shader
             const blades = r[20] >= 0.001 || r[22] >= 0.001 || r[24] >= 0.001 || r[26] >= 0.001;
             const detail = r[12] > 0.001 || r[13] > 0.001 || (r[16] > 0.001 && r[15] > 0.5) || blades || half;
             let kind = 0;
             if (detail) {
-                if (r[10] >= 0.7 && !blades && !half) kind = 1;
-                else if (r[48] > 0) kind = 2;
+                if (r[48] > 0) kind = 2;
+                else if (r[10] >= 0.7 && !blades && !half) kind = 1;
                 else kind = 3;
             }
             const outR = iris + 0.012 + frostBlur + 0.14 + 0.01;

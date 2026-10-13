@@ -263,12 +263,12 @@ export class SpotFixture {
         r[36] = pr.count; r[37] = this.tanLight; r[38] = pr.mainW; r[39] = pr.facetW;
         r[40] = pr.x0; r[41] = pr.y0; r[42] = pr.cos; r[43] = pr.sin;
         r[44] = pr.dx; r[45] = pr.dy; r[46] = 0; r[47] = 0;
-        // Atlas de fenêtre : seulement si l'image n'est pas un simple disque (gobo, animation, couteaux,
-        // demi-couleur) et que le frost ne l'efface pas déjà (≥ 70 % : transmission moyenne dans le shader)
+        // Atlas de fenêtre : dès que l'image n'est pas un simple disque (gobo, animation, couteaux, demi-couleur),
+        // frost compris (il est dans l'image de l'atlas) : plus de passage brusque à la transmission moyenne à 70 %
         const blades = m.blades[0] >= 0.001 || m.blades[1] >= 0.001 || m.blades[2] >= 0.001 || m.blades[3] >= 0.001;
         const half = m.split < 1.9;
         const detail = m.goboFixedPos > 0.001 || m.goboRotPos > 0.001 || (m.animIn > 0.001 && m.animSlot > 0.5) || blades || half;
-        this.needsGate = this.flux > 1e-4 && detail && !(m.frost >= 0.7 && !blades && !half);
+        this.needsGate = this.flux > 1e-4 && detail;
         r[48] = this.needsGate && this.gateTile >= 0 ? this.gateTile + 1 : 0;
         // longueur visible du faisceau (0 : toute la portée)
         r[49] = p.beamLength > 0 && p.beamLength < SPOT_BEAM_RANGE ? p.beamLength : 0;
