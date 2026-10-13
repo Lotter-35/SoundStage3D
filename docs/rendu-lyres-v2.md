@@ -62,3 +62,89 @@ passe » (⚙️ Options › Affichage : tableau en haut à droite, résolution 
 - Faisceaux très fins (près de la lentille, de loin) plus larges qu'en classique : limite de la basse résolution
   (⅓ en 4K = 1280 × 720 ; ½ si besoin).
 - Correction du rayon de lentille (`SpotFixture.js`, r[19]) et de r[50]/r[51].
+
+## Phase B — faite (branche `lyres-v2-b`)
+
+**Fichiers** : `src/spot/lighting/shadowGLSL.js` (lecture des ombres, GLSL commun), `SpotShadowAtlas.js` (cuisson),
+`LightPoolShaders.js` + `LightPoolPass.js` (taches de lumière) ; `src/spot/ssdepth/SSConeGLSL.js` (lecture d'un cône
+et image de fenêtre, partagés par les faisceaux SS et les taches). **Supprimés** : `SpotLightPool.js` (8 SpotLight
+three.js + textures de projection), `createGateMapMaterial`, les réglages « Éclairage réel » / « Ombres (2 max) »,
+`poolWeight`.
+
+### R3 — Ombres statiques
+
+- Une « cubemap » de **distances** par lyre (6 faces S × S en bloc 3 × 2, 8 blocs par ligne d'un atlas 2D R16F,
+  64 lyres au plus). Centre = **pivot de la tête** (fixe en pan / tilt) : l'ombre reste juste quand la lyre bouge.
+- Choix cubemap plutôt qu'octaédrique : faces dessinées directement (rendu perspective 90°), lecture = choix de face
+  + 1 lecture, pas de passe de reprojection ; 6 × 128² ≈ octaédrique 256² en densité moyenne.
+- Cuisson : maillages visibles qui projettent une ombre (`castShadow`), hors personnages (maillages à squelette) et
+  hors appareils instanciés mobiles (barres LED) ; ni faisceaux, ni lasers, ni boîtiers de lyres. Doublures légères
+  (même géométrie, même matrice monde, matériau « distance »), rendu dans une cible 3S × 2S avec profondeur puis
+  recopie dans l'atlas (l'atlas n'a pas de tampon de profondeur).
+- **Étalée** : 2 lyres par image au plus ; une lyre déplacée perd son ombre jusqu'à ce qu'elle soit immobile
+  4 images, puis est recuite ; empreinte du décor relevée toutes les 30 images (objet ajouté / déplacé, modèle GLB
+  chargé) → tout est recuit progressivement (les anciennes ombres restent en attendant).
+- Lecture `shadowHard(slot, origine, P, biais)` (1 lecture, faisceaux) et `shadowPCF` (2 × 2 bilinéaire sans
+  déborder sur la face voisine, taches) ; biais = taille d'un texel à cette distance (+ pente, + décalage le long de
+  la normale pour les taches).
+- Utilisée par : faisceaux SS Depth (point « OMBRE », 3 échantillons), faisceaux classiques (option, chaque
+  échantillon), taches de lumière. Une lyre dont la cubemap est cuite n'utilise plus les boîtes de `SpotOcclusion`
+  (elles restent le repli : ombres désactivées, lyre au-delà de 64, cuisson en attente).
+
+### R4 — Taches de lumière de toutes les lyres
+
+- `SSDepthLights.collect` décrit maintenant les cônes de **toutes** les lyres allumées (faisceau Classique ou
+  SS Depth) ; `bin` remplit **deux** listes par tuile : faisceaux SS (cône jusqu'à la longueur visible) et taches
+  (cône jusqu'à la portée), une seule projection quand les longueurs sont égales. Tri fait une fois par image par la
+  première passe qui en a besoin (`ensureBinned`). Texel L8 : éclairement des taches (lumière émise) et emplacement
+  d'ombre ; ligne de paramètres r[50] (T12.z) : emplacement d'ombre pour le shader classique.
+- `LightPoolPass` (avant la passe SS Depth) : par pixel, profondeur → position, **normale reconstruite** depuis la
+  profondeur (voisin de plus petit écart en x et en y ; pas de passe de normales : le relief des normal maps est
+  ignoré), liste de la tuile, test « point dans le cône » (3 lectures), image de fenêtre complète (gobos,
+  couteaux, couleurs, prisme = un cône par facette), ombre PCF, N·L, **diffus + Cook-Torrance** (GGX, Schlick
+  F0 = 0,04, visibilité de Kelemen, comme le banc C++).
+- Matériaux sans G-buffer (comme `material()` du banc C++) : sol herbe (texture de la pelouse du matériau du sol,
+  rugosité 0,9), dessus du plateau / marches / table (lino noir brillant, rugosité 0,3, spéculaire × 1,5), reste du
+  décor (lino satiné, rugosité 0,6). Échelle = celle des anciennes SpotLight (60 × lumière émise / (π tan²)).
+- Sortie rgb + profondeur ; ajoutée par `FinalCompositePass` **avant le brouillard** (pleine résolution : 1 lecture ;
+  ½ : même remontée bilatérale 3×3 que les faisceaux SS, factorisée en `bilateralUp`). Le halo atmosphérique lit
+  aussi les taches.
+- La tache simple des phases précédentes (calculée en basse résolution dans les faisceaux) n'est plus utilisée que
+  si « Taches de lumière » est désactivé (repli bon marché, sans ombre ni reflet). Barres LED : inchangées.
+
+### Réglages
+
+- Globaux synchronisés (🌫️ Rendu global des lyres) : **Taches de lumière** (oui), **Taches de lumière (intensité)**
+  (1), **Reflets spéculaires** (oui).
+- Locaux (⚙️ Options › Lyres) : **Ombres des lyres** (Désactivées / 128 / 256, défaut 128), **Ombres dans les
+  faisceaux classiques** (oui), **Résolution des taches** (Auto / Pleine / ½ ; Auto = pleine jusqu'en 1080p, ½
+  au-delà).
+- Mesures GPU par passe : sections « Taches de lumière » et « Cuisson des ombres » ; le tableau indique aussi le
+  nombre de cônes de taches, la résolution de la passe et l'état des ombres.
+
+### Mesures (rendu logiciel SwiftShader, 1280 × 720, relatives, ±10 % de bruit)
+
+| Scène (SS Depth) | Avant : total / Scène | Après : total / Scène | Taches (pleine) | Taches (½) |
+|---|---|---|---|---|
+| gobos (9 lyres) | 3075 / 1574 | 3745 / 1641 | 300 | – |
+| vue de côté | 3129 / 1736 | 3493 / 1756 | 309 | – |
+| sol (9 taches au sol) | – | 3905 / 1974 | 352 | ≈ 80 |
+| 50 lyres | 2978 / 1652 | 3567 / 1528 | 318 | 68 |
+
+- Taches de lumière en pleine résolution ≈ 20 % de la passe de scène, **≈ 4 % en ½** (4,7 × moins) : d'où « Auto ».
+- Ombres : coût non mesurable dans les faisceaux et les taches (128 ou 256, ombres dans les faisceaux classiques
+  ou non : dans le bruit). Cuisson : ≈ 65 (2 lyres, 6 faces de 128²) pour une passe de scène de ≈ 1800, seulement
+  pendant les images qui cuisent.
+- Les 8 SpotLight supprimées allègent tous les matériaux éclairés (8 textures de projection, 8 lumières) : la passe
+  de scène n'augmente pas malgré l'éclairage de toutes les lyres.
+- Captures avant / après : `cmp_gobos`, `cmp_side`, `cmp_floor`, `cmp_cut` (faisceau coupé par la table DJ),
+  `cmp_gloss` (reflet sur le plateau), `cmp_many` (scratchpad de la session).
+
+### Limites / à savoir
+
+- Pas d'albédo réel : classement par position / normale (personnages et objets posés reçoivent l'albédo du lino).
+- Les personnages et objets mobiles ne projettent pas d'ombre (décor statique seulement) ; ils reçoivent la lumière.
+- Origine de l'ombre = pivot de la tête (lentille à 22 cm) : léger décalage tout près de la lyre.
+- 128² par face : texel de 1,6 cm à 1 m, 1,6 m à 100 m → bords d'ombre doux / crénelés au loin (256 conseillé si
+  la VRAM le permet : 44 Mo pour 50 lyres, 11 Mo en 128).
+- Éclairage direct seulement : le rebond (GI) arrive en phase C.
