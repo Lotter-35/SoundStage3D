@@ -24,10 +24,10 @@ Tout est décrit dans **`docs/rendu-lyres-v2.md`** (décisions R1–R7, bilans d
 |---|---|---|
 | A | Faisceaux SS Depth (tri par tuile, basse résolution, quadrature de Gauss), halo, choix du rendu par lyre, mesures GPU | ✅ poussée |
 | B | Ombres statiques (cubemaps cuites par lyre), taches de lumière de toutes les lyres (Cook-Torrance), suppression des 8 SpotLights | ✅ poussée |
-| C | GI en grille 3D (rebond sur le décor + brume éclairée), reflets des faisceaux sur le plateau brillant | en cours (branche `lyres-v2-c`, pas encore sur `dev-ambiant`) |
+| C | GI en grille 3D (rebond sur le décor + brume éclairée), reflets des faisceaux sur le plateau brillant | ✅ poussée |
 
 Fichiers principaux : `src/spot/ssdepth/`, `src/spot/lighting/`, `src/laser/FinalCompositePass.js`,
-`src/render/GpuPassTimer.js`, `src/spot/config/spotParams.js`, `src/ui/ClientOptions.js`.
+`src/spot/gi/`, `src/spot/reflect/`, `src/spot/SpotLightingFX.js`, `src/render/GpuPassTimer.js`, `src/spot/config/spotParams.js`, `src/ui/ClientOptions.js`.
 
 ## Prochaine étape : mesurer sur la vraie carte graphique
 
@@ -39,6 +39,15 @@ Les mesures faites jusqu'ici l'ont été en rendu logiciel (pas de GPU dans le c
    résolution des taches (Auto / Pleine / ½), ombres (128 / 256), qualité GI, résolution des reflets.
 4. Vérifier à l'œil : ombres qui coupent les faisceaux, taches au sol, reflets sur le plateau, mélange
    Classique / SS Depth par lyre (« ✨ Rendu › Rendu du faisceau »).
+
+## Points connus à revoir après les mesures
+
+- GI : le rebond coloré sur le décor reste discret (gain ≈ 12× le physique sur le plateau noir) ; la brume éclairée
+  et les reflets se voient bien. Grille sans direction : léger halo coloré autour des taches.
+- Reflets des faisceaux : seulement sur le dessus du plateau (pas les marches, la table DJ, le sol) ; pas les lasers,
+  barres LED ni faisceaux en mode Classique.
+- `SpotManager.js` fait 453 lignes (à découper).
+- Les personnages et objets mobiles ne projettent pas d'ombre (seul le décor fixe est cuit).
 
 ## Autre projet du dépôt : ilda-gen
 
