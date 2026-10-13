@@ -5,9 +5,11 @@
  * Insérée après la passe des faisceaux classiques (SpotVolumePass) ; recomposée par FinalCompositePass
  * (remontée bilatérale 3×3 guidée par la profondeur, avant le brouillard).
  *
- *   1. tri des cônes par tuile (CPU, SSDepthLights.bin) avec les matrices de la caméra du rendu ;
+ *   1. tri des cônes par tuile (CPU, SSDepthLights.bin, une fois par image : partagé avec les taches de
+ *      lumière) avec les matrices de la caméra du rendu ;
  *   2. passe des faisceaux en basse résolution (image / div, div = 2, 3 ou 4) ;
- *   3. halo atmosphérique (si intensité > 0) à la même résolution, ajouté aux faisceaux ;
+ *   3. halo atmosphérique (si intensité > 0) à la même résolution, ajouté aux faisceaux (il lit aussi les
+ *      taches de lumière de LightPoolPass) ;
  *   4. sortie différée { kind: 'ss' } lue par la passe finale.
  * Aucune passe plein écran supplémentaire : la seule lecture en pleine résolution est dans la passe finale.
  * ─────────────────────────────────────────────────────────────
@@ -23,8 +25,9 @@ export class SSDepthPass extends Pass {
      * @param {import('./SSDepthLights.js').SSDepthLights} lights
      * @param {import('../SpotBatch.js').SpotBatch} batch
      * @param {THREE.PerspectiveCamera} camera
+     * @param {object} [shadowUniforms] uniformes partagés des ombres statiques (SpotShadowAtlas.uniforms)
      */
-    constructor(lights, batch, camera) {
+    constructor(lights, batch, camera, shadowUniforms) {
         super();
         this.lights = lights;
         this.batch = batch;
@@ -34,6 +37,8 @@ export class SSDepthPass extends Pass {
         this.deferred = false;         // passe à true par LaserManager.addScenePass
         this.sceneDepth = null;        // { texture } : profondeur de la scène
         this.classicPass = null;       // SpotVolumePass : ses faisceaux entrent dans le halo
+        this.poolPass = null;          // LightPoolPass : ses taches entrent dans le halo
+        this.splash = true;            // tache simple sur la surface (passe des taches désactivée)
         this.div = 3;
         this.sharpness = 1.5;
         this.haloIntensity = 0.5;
@@ -48,7 +53,7 @@ export class SSDepthPass extends Pass {
         };
         this.beamTarget = new THREE.WebGLRenderTarget(1, 1, opts);
         this.haloTarget = new THREE.WebGLRenderTarget(1, 1, opts);
-        this.beamMaterial = createSSBeamMaterial();
+        this.beamMaterial = createSSBeamMaterial(shadowUniforms);
         this.haloMaterial = createSSHaloMaterial();
         this._beamQuad = new FullScreenQuad(this.beamMaterial);
         this._haloQuad = new FullScreenQuad(this.haloMaterial);
@@ -97,7 +102,7 @@ export class SSDepthPass extends Pass {
         const timer = gpuPassTimer.enabled ? gpuPassTimer : null;
 
         // Tri des cônes par tuile (matrices de la caméra mises à jour par le rendu de la scène)
-        this.lights.bin(cam);
+        this.lights.ensureBinned(cam);
 
         const u = this.beamMaterial.uniforms;
         u.uDepth.value = depth;
@@ -116,6 +121,7 @@ export class SSDepthPass extends Pass {
         u.uFar.value = cam.far;
         u.uHazeK.value = this.haze * 0.035;
         u.uPhaseG.value = this.phaseG;
+        u.uSplashOn.value = this.splash ? 1 : 0;
 
         const oldAutoClear = renderer.autoClear;
         renderer.autoClear = false;
@@ -133,6 +139,10 @@ export class SSDepthPass extends Pass {
                 ? this.classicPass.deferredOutput() : null;
             h.tClassic.value = classic ? classic.texture : this._black;
             h.uClassicOn.value = classic ? 1 : 0;
+            const pool = this.poolPass && this.poolPass.enabled ? this.poolPass.deferredOutput() : null;
+            h.tPool.value = pool ? pool.texture : this._black;
+            h.uPoolOn.value = pool ? 1 : 0;
+            if (pool) h.uPoolScale.value.copy(pool.scale);
             h.uFull.value.copy(this._fullSize);
             h.uLow.value.copy(this._lowSize);
             h.uDiv.value = this.div;

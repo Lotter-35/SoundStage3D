@@ -77,6 +77,7 @@ export function createStage(scene) {
     };
     groundMat.customProgramCacheKey = () => 'ss3d-ground-notile-v2';
     const ground = new THREE.Mesh(groundGeo, groundMat);
+    ground.name = 'ground';   // les taches de lumière des lyres y lisent l'albédo de la pelouse
     ground.rotation.x = -Math.PI / 2;
     ground.position.y = 0;
     ground.receiveShadow = true;

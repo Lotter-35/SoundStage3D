@@ -174,12 +174,13 @@ export const SPOT_GLOBAL_SCHEMA = {
     haloIntensity: { value: 0.5, min: 0, max: 2.5, step: 0.01, label: 'Halo atmosphérique (intensité)' },
     haloRadius:   { value: 1.0, min: 0.2, max: 3, step: 0.05, label: 'Halo atmosphérique (rayon)' },
     beamQuality:  { value: RES_AUTO, options: [RES_AUTO, 'Pleine résolution', 'Demi-résolution', 'Quart de résolution', '1/8 de résolution', '1/16 de résolution'], label: 'Qualité des faisceaux' },
-    realLights:   { value: true, label: 'Éclairage réel de la scène' },
-    lightShadows: { value: false, label: 'Ombres portées (2 lyres max)' },
+    lightPools:   { value: true, label: 'Taches de lumière' },
+    lightPoolIntensity: { value: 1.0, min: 0, max: 3, step: 0.01, label: 'Taches de lumière (intensité)' },
+    specular:     { value: true, label: 'Reflets spéculaires' },
 };
 
 /** Réglages de rendu propres à chaque joueur (menu ⚙️ Options, jamais synchronisés) */
-export const SPOT_LOCAL_GLOBALS = new Set(['beamQuality', 'realLights', 'lightShadows']);
+export const SPOT_LOCAL_GLOBALS = new Set(['beamQuality']);
 
 export function defaultSpotGlobals() {
     const out = {};

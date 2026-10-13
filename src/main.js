@@ -49,7 +49,7 @@ import { HazeVolume } from './haze/HazeVolume.js?v=2';
 import { SunLensFlarePass } from './scene/SunLensFlare.js';
 import { SkyMoon } from './scene/SkyMoon.js';
 import { HazePanel } from './haze/ui/HazePanel.js';
-import { clientOptions, RES_QUALITY, SS_RESOLUTIONS } from './ui/ClientOptions.js';
+import { clientOptions, RES_QUALITY, SS_RESOLUTIONS, SPOT_SHADOW_SIZES, POOL_RESOLUTIONS } from './ui/ClientOptions.js';
 import { loadFbxShared, YBOT_PATH } from './scene/fbxCache.js';
 import { LightPoolGate } from './render/lightPoolGate.js';
 import { DeviceLights } from './render/deviceLights.js';
@@ -336,13 +336,11 @@ const lightPoolGate = new LightPoolGate(renderer, scene, camera, () => laserMana
     () => laserManager.count > 0 || strobeManager.getAllStrobes().length > 0 || spotManager.getAllSpots().length > 0);
 lightPoolGate.addPool(laserManager._laserLights);
 lightPoolGate.addPool([...strobeManager.lightPool.shadowSlots, ...strobeManager.lightPool.plainSlots].map(s => s.light));
-lightPoolGate.addPool(spotManager.pool.slots.map(s => s.light));
 window.__SS3D.lightPoolGate = lightPoolGate;
 
 // Test de performance (Ambiance › Outils 3D) : retire vraiment de la scène les lumières des appareils
 const deviceLights = new DeviceLights();
 deviceLights.addLights(lightPoolGate.lights);
-deviceLights.onChange((removed) => { spotManager.pool.disabled = removed; });
 ambiancePanel.deviceLights = deviceLights;
 window.__SS3D.deviceLights = deviceLights;
 
@@ -2331,8 +2329,9 @@ clientOptions.bind('hazeResolution', (v) => hazeVolume.setParam('resolution', v)
 clientOptions.bind('hazeSegments', (v) => hazeVolume.setParam('segments', v));
 clientOptions.bind('hazeMaxLights', (v) => hazeVolume.setParam('maxLights', v));
 clientOptions.bind('spotBeamQuality', (v) => spotManager.setGlobal('beamQuality', v));
-clientOptions.bind('spotRealLights', (v) => spotManager.setGlobal('realLights', v));
-clientOptions.bind('spotShadows', (v) => spotManager.setGlobal('lightShadows', v));
+clientOptions.bind('spotShadowRes', (v) => spotManager.setShadowResolution(SPOT_SHADOW_SIZES[v] ?? 128));
+clientOptions.bind('spotClassicShadows', (v) => spotManager.setClassicBeamShadows(v));
+clientOptions.bind('spotPoolResolution', (v) => spotManager.setPoolResolution(POOL_RESOLUTIONS[v] ?? 'auto'));
 clientOptions.bind('spotSSResolution', (v) => spotManager.setSSResolution(SS_RESOLUTIONS[v] || 3));
 clientOptions.bind('spotSSSharpness', (v) => spotManager.setSSSharpness(v));
 // Mesures GPU par passe : petit tableau en haut à droite ; la résolution dynamique est figée pendant la mesure
@@ -2362,7 +2361,11 @@ function updateGpuPassOverlay(now) {
     const ss = spotManager && spotManager.ssLights;
     if (ss) {
         const p = spotManager.ssPass;
-        lines.push(`SS Depth : ${ss.fixtures} lyres, ${ss.count} cônes (${ss.visible} à l'écran), ${p.lowWidth}×${p.lowHeight}`);
+        lines.push(`SS Depth : ${ss.fixtures} lyres, ${ss.beamCones} cônes (${ss.visible} à l'écran), ${p.lowWidth}×${p.lowHeight}`);
+        const pp = spotManager.poolPass;
+        if (pp.enabled) lines.push(`Taches : ${ss.poolCones} cônes (${ss.poolVisible} à l'écran), ${pp.target.width}×${pp.target.height}`);
+        const sh = spotManager.shadows;
+        if (sh.size > 0) lines.push(`Ombres : ${sh.slotCount} lyres, faces ${sh.size}², ${sh.bakedCount} cuissons`);
     }
     _gpuPassEl.textContent = lines.join('\n');
 }

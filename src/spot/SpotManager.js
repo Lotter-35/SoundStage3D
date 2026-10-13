@@ -3,12 +3,13 @@
  * ─────────────────────────────────────────────────────────────
  * Orchestrateur des lyres Spot :
  *   - ajout / suppression / duplication / recherche (identifiants uniques réseau)
- *   - boucle de mise à jour : DMX → mécanique → batch GPU → pool de lumières réelles
- *   - réglages globaux (fumée, qualité, éclairage réel, ombres)
+ *   - boucle de mise à jour : DMX → mécanique → batch GPU → ombres statiques → cônes (faisceaux SS, taches)
+ *   - réglages globaux (fumée, qualité, taches de lumière, reflets)
  *   - point d'entrée DMX : applyDmxFrame(univers, octets)
  *
- * Coût GPU : 1 draw call de faisceaux + 1 d'éblouissements + ~10 de boîtiers
- * quel que soit le nombre de lyres ; 8 lumières réelles au maximum.
+ * Coût GPU : 1 draw call de faisceaux + 1 d'éblouissements + ~10 de boîtiers quel que soit le nombre de
+ * lyres ; aucune lumière three.js : l'éclairage du décor est une passe à l'écran (LightPoolPass, toutes
+ * les lyres, ombres statiques cuites par SpotShadowAtlas).
  *
  * Rendu des faisceaux choisi PAR LYRE (paramètre « Rendu du faisceau » : Global / Classique / SS Depth ;
  * Global = réglage synchronisé « Rendu des faisceaux (défaut) ») : les lyres classiques passent par
@@ -21,7 +22,8 @@ import { SpotFixture, SPOT_BEAM_RANGE } from './SpotFixture.js?v=3';
 import { SSDepthLights } from './ssdepth/SSDepthLights.js';
 import { SSDepthPass } from './ssdepth/SSDepthPass.js';
 import { LENS_RADIUS } from './SpotHousing.js?v=2';
-import { SpotLightPool } from './SpotLightPool.js?v=2';
+import { SpotShadowAtlas } from './lighting/SpotShadowAtlas.js';
+import { LightPoolPass } from './lighting/LightPoolPass.js';
 import { getSpotHousingInstancer } from './SpotHousing.js?v=2';
 import { DmxPatch } from '../dmx/DmxPatch.js';
 import { defaultSpotGlobals, SPOT_GLOBAL_SCHEMA } from './config/spotParams.js';
@@ -33,6 +35,8 @@ import { nextBusyState, BUSY_RES_FACTOR } from '../render/resolutionScale.js';
 const INSIDE_RES_FACTOR = 0.5;
 /** Image trop lente (temps GPU > budget des FPS visés) : la résolution des faisceaux seuls baisse par paliers */
 const LOAD_MIN = 0.5, LOAD_STEP_DOWN = 0.1, LOAD_STEP_UP = 0.05, LOAD_PERIOD_MS = 500;
+/** Taches de lumière : lumière émise → éclairement (même échelle que les anciennes SpotLight three.js) */
+const POOL_GAIN = 60;
 
 function makeId() {
     return 'spot-' + Date.now().toString(36) + '-' + Math.floor(Math.random() * 1e6).toString(36);
@@ -56,9 +60,10 @@ export class SpotManager {
         this._nextNumber = 1;
         this.globals = defaultSpotGlobals();
 
-        this.batch = new SpotBatch(scene);
+        // Ombres statiques (cubemaps de distances cuites une fois) : uniformes partagés par tous les shaders
+        this.shadows = new SpotShadowAtlas(renderer, scene);
+        this.batch = new SpotBatch(scene, this.shadows.uniforms);
         this.patch = new DmxPatch();
-        this.pool = new SpotLightPool(scene, renderer, this.batch);
         getSpotHousingInstancer(scene);
 
         // Faisceaux : passe insérée juste après le rendu de la scène (lit sa profondeur)
@@ -69,11 +74,19 @@ export class SpotManager {
         if (this._hasPass) this.volumePass.sceneDepth = laserManager.sceneDepth;
         if (!this._hasPass) console.warn('[SpotManager] Pas de chaîne de post-traitement : faisceaux volumétriques désactivés.');
 
-        // Faisceaux SS Depth (+ halo atmosphérique) : passe insérée après celle des faisceaux classiques
+        // Cônes des lyres (faisceaux SS Depth et taches de lumière), triés par tuile d'écran
         this.ssLights = new SSDepthLights(this.batch);
-        this.ssPass = new SSDepthPass(this.ssLights, this.batch, camera);
+        // Taches de lumière de toutes les lyres : passe insérée avant les faisceaux SS Depth (le halo les lit)
+        this.poolPass = new LightPoolPass(this.ssLights, this.batch, camera, this.shadows.uniforms);
+        this.poolPass.enabled = false;
+        this._hasPoolPass = this._hasPass && laserManager.addScenePass(this.poolPass);
+        if (this._hasPoolPass) this.poolPass.sceneDepth = laserManager.sceneDepth;
+        this._grassLookup = 0;
+        // Faisceaux SS Depth (+ halo atmosphérique) : passe insérée après celle des faisceaux classiques
+        this.ssPass = new SSDepthPass(this.ssLights, this.batch, camera, this.shadows.uniforms);
         this.ssPass.enabled = false;
         this.ssPass.classicPass = this.volumePass;
+        this.ssPass.poolPass = this.poolPass;
         this._hasSSPass = this._hasPass && laserManager.addScenePass(this.ssPass);
         if (this._hasSSPass) this.ssPass.sceneDepth = laserManager.sceneDepth;
 
@@ -173,7 +186,7 @@ export class SpotManager {
     removeSpot(id) {
         const spot = this._spots.get(id);
         if (!spot) return false;
-        this.pool.release(spot);
+        this.shadows.release(spot);
         spot.dispose();
         this._spots.delete(id);
         return true;
@@ -288,7 +301,43 @@ export class SpotManager {
         // Lissage temporel désactivé : il floute les gobos animés (moyenne de plusieurs images)
         this.volumePass.temporal = false;
         this._applyVolumeResolution();
-        this.pool.setShadows(g.lightShadows);
+        // Taches de lumière (passe à l'écran) ; désactivées : tache simple calculée par les faisceaux
+        const pools = this._poolsOn();
+        this.batch.splashOn = !pools;
+        this.ssPass.splash = !pools;
+        const pu = this.poolPass.material.uniforms;
+        pu.uGain.value = POOL_GAIN * g.lightPoolIntensity;
+        pu.uSpecOn.value = g.specular ? 1 : 0;
+    }
+
+    _poolsOn() {
+        return Boolean(this._hasPoolPass && this.globals.lightPools);
+    }
+
+    /** Ombres statiques des lyres : taille des faces de la cubemap (0 = désactivées, 128, 256) — option locale */
+    setShadowResolution(size) {
+        this.shadows.setSize(size);
+    }
+
+    /** Ombres statiques aussi dans les faisceaux classiques — option locale */
+    setClassicBeamShadows(on) {
+        this.batch.volumeMaterial.uniforms.uClassicShadow.value = on ? 1 : 0;
+    }
+
+    /** Résolution des taches de lumière : 'auto', 1 (pleine) ou 2 (½) — option locale */
+    setPoolResolution(res) {
+        this.poolPass.setResolution(res);
+    }
+
+    /** Albédo du sol : texture de la pelouse (cherchée tant que le sol n'est pas dans la scène) */
+    _findGrass() {
+        if (this._grassFound || (this._grassLookup++ % 60) !== 0) return;
+        const ground = this.scene.getObjectByName('ground');
+        const map = ground && ground.material && ground.material.map;
+        if (map) {
+            this.poolPass.setGrassTexture(map);
+            this._grassFound = true;
+        }
     }
 
     /** Résolution de la passe SS Depth : diviseur de l'image (2 = ½, 3 = ⅓, 4 = ¼) — option locale */
@@ -328,8 +377,8 @@ export class SpotManager {
             this.volumePass.enabled = false;
             this.ssLights.collect(this._spots.values());
             this.ssPass.enabled = this._haloOn();
+            this.poolPass.enabled = false;
             this.batch.glareMesh.visible = false;
-            this.pool.update(this._spots.values(), this.camera, false, dt);
             return;
         }
         this._time += dt;
@@ -354,9 +403,14 @@ export class SpotManager {
         u.uTime.value = this._time;
 
         this.volumePass.enabled = this._hasPass && this.batch.volumeCount > 0;
-        // Cônes des lyres SS Depth (triés par tuile au moment du rendu, avec la caméra de l'image)
-        this.ssLights.collect(this._spots.values());
-        this.ssPass.enabled = this._hasSSPass && (this.ssLights.count > 0 || this._haloOn());
+        // Ombres statiques : emplacements, invalidations (lyre déplacée, décor modifié), quelques cuissons
+        this.shadows.update(this._spots.values());
+        // Cônes : faisceaux des lyres SS Depth + taches de toutes les lyres (triés par tuile au rendu)
+        const pools = this._poolsOn();
+        this.ssLights.collect(this._spots.values(), pools);
+        this.ssPass.enabled = this._hasSSPass && (this.ssLights.beamCones > 0 || this._haloOn());
+        this.poolPass.enabled = pools && this.ssLights.poolCones > 0;
+        if (pools) this._findGrass();
 
         // Résolution réduite tant que la caméra est dans un faisceau (maintenue 0,5 s : pas de va-et-vient)
         if (this.volumePass.enabled && this._cameraInsideBeam()) this._insideHold = 0.5;
@@ -369,13 +423,13 @@ export class SpotManager {
             this._busy = busy;
             this._applyVolumeResolution();
         }
-        this.pool.update(this._spots.values(), this.camera, this.globals.realLights && !this.pool.disabled, dt);
     }
 
     dispose() {
         for (const s of this._spots.values()) s.dispose();
         this._spots.clear();
-        this.pool.dispose();
+        this.shadows.dispose();
+        this.poolPass.dispose();
         this.volumePass.dispose();
         this.ssPass.dispose();
         this.ssLights.dispose();

@@ -1,5 +1,5 @@
 /**
- * lightPoolGate.js — Masque les pools de lumières (lasers, strobes, lyres) quand la scène n'a aucun appareil.
+ * lightPoolGate.js — Masque les pools de lumières (lasers, strobes) quand la scène n'a aucun appareil.
  *
  * Les pools restent dans la scène à intensité 0 pour que poser un appareil ne recompile rien. Éteintes,
  * elles ne coûtent presque plus rien (skipDarkLights.js), mais chaque pixel éclairé parcourt encore leurs

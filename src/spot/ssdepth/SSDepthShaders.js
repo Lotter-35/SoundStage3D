@@ -14,9 +14,10 @@
  *      image de fenêtre complète (gobos, couteaux, demi-couleurs, animation) sur l'échantillon du milieu,
  *      lue dans l'atlas (1 lecture) aux 2 autres quand la lyre en a une ; phase de Mie (Henyey-Greenstein,
  *      même formule que le rendu classique) ; pas de bruit de fumée ;
- *    - ombre des obstacles de la scène (boîtes de SpotOcclusion) à chaque échantillon ;
- *      phase B : cubemaps d'ombre statiques (voir le point d'accroche « OMBRE » ci-dessous) ;
- *    - tache de lumière au sol (lyres sans lumière réelle), comme le rendu classique ;
+ *    - OMBRE à chaque échantillon : cubemap statique de la lyre (lighting/SpotShadowAtlas.js, 1 lecture) quand
+ *      elle est cuite, sinon boîtes de SpotOcclusion ;
+ *    - tache simple sur la surface seulement si la passe des taches de lumière (lighting/LightPoolPass.js)
+ *      est désactivée ;
  *    - sortie : rgb = faisceaux, a = profondeur linéaire du pixel réduit (pour la remontée bilatérale).
  *
  * 2. HALO ATMOSPHÉRIQUE (createSSHaloMaterial), même résolution : 8 échantillons (disque de Poisson tourné
@@ -30,9 +31,11 @@
  */
 
 import * as THREE from 'three';
-import { GATE_GLSL, GATE_ATLAS_R, GATE_ATLAS_SIDE, GATE_ATLAS_TILE } from '../SpotShaders.js?v=5';
+import { GATE_GLSL } from '../SpotShaders.js?v=5';
 import { occluderUniforms, MAX_OCCLUDERS } from '../SpotOcclusion.js';
 import { SS_TILES_X, SS_TILES_Y, SS_MAX_PER_TILE } from './SSDepthLights.js';
+import { CONE_GLSL } from './SSConeGLSL.js';
+import { SHADOW_GLSL, createShadowUniforms } from '../lighting/shadowGLSL.js';
 
 const VERT = /* glsl */`
     void main() {
@@ -40,10 +43,12 @@ const VERT = /* glsl */`
     }
 `;
 
-export function createSSBeamMaterial() {
+/** @param {object} [shadowUniforms] uniformes partagés des ombres statiques (SpotShadowAtlas.uniforms) */
+export function createSSBeamMaterial(shadowUniforms = createShadowUniforms()) {
     const occ = occluderUniforms();
     return new THREE.ShaderMaterial({
         uniforms: {
+            ...shadowUniforms,
             uDepth:      { value: null },
             uSpotParams: { value: null },
             uGobos:      { value: null },
@@ -61,6 +66,7 @@ export function createSSBeamMaterial() {
             uFar:        { value: 5000 },
             uHazeK:      { value: 0.6 * 0.035 },
             uPhaseG:     { value: 0.72 },
+            uSplashOn:   { value: 1 },     // tache simple sur la surface (passe des taches désactivée)
         },
         vertexShader: VERT,
         fragmentShader: /* glsl */`
@@ -68,10 +74,10 @@ export function createSSBeamMaterial() {
             precision highp int;
             #include <packing>
             ${GATE_GLSL}
+            ${CONE_GLSL}
+            ${SHADOW_GLSL}
             uniform highp sampler2D uDepth;
-            uniform highp sampler2D uSSLights;
             uniform highp usampler2D uSSTiles;
-            uniform sampler2D uGateAtlas;
             uniform vec3 uBoxMin[${MAX_OCCLUDERS}];
             uniform vec3 uBoxMax[${MAX_OCCLUDERS}];
             uniform vec2 uFull;
@@ -83,11 +89,11 @@ export function createSSBeamMaterial() {
             uniform float uFar;
             uniform float uHazeK;
             uniform float uPhaseG;
+            uniform float uSplashOn;
 
             const float PI = 3.14159265;
             const ivec2 TILES = ivec2(${SS_TILES_X}, ${SS_TILES_Y});
 
-            vec4 LT(int i, int k) { return texelFetch(uSSLights, ivec2(k, i), 0); }
             float linZ(ivec2 p) { return -perspectiveDepthToViewZ(texelFetch(uDepth, p, 0).r, uNear, uFar); }
             vec3 rayView(vec2 px) {
                 vec2 ndc = px / uFull * 2.0 - 1.0;
@@ -119,48 +125,6 @@ export function createSSBeamMaterial() {
                 float x = max(1e-4, 1.0 + g * g - 2.0 * g * cosT);
                 float hg = (1.0 - g * g) * inversesqrt(x) / x;
                 return 0.65 + 0.35 * hg;
-            }
-
-            // ── Cône en cours (lu une fois par cône touché) ──
-            vec3 cLens, cApexC, cW, cR, cU, cCol;
-            vec2 cV;
-            float cTanHalf, cIris, cFrostBlur, cLogFocus, cKind, cTile, cOutR2, cPlainR2;
-            Gate cG;
-
-            // Disque de l'iris (faisceau ouvert) : formule exacte du rendu classique
-            vec3 plainGate(vec2 g, float blur) {
-                float r2 = dot(g, g);
-                if (r2 >= cOutR2) return vec3(0.0);
-                if (r2 < cPlainR2) return cCol * (1.0 - 0.2 * r2);
-                float e = 0.012 + blur;
-                return cCol * ((1.0 - smoothstep(cIris - e, cIris + e, sqrt(r2))) * (1.0 - 0.2 * min(r2, 1.0)));
-            }
-
-            vec3 atlasGate(vec2 g, float blur) {
-                vec2 uv = g * (0.5 / ${GATE_ATLAS_R.toFixed(2)}) + 0.5;
-                if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
-                vec2 cell = vec2(mod(cTile, ${GATE_ATLAS_SIDE.toFixed(1)}), floor(cTile / ${GATE_ATLAS_SIDE.toFixed(1)}));
-                float texelG = ${(2 * GATE_ATLAS_R / GATE_ATLAS_TILE).toFixed(6)};
-                float lod = clamp(log2(max(1.0, (blur - cFrostBlur) / texelG)), 0.0, 3.0);
-                return textureLod(uGateAtlas, (cell + uv) / ${GATE_ATLAS_SIDE.toFixed(1)}, lod).rgb;
-            }
-
-            // Image de la fenêtre au point P ; full : échantillon du milieu (image complète)
-            vec3 gateAtPoint(vec3 P, bool full, out float zA, out vec3 lp) {
-                lp = P - cApexC;
-                zA = max(dot(lp, cW), 1e-3);
-                vec3 rad = lp - cW * zA;
-                float zl = max(dot(P - cLens, cW), 0.0);   // distance à la lentille le long de l'axe
-                vec2 g = vec2(dot(rad, cR), dot(rad, cU)) / (zA * cTanHalf) - cV * (zl / zA);
-                float blur = cFrostBlur + min(0.14, abs(log(zl + 0.5) - cLogFocus) * 0.035);
-                if (cKind > 1.5) {
-                    if (cKind < 2.5) return atlasGate(g, blur);
-                    if (full) {
-                        if (dot(g, g) >= cOutR2) return vec3(0.0);
-                        return gateImage(cG, g, blur);
-                    }
-                }
-                return plainGate(g, blur);
             }
 
             void main() {
@@ -250,7 +214,7 @@ export function createSSBeamMaterial() {
                     }
                     // Surface du pixel dans le cône (tache au sol possible) ?
                     bool inSurf = false;
-                    if (!sky) {
+                    if (!sky && uSplashOn > 0.5) {
                         vec3 qs = sceneP - apex;
                         float zs = dot(qs, cW);
                         vec3 rs = qs - WV * zs;
@@ -274,40 +238,14 @@ export function createSSBeamMaterial() {
                     if (!hit && !splash) continue;
 
                     // ── Réglages du cône ──
-                    vec4 A3 = LT(i, 3), A4 = LT(i, 4), A5 = LT(i, 5), A8 = LT(i, 8);
                     float apexDist = zS;
-                    cR = A3.xyz;
-                    cU = cross(cR, cW);
-                    int row = int(A3.w + 0.5);
-                    cLens = apex + WV * apexDist;
-                    cApexC = cLens - cW * apexDist;
-                    cCol = A4.rgb;
-                    float irr = A4.w;
-                    cTanHalf = A5.x;
-                    cIris = A5.y;
-                    cFrostBlur = A5.z;
-                    cLogFocus = A5.w;
-                    cV = A8.xy;
-                    cKind = A6.x;
-                    cTile = A6.y;
-                    float outR = cIris + 0.012 + cFrostBlur + 0.14;
-                    cOutR2 = outR * outR;
-                    float plainR = cIris - (0.012 + cFrostBlur + 0.14);
-                    cPlainR2 = plainR > 0.0 ? plainR * plainR : -1.0;
-                    if (cKind > 0.5 && cKind < 1.5) {
-                        // Frost fort : transmission moyenne des gobos (dernier niveau de mipmap), comme le rendu classique
-                        vec4 T3 = spotParam(row, 3), T4 = spotParam(row, 4);
-                        float avg = 1.0;
-                        if (T3.x > 0.001) { float sl = mod(floor(T3.x + 0.5), 9.0); if (sl > 0.5) avg *= textureLod(uGobos, vec3(0.5, 0.5, sl), 10.0).r; }
-                        if (T3.y > 0.001) { float sl = mod(floor(T3.y + 0.5), 8.0); if (sl > 0.5) avg *= textureLod(uGobos, vec3(0.5, 0.5, 8.0 + sl), 10.0).r; }
-                        if (T4.x > 0.001 && T3.w > 0.5) avg *= mix(1.0, clamp(textureLod(uGobos, vec3(0.5, 0.5, 15.0 + T3.w), 10.0).r * 1.25, 0.0, 1.0), clamp(T4.x, 0.0, 1.0));
-                        cCol *= avg;
-                    } else if (cKind > 2.5) {
-                        cG = loadGate(row);
-                    }
-                    // OMBRE : obstacles (boîtes) de la lyre ; phase B → cubemap d'ombre statique de la lyre
-                    bool hasOcc = A6.w > 0.5;
-                    vec4 T8 = hasOcc ? spotParam(row, 8) : vec4(-1.0);
+                    loadCone(i, apex, WV, apexDist, A6);
+                    float irr = LT(i, 4).w;
+                    // OMBRE : cubemap statique de la lyre si elle est cuite, sinon obstacles (boîtes) de la lyre
+                    vec4 SH = cSlot >= 0 && uShadowSize > 0.5 ? shadowInfo(cSlot) : vec4(0.0);
+                    bool hasCube = SH.w > 0.5;
+                    bool hasOcc = !hasCube && A6.w > 0.5;
+                    vec4 T8 = hasOcc ? spotParam(cRow, 8) : vec4(-1.0);
 
                     // ── Diffusion : quadrature de Gauss à 3 points ──
                     if (hit) {
@@ -331,7 +269,10 @@ export function createSSBeamMaterial() {
                             float zA; vec3 lp;
                             vec3 gate = gateAtPoint(P, s == 1, zA, lp);
                             if (gate.r + gate.g + gate.b < 1e-5) continue;
-                            if (hasOcc) {
+                            if (hasCube) {
+                                float dl = length(P - SH.xyz);
+                                if (shadowHard(cSlot, SH.xyz, P, 0.06 + shadowTexelSize(dl)) < 0.5) continue;
+                            } else if (hasOcc) {
                                 vec3 sd = P - cLens;
                                 if (segBlocked(cLens, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8)) continue;
                             }
@@ -346,14 +287,17 @@ export function createSSBeamMaterial() {
                         acc += sum * (irr * span * uHazeK);
                     }
 
-                    // ── Tache de lumière sur la surface (lyres sans lumière réelle) ──
+                    // ── Tache simple sur la surface (passe des taches de lumière désactivée) ──
                     if (splash) {
                         float zA; vec3 lp;
                         vec3 gate = gateAtPoint(sceneP, true, zA, lp);
                         float zl = zA - apexDist;
                         if (zl > 0.0 && zl < range && gate.r + gate.g + gate.b > 1e-5) {
                             bool blocked = false;
-                            if (hasOcc) {
+                            if (hasCube) {
+                                float dl = length(sceneP - SH.xyz);
+                                blocked = shadowHard(cSlot, SH.xyz, sceneP, 0.1 + 2.0 * shadowTexelSize(dl)) < 0.5;
+                            } else if (hasOcc) {
                                 vec3 sd = sceneP - cLens;
                                 blocked = segBlocked(cLens, sd, 1.0 - 0.06 / max(length(sd), 0.1), T8);
                             }
@@ -388,6 +332,9 @@ export function createSSHaloMaterial() {
             tSS:        { value: null },
             tClassic:   { value: null },
             uClassicOn: { value: 0 },
+            tPool:      { value: null },
+            uPoolOn:    { value: 0 },
+            uPoolScale: { value: new THREE.Vector2(1, 1) },
             uFull:      { value: new THREE.Vector2(1, 1) },
             uLow:       { value: new THREE.Vector2(1, 1) },
             uDiv:       { value: 3 },
@@ -401,6 +348,9 @@ export function createSSHaloMaterial() {
             uniform sampler2D tSS;
             uniform sampler2D tClassic;
             uniform int uClassicOn;
+            uniform sampler2D tPool;
+            uniform int uPoolOn;
+            uniform vec2 uPoolScale;
             uniform vec2 uFull;
             uniform vec2 uLow;
             uniform float uDiv;
@@ -434,6 +384,7 @@ export function createSSHaloMaterial() {
                     vec4 b = texture2D(tSS, tuv * toLow);
                     vec3 col = texture2D(tScene, tuv + pxHalf).rgb + b.rgb;
                     if (uClassicOn == 1) col += texture2D(tClassic, tuv).rgb;
+                    if (uPoolOn == 1) col += texture2D(tPool, tuv * uPoolScale).rgb;
                     float dz = max(b.a, 0.1) - cd;
                     // Occultation asymétrique : un objet au premier plan bloque la lumière de derrière ;
                     // une lumière devant un mur diffuse librement son halo

@@ -8,6 +8,7 @@
  * plus elles-mêmes : cette passe lit l'image de la scène UNE fois et applique, dans le même ordre
  * qu'avant et avec les mêmes formules :
  *   1. + nappes et faisceaux (sur-échantillonnage sensible à la profondeur)
+ *      + taches de lumière des lyres (pleine résolution, ou ½ + remontée bilatérale)
  *      + faisceaux SS Depth et halo atmosphérique (remontée bilatérale 3×3 guidée par la profondeur)
  *   2. × transmittance + lumière diffusée du brouillard (bilatéral)
  *   3. + bloom lasers + bloom lampes
@@ -40,6 +41,12 @@ function createFinalCompositeMaterial(dummy) {
             uSSScale:  { value: new THREE.Vector2(1, 1) },
             uSSTexel:  { value: new THREE.Vector2(1, 1) },
             uSSSharp:  { value: 1.5 },
+            // taches de lumière des lyres : a = profondeur linéaire ; div 1 = pleine résolution
+            uPoolOn:   { value: 0 },
+            tPool:     { value: dummy },
+            uPoolScale: { value: new THREE.Vector2(1, 1) },
+            uPoolDiv:  { value: 1 },
+            uPoolSharp: { value: 1.5 },
             // brouillard
             uHazeOn:   { value: 0 },
             tHaze:     { value: dummy },
@@ -79,6 +86,11 @@ function createFinalCompositeMaterial(dummy) {
             uniform vec2 uSSScale;
             uniform vec2 uSSTexel;
             uniform float uSSSharp;
+            uniform int uPoolOn;
+            uniform sampler2D tPool;
+            uniform vec2 uPoolScale;
+            uniform int uPoolDiv;
+            uniform float uPoolSharp;
             uniform int uHazeOn;
             uniform sampler2D tHaze;
             uniform vec2 uHazeSize;
@@ -122,6 +134,35 @@ function createFinalCompositeMaterial(dummy) {
                 return depthAware(tex, res, z0);
             }
 
+            // Remontée bilatérale jointe 3×3 guidée par la profondeur (a = profondeur linéaire de l'image réduite).
+            // Poids spatial = tente bilinéaire (net) + un plancher sur l'anneau 3×3 (repli quand les 2×2 texels
+            // les plus proches sont à une autre profondeur) ; poids de profondeur = exp(−écart relatif² × netteté).
+            // Aucun texel à la bonne profondeur : texel de profondeur la plus proche (bord net sur les objets).
+            vec3 bilateralUp(sampler2D tex, vec2 suv, vec3 quick, float cz, float sharpness) {
+                float sharp = 35.0 * sharpness;
+                ivec2 size = textureSize(tex, 0);
+                vec2 pos = suv * vec2(size) - 0.5;
+                ivec2 c0 = ivec2(floor(pos + 0.5));
+                vec2 f = pos - vec2(c0);
+                vec3 sum = vec3(0.0);
+                float wSum = 0.0;
+                vec3 best = quick;
+                float bestRel = 1e9;
+                for (int dy = -1; dy <= 1; dy++) {
+                    for (int dx = -1; dx <= 1; dx++) {
+                        vec4 s = texelFetch(tex, clamp(c0 + ivec2(dx, dy), ivec2(0), size - 1), 0);
+                        vec2 d = abs(vec2(float(dx), float(dy)) - f);
+                        float ws = max(0.0, 1.0 - d.x) * max(0.0, 1.0 - d.y) + 0.02;
+                        float rel = abs(cz - s.a) / max(cz, 0.5);
+                        float w = ws * exp(-rel * rel * sharp);
+                        sum += s.rgb * w;
+                        wSum += w;
+                        if (rel < bestRel) { bestRel = rel; best = s.rgb; }
+                    }
+                }
+                return wSum > 1e-3 ? sum / wSum : best;
+            }
+
             void main() {
                 vec4 base = texture2D(tDiffuse, vUv);
                 vec3 col = base.rgb;
@@ -131,38 +172,27 @@ function createFinalCompositeMaterial(dummy) {
                 if (uAdd0On == 1) col += additive(tAdd0, uAdd0Res, uAdd0Depth, z0);
                 if (uAdd1On == 1) col += additive(tAdd1, uAdd1Res, uAdd1Depth, z0);
 
-                // 1 bis. Faisceaux SS Depth (+ halo) : remontée bilatérale jointe 3×3 guidée par la profondeur.
-                // Poids spatial = tente bilinéaire (net) + un plancher sur l'anneau 3×3 (repli quand les 2×2 texels
-                // les plus proches sont à une autre profondeur) ; poids de profondeur = exp(−écart relatif² × netteté).
-                // Aucun texel à la bonne profondeur : texel de profondeur la plus proche (bord net sur les objets).
+                // 1 bis. Taches de lumière des lyres (avant le brouillard : la transmittance s'applique)
+                if (uPoolOn == 1) {
+                    if (uPoolDiv == 1) {
+                        col += texelFetch(tPool, ivec2(gl_FragCoord.xy), 0).rgb;
+                    } else {
+                        vec2 puv = vUv * uPoolScale;
+                        vec3 quick = texture2D(tPool, puv).rgb;
+                        if (quick.r + quick.g + quick.b > 0.0) {
+                            if (z0 < 0.0) z0 = linZ(vUv);
+                            col += bilateralUp(tPool, puv, quick, max(z0, 0.1), uPoolSharp);
+                        }
+                    }
+                }
+
+                // 1 ter. Faisceaux SS Depth (+ halo) : remontée bilatérale jointe 3×3 guidée par la profondeur
                 if (uSSOn == 1) {
                     vec2 suv = vUv * uSSScale;
                     vec3 quick = texture2D(tSS, suv).rgb;
                     if (quick.r + quick.g + quick.b > 0.0) {
                         if (z0 < 0.0) z0 = linZ(vUv);
-                        float cz = max(z0, 0.1);
-                        float sharp = 35.0 * uSSSharp;
-                        ivec2 size = textureSize(tSS, 0);
-                        vec2 pos = suv * vec2(size) - 0.5;
-                        ivec2 c0 = ivec2(floor(pos + 0.5));
-                        vec2 f = pos - vec2(c0);
-                        vec3 sum = vec3(0.0);
-                        float wSum = 0.0;
-                        vec3 best = quick;
-                        float bestRel = 1e9;
-                        for (int dy = -1; dy <= 1; dy++) {
-                            for (int dx = -1; dx <= 1; dx++) {
-                                vec4 s = texelFetch(tSS, clamp(c0 + ivec2(dx, dy), ivec2(0), size - 1), 0);
-                                vec2 d = abs(vec2(float(dx), float(dy)) - f);
-                                float ws = max(0.0, 1.0 - d.x) * max(0.0, 1.0 - d.y) + 0.02;
-                                float rel = abs(cz - s.a) / max(cz, 0.5);
-                                float w = ws * exp(-rel * rel * sharp);
-                                sum += s.rgb * w;
-                                wSum += w;
-                                if (rel < bestRel) { bestRel = rel; best = s.rgb; }
-                            }
-                        }
-                        col += wSum > 1e-3 ? sum / wSum : best;
+                        col += bilateralUp(tSS, suv, quick, max(z0, 0.1), uSSSharp);
                     }
                 }
 
@@ -246,6 +276,7 @@ export class FinalCompositePass extends Pass {
         u.uAdd1On.value = 0;
         u.uHazeOn.value = 0;
         u.uSSOn.value = 0;
+        u.uPoolOn.value = 0;
         for (const p of this.producers) {
             if (!p.enabled || typeof p.deferredOutput !== 'function') continue;
             const o = p.deferredOutput();
@@ -263,6 +294,12 @@ export class FinalCompositePass extends Pass {
                 u.uSSScale.value.copy(o.scale);
                 u.uSSTexel.value.copy(o.texel);
                 u.uSSSharp.value = o.sharpness;
+            } else if (o.kind === 'pool') {
+                u.uPoolOn.value = 1;
+                u.tPool.value = o.texture;
+                u.uPoolScale.value.copy(o.scale);
+                u.uPoolDiv.value = o.div;
+                u.uPoolSharp.value = o.sharpness;
             } else if (o.kind === 'haze') {
                 u.uHazeOn.value = 1;
                 u.tHaze.value = o.texture;

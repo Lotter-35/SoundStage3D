@@ -20,16 +20,14 @@
  *          gobos fixes / rotatifs (glissement des roues), roue d'animation,
  *          iris, 4 couteaux + rotation du bloc, demi-couleurs, frost, focus
  *          (le gobo est net à la distance de mise au point, flou ailleurs)
- *      - tache de lumière sur les surfaces pour les lyres sans lumière réelle
+ *      - ombres : cubemap statique de la lyre (lighting/SpotShadowAtlas.js) quand elle est cuite et que
+ *        l'option « Ombres dans les faisceaux classiques » est active, sinon boîtes de SpotOcclusion
+ *      - tache simple sur les surfaces seulement si la passe des taches de lumière est désactivée
  *
  * 2. COMPOSITION (createCompositeMaterial) : ajoute les faisceaux (rendus en
  *    demi-résolution) à l'image de la scène.
  *
- * 3. TEXTURE DE PROJECTION (createGateMapMaterial) : dessine la même image de
- *    fenêtre (gobos, prisme, couleurs…) dans la texture `map` des SpotLight réels
- *    → le gobo projeté sur le décor correspond exactement au faisceau.
- *
- * 4. ÉBLOUISSEMENT (createGlareMaterial) : halo de lentille quand on regarde
+ * 3. ÉBLOUISSEMENT (createGlareMaterial) : halo de lentille quand on regarde
  *    dans le faisceau (bloom lampes).
  *
  * Les paramètres de chaque lyre sont lus dans une DataTexture float
@@ -40,6 +38,7 @@
 import * as THREE from 'three';
 import { SMOKE_NOISE_UVW_SCALE } from '../laser/LaserSmokeNoise.js';
 import { occluderUniforms, MAX_OCCLUDERS } from './SpotOcclusion.js';
+import { SHADOW_GLSL, createShadowUniforms } from './lighting/shadowGLSL.js';
 
 /** Texels RGBA par lyre dans la texture de paramètres */
 export const SPOT_TEXELS = 13;
@@ -77,7 +76,8 @@ export const GATE_ATLAS_R = 1.6;         // la tuile couvre g ∈ [−R, R] (iri
  * T10: 1re ligne des LED (lignes consécutives : couleur, flux) , nombre de LED , pas (m) , demi-couleur selon la hauteur
  * T11: – , – , début du volume (m : les faisceaux individuels couvrent la zone plus proche) , –
  *
- * T12 (toutes les lignes) : tuile de l'atlas de fenêtre + 1 (0 = aucune : image calculée dans le shader) , – , – , –
+ * T12 (toutes les lignes) : tuile de l'atlas de fenêtre + 1 (0 = aucune : image calculée dans le shader) ,
+ *      longueur visible (lyres) , emplacement de l'ombre statique (lyres, −1 = aucune) , –
  */
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -230,13 +230,16 @@ vec3 spotGate(int row, vec2 g, float blur) {
  * @param {object} [o]
  * @param {boolean} [o.bar] volume des barres LED (toutes les LED d'une barre en une instance)
  * @param {boolean} [o.prism] lyres à prisme (somme des facettes)
+ * @param {object} [o.shadowUniforms] uniformes partagés des ombres statiques (SpotShadowAtlas.uniforms)
  * Variantes séparées : le code du prisme ou des barres alourdirait le shader de toutes les lyres
  * (plus de registres → moins de pixels calculés en parallèle, ~15 % plus lent)
  */
-export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, { bar = false, prism = false } = {}) {
+export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, { bar = false, prism = false, shadowUniforms = createShadowUniforms() } = {}) {
     const occ = occluderUniforms();
     return new THREE.ShaderMaterial({
         uniforms: {
+            ...shadowUniforms,
+            uClassicShadow: { value: 1 },   // ombres statiques dans les faisceaux classiques (option locale)
             uBoxMin:     { value: occ.mins },
             uGateAtlas:  { value: null },
             uBoxMax:     { value: occ.maxs },
@@ -304,6 +307,8 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
         fragmentShader: /* glsl */`
             #include <packing>
             ${GATE_GLSL}
+            ${SHADOW_GLSL}
+            uniform float uClassicShadow;
             uniform highp sampler3D uNoise;
             uniform highp sampler2D uDepth;
             uniform vec2 uInvRes;
@@ -671,6 +676,11 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 float frostBlur = T2.z * 0.42;
                 pFrostBlur = frostBlur;
                 vec4 T12 = spotParam(row, 12);
+                // Ombre : cubemap statique de la lyre si elle est cuite (remplace les boîtes)
+                int shSlot = int(floor(T12.z + 0.5));
+                vec4 SH = (uClassicShadow > 0.5 && shSlot >= 0 && uShadowSize > 0.5) ? shadowInfo(shSlot) : vec4(0.0);
+                bool hasCube = SH.w > 0.5;
+                if (hasCube) hasOcc = false;
                 pTile = T12.x - 1.0;
                 float logFocus = log(focusDist);
                 float irr0 = flux / (PI * tanHalf * tanHalf);
@@ -785,7 +795,9 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                         gate = mix(gate, prismImage(G, g2, max(zA2 - apexDist, 0.0) / zA2, blur), 0.35);
                     }
                     bool blocked = false;
-                    if (hasOcc) {
+                    if (hasCube) {
+                        blocked = shadowHard(shSlot, SH.xyz, P, 0.06 + shadowTexelSize(length(P - SH.xyz))) < 0.5;
+                    } else if (hasOcc) {
                         vec3 sd = P - vLens.xyz;
                         blocked = segBlocked(vLens.xyz, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8);
                     }
@@ -829,7 +841,10 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     }
                     // Ombre de la structure de la scène : départ tiré sur la surface de la lentille (pénombre douce).
                     // Dans le faisceau : testée un échantillon sur deux (le résultat précédent est réutilisé).
-                    if (hasOcc) {
+                    if (hasCube) {
+                        if (!inside || (i & 1) == 0) lastBlocked = shadowHard(shSlot, SH.xyz, P, 0.06 + shadowTexelSize(length(P - SH.xyz))) < 0.5;
+                        if (lastBlocked) continue;
+                    } else if (hasOcc) {
                         if (!inside || (i & 1) == 0) {
                             float ang = 6.2831853 * fract(jit * 7.13 + float(i) * 0.618);
                             float rr = T4.w * sqrt(fract(jit * 3.71 + float(i) * 0.382));
@@ -850,10 +865,12 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 }
                 vec3 col = sum * 0.035;
 
-                // ── Tache de lumière sur les surfaces (lyres sans lumière réelle) ──
+                // ── Tache simple sur les surfaces (passe des taches de lumière désactivée) ──
                 float splashW = T4.z;
                 bool splashBlocked = false;
-                if (hitSurface && splashW > 0.001 && hasOcc) {
+                if (hitSurface && splashW > 0.001 && hasCube) {
+                    splashBlocked = shadowHard(shSlot, SH.xyz, sceneP, 0.1 + 2.0 * shadowTexelSize(length(sceneP - SH.xyz))) < 0.5;
+                } else if (hitSurface && splashW > 0.001 && hasOcc) {
                     vec3 sd = sceneP - vLens.xyz;
                     splashBlocked = segBlocked(vLens.xyz, sd, 1.0 - 0.06 / max(length(sd), 0.1), T8);
                 }
@@ -954,52 +971,7 @@ export function createCompositeMaterial() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 3. Texture de projection des SpotLight réels (même image que le faisceau)
-// ─────────────────────────────────────────────────────────────────────────────
-export function createGateMapMaterial(paramsTexture, goboTexture) {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            uSpotParams: { value: paramsTexture },
-            uGobos:      { value: goboTexture },
-            uRow:        { value: 0 },
-            uScale:      { value: 1 },      // tan(angle lumière) / tan(zoom/2)
-            uBlur:       { value: 0 },
-            uFacets:     { value: Array.from({ length: 9 }, () => new THREE.Vector3()) }, // centre.xy, poids (axe + 8 facettes pendant l'insertion)
-            uFacetCount: { value: 1 },
-        },
-        vertexShader: /* glsl */`
-            varying vec2 vUv;
-            void main() {
-                vUv = uv;
-                gl_Position = vec4(position.xy, 0.0, 1.0);
-            }
-        `,
-        fragmentShader: /* glsl */`
-            ${GATE_GLSL}
-            uniform int uRow;
-            uniform float uScale;
-            uniform float uBlur;
-            uniform vec3 uFacets[9];
-            uniform int uFacetCount;
-            varying vec2 vUv;
-            void main() {
-                vec2 g = (vUv * 2.0 - 1.0) * uScale;
-                vec3 col = vec3(0.0);
-                Gate G = loadGate(uRow);
-                for (int i = 0; i < 9; i++) {
-                    if (i >= uFacetCount) break;
-                    col += gateImage(G, g - uFacets[i].xy, uBlur) * uFacets[i].z;
-                }
-                gl_FragColor = vec4(min(col, vec3(1.0)), 1.0);
-            }
-        `,
-        depthTest: false,
-        depthWrite: false,
-    });
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// 4. Éblouissement de lentille (billboard instancié, bloom lampes)
+// 3. Éblouissement de lentille (billboard instancié, bloom lampes)
 // ─────────────────────────────────────────────────────────────────────────────
 export function createGlareMaterial(paramsTexture) {
     return new THREE.ShaderMaterial({
@@ -1064,7 +1036,7 @@ export function createGlareMaterial(paramsTexture) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 5. Atlas de l'image de fenêtre (une tuile par lyre, une instance par tuile, 1 draw call)
+// 4. Atlas de l'image de fenêtre (une tuile par lyre, une instance par tuile, 1 draw call)
 // ─────────────────────────────────────────────────────────────────────────────
 export function createGateAtlasMaterial(paramsTexture, goboTexture) {
     return new THREE.ShaderMaterial({
@@ -1099,7 +1071,7 @@ export function createGateAtlasMaterial(paramsTexture, goboTexture) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 6. Lissage temporel des faisceaux (calcul rapide)
+// 5. Lissage temporel des faisceaux (calcul rapide)
 // ─────────────────────────────────────────────────────────────────────────────
 /**
  * Mélange l'image des faisceaux avec celle des images précédentes. L'historique est borné par le voisinage

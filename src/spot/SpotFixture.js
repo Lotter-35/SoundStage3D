@@ -84,7 +84,7 @@ export class SpotFixture {
         this._lensColor = new THREE.Color();
         this._lastLens = new THREE.Color(-1, -1, -1);
 
-        // État optique courant (lu par le pool de lumières et le batch)
+        // État optique courant (lu par le batch, les faisceaux SS Depth et les taches de lumière)
         this.lensPos = new THREE.Vector3();
         this.axis = new THREE.Vector3(0, 1, 0);
         this.right = new THREE.Vector3(1, 0, 0);
@@ -94,7 +94,9 @@ export class SpotFixture {
         this.tanLight = 0.2;
         this.focusDist = 10;
         this.frost = 0;
-        this.poolWeight = 0;       // part d'éclairage assurée par une SpotLight réelle (0…1)
+        // Ombre statique : cubemap centrée sur le pivot de la tête (fixe en pan / tilt), emplacement dans l'atlas
+        this.shadowOrigin = new THREE.Vector3();
+        this.shadowSlot = -1;
         this.occluders = new Float32Array(OCCLUDERS_PER_SPOT).fill(-1); // obstacles de la scène dans le cône
         this.occluderCount = 0;
         this.isBeingDragged = false;
@@ -217,6 +219,7 @@ export class SpotFixture {
         this.up.crossVectors(this.right, this.axis);
         _lensLocal.set(0, LENS_OFFSET, 0);
         this.lensPos.copy(_lensLocal).applyMatrix4(this._head);
+        this.shadowOrigin.set(e[12], e[13], e[14]);
 
         // Optique
         const tanHalf = Math.tan(Math.max(MIN_ZOOM_DEG, m.zoom) * 0.5 * DEG);
@@ -247,8 +250,9 @@ export class SpotFixture {
         r[8] = tanHalf; r[9] = m.iris; r[10] = m.frost; r[11] = this.focusDist;
         r[12] = m.goboFixedPos; r[13] = m.goboRotPos; r[14] = m.goboAngle; r[15] = m.animSlot;
         r[16] = m.animIn; r[17] = m.animAngle;
-        // Tache au sol ∝ lumière émise ; rayon de la lentille (pénombre douce, éblouissement, faisceaux regroupés)
-        r[18] = (1 - this.poolWeight) * (p.beamIntensity > 1e-3 ? Math.min(4, p.lightOutput / p.beamIntensity) : 0);
+        // Tache simple ∝ lumière émise (seulement sans la passe des taches de lumière) ; rayon de la lentille
+        // (pénombre douce, éblouissement, faisceaux regroupés)
+        r[18] = this.batch.splashOn && p.beamIntensity > 1e-3 ? Math.min(4, p.lightOutput / p.beamIntensity) : 0;
         r[19] = LENS_RADIUS;
         r[20] = m.blades[0]; r[21] = m.bladeAngles[0]; r[22] = m.blades[1]; r[23] = m.bladeAngles[1];
         r[24] = m.blades[2]; r[25] = m.bladeAngles[2]; r[26] = m.blades[3]; r[27] = m.bladeAngles[3];
@@ -268,7 +272,8 @@ export class SpotFixture {
         r[48] = this.needsGate && this.gateTile >= 0 ? this.gateTile + 1 : 0;
         // longueur visible du faisceau (0 : toute la portée)
         r[49] = p.beamLength > 0 && p.beamLength < SPOT_BEAM_RANGE ? p.beamLength : 0;
-        r[50] = 0; r[51] = 0;
+        // emplacement de l'ombre statique (−1 : aucune ou pas encore cuite)
+        r[50] = this.shadowSlot; r[51] = 0;
 
         // Lentille : s'illumine de la couleur du faisceau (bloom 3x plus puissant)
         const k = Math.min(m.intensity, 1) * Math.min(p.beamIntensity, 2) * 15.0;

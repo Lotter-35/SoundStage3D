@@ -110,7 +110,13 @@ function makeConeGeometry() {
 }
 
 export class SpotBatch {
-    constructor(scene) {
+    /**
+     * @param {THREE.Scene} scene
+     * @param {object} [shadowUniforms] uniformes partagés des ombres statiques (lighting/SpotShadowAtlas.js)
+     */
+    constructor(scene, shadowUniforms) {
+        /** Tache simple sur les surfaces calculée par les faisceaux (passe des taches de lumière désactivée) */
+        this.splashOn = false;
         this.scene = scene;
         this._rows = 0;
         this._freeRows = [];
@@ -120,7 +126,7 @@ export class SpotBatch {
         this._allocParamsTexture(32);
 
         this.goboTexture = getGoboTexture();
-        this.volumeMaterial = createVolumeMaterial(this.paramsTexture, this.goboTexture, getSmokeNoiseTexture());
+        this.volumeMaterial = createVolumeMaterial(this.paramsTexture, this.goboTexture, getSmokeNoiseTexture(), { shadowUniforms });
         this.glareMaterial = createGlareMaterial(this.paramsTexture);
         this._materials = [this.volumeMaterial, this.glareMaterial];
 

@@ -1,11 +1,11 @@
 /**
  * deviceLights.js — Test de performance : retire de la scène les lumières Three.js des appareils
- * (pools des lasers, des stroboscopes et des lyres / barres LED), ombres comprises.
+ * (pools des lasers et des stroboscopes), ombres comprises. Les lyres n'ont plus de lumière three.js
+ * (taches de lumière calculées à l'écran par spot/lighting/LightPoolPass.js).
  *
  * Les lumières sont vraiment retirées (pas masquées) : les shaders éclairés sont recompilés sans elles.
  * Les lumières de base (soleil, ambiance, ciel, rebonds de la GI, lumières posées à la main) restent.
- * Les faisceaux, nappes, halos et la fumée restent affichés ; les lyres gardent la tache de lumière
- * calculée par leur shader. Remettre les lumières recompile à nouveau les shaders (gel attendu).
+ * Les faisceaux, nappes, halos, la fumée et les taches de lumière des lyres restent affichés. Remettre les lumières recompile à nouveau les shaders (gel attendu).
  */
 
 export class DeviceLights {
