@@ -32,9 +32,9 @@ export const GI_QUALITIES = {
     high: { dims: [48, 16, 64], div: 4, vpl: 512, alpha: 0.5 },
 };
 
-/** Volume couvert : plateau, mur du fond, toit et 50 m de public (m) */
-export const GI_BOUNDS_MIN = [-24, -0.5, -12];
-export const GI_BOUNDS_SIZE = [48, 22, 64];
+/** Volume couvert par défaut (m) ; ensuite celui de la boîte du brouillard de salle (setBounds) */
+export const GI_BOUNDS_MIN = [-30, 0, -15];
+export const GI_BOUNDS_SIZE = [60, 25, 80];
 
 export class GIGridPass extends Pass {
     /**
@@ -51,8 +51,10 @@ export class GIGridPass extends Pass {
         this.enabled = false;
         /** Uniformes de lecture partagés par le décor et le brouillard */
         this.uniforms = createGIUniforms();
-        this.uniforms.uGIMin.value.fromArray(GI_BOUNDS_MIN);
-        this.uniforms.uGISize.value.fromArray(GI_BOUNDS_SIZE);
+        this._min = new THREE.Vector3().fromArray(GI_BOUNDS_MIN);
+        this._size = new THREE.Vector3().fromArray(GI_BOUNDS_SIZE);
+        this.uniforms.uGIMin.value.copy(this._min);
+        this.uniforms.uGISize.value.copy(this._size);
         /** Vrai quand la grille contient de la lumière (les lecteurs peuvent la lire) */
         this.active = false;
         this.quality = null;
@@ -98,11 +100,34 @@ export class GIGridPass extends Pass {
         this.grid = grid;
         this.uniforms.uGI.value = t;
         this.uniforms.uGIEdge.value.set(0.5 / nx, 0.5 / ny, 0.5 / nz);
-        const u = this.gridMaterial.uniforms;
-        u.uMin.value.fromArray(GI_BOUNDS_MIN);
-        u.uCell.value.set(GI_BOUNDS_SIZE[0] / nx, GI_BOUNDS_SIZE[1] / ny, GI_BOUNDS_SIZE[2] / nz);
-        u.uR0.value = 0.35 * u.uCell.value.lengthSq();
+        this._applyCells();
         this._cleared = false;
+    }
+
+    /**
+     * Volume couvert par la grille (boîte du brouillard de salle) ; la lumière déjà calculée est effacée
+     * @param {THREE.Vector3} min coin bas
+     * @param {THREE.Vector3} size dimensions (m)
+     */
+    setBounds(min, size) {
+        if (this._min.equals(min) && this._size.equals(size)) return;
+        this._min.copy(min);
+        this._size.set(Math.max(size.x, 1), Math.max(size.y, 1), Math.max(size.z, 1));
+        this.uniforms.uGIMin.value.copy(this._min);
+        this.uniforms.uGISize.value.copy(this._size);
+        this._applyCells();
+        this._hasLight = false;
+        this.active = false;
+        this._cleared = false;
+    }
+
+    _applyCells() {
+        if (!this.quality) return;
+        const [nx, ny, nz] = this.quality.dims;
+        const u = this.gridMaterial.uniforms;
+        u.uMin.value.copy(this._min);
+        u.uCell.value.set(this._size.x / nx, this._size.y / ny, this._size.z / nz);
+        u.uR0.value = 0.35 * u.uCell.value.lengthSq();
     }
 
     /** Lumière effacée (GI désactivée puis réactivée : pas de reste d'une ancienne image) */

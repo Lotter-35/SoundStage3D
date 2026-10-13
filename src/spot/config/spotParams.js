@@ -171,8 +171,6 @@ export const SPOT_GLOBAL_SCHEMA = {
     scattering:   { value: 0.72, min: 0, max: 0.95, step: 0.01, label: 'Diffusion avant (Mie)' },
     beamRender:   { value: 'Rapide', options: ['Rapide', 'Précis'], label: 'Calcul des faisceaux' },
     beamRenderDefault: { value: 'SS Depth', options: BEAM_RENDER_DEFAULTS, label: 'Rendu des faisceaux (défaut)' },
-    haloIntensity: { value: 0.5, min: 0, max: 2.5, step: 0.01, label: 'Halo atmosphérique (intensité)' },
-    haloRadius:   { value: 1.0, min: 0.2, max: 3, step: 0.05, label: 'Halo atmosphérique (rayon)' },
     beamQuality:  { value: RES_AUTO, options: [RES_AUTO, 'Pleine résolution', 'Demi-résolution', 'Quart de résolution', '1/8 de résolution', '1/16 de résolution'], label: 'Qualité des faisceaux' },
     lightPools:   { value: true, label: 'Taches de lumière' },
     lightPoolIntensity: { value: 1.0, min: 0, max: 3, step: 0.01, label: 'Taches de lumière (intensité)' },

@@ -22,7 +22,7 @@ import { getSmokeNoiseTexture } from '../laser/LaserSmokeNoise.js';
 import { getStageObstacles } from '../laser/LaserSceneIntersector.js';
 import { createHazeMaterial, HAZE_MAX_LIGHTS } from './HazeShaders.js?v=2';
 import { HazePass } from './HazePass.js?v=2';
-import { defaultHazeParams, HAZE_PARAMS_SCHEMA } from './hazeParams.js';
+import { defaultHazeParams, HAZE_PARAMS_SCHEMA, migrateHazeBox } from './hazeParams.js';
 import { RES_AUTO } from '../render/resolutionScale.js';
 
 // Calibrage des puissances (unités différentes selon le type de source)
@@ -138,7 +138,7 @@ export class HazeVolume {
     }
 
     setParams(obj) {
-        for (const [k, v] of Object.entries(obj || {})) if (k in HAZE_PARAMS_SCHEMA) this.params[k] = v;
+        for (const [k, v] of Object.entries(migrateHazeBox(obj) || {})) if (k in HAZE_PARAMS_SCHEMA) this.params[k] = v;
         this._applyAll();
     }
 
@@ -163,6 +163,13 @@ export class HazeVolume {
         this.boxHelper.updateMatrixWorld();
         this.handle.position.set(p.boxX, p.boxY, p.boxZ);
         this.handle.updateMatrixWorld();
+        // Lumière indirecte des lyres (grille de GI) : même volume que la fumée
+        const gi = this.spotManager && this.spotManager.fx && this.spotManager.fx.gi;
+        if (gi && typeof gi.setBounds === 'function') {
+            _pos.set(p.boxX - p.sizeX / 2, p.boxY - p.sizeY / 2, p.boxZ - p.sizeZ / 2);
+            _tgt.set(p.sizeX, p.sizeY, p.sizeZ);
+            gi.setBounds(_pos, _tgt);
+        }
 
         // Fumée des faisceaux des lyres : indépendante ou liée à la densité du brouillard
         if (this.spotManager && typeof this.spotManager.setHazeOverride === 'function') {

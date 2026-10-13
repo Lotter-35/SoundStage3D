@@ -83,17 +83,15 @@ export class SpotManager {
             lights: this.ssLights, batch: this.batch, camera, shadowUniforms: this.shadows.uniforms,
             laserManager: this._hasPass ? laserManager : null,
         });
-        // Taches de lumière de toutes les lyres : passe insérée avant les faisceaux SS Depth (le halo les lit)
+        // Taches de lumière de toutes les lyres : passe insérée avant les faisceaux SS Depth
         this.poolPass = new LightPoolPass(this.ssLights, this.batch, camera, this.shadows.uniforms, this.fx.giUniforms);
         this.poolPass.enabled = false;
         this._hasPoolPass = this._hasPass && laserManager.addScenePass(this.poolPass);
         if (this._hasPoolPass) this.poolPass.sceneDepth = laserManager.sceneDepth;
         this._grassLookup = 0;
-        // Faisceaux SS Depth (+ halo atmosphérique) : passe insérée après celle des faisceaux classiques
+        // Faisceaux SS Depth : passe insérée après celle des faisceaux classiques
         this.ssPass = new SSDepthPass(this.ssLights, this.batch, camera, this.shadows.uniforms);
         this.ssPass.enabled = false;
-        this.ssPass.classicPass = this.volumePass;
-        this.ssPass.poolPass = this.poolPass;
         this._hasSSPass = this._hasPass && laserManager.addScenePass(this.ssPass);
         if (this._hasSSPass) this.ssPass.sceneDepth = laserManager.sceneDepth;
         this.fx.addReflectPass();
@@ -298,11 +296,9 @@ export class SpotManager {
         u.uHazeContrast.value = g.hazeContrast;
         u.uHazeScale.value = g.hazeScale;
         u.uPhaseG.value = g.scattering;
-        // Faisceaux SS Depth : même fumée (sans volutes) et même diffusion ; halo atmosphérique
+        // Faisceaux SS Depth : même fumée (sans volutes) et même diffusion
         this.ssPass.haze = u.uHaze.value;
         this.ssPass.phaseG = g.scattering;
-        this.ssPass.haloIntensity = g.haloIntensity;
-        this.ssPass.haloRadius = g.haloRadius;
         // Calcul des faisceaux : rapide (moins d'échantillons, même énergie) ou précis (ancien rendu)
         const fast = g.beamRender !== 'Précis';
         u.uFast.value = fast ? 1 : 0;
@@ -369,10 +365,6 @@ export class SpotManager {
         return this.globals.beamRenderDefault === 'SS Depth';
     }
 
-    _haloOn() {
-        return this._hasSSPass && this.globals.haloIntensity > 0.005;
-    }
-
     // ── DMX ───────────────────────────────────────────────────────────────
 
     /** Trame DMX reçue (future source Art-Net / sACN via le serveur) */
@@ -386,7 +378,7 @@ export class SpotManager {
         if (this._spots.size === 0 && !this._sourcesActive()) {
             this.volumePass.enabled = false;
             this.ssLights.collect(this._spots.values());
-            this.ssPass.enabled = this._haloOn();
+            this.ssPass.enabled = false;
             this.poolPass.enabled = false;
             this.fx.update(this.poolPass);
             this.batch.glareMesh.visible = false;
@@ -421,7 +413,7 @@ export class SpotManager {
         const pools = this._poolsOn();
         const gi = this.fx.giWanted();
         this.ssLights.collect(this._spots.values(), pools || gi);
-        this.ssPass.enabled = this._hasSSPass && (this.ssLights.beamCones > 0 || this._haloOn());
+        this.ssPass.enabled = this._hasSSPass && this.ssLights.beamCones > 0;
         this.poolPass.pools = pools;
         this.fx.update(this.poolPass);
         this.poolPass.enabled = this._hasPoolPass && ((pools && this.ssLights.poolCones > 0) || this.poolPass.giGain > 0);

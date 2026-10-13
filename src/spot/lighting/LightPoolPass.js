@@ -8,7 +8,7 @@
  * Ajoute aussi le rebond de la lumière indirecte (grille de GI) sur le décor quand la GI est active ; elle
  * tourne alors même sans tache (option « Taches de lumière » désactivée : GI seule).
  *
- * Insérée avant la passe SS Depth (le halo y lit les taches) ; sortie différée { kind: 'pool' } ajoutée par
+ * Insérée avant la passe SS Depth ; sortie différée { kind: 'pool' } ajoutée par
  * FinalCompositePass avant le brouillard (pleine résolution : lecture directe ; ½ : remontée bilatérale).
  * ─────────────────────────────────────────────────────────────
  */

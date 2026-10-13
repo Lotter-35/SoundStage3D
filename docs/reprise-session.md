@@ -34,7 +34,15 @@ Fichiers principaux : `src/spot/ssdepth/`, `src/spot/lighting/`, `src/laser/Fina
 - **Bug corrigé** (`305a4ec`) : les `EffectComposer` reprenaient le pixelRatio du renderer alors que les tailles
   leur sont déjà données en pixels réels. Écran zoomé à 150 % (4K Windows) : post-traitement en 5760 × 3240,
   faisceaux SS limités à un rectangle des ⅔ de l'écran, pointillés, gros lag. Désormais `setPixelRatio(1)`.
-- Halo SS (`0a7bea2`) : lit une image réduite au lieu de l'image 4K (1,7 → 0,7 ms).
+- **Halo atmosphérique des lyres supprimé** (code et réglages) à la demande de l'utilisateur.
+- Gobos dans les faisceaux SS : 4 à 12 échantillons réguliers décalés par pixel (`81d2d89`).
+- Faisceaux SS : nœuds de Gauss à 3 points corrigés (le faisceau était 20 à 40 % trop lumineux) et retouche
+  des bords en pleine résolution (« Bords des faisceaux SS »), seulement dans les tuiles de ≤ 24 cônes.
+- Tuiles : jusqu'à 1024 cônes par tuile (128 débordait avec 126 lyres à prisme : gros carrés à l'écran).
+- Grille de GI = boîte du brouillard de salle (`GIGridPass.setBounds`) ; boîte par défaut 60 × 25 × 80 m
+  (x −30…30, y 0…25, z −15…65) ; l'ancienne boîte par défaut (100 × 90 × 200) est remplacée à la lecture.
+- GI : la lumière des faisceaux dans la fumée va jusqu'à la portée (raccourcir le faisceau ne change plus le sol).
+- Shader GI : sorties de `hitDecor` initialisées (Direct3D le recompilait sans optimisation : chargement long).
 - 4K (3840 × 2160), scène par défaut, 13 à 20 lyres : ≈ 10 à 12 ms. Postes principaux : Scène 4 à 5 ms
   (MSAA, déjà là avant les lyres v2), Brouillard ≈ 1,7 ms (constant, déjà là avant), Composition finale ≈ 1,4 ms.
 - Les ombres statiques sont limitées à 64 lyres (la salle SPECTACLE du serveur en a 138).

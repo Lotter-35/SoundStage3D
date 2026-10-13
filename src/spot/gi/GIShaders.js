@@ -142,7 +142,9 @@ export function createVPLMaterial(shadowUniforms) {
                     // ── Point le long du faisceau (lumière diffusée par la fumée), jusqu'au décor ──
                     if (uHazeK <= 0.0) { gl_FragColor = NONE; return; }
                     vec3 d = normalize(cW + cTanHalf * (cV.x * cR + cV.y * cU));
-                    float len = min(A7.x, 60.0);
+                    // Portée complète (pas la longueur visible) : raccourcir le faisceau ne change pas l'éclairage
+                    // de la salle ni du sol, comme la tache de lumière
+                    float len = min(A7.z, 60.0);
                     if (hitDecor(cLens, d, SH, X, N)) len = min(len, length(X - cLens));
                     int j = k - uK;
                     float u = (float(j) + fract(uSpin * 0.159155 + float(j) * 0.618034)) / float(uM);

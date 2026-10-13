@@ -30,8 +30,9 @@ import * as THREE from 'three';
 export const SS_TILES_X = 32;
 export const SS_TILES_Y = 18;
 export const SS_TILE_COUNT = SS_TILES_X * SS_TILES_Y;
-/** Cônes au plus par tuile (au-delà : ignorés) — 50 lyres à prisme 8 facettes convergentes en remplissent ~100 */
-export const SS_MAX_PER_TILE = 128;
+/** Cônes au plus par tuile = tous les cônes (SS_MAX_LIGHTS) : une tuile pleine perdait des faisceaux, d'où des
+ *  carrés de la taille d'une tuile (126 lyres à prisme 8 facettes = 1008 cônes, tous près des lyres) */
+export const SS_MAX_PER_TILE = 1024;
 /** Texels par ligne de tuile : nombre (texel 0), puis 4 indices par texel */
 export const SS_TILE_TEXELS = 1 + SS_MAX_PER_TILE / 4;
 /** Texels RGBA32F par cône (voir le format ci-dessous) */

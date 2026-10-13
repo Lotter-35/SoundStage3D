@@ -51,13 +51,14 @@ export const HAZE_PARAMS_SCHEMA = {
     laserGain:    num(1, 0, 5, 0.05, 'Gain lasers', 'light'),
     sceneGain:    num(1, 0, 10, 0.05, 'Gain lampes posées', 'light'),
 
-    // ── Boîte (espace public + scène par défaut) ──
+    // ── Boîte (scène + public par défaut : x −30…30, y 0…25, z −15…65) ; c'est aussi le volume de la
+    //    lumière indirecte des lyres (grille de GI) ──
     boxX:         num(0, -150, 150, 0.5, 'Centre X', 'box'),
-    boxY:         num(45, -10, 80, 0.5, 'Centre Y', 'box'),
-    boxZ:         num(80, -150, 150, 0.5, 'Centre Z', 'box'),
-    sizeX:        num(100, 1, 300, 0.5, 'Largeur (X)', 'box'),
-    sizeY:        num(90, 1, 120, 0.5, 'Hauteur (Y)', 'box'),
-    sizeZ:        num(200, 1, 300, 0.5, 'Profondeur (Z)', 'box'),
+    boxY:         num(12.5, -10, 80, 0.5, 'Centre Y', 'box'),
+    boxZ:         num(25, -150, 150, 0.5, 'Centre Z', 'box'),
+    sizeX:        num(60, 1, 300, 0.5, 'Largeur (X)', 'box'),
+    sizeY:        num(25, 1, 120, 0.5, 'Hauteur (Y)', 'box'),
+    sizeZ:        num(80, 1, 300, 0.5, 'Profondeur (Z)', 'box'),
     edge:         num(8, 0, 20, 0.1, 'Bords doux (m)', 'box'),
 
     // ── Qualité ──
@@ -69,6 +70,17 @@ export const HAZE_PARAMS_SCHEMA = {
 /** Réglages locaux à chaque machine (jamais synchronisés) */
 // Réglages de qualité propres à chaque joueur (menu ⚙️ Options, jamais synchronisés)
 export const HAZE_LOCAL_KEYS = new Set(['resolution', 'maxLights', 'segments']);
+
+/** Ancienne boîte par défaut (100 × 90 × 200 m, bien plus grande que la fumée visible) : remplacée par la
+ *  nouvelle à la lecture d'un monde enregistré qui l'avait gardée telle quelle */
+const OLD_DEFAULT_BOX = { boxX: 0, boxY: 45, boxZ: 80, sizeX: 100, sizeY: 90, sizeZ: 200 };
+export function migrateHazeBox(p) {
+    if (!p) return p;
+    for (const [k, v] of Object.entries(OLD_DEFAULT_BOX)) if (p[k] !== v) return p;
+    const out = { ...p };
+    for (const k of Object.keys(OLD_DEFAULT_BOX)) out[k] = HAZE_PARAMS_SCHEMA[k].value;
+    return out;
+}
 
 export function defaultHazeParams() {
     const out = {};

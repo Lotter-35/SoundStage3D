@@ -20,21 +20,12 @@
  *      est désactivée ;
  *    - sortie : rgb = faisceaux, a = profondeur linéaire du pixel réduit (pour la remontée bilatérale).
  *
- * 2. HALO ATMOSPHÉRIQUE (createSSHaloMaterial), même résolution : 8 échantillons (disque de Poisson tourné
- *    par pixel) de l'image de la scène + faisceaux, occultation ASYMÉTRIQUE par la profondeur (un objet au
- *    premier plan bloque la lumière de derrière, une lumière devant un mur diffuse librement son halo).
- *    Sortie = faisceaux + halo (tout est additif) : une seule remontée dans la passe finale.
- *    La scène, les faisceaux (SS et classiques) et les taches sont d'abord réduits à la résolution des
- *    faisceaux (createHaloSourceMaterial, 4 lectures bilinéaires par pixel réduit) puis en mipmaps : le halo
- *    lit le niveau dont le flou correspond à l'écart entre ses échantillons (halo lisse, sans grain ; le motif
- *    tourné d'un pixel à l'autre donnait des points avec un grand rayon), et plus l'image pleine résolution
- *    à 8 endroits éloignés par pixel (très coûteux en 4K : le cache ne suit pas).
- *
- * 3. RETOUCHE DES BORDS en pleine résolution (même matériau, define REFINE) : pour chaque pixel, les 2×2 pixels
+ * 2. RETOUCHE DES BORDS en pleine résolution (même matériau, define REFINE) : pour chaque pixel, les 2×2 pixels
  *    réduits voisins ; s'ils sont tous semblables (intérieur d'un faisceau, fond vide), remontée bilatérale 3×3
  *    guidée par la profondeur ; sinon (bord d'un faisceau, faisceau plus fin qu'un pixel réduit près de la
  *    lentille, bord d'objet) les faisceaux de CE pixel sont recalculés exactement. Plus de tache étalée autour
- *    des faisceaux fins, même en ¼. Le halo (basse résolution) est ajouté par interpolation bilinéaire.
+ *    des faisceaux fins, même en ¼. Seulement dans les tuiles où passent peu de cônes (uRefineMax) : avec
+ *    des centaines de cônes (prismes), chaque pixel de bord les recalculait tous (plusieurs ms).
  *    La passe finale (FinalCompositePass) lit cette image en pleine résolution (1 lecture), avant le brouillard
  *    (transmittance et bloom s'appliquent aux faisceaux SS comme aux faisceaux classiques).
  * ─────────────────────────────────────────────────────────────
@@ -57,15 +48,15 @@ const VERT = /* glsl */`
 /**
  * @param {object} [shadowUniforms] uniformes partagés des ombres statiques (SpotShadowAtlas.uniforms)
  * @param {object} [o]
- * @param {boolean} [o.refine] variante de retouche des bords en pleine résolution (voir 3. plus haut)
+ * @param {boolean} [o.refine] variante de retouche des bords en pleine résolution (voir 2. plus haut)
  */
 export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { refine = false } = {}) {
     const occ = occluderUniforms();
     return new THREE.ShaderMaterial({
         defines: refine ? { REFINE: 1 } : {},
         uniforms: {
-            tLow:        { value: null },   // retouche : image réduite finale (faisceaux + halo)
-            tBeamLow:    { value: null },   // retouche : faisceaux seuls (a = profondeur du pixel réduit)
+            tBeamLow:    { value: null },   // retouche : faisceaux réduits (a = profondeur du pixel réduit)
+            uRefineMax:  { value: 24 },     // retouche : nombre de cônes de la tuile au-delà duquel on ne recalcule pas
             uLowScale:   { value: new THREE.Vector2(1, 1) },
             uSharp:      { value: 1.5 },
             ...shadowUniforms,
@@ -235,8 +226,8 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                 gl_FragColor = vec4(shadeBeams(vec2(b) + 1.0, viewDepth, b, d00, d10, d01), viewDepth);
             }
         #else
-            uniform sampler2D tLow;
             uniform sampler2D tBeamLow;
+            uniform int uRefineMax;
             uniform vec2 uLowScale;
             uniform float uSharp;
 
@@ -260,8 +251,14 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                     lMax = max(lMax, l);
                     if (abs(s.a - cz) > 0.1 * cz) depthEdge = true;
                 }
-                vec3 halo = vec3(0.0);
                 bool edge = depthEdge || (lMax > 0.003 && lMax - lMin > 0.2 * lMax);
+                if (edge) {
+                    // Tuile chargée (prismes, dizaines de lyres) : remontée seule
+                    vec2 pc = vec2(p) + 0.5;
+                    ivec2 tile = min(ivec2(pc / uFull * vec2(TILES)), TILES - 1);
+                    int n = int(texelFetch(uSSTiles, ivec2(0, tile.y * TILES.x + tile.x), 0).x);
+                    if (n > uRefineMax) edge = false;
+                }
                 if (!edge) {
                     // Remontée bilatérale 3×3 guidée par la profondeur (comme la passe finale)
                     float sharp = 35.0 * uSharp;
@@ -272,8 +269,9 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                     for (int dy = -1; dy <= 1; dy++) {
                         for (int dx = -1; dx <= 1; dx++) {
                             ivec2 q = clamp(c0 + ivec2(dx, dy), ivec2(0), size - 1);
-                            vec3 c = texelFetch(tLow, q, 0).rgb;
-                            float za = texelFetch(tBeamLow, q, 0).a;
+                            vec4 c4 = texelFetch(tBeamLow, q, 0);
+                            vec3 c = c4.rgb;
+                            float za = c4.a;
                             vec2 d = abs(vec2(float(dx), float(dy)) - f);
                             float ws = max(0.0, 1.0 - d.x) * max(0.0, 1.0 - d.y) + 0.02;
                             float rel = abs(cz - za) / max(cz, 0.5);
@@ -285,119 +283,12 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                     gl_FragColor = vec4(wSum > 1e-3 ? sum / wSum : vec3(0.0), 1.0);
                     return;
                 }
-                // Bord : faisceaux recalculés pour ce pixel ; halo (doux) interpolé depuis l'image réduite
-                halo = max(texture2D(tLow, suv).rgb - texture2D(tBeamLow, suv).rgb, vec3(0.0));
+                // Bord : faisceaux recalculés pour ce pixel
                 ivec2 b = min(p, fullI - 2);
                 float d10 = linZ(b + ivec2(1, 0)), d01 = linZ(b + ivec2(0, 1));
-                gl_FragColor = vec4(shadeBeams(vec2(p) + 0.5, linZ(p), b, linZ(b), d10, d01) + halo, 1.0);
+                gl_FragColor = vec4(shadeBeams(vec2(p) + 0.5, linZ(p), b, linZ(b), d10, d01), 1.0);
             }
         #endif
-        `,
-        depthTest: false,
-        depthWrite: false,
-    });
-}
-
-/** Image source du halo à la résolution des faisceaux : scène (moyenne du bloc de pixels) + classiques + taches */
-export function createHaloSourceMaterial() {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            tScene:     { value: null },
-            tClassic:   { value: null },
-            uClassicOn: { value: 0 },
-            tPool:      { value: null },
-            uPoolOn:    { value: 0 },
-            uPoolScale: { value: new THREE.Vector2(1, 1) },
-            tSS:        { value: null },
-            uFull:      { value: new THREE.Vector2(1, 1) },
-            uDiv:       { value: 3 },
-        },
-        vertexShader: VERT,
-        fragmentShader: /* glsl */`
-            precision highp float;
-            uniform sampler2D tSS;
-            uniform sampler2D tScene;
-            uniform sampler2D tClassic;
-            uniform int uClassicOn;
-            uniform sampler2D tPool;
-            uniform int uPoolOn;
-            uniform vec2 uPoolScale;
-            uniform vec2 uFull;
-            uniform float uDiv;
-            void main() {
-                vec2 uv = gl_FragCoord.xy * uDiv / uFull;        // centre du bloc de pixels pleine résolution
-                // 4 lectures bilinéaires (2×2 texels chacune) réparties sur le bloc : moyenne d'environ div × div pixels
-                vec2 o = vec2(0.25 * uDiv) / uFull;
-                vec3 col = 0.25 * (texture2D(tScene, uv + vec2(-o.x, -o.y)).rgb + texture2D(tScene, uv + vec2(o.x, -o.y)).rgb
-                                 + texture2D(tScene, uv + vec2(-o.x, o.y)).rgb + texture2D(tScene, uv + vec2(o.x, o.y)).rgb);
-                if (uClassicOn == 1) col += texture2D(tClassic, uv).rgb;
-                if (uPoolOn == 1) col += texture2D(tPool, uv * uPoolScale).rgb;
-                col += texelFetch(tSS, ivec2(gl_FragCoord.xy), 0).rgb;   // faisceaux SS (même résolution)
-                gl_FragColor = vec4(col, 1.0);
-            }
-        `,
-        depthTest: false,
-        depthWrite: false,
-    });
-}
-
-export function createSSHaloMaterial() {
-    return new THREE.ShaderMaterial({
-        uniforms: {
-            tSrc:       { value: null },
-            tSS:        { value: null },
-            uFull:      { value: new THREE.Vector2(1, 1) },
-            uLow:       { value: new THREE.Vector2(1, 1) },
-            uDiv:       { value: 3 },
-            uIntensity: { value: 0.5 },
-            uRadius:    { value: 1 },
-        },
-        vertexShader: VERT,
-        fragmentShader: /* glsl */`
-            precision highp float;
-            uniform sampler2D tSrc;
-            uniform sampler2D tSS;
-            uniform vec2 uFull;
-            uniform vec2 uLow;
-            uniform float uDiv;
-            uniform float uIntensity;
-            uniform float uRadius;
-
-            const vec2 POISSON[8] = vec2[8](
-                vec2(-0.326, -0.406), vec2(-0.840, -0.074),
-                vec2(-0.696,  0.457), vec2(-0.203,  0.621),
-                vec2( 0.962, -0.195), vec2( 0.473, -0.480),
-                vec2( 0.519,  0.767), vec2( 0.185, -0.893)
-            );
-
-            void main() {
-                ivec2 lo = ivec2(gl_FragCoord.xy);
-                vec4 c = texelFetch(tSS, lo, 0);
-                float cd = max(c.a, 0.1);
-                vec2 uv = (vec2(lo) + 0.5) * uDiv / uFull;     // position dans l'image pleine résolution
-                vec2 toLow = uFull / (uDiv * uLow);              // uv plein écran → uv de l'image réduite
-                float rad = uRadius * 0.022 / clamp(cd * 0.06, 0.45, 2.5);
-                vec2 st = vec2(rad * uFull.y / uFull.x, rad);
-                // Niveau de mipmap : flou de la taille de l'écart entre échantillons (pas de grain ni de copies
-                // des points brillants, motif identique pour tous les pixels)
-                float lod = log2(max(1.0, rad * uLow.y * 0.6));
-                vec3 accum = vec3(0.0);
-                float wSum = 0.0;
-                for (int i = 0; i < 8; i++) {
-                    vec2 tuv = clamp(uv + POISSON[i] * st, vec2(0.001), vec2(0.999));
-                    float bz = textureLod(tSS, tuv * toLow, 0.0).a;
-                    // Image réduite et floutée : scène + faisceaux (SS et classiques) + taches
-                    vec3 col = textureLod(tSrc, tuv * toLow, lod).rgb;
-                    float dz = max(bz, 0.1) - cd;
-                    // Occultation asymétrique : un objet au premier plan bloque la lumière de derrière ;
-                    // une lumière devant un mur diffuse librement son halo
-                    float wOcc = dz > 0.3 ? exp(-dz * dz * 1.8) : exp(-dz * dz * 0.03);
-                    accum += col * wOcc;
-                    wSum += wOcc;
-                }
-                vec3 glow = wSum > 1e-4 ? accum / wSum : vec3(0.0);
-                gl_FragColor = vec4(c.rgb + glow * (0.45 * clamp(uIntensity * 0.5, 0.0, 0.85)), c.a);
-            }
         `,
         depthTest: false,
         depthWrite: false,
