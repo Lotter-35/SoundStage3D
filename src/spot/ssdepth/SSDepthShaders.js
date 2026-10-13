@@ -20,7 +20,7 @@
  *      est désactivée ;
  *    - sortie : rgb = faisceaux, a = profondeur linéaire du pixel réduit (pour la remontée bilatérale).
  *
- * 2. RETOUCHE DES BORDS en pleine résolution (même matériau, define REFINE) : pour chaque pixel, les 2×2 pixels
+ * 2. RETOUCHE DES BORDS en pleine résolution (même matériau, define REFINE) : pour chaque pixel, les 3×3 pixels
  *    réduits voisins ; s'ils sont tous semblables (intérieur d'un faisceau, fond vide), remontée bilatérale 3×3
  *    guidée par la profondeur ; sinon (bord d'un faisceau, faisceau plus fin qu'un pixel réduit près de la
  *    lentille, bord d'objet) les faisceaux de CE pixel sont recalculés exactement. Plus de tache étalée autour
@@ -240,18 +240,19 @@ export function createSSBeamMaterial(shadowUniforms = createShadowUniforms(), { 
                 vec2 suv = (vec2(p) + 0.5) / uFull * uLowScale;
                 ivec2 size = textureSize(tBeamLow, 0);
                 vec2 pos = suv * vec2(size) - 0.5;
-                ivec2 i0 = ivec2(floor(pos));
-                // Pixels réduits voisins (empreinte bilinéaire 2×2) : semblables ou non ?
+                ivec2 cc = ivec2(floor(pos + 0.5));
+                // Pixels réduits voisins (3×3 autour du plus proche) : tous semblables ou non ? (2×2 ne suffisait pas :
+                // près de la lentille, des pixels juste à côté d'un faisceau fin recevaient sa lumière étalée → points)
                 float lMin = 1e9, lMax = 0.0;
                 bool depthEdge = false;
-                for (int k = 0; k < 4; k++) {
-                    vec4 s = texelFetch(tBeamLow, clamp(i0 + ivec2(k & 1, k >> 1), ivec2(0), size - 1), 0);
+                for (int k = 0; k < 9; k++) {
+                    vec4 s = texelFetch(tBeamLow, clamp(cc + ivec2(k % 3 - 1, k / 3 - 1), ivec2(0), size - 1), 0);
                     float l = lum(s.rgb);
                     lMin = min(lMin, l);
                     lMax = max(lMax, l);
                     if (abs(s.a - cz) > 0.1 * cz) depthEdge = true;
                 }
-                bool edge = depthEdge || (lMax > 0.003 && lMax - lMin > 0.2 * lMax);
+                bool edge = depthEdge || (lMax > 0.003 && lMax - lMin > 0.15 * lMax);
                 if (edge) {
                     // Tuile chargée (prismes, dizaines de lyres) : remontée seule
                     vec2 pc = vec2(p) + 0.5;

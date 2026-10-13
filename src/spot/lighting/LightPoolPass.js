@@ -8,8 +8,9 @@
  * Ajoute aussi le rebond de la lumière indirecte (grille de GI) sur le décor quand la GI est active ; elle
  * tourne alors même sans tache (option « Taches de lumière » désactivée : GI seule).
  *
- * Insérée avant la passe SS Depth ; sortie différée { kind: 'pool' } ajoutée par
- * FinalCompositePass avant le brouillard (pleine résolution : lecture directe ; ½ : remontée bilatérale).
+ * Insérée avant la passe SS Depth ; sortie différée { kind: 'pool' } ajoutée par FinalCompositePass avant le
+ * brouillard. En ½ : retouche des bords en pleine résolution (pixels dont les voisins réduits diffèrent
+ * recalculés exactement, ailleurs remontée bilatérale) → bord des taches net, sans escalier ; lecture directe.
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -51,6 +52,16 @@ export class LightPoolPass extends Pass {
         });
         this.material = createLightPoolMaterial(shadowUniforms, giUniforms);
         this._quad = new FullScreenQuad(this.material);
+        // Retouche des bords (½) : même code, uniformes communs partagés
+        this.refineTarget = new THREE.WebGLRenderTarget(1, 1, {
+            type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
+            minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false,
+        });
+        this.refineMaterial = createLightPoolMaterial(shadowUniforms, giUniforms, { refine: true });
+        for (const k of Object.keys(this.material.uniforms)) {
+            if (!['tLow', 'uLowScale', 'uSharp'].includes(k)) this.refineMaterial.uniforms[k] = this.material.uniforms[k];
+        }
+        this._refineQuad = new FullScreenQuad(this.refineMaterial);
         this._out = { kind: 'pool', texture: null, scale: new THREE.Vector2(1, 1), div: 1, sharpness: 1.5 };
         this._hasOut = false;
     }
@@ -78,6 +89,7 @@ export class LightPoolPass extends Pass {
         this.div = div;
         const w = Math.max(1, Math.ceil(width / div)), h = Math.max(1, Math.ceil(height / div));
         this.target.setSize(w, h);
+        this.refineTarget.setSize(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
         this._out.scale.set(width / (div * w), height / (div * h));
         this._out.div = div;
     }
@@ -116,9 +128,22 @@ export class LightPoolPass extends Pass {
         renderer.setRenderTarget(this.target);
         this._quad.render(renderer);
         if (timer) timer.end();
+        this._out.texture = this.target.texture;
+        this._out.div = this.div;
+        if (this.div > 1) {
+            const r = this.refineMaterial.uniforms;
+            r.tLow.value = this.target.texture;
+            r.uLowScale.value.copy(this._out.scale);
+            r.uSharp.value = this.sharpness;
+            if (timer) timer.begin('Bords des taches');
+            renderer.setRenderTarget(this.refineTarget);
+            this._refineQuad.render(renderer);
+            if (timer) timer.end();
+            this._out.texture = this.refineTarget.texture;
+            this._out.div = 1;
+        }
         renderer.autoClear = oldAutoClear;
 
-        this._out.texture = this.target.texture;
         this._out.sharpness = this.sharpness;
         this._hasOut = true;
     }
@@ -127,5 +152,8 @@ export class LightPoolPass extends Pass {
         this.target.dispose();
         this.material.dispose();
         this._quad.dispose();
+        this.refineTarget.dispose();
+        this.refineMaterial.dispose();
+        this._refineQuad.dispose();
     }
 }

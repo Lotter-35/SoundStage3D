@@ -34,9 +34,13 @@ import { GI_GLSL, createGIUniforms } from '../gi/giGLSL.js';
  * @param {object} [shadowUniforms] uniformes partagés des ombres statiques
  * @param {object} [giUniforms] uniformes partagés de la grille de GI
  */
-export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(), giUniforms = createGIUniforms()) {
+export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(), giUniforms = createGIUniforms(), { refine = false } = {}) {
     return new THREE.ShaderMaterial({
+        defines: refine ? { REFINE: 1 } : {},
         uniforms: {
+            tLow:        { value: null },   // retouche : taches en ½ (a = profondeur)
+            uLowScale:   { value: new THREE.Vector2(1, 1) },
+            uSharp:      { value: 1.5 },
             ...shadowUniforms,
             ...giUniforms,
             uGIGain:     { value: 0 },     // 0 = pas de lumière indirecte
@@ -85,19 +89,15 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
             const float PI = 3.14159265;
             const ivec2 TILES = ivec2(${SS_TILES_X}, ${SS_TILES_Y});
 
-            void main() {
-                ivec2 lo = ivec2(gl_FragCoord.xy);
-                ivec2 fullI = ivec2(uFull);
-                ivec2 c = min(ivec2((vec2(lo) + 0.5) * uDiv), fullI - 1);
-                float depth = linZ(c);
-                if (depth > uFar * 0.98) { gl_FragColor = vec4(0.0, 0.0, 0.0, depth); return; }
+            // Taches (et rebond de la GI) au pixel pleine résolution c, de profondeur linéaire depth
+            vec3 shadePool(ivec2 c, float depth) {
 
                 vec2 pc = vec2(c) + 0.5;
                 ivec2 tile = min(ivec2(pc / uFull * vec2(TILES)), TILES - 1);
                 int tIdx = tile.y * TILES.x + tile.x;
                 int n = uPoolsOn > 0.5 ? int(texelFetch(uPoolTiles, ivec2(0, tIdx), 0).x) : 0;
                 bool gi = uGIGain > 0.0;
-                if (n == 0 && !gi) { gl_FragColor = vec4(0.0, 0.0, 0.0, depth); return; }
+                if (n == 0 && !gi) return vec3(0.0);
 
                 vec3 vp = rayView(pc) * depth;
                 vec3 P = uCamPos + uCamRot * vp;
@@ -183,10 +183,59 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     }
                     acc += gate * brdf * E;
                 }
-                // Garde-fou : une valeur invalide se propagerait au halo et au bloom
+                // Garde-fou : une valeur invalide se propagerait au bloom
                 if (any(isnan(acc)) || any(isinf(acc))) acc = vec3(0.0);
-                gl_FragColor = vec4(min(acc, vec3(60000.0)), depth);
+                return min(acc, vec3(60000.0));
             }
+
+        #ifndef REFINE
+            void main() {
+                ivec2 lo = ivec2(gl_FragCoord.xy);
+                ivec2 fullI = ivec2(uFull);
+                ivec2 c = min(ivec2((vec2(lo) + 0.5) * uDiv), fullI - 1);
+                float depth = linZ(c);
+                if (depth > uFar * 0.98) { gl_FragColor = vec4(0.0, 0.0, 0.0, depth); return; }
+                gl_FragColor = vec4(shadePool(c, depth), depth);
+            }
+        #else
+            // Retouche des bords en pleine résolution : pixels dont les 3×3 voisins réduits diffèrent (bord d'une
+            // tache, d'une ombre, d'un objet) recalculés exactement ; ailleurs remontée bilatérale guidée par la profondeur
+            uniform sampler2D tLow;
+            uniform vec2 uLowScale;
+            uniform float uSharp;
+            void main() {
+                ivec2 p = ivec2(gl_FragCoord.xy);
+                float depth = linZ(p);
+                if (depth > uFar * 0.98) { gl_FragColor = vec4(0.0); return; }
+                float cz = max(depth, 0.1);
+                vec2 suv = (vec2(p) + 0.5) / uFull * uLowScale;
+                ivec2 size = textureSize(tLow, 0);
+                vec2 pos = suv * vec2(size) - 0.5;
+                ivec2 cc = ivec2(floor(pos + 0.5));
+                vec2 f = pos - vec2(cc);
+                float lMin = 1e9, lMax = 0.0;
+                bool depthEdge = false;
+                float sharp = 35.0 * uSharp;
+                vec3 sum = vec3(0.0);
+                float wSum = 0.0;
+                for (int k = 0; k < 9; k++) {
+                    ivec2 o = ivec2(k % 3 - 1, k / 3 - 1);
+                    vec4 s = texelFetch(tLow, clamp(cc + o, ivec2(0), size - 1), 0);
+                    float l = s.r + s.g + s.b;
+                    lMin = min(lMin, l);
+                    lMax = max(lMax, l);
+                    float rel = abs(cz - s.a) / max(cz, 0.5);
+                    if (rel > 0.1) depthEdge = true;
+                    vec2 d = abs(vec2(o) - f);
+                    float w = (max(0.0, 1.0 - d.x) * max(0.0, 1.0 - d.y) + 0.02) * exp(-rel * rel * sharp);
+                    sum += s.rgb * w;
+                    wSum += w;
+                }
+                bool edge = depthEdge || (lMax > 0.003 && lMax - lMin > 0.15 * lMax);
+                if (!edge) { gl_FragColor = vec4(wSum > 1e-3 ? sum / wSum : vec3(0.0), 1.0); return; }
+                gl_FragColor = vec4(shadePool(p, depth), 1.0);
+            }
+        #endif
         `,
         depthTest: false,
         depthWrite: false,
