@@ -143,6 +143,7 @@ export class SpotBatch {
         this._prism = this._makeVolumeLayer(variant({ prism: true }), 16);
         this._bars = this._makeVolumeLayer(variant({ bar: true }), 8);
         this.volumeMaterial.uniforms.uDebugCost = { value: 0 };   // vue « coût des lyres » (render/costDebug.js)
+        this.volumeMaterial.uniforms.uInsideRow = { value: -1 };  // rendu Analytique : lyre dans laquelle est la caméra
         // Rendu « Analytique » (sans marche dans la fumée) : mêmes uniformes, même passe
         this._analytic = this._makeVolumeLayer(createAnalyticBeamMaterial(this.volumeMaterial.uniforms), 64);
         this._layers = [this._plain, this._prism, this._bars, this._analytic];

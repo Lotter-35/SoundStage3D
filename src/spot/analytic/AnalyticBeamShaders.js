@@ -12,6 +12,9 @@
  *     répartis en 1/z quand le rayon remonte le faisceau (l'éclairement en 1/z² est alors intégré exactement) :
  *     nombre de calculs FIXE par pixel et par facette, sans bruit ni grain ;
  *   - cône coupé au sol (y = 0) dans le shader de sommets : rien n'est calculé sous la surface ;
+ *   - caméra DANS un faisceau (une seule lyre, choisie par SpotManager : uInsideRow) : 12 points réguliers et une
+ *     ombre par point pour cette lyre (le rayon remonte tout le faisceau : avec 2 à 4 points, le bord de l'iris
+ *     faisait un disque en marches) ; les autres lyres gardent 2 à 4 points (coût borné au milieu des faisceaux) ;
  *   - prisme + frost fort (≥ 60 %) : les facettes se fondent dans le flou → UN cône (l'enveloppe) et 4 points
  *     le long du rayon, l'image des facettes lue d'un coup à chaque point (1 lecture d'atlas par facette) ;
  *     ombre, diffusion et fondu une fois par point. Sans frost fort, le prisme net garde un cône par facette ;
@@ -97,6 +100,8 @@ export function createAnalyticBeamMaterial(uniforms) {
             uniform vec3 uBoxMax[${MAX_OCCLUDERS}];
             uniform sampler2D uGateAtlas;
             uniform float uDebugCost;   // vue « coût des lyres » : travail du pixel au lieu de la lumière
+            uniform float uInsideRow;   // ligne de la lyre dans laquelle est la caméra (−1 : aucune) : 12 points
+            const int NQ_INSIDE = 12;
             flat varying vec4 vLens;
             flat varying vec4 vAxis;
             flat varying vec4 vRight;
@@ -255,8 +260,10 @@ export function createAnalyticBeamMaterial(uniforms) {
                 bool hasCube = SH.w > 0.5;
                 bool hasOcc = !hasCube && T8.x >= 0.0;
                 gSH = SH; gT8 = T8; gLens = lens; gSlot = shSlot; gHasCube = hasCube; gHasOcc = hasOcc;
-                // Faisceau ouvert, ou motif noyé dans un frost fort : profil lisse, 2 points suffisent ; motif net : 4
-                int NQ = (aPlain || aFrostBlur >= 0.25) ? 2 : 4;
+                // Faisceau ouvert, ou motif noyé dans un frost fort : profil lisse, 2 points suffisent ; motif net : 4 ;
+                // lyre dans laquelle est la caméra : 12 points réguliers, ombre à chaque point
+                bool inside = abs(float(row) - uInsideRow) < 0.5;
+                int NQ = inside ? NQ_INSIDE : (aPlain || aFrostBlur >= 0.25) ? 2 : 4;
 
                 // Prisme : faisceau central (poids T9.z, 1 sans prisme) + facettes (décalage v en unités de fenêtre)
                 int pCount = int(T9.x + 0.5);
@@ -293,8 +300,12 @@ export function createAnalyticBeamMaterial(uniforms) {
                         float extraBlur = sweep < 8.0 ? sweep * 0.12 : 0.96;
                         vec3 acc = vec3(0.0);
                         bool has0 = false, has1 = false, lit0 = true, lit1 = true;
-                        for (int s = 0; s < 4; s++) {
-                            float x = GX[s];
+                        int NE = inside ? NQ_INSIDE : 4;
+                        if (inside) extraBlur *= 0.33;
+                        for (int s = 0; s < NQ_INSIDE; s++) {
+                            if (s >= NE) break;
+                            float x = inside ? (float(s) + 0.5) / float(NE) : GX[s];
+                            float wq = inside ? 1.0 / float(NE) : GW[s];
                             float t = imp ? (1.0 / mix(uIn, uOut, x) - zc0) / dz : mix(tin, tout, x);
                             vec3 P = ro + rd * t;
                             vec3 lp = P - apexC;
@@ -315,7 +326,10 @@ export function createAnalyticBeamMaterial(uniforms) {
                             work += 1.0 + 0.25 * float(pCount);
                             if (gate.r + gate.g + gate.b < 1e-5) continue;
                             bool lit;
-                            if (s < 2) {
+                            if (inside) {
+                                lit = litAt(P);
+                                if (hasCube || hasOcc) work += 1.0;
+                            } else if (s < 2) {
                                 if (!has0) { lit0 = litAt(P); has0 = true; if (hasCube || hasOcc) work += 1.0; }
                                 lit = lit0;
                             } else {
@@ -326,7 +340,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                             float fade = 1.0 - smoothstep(fadeStart, beamEnd, zl);
                             float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                             float e = imp ? 1.0 : 1.0 / (zA * zA);
-                            acc += gate * (GW[s] * e * fade * phase(cosT));
+                            acc += gate * (wq * e * fade * phase(cosT));
                         }
                         float span = imp ? abs(uIn - uOut) / abs(dz) : (tout - tin);
                         vec3 Pm = ro + rd * (0.5 * (tin + tout));
@@ -372,10 +386,11 @@ export function createAnalyticBeamMaterial(uniforms) {
 
                     vec3 acc = vec3(0.0);
                     bool has0 = false, has1 = false, lit0 = true, lit1 = true;
-                    for (int s = 0; s < 4; s++) {
+                    if (inside) extraBlur *= 0.33;
+                    for (int s = 0; s < NQ_INSIDE; s++) {
                         if (s >= NQ) break;
-                        float x = NQ == 2 ? (s == 0 ? 0.2113249 : 0.7886751) : GX[s];
-                        float wq = NQ == 2 ? 0.5 : GW[s];
+                        float x = inside ? (float(s) + 0.5) / float(NQ) : NQ == 2 ? (s == 0 ? 0.2113249 : 0.7886751) : GX[s];
+                        float wq = inside ? 1.0 / float(NQ) : NQ == 2 ? 0.5 : GW[s];
                         float t = imp ? (1.0 / mix(uIn, uOut, x) - zc0) / dz : mix(tin, tout, x);
                         vec3 P = ro + rd * t;
                         vec3 lp = P - apexC;
@@ -389,7 +404,10 @@ export function createAnalyticBeamMaterial(uniforms) {
                         if (gate.r + gate.g + gate.b < 1e-5) continue;
                         // Ombre : une lecture par moitié du segment, réutilisée par les autres points de la moitié
                         bool lit;
-                        if (s < NQ / 2) {
+                        if (inside) {
+                            lit = litAt(P);
+                            if (hasCube || hasOcc) work += 1.0;
+                        } else if (s < NQ / 2) {
                             if (!has0) { lit0 = litAt(P); has0 = true; if (hasCube || hasOcc) work += 1.0; }
                             lit = lit0;
                         } else {

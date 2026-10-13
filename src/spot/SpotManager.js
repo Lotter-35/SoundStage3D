@@ -131,6 +131,27 @@ export class SpotManager {
         return false;
     }
 
+    /**
+     * Lyre en rendu Analytique dans le faisceau de laquelle se trouve la caméra (la plus lumineuse si plusieurs) :
+     * sa ligne de paramètres, ou −1. Elle seule reçoit 12 points le long du rayon (AnalyticBeamShaders.js).
+     */
+    _insideAnalyticRow() {
+        const c = this.camera.position;
+        let best = -1, bestFlux = 0;
+        for (const s of this._spots.values()) {
+            if (!s.analytic || s.flux <= 1e-4) continue;
+            const dx = c.x - s.lensPos.x, dy = c.y - s.lensPos.y, dz = c.z - s.lensPos.z;
+            const z = dx * s.axis.x + dy * s.axis.y + dz * s.axis.z;
+            if (z <= 0 || z > SPOT_BEAM_RANGE) continue;
+            // Cône enveloppe (prisme compris) : tan dans la ligne de paramètres (T9.y)
+            const tanEnv = this.batch.paramsRow(s.row)[37] || s.tanLight;
+            const r = LENS_RADIUS + z * tanEnv;
+            if (dx * dx + dy * dy + dz * dz - z * z > r * r) continue;
+            if (s.flux > bestFlux) { bestFlux = s.flux; best = s.row; }
+        }
+        return best;
+    }
+
     /** Branche une autre famille de projecteurs sur le batch des faisceaux (barres LED…) */
     addSource(source) {
         this._sources.push(source);
@@ -418,6 +439,7 @@ export class SpotManager {
         else u.uWind.value.set(this._time * 0.18, this._time * 0.04, this._time * 0.13);
         u.uTime.value = this._time;
         u.uDebugCost.value = costDebug.on ? 1 : 0;   // vue « coût des lyres » (faisceaux classiques et analytiques)
+        u.uInsideRow.value = this._insideAnalyticRow();   // 12 points pour la lyre dans laquelle est la caméra
 
         this.volumePass.enabled = this._hasPass && this.batch.volumeCount > 0;
         // Ombres statiques : emplacements, invalidations (lyre déplacée, décor modifié), quelques cuissons
