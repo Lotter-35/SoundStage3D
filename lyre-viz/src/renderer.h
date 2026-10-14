@@ -55,6 +55,11 @@ struct RenderSettings {
     int floor_aniso = 4;          // filtrage anisotrope du sol (1 a 16, fixe au lancement) : 4 = meme image que 16, 3 x moins cher
     bool chroma = false;          // aberration chromatique de l'optique : franges colorees au bord des taches et des gobos (coupee : +0,5 a +0,9 ms avec gobo + prisme)
     float chroma_strength = 1.0f; // intensite (1 = lyre courante)
+    // lasers (PLAN-LASERS.md : segments d'eventail analytiques, tuiles en calcul)
+    bool lasers = true;           // lasers dans la fumee
+    float laser_gain = 1.0f;      // intensite des faisceaux dans la fumee (multiplicateur)
+    float laser_width_px = 0.6f;  // largeur minimale d'un trait (sigma de la gaussienne, en pixels)
+    float laser_air = 0.0005f;    // diffusion de l'air (par m) : traits visibles meme sans fumee
     // (laterale, prisme, axiale, active) pour les shaders : voir beam_pattern_rgb
     void chroma_params(float out[4]) const {
         const float k = chroma ? chroma_strength : 0.0f;
@@ -80,7 +85,16 @@ struct RenderStats {
     int mirror_beams = 0;         // reflet du sol mouille : faisceaux visibles dans le reflet
     int occluded_lights = 0;      // lyres avec un obstacle (ombre) dans leur cone
     int occ_pairs = 0;            // paires (lyre, pave) : volumes d'ombre
+    // lasers
+    int laser_segments = 0;       // segments d'eventail envoyes au GPU
+    int laser_tiles_x = 0, laser_tiles_y = 0;
+    // compteurs (--stats) : lus quelques images plus tard
+    double laser_tile_pairs = 0;  // tuiles de 16 px : couples (tuile, segment)
+    int laser_tile_max = 0;       // segments au plus dans une tuile
+    int laser_tiles_hit = 0;      // tuiles touchees par au moins un segment
 };
+
+struct LaserRig;
 
 class Renderer {
   public:
@@ -88,7 +102,8 @@ class Renderer {
     void shutdown();
     // Prepare et soumet toutes les passes. 'ui' est appele dans la passe finale (ImGui).
     void render(const Camera& cam, const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const FogSim& fog,
-                const FogSettings& fs, const RenderSettings& rs, int width, int height, float time, void (*ui)());
+                const FogSettings& fs, const RenderSettings& rs, int width, int height, float time, void (*ui)(),
+                const LaserRig* lasers = nullptr);
     RenderStats stats;
     void reset_quality() {
         quality = 1.0f;
@@ -244,6 +259,19 @@ class Renderer {
     sg_pipeline pip_vol_ambient = {}, pip_beams = {}, pip_temporal = {}, pip_composite = {};
     sg_pipeline pip_bloom_down = {}, pip_bloom_up = {}, pip_final = {};
     sg_pipeline pip_beams_m = {}, pip_beams_an_m = {}, pip_refl_compose = {}, pip_refl_mask = {}, pip_refl_block = {};   // passe miroir
+
+    // lasers : segments d'eventail (voir shaders, section 10)
+    static constexpr int MAX_LASER_SEGS = 8192, LASER_CAP = 4096;   // LASER_CAP : comme le shader
+    sg_buffer laser_buf = {}, laser_scr_buf = {}, laser_stats_buf = {};
+    sg_view laser_view = {}, laser_scr_view = {}, laser_stats_view = {};
+    sg_buffer laser_ccount_buf = {}, laser_clist_buf = {};   // grosses tuiles (128 px) : nombre et liste
+    sg_view laser_ccount_view = {}, laser_clist_view = {};
+    int laser_ctx = 0, laser_cty = 0;                        // grosses tuiles allouees
+    sg_image laser_img = {};                                 // tuiles en calcul : lasers du pixel (RGBA16F)
+    sg_view laser_store = {}, laser_tex = {};
+    std::vector<float> laser_data;                           // sb_laser_t[] (20 flottants)
+    sg_pipeline pip_laser_setup = {}, pip_laser_bin = {}, pip_laser_shade = {};
+    sg_pipeline pip_laser_shade_grad = {};   // variante avec degrades (couleur au bord 1)
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;

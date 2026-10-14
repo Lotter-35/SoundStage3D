@@ -44,8 +44,12 @@ static void* g_prev_foreground = nullptr;
 static bool g_bench_requested = false;
 static int g_demo = -1;           // --demo [variante] : vue d'essai des gobos au sol (aberration chromatique)
 static void setup_demo();
+static int g_demo_laser = -1;     // --demo-laser [variante] : vues d'essai des lasers (formes, degrades, programmation)
+static bool g_cam_set = false;    // --cam x,y,z,cap,site : camera au lancement (cap et site en degres)
+static float g_cam[5];
+static void setup_demo_laser();
 static std::string g_shot_path;
-static bool g_stats = false;      // --stats : compte les couples (pixel, faisceau) de la fumee   // --shot fichier.bmp : capture de la derniere image (avec --frames)
+static bool g_stats = false;      // --stats : compte les couples (pixel, faisceau) de la fumee et des lasers
 
 // ---------------------------------------------------------------------------------------------
 //  Banc d'essai (--bench) : vues et scenarios fixes, pas de temps constant (resultats
@@ -62,7 +66,11 @@ const View VIEWS[] = {
     {"public", {30, 1.8f, 0}, PI, 0.08f},                    // du fond de la salle vers la scene
     {"scene", {-30, 3.0f, 2}, 0.0f, 0.12f},                  // de la scene vers la salle
     {"sous les trusses", {8, 2.0f, 0}, PI * 0.85f, 0.75f},   // vers le haut, dans les faisceaux
+    // banc des lasers
+    {"dans les nappes", {8, 1.7f, 0.3f}, PI, 0.25f},         // L3 : au milieu des rideaux
+    {"gros plan", {14, 12.5f, -2.2f}, PI * 0.93f, -0.32f},   // L5 : nappe vue de pres, en biais
 };
+enum { V_PUBLIC = 0, V_SCENE, V_TRUSSES, V_INSIDE, V_CLOSEUP };
 
 // Scenarios de lyres
 enum { SC_DEFAULT = 0, SC_GOBO_PRISM, SC_FROST_WIDE, SC_COUNT };
@@ -90,10 +98,18 @@ struct Case {
     std::string name;
     int view, scenario;
     void (*opts)(RenderSettings&);
+    // banc des lasers (--bench-lasers)
+    int lasers = LP_OFF;     // motif
+    int laser_count = 200;   // boitiers allumes
+    int lyres = 200;         // lyres allumees (une sur deux pour 100)
+    float fog = 1.0f;        // multiplicateur de la densite de la fumee
 };
 std::vector<Case> cases;
 bool active = false;
 bool quick = false;
+std::vector<int> only;     // --cases 3,14 : seulement ces cas (numeros de la liste complete)
+bool laser_bench = false;   // --bench-lasers : cas L1 a L6 et M1 (PLAN-LASERS.md, section 10)
+FogSettings fog_defaults;
 bool frozen = false;   // --static : lyres et fumee immobiles (comparaison d'images sans mouvement)
 std::string dir = "bench";
 int index = -1, frame_in_case = 0;
@@ -104,12 +120,49 @@ std::map<std::string, std::vector<float>> samples;
 std::vector<std::string> order;
 std::vector<float> totals, cpu_frames;
 std::vector<float> cpu_rig, cpu_fog, cpu_render, cpu_wait, cpu_total, beam_frags, gpu_gaps, outside;
+std::vector<float> cpu_laser, laser_pairs, laser_tile_avg, laser_tile_max, laser_tiles_hit;
 FILE* frames_csv = nullptr;   // une ligne par image (diagnostic)
 unsigned last_id = 0;
 FILE* out = nullptr;
 RenderSettings defaults;
 
+// Banc des lasers : lasers seuls (lyres eteintes), puis le mix 100 lyres + 100 lasers, puis la scene sans lasers.
+void build_laser_cases() {
+    auto L = [](const char* name, int view, int pattern, int count = 200, int lyres = 0, float fog = 1.0f) {
+        Case c{name, view, SC_DEFAULT, nullptr};
+        c.lasers = pattern;
+        c.laser_count = count;
+        c.lyres = lyres;
+        c.fog = fog;
+        cases.push_back(c);
+    };
+    L("L1 eventails 200 x 1000 traits / public", V_PUBLIC, LP_FANS);
+    if (!quick) {
+        L("L1 eventails 200 x 1000 traits / scene", V_SCENE, LP_FANS);
+        L("L1 eventails 200 x 1000 traits / sous les trusses", V_TRUSSES, LP_FANS);
+    }
+    L("L2 cones 200 x 32 segments / public", V_PUBLIC, LP_CONES);
+    if (!quick) L("L2 cones 200 x 32 segments / scene", V_SCENE, LP_CONES);
+    L("L3 camera dans les nappes", V_INSIDE, LP_CURTAINS);
+    L("L4 200 x 8 traits separes / public", V_PUBLIC, LP_BEAMS);
+    if (!quick) {
+        L("L5 nappes en gros plan, fumee epaisse", V_CLOSEUP, LP_CLOSEUP, 200, 0, 4.0f);
+        L("L6 traits vers le sol et les obstacles / public", V_PUBLIC, LP_FLOOR);
+    }
+    L("M1 100 lyres + 100 lasers / public", V_PUBLIC, LP_FANS, 100, 100);
+    if (quick) return;
+    L("M1 100 lyres + 100 lasers / scene", V_SCENE, LP_FANS, 100, 100);
+    L("M1 100 lyres + 100 lasers / sous les trusses", V_TRUSSES, LP_FANS, 100, 100);
+    L("sans lasers (scene seule) / public", V_PUBLIC, LP_OFF);
+    // programmeur : formes, degrades, diffraction et effets sur les 200 boitiers (lasers seuls)
+    L("L7 programmeur : formes, degrades, effets / public", V_PUBLIC, LP_PROGRAM);
+}
+
 void build_cases() {
+    if (laser_bench) {
+        build_laser_cases();
+        return;
+    }
     for (int sc = 0; sc < SC_COUNT; sc++)
         for (int v = 0; v < (quick ? 1 : 3); v++) cases.push_back({std::string(SC_NAMES[sc]) + " / " + VIEWS[v].name, v, sc, nullptr});
     if (quick) return;
@@ -129,6 +182,17 @@ void start_case() {
     app.rs = defaults;
     if (c.opts) c.opts(app.rs);
     apply_scenario(c.scenario);
+    // banc des lasers : lyres allumees (toutes, une sur deux ou aucune), motif des lasers, fumee
+    if (c.lyres < 200)
+        for (size_t i = 0; i < app.rig.fixtures.size(); i++)
+            if (c.lyres <= 0 || (i & 1)) app.rig.fixtures[i].base.dimmer = 0;
+    app.lasers.pattern = c.lasers;
+    app.lasers.count = c.laser_count;
+    if (c.lasers == LP_PROGRAM) app.lasers.program_showcase();
+    app.lasers.time = 0;
+    app.lasers.update(0.0f, 0.0f, app.scene.bounds_min, app.scene.bounds_max);   // galvos en place
+    app.fog_settings = fog_defaults;
+    app.fog_settings.density *= c.fog;
     app.rig.instant_moves = true;
     app.rig.update(0);
     app.rig.instant_moves = false;
@@ -154,6 +218,7 @@ void start_case() {
     beam_frags.clear();
     gpu_gaps.clear();
     outside.clear();
+    for (std::vector<float>* v : {&cpu_laser, &laser_pairs, &laser_tile_avg, &laser_tile_max, &laser_tiles_hit}) v->clear();
 }
 
 void log(const char* fmt, ...) {
@@ -173,8 +238,15 @@ void log(const char* fmt, ...) {
 void begin() {
     active = true;
     defaults = app.rs;
+    fog_defaults = app.fog_settings;
     app.show_ui = false;
     build_cases();
+    if (!only.empty()) {
+        std::vector<Case> kept;
+        for (int k : only)
+            if (k >= 1 && k <= (int)cases.size()) kept.push_back(cases[k - 1]);
+        cases = kept;
+    }
 #if defined(_WIN32)
     std::string cmd = "mkdir \"" + dir + "\" 2>nul";
 #else
@@ -211,6 +283,15 @@ void after_frame(int w, int h) {
         cpu_render.push_back(app.timings.render_cpu_ms - gpuprof::last_wait_ms());
         cpu_wait.push_back(gpuprof::last_wait_ms());
         cpu_total.push_back(app.timings.cpu_ms - gpuprof::last_wait_ms());
+        cpu_laser.push_back(app.timings.laser_ms);
+        {
+            // chaque couple (tuile, segment) calcule les 256 pixels de la tuile
+            const RenderStats& rs = app.renderer.stats;
+            laser_pairs.push_back((float)(rs.laser_tile_pairs * 256.0));
+            laser_tile_avg.push_back(rs.laser_tiles_hit > 0 ? (float)(rs.laser_tile_pairs / rs.laser_tiles_hit) : 0.0f);
+            laser_tile_max.push_back((float)rs.laser_tile_max);
+            laser_tiles_hit.push_back((float)rs.laser_tiles_hit);
+        }
         if (gpuprof::last_id() != last_id) {
             last_id = gpuprof::last_id();
             for (const gpuprof::Section& s : gpuprof::last()) {
@@ -237,7 +318,11 @@ void after_frame(int w, int h) {
     // aux autres programmes qui utilisent la carte).
     const double frame_ms = mean(cpu_frames);
     const double gpu_ms = mean(totals);
-    if (index == 0) log("LyreViz banc d'essai : %d x %d, %d lyres\n", w, h, (int)app.rig.fixtures.size());
+    if (index == 0) {
+        if (laser_bench)
+            log("LyreViz banc d'essai lasers : %d x %d, %d emplacements de lasers\n", w, h, (int)app.lasers.mounts.size());
+        else log("LyreViz banc d'essai : %d x %d, %d lyres\n", w, h, (int)app.rig.fixtures.size());
+    }
     log("\n[%02d] %s\n  image : %.2f ms (%.1f img/s)   GPU : %.2f ms (mediane %.2f)\n", index + 1, c.name.c_str(), frame_ms,
         1000.0 / frame_ms, gpu_ms, median(totals));
     for (const std::string& n : order) log("    %-26s %7.3f ms   (moyenne %.3f)\n", n.c_str(), median(samples[n]), mean(samples[n]));
@@ -250,6 +335,15 @@ void after_frame(int w, int h) {
     log("  Fumee : %.1f millions de couples (pixel, faisceau) calcules ; faisceaux par niveau %d / %d / %d ; tables : %d lignes, %.2f millions de cases, echelle %.2f\n",
         median(beam_frags) / 1e6, app.renderer.stats.tier_count[0], app.renderer.stats.tier_count[1], app.renderer.stats.tier_count[2],
         app.renderer.stats.table_rows, app.renderer.stats.table_cells / 1e6, app.renderer.stats.table_scale);
+    if (laser_bench) {
+        log("  Lasers : %d boitiers, %d segments, %d traits ; moteur CPU %.3f ms\n", app.lasers.lit, app.renderer.stats.laser_segments,
+            app.lasers.total_traits, mean(cpu_laser));
+        if (g_stats && app.renderer.stats.laser_segments > 0)
+            log("  Lasers (compteurs) : %.0f tuiles de 16 px touchees sur %d, %.1f segments par tuile touchee (%.0f au plus) ; "
+                "%.1f millions de couples (pixel, segment)\n",
+                median(laser_tiles_hit), app.renderer.stats.laser_tiles_x * app.renderer.stats.laser_tiles_y, median(laser_tile_avg),
+                median(laser_tile_max), median(laser_pairs) / 1e6);
+    }
     index++;
     if (index >= (int)cases.size()) {
         if (out) std::fclose(out);
@@ -303,6 +397,7 @@ static void init() {
 
     app.scene.build();
     app.rig.build(app.scene);
+    app.lasers.build(app.scene);
     app.gobos.generate();
     if (!app.floor.load(g_exe_path, 0.32f)) std::printf("Sol : texture non chargee (%s), beton uni\n", app.floor.error.c_str());
     app.fog.init(app.scene.bounds_min, app.scene.bounds_max);
@@ -311,6 +406,13 @@ static void init() {
     gpuprof::enable_stats(g_stats);
     app.cam.update_basis();
     if (g_demo >= 0) setup_demo();
+    if (g_demo_laser >= 0) setup_demo_laser();
+    if (g_cam_set) {
+        app.cam.pos = {g_cam[0], g_cam[1], g_cam[2]};
+        app.cam.yaw = g_cam[3] * DEG;
+        app.cam.pitch = g_cam[4] * DEG;
+        app.cam.update_basis();
+    }
     if (g_bench_requested) bench::begin();
     std::printf("LyreViz : %d lyres, %d objets statiques, backend %d\n", (int)app.rig.fixtures.size(),
                 (int)app.scene.cubes.size(), (int)sg_query_backend());
@@ -403,9 +505,15 @@ static void frame() {
     app.fog.update(app.paused ? 0.0f : dt, app.fog_settings);
     app.timings.fog_ms = (float)stm_ms(stm_since(tf));
 
+    const uint64_t tl = stm_now();
+    app.lasers.update(app.time, app.paused ? 0.0f : dt, app.scene.bounds_min, app.scene.bounds_max);
+    app.lasers.housings(app.renderer.dyn_cubes);
+    app.timings.laser_ms = (float)stm_ms(stm_since(tl));
+
     const uint64_t tg = stm_now();
     simgui_flush();   // prepare l'interface (hors passe de rendu)
-    app.renderer.render(app.cam, app.scene, app.rig, app.gobos, app.fog, app.fog_settings, app.rs, w, h, app.time, [] { simgui_draw(); });
+    app.renderer.render(app.cam, app.scene, app.rig, app.gobos, app.fog, app.fog_settings, app.rs, w, h, app.time, [] { simgui_draw(); },
+                        &app.lasers);
     app.timings.render_cpu_ms = (float)stm_ms(stm_since(tg));
 
     app.timings.cpu_ms = (float)stm_ms(stm_since(t0));
@@ -597,6 +705,67 @@ static void setup_demo() {
     app.paused = true;
 }
 
+// --demo-laser : vues d'essai des lasers, lyres eteintes, effets figes (captures avec --frames et --shot).
+//   0 formes : 7 lasers du pont de scene, une forme chacun (eventail, double eventail, cone, tunnel, vague,
+//     grille de points, eventail en reseau de diffraction x9), vus depuis le public ;
+//   1 degrades : 6 eventails du pont (uni, 2 couleurs, 3 couleurs, defilant, arc-en-ciel, aleatoire par trait) ;
+//   2 programmation de demonstration sur les 200 lasers (cas L7 du banc), vue du public.
+static void setup_demo_laser() {
+    for (Fixture& f : app.rig.fixtures) f.base.dimmer = 0;
+    app.rig.effects.clear();
+    LaserRig& lr = app.lasers;
+    lr.pattern = LP_PROGRAM;
+    if (g_demo_laser == 2) {
+        lr.program_showcase();
+        app.cam.pos = {30, 1.8f, 0};
+        app.cam.yaw = PI;
+        app.cam.pitch = 0.08f;
+    } else {
+        lr.effects.clear();
+        for (LaserFixture& f : lr.fixtures) {
+            f.base = LaserParams();
+            f.base.dimmer = 0;
+        }
+        // lasers du pont de scene (groupe 4, 16 boitiers) : un sur deux a partir du 2e
+        std::vector<int> pont;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++)
+            if (lr.fixtures[i].mount.group == 4) pont.push_back(i);
+        const int nshow = g_demo_laser == 0 ? 7 : 6;
+        for (int k = 0; k < nshow; k++) {
+            LaserParams& p = lr.fixtures[pont[1 + 2 * k]].base;
+            p.dimmer = 1;
+            p.opening = 30;
+            p.traits = 400;
+            p.tilt = -6;
+            if (g_demo_laser == 0) {
+                static const vec3 cols[7] = {{0, 1, 0}, {0, 0.6f, 1}, {1, 0, 0}, {1, 0.5f, 0}, {0, 1, 0.3f}, {1, 0.85f, 0.2f}, {1, 0, 1}};
+                p.color = cols[k];
+                p.shape = k < 6 ? k : LS_FAN;
+                if (p.shape == LS_CONE || p.shape == LS_TUNNEL) p.opening = 16;
+                if (p.shape == LS_GRID) { p.traits = 25; p.shape_param = 5; p.opening = 14; }
+                if (p.shape == LS_WAVE) { p.shape_param = 4; p.wave_cycles = 3; }
+                if (k == 6) { p.diffraction = 9; p.diffraction_angle = 9; p.opening = 8; p.traits = 100; }
+            } else {
+                p.shape = LS_FAN;
+                p.gradient = k;
+                p.color = {1, 0, 0};
+                p.color2 = {0, 0.4f, 1};
+                p.color3 = {0, 1, 0};
+                if (k == LG_RANDOM) p.traits = 12;
+            }
+        }
+        app.cam.pos = {-8, 6.0f, 0};
+        app.cam.yaw = PI;
+        app.cam.pitch = 0.05f;
+    }
+    app.cam.update_basis();
+    app.rig.instant_moves = true;
+    app.rig.update(0);
+    app.rig.instant_moves = false;
+    lr.update(0.0f, 0.0f, app.scene.bounds_min, app.scene.bounds_max);
+    app.paused = true;
+}
+
 // --set nom=valeur : change un reglage de l'onglet Rendu au lancement (mesures, comparaisons).
 static bool set_render_option(RenderSettings& r, const char* kv) {
     const char* eq = std::strchr(kv, '=');
@@ -626,6 +795,14 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "shadows") r.shadows = v != 0;
     else if (k == "chroma") r.chroma = v != 0;
     else if (k == "chromaforce") r.chroma_strength = v;
+    // lasers
+    else if (k == "lasers") r.lasers = v != 0;
+    else if (k == "lasergain") r.laser_gain = v;
+    else if (k == "laserwidth") r.laser_width_px = v;
+    else if (k == "laserair") r.laser_air = v;
+    else if (k == "laserpattern") app.lasers.pattern = (int)v;
+    else if (k == "lasercount") app.lasers.count = (int)v;
+    else if (k == "laserpower") app.lasers.power_w = v;
     // fumee
     else if (k == "density") app.fog_settings.density = v;
     else if (k == "haze") app.fog_settings.haze = v;
@@ -645,7 +822,15 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) app.rs.render_scale = (float)std::atof(argv[++i]);
         else if (!std::strcmp(argv[i], "--fullscreen")) g_fullscreen = true;
         else if (!std::strcmp(argv[i], "--bench")) { g_bench_requested = true; g_novsync = true; }
+        else if (!std::strcmp(argv[i], "--bench-lasers")) { g_bench_requested = true; g_novsync = true; bench::laser_bench = true; }
         else if (!std::strcmp(argv[i], "--quick")) bench::quick = true;
+        else if (!std::strcmp(argv[i], "--cases") && i + 1 < argc) {
+            for (const char* c = argv[++i]; *c;) {
+                bench::only.push_back(std::atoi(c));
+                while (*c && *c != ',') c++;
+                if (*c == ',') c++;
+            }
+        }
         else if (!std::strcmp(argv[i], "--fast")) {
             bench::WARMUP = 30;
             bench::MEASURE = 60;
@@ -656,6 +841,13 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         else if (!std::strcmp(argv[i], "--demo")) {
             g_demo = 0;
             if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') g_demo = std::atoi(argv[++i]);
+        }
+        else if (!std::strcmp(argv[i], "--cam") && i + 1 < argc) {
+            g_cam_set = std::sscanf(argv[++i], "%f,%f,%f,%f,%f", &g_cam[0], &g_cam[1], &g_cam[2], &g_cam[3], &g_cam[4]) == 5;
+        }
+        else if (!std::strcmp(argv[i], "--demo-laser")) {
+            g_demo_laser = 0;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') g_demo_laser = std::atoi(argv[++i]);
         }
         else if (!std::strcmp(argv[i], "--shot") && i + 1 < argc) g_shot_path = argv[++i];
         else if (!std::strcmp(argv[i], "--benchdir") && i + 1 < argc) bench::dir = argv[++i];

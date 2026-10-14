@@ -44,9 +44,12 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `--fullscreen` | Plein écran, à la résolution de l'écran. |
   | `--set nom=valeur` | Change un réglage au lancement (voir la liste ci-dessous). Exemple : `--set gi=0 --set analytic=0`. |
   | `--bench` | Banc d'essai (voir plus bas). |
+  | `--bench-lasers` | Banc d'essai des lasers (voir plus bas). Mêmes options que `--bench`. |
   | `--fast` | Banc rapide : 30 images de chauffe et 60 mesurées par cas (au lieu de 60 et 150). |
   | `--behind` | La fenêtre s'ouvre derrière les autres sans prendre le clavier. Attention : le GPU est alors 5 à 15 % plus lent (Windows donne la priorité à la fenêtre active). |
   | `--demo [0..5]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large, 4 pont de scène en orange (gobo barres, zoom 2,2°, tilt 69°) : taches très allongées vues en rasant ; 5 eau au sol (6 taches blanches larges, avec `--set wet=...`). |
+  | `--demo-laser [0..2]` | Vue d'essai des lasers, lyres éteintes, effets figés : 0 les formes (éventail, double éventail, cône, tunnel, vague, grille, diffraction ×9) sur le pont de scène ; 1 les dégradés (aucun, 2 et 3 couleurs, défilant, arc-en-ciel, au hasard) ; 2 la programmation de démonstration sur les 200 lasers (cas L7 du banc), vue du public. |
+  | `--cam x,y,z,cap,site` | Place la caméra au lancement (position en mètres, cap et site en degrés ; cap 180 = vers la scène). Exemple : `--demo-laser 0 --cam 6,1.7,0,180,9`. |
 
   Réglages de `--set` :
 
@@ -66,6 +69,9 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `shadows` | Ombres exactes des obstacles (1) ou non (0). |
   | `chroma`, `chromaforce` | Aberration chromatique des lyres sur les surfaces (0 par défaut, 1 active) et son intensité (1 = lyre courante). |
   | `flooraniso` | Filtrage anisotrope de la texture du sol (1 à 16, 4 par défaut). |
+  | `lasers` | Lasers dans la fumée (1 par défaut) ou coupés (0). |
+  | `laserpattern`, `lasercount`, `laserpower` | Pilotage des lasers (0 éteints, 1 à 6 : motifs des cas L1 à L6, 7 : programmeur de l'onglet Lasers), boîtiers allumés dans les motifs d'essai (1 à 200), puissance d'un boîtier (W). |
+  | `lasergain`, `laserwidth`, `laserair` | Intensité des lasers dans la fumée, largeur minimale d'un trait (sigma, en pixels, 0,6 par défaut), diffusion de l'air (traits visibles sans fumée). |
 
 ### Banc d'essai
 
@@ -87,7 +93,7 @@ LyreViz.exe --bench --fullscreen
   - détail du temps CPU, qualité adaptative, nombre de faisceaux par niveau de résolution.
 - `bench/images.csv` : les temps image par image.
 - La dernière image de chaque cas est enregistrée (`bench/01.bmp`, …) pour comparer deux versions.
-- `--quick` : seulement la vue public (3 cas). `--benchdir dossier` : dossier de sortie. Les options `--set` s'appliquent à tous les cas.
+- `--quick` : seulement la vue public (3 cas). `--cases 2,5` : seulement ces cas (numéros du banc complet). `--benchdir dossier` : dossier de sortie. Les options `--set` s'appliquent à tous les cas.
 - `--static` : lyres et fumée immobiles, pour comparer des images sans mouvement. `--stats` : compte les couples (pixel, faisceau) de la fumée (ralentit un peu).
 - Les mesures varient de 10 à 20 % d'un lancement à l'autre (fréquence de la carte, autres programmes) : pour comparer deux versions, les lancer en alternance plusieurs fois.
 - Comparer deux versions (temps et écart entre les images) :
@@ -95,6 +101,17 @@ LyreViz.exe --bench --fullscreen
 ```bat
 python tools\compare_bench.py bench\avant bench\apres --diff bench\ecarts
 ```
+
+### Banc d'essai des lasers
+
+```bat
+LyreViz.exe --bench-lasers --fullscreen
+```
+
+- Cas (`PLAN-LASERS.md`, section 10) : L1 200 éventails de 1 000 traits en mouvement (3 vues), L2 200 cônes de 32 segments (2 vues), L3 caméra au milieu des nappes, L4 200 × 8 traits séparés, L5 nappes en gros plan dans une fumée épaisse, L6 traits vers le sol et les obstacles, M1 100 lyres + 100 lasers (3 vues), la scène sans lasers, puis L7 la programmation de démonstration (toutes les formes, dégradés, diffraction et effets sur les 200 lasers, vue du public). Lyres éteintes sauf en M1.
+- `--quick` : 5 cas (L1, L2 et M1 vus du public, L3, L4). Les autres options sont celles du banc des lyres ; `--stats` compte aussi les couples (pixel, segment) des lasers et les segments par tuile.
+- Même format de sortie que le banc des lyres, avec une ligne « Lasers » par cas : boîtiers, segments, traits, temps CPU du moteur laser.
+- Scripts : option `-Lasers` de `tools\perf_ab.ps1` et `tools\set_ab.ps1` (voir `PERFORMANCE.md`).
 
 ## Commandes
 
@@ -133,6 +150,19 @@ Chaque lyre a les canaux d'une vraie lyre :
 - roue de 14 gobos, avec indexation et rotation ;
 - prismes 3, 6, 8, **9 (8 + centre)**, **9 (grille 3×3)** et linéaire 4, avec écartement et rotation ;
 - zoom (de 1,5 à 50°), mise au point (le gobo est net à une distance donnée, flou ailleurs), frost et iris.
+
+### Lasers (étapes 1 et 2 de `PLAN-LASERS.md`)
+
+- 200 boîtiers : 168 sur les trusses (entre les lyres), 16 sur le pont de scène, 8 au sol de la scène, 8 en nez de scène. Chaque boîtier est fixe (axe d'accroche par groupe) et place sa figure dans le champ de son scanner (angle maximal réglable, 60° par défaut), avec l'inertie des galvos. Les corps des boîtiers sont dessinés (pavés sombres, sortie claire).
+- **Onglet Lasers** (même principe que les lyres) :
+  - sélection : tous, groupes, une sur deux, inverser, ou laser par laser ;
+  - intensité : dimmer, strobe ; couleur (nuancier) et **dégradé le long de la figure** : aucun, 2 ou 3 couleurs, défilant, arc-en-ciel, au hasard par trait ;
+  - **figure** : éventail, double éventail, cône, tunnel, vague, grille de points ; ouverture (0 = un point, jusqu'à l'angle maximal), nombre de traits (1 à 2 000), écart, amplitude, rangées ; **réseau de diffraction** ×3, ×5, ×9 avec l'écart des copies ;
+  - position : pan, tilt, roulis, rotation continue ;
+  - **effets** sur la sélection (même moteur que les lyres : forme d'onde, vitesse, amplitude, décalage, ailes) : vagues pan et tilt, cercle, huit, éventail, roulis, pulsation de l'ouverture, chenillard de traits, chenillard d'intensité, arc-en-ciel, alternance de deux couleurs ;
+  - réglages des boîtiers : pilotage (programmeur ou motifs d'essai du banc), programmation de départ, démonstration, grand master, puissance, angle maximal, inertie des galvos, diamètre de sortie, divergence ; dans la fumée : intensité, largeur minimale d'un trait, diffusion de l'air.
+- Au lancement : le pont et le nez de scène en éventails verts qui balaient lentement.
+- Pas encore : volutes de fumée fine, blanc à la sortie, impacts sur les surfaces, éblouissement (étapes suivantes du plan).
 
 ### Panneau
 
@@ -189,9 +219,10 @@ Toutes les passes sont dans `shaders/lyreviz.glsl`. Voici une image, étape par 
    - Chaque cône s'arrête là où il est entièrement sorti du hangar (sol, murs, toit). Au-delà, il serait de toute façon caché.
    - Les faisceaux sans détail fin à l'écran (frost, flou, très larges) sont calculés à 1/2 ou 1/4 de cette résolution, puis ajoutés en tenant compte de la profondeur.
    - La lumière indirecte diffusée par la fumée est ajoutée dans la même passe.
-7. **Accumulation temporelle.** Elle lisse le bruit qui reste (lumière indirecte de la fumée).
-8. **Composition.** La scène est atténuée par la fumée, puis la lumière diffusée est agrandie en tenant compte de la profondeur.
-9. **Bloom, puis image finale.**
+7. **Lasers dans la fumée** (tuiles en calcul, pleine résolution, voir plus bas).
+8. **Accumulation temporelle.** Elle lisse le bruit qui reste (lumière indirecte de la fumée).
+9. **Composition.** La scène est atténuée par la fumée, puis la lumière diffusée est agrandie en tenant compte de la profondeur ; les lasers sont ajoutés.
+10. **Bloom, puis image finale.**
 
 ### Calcul analytique des faisceaux
 
@@ -204,6 +235,24 @@ C'est ce qui rend les gobos, les prismes et le frost presque gratuits dans la fu
 - Ce qui varie lentement (densité de la fumée, diffusion, atténuation, distance) est pris au milieu de quelques morceaux du rayon.
 - La table existe en plusieurs niveaux de flou, pour la mise au point et le frost.
 - L'ancien calcul par échantillons reste disponible : décocher « calcul analytique » dans l'onglet Rendu.
+
+### Lasers : segments d'éventail analytiques
+
+Un laser balaie une figure avec un seul faisceau : tout se décompose en **segments d'éventail** plans (une source, n traits répartis entre deux directions). Le coût ne dépend pas du nombre de traits : 200 lasers de 1 000 traits font 200 segments.
+
+- **Un segment dans un rayon de la caméra** (`laser_eval`) : le rayon traverse le plan de l'éventail en P. Près de P, les traits sont presque parallèles. Chaque trait est une gaussienne autour de sa droite (formule des « photon beams », Jarosz 2011 : noyau / sinus de l'angle rayon–trait). Leur somme se calcule en forme fermée :
+  - traits séparés à l'écran (plus de 4 pixels d'écart) : les gaussiennes des traits voisins ;
+  - traits serrés : la nappe (puissance / (ouverture × distance × |n·v|)), plus l'ondulation des traits (somme de Poisson). Elle s'efface quand les traits se serrent ou quand leur écart à l'écran approche 2 pixels : aucun moiré.
+- **Largeur minimale qui conserve l'énergie** : un trait plus fin qu'un pixel devient plus large (0,6 pixel) et plus sombre. Largeur physique : sortie de 5 mm, divergence de 1 mrad.
+- **Diffusion vers l'avant** (même réglage que la fumée des lyres) et atténuation. La fumée est encore uniforme (moyenne de la pièce, plus la diffusion de l'air) : ses amas et les volutes viendront à l'étape 3.
+- **Tuiles en calcul** (`cs_laser_setup`, `cs_laser_bin`, `cs_laser_shade`) :
+  - chaque segment devient un polygone à l'écran : son triangle coupé par les parois du hangar (rien n'est visible au-delà), le plan proche et l'écran élargi, puis bordé de 3,5 largeurs de trait ;
+  - tri par grosses tuiles de 128 pixels, puis chaque tuile de 16 pixels garde les siens ;
+  - chaque pixel additionne tous ses segments dans ses registres et écrit une seule fois. Pas de mélange additif : il coûtait à lui seul environ 2,8 ms sur le cas L1 (voir `PERFORMANCE.md`).
+- La caméra est exprimée une fois par image dans le repère de chaque segment (CPU) : par pixel, il ne reste qu'à exprimer le rayon dans ce repère.
+- **Nappe lisse** (traits confondus, cas le plus courant) : 4 opérations spéciales seulement ; les bords sont testés avec le sinus des angles vus de la source (sinus et cosinus de la demi-ouverture calculés une fois par segment).
+- **Éventails de 16 traits au plus** : un segment par trait. À l'écran, chaque trait n'occupe qu'une bande fine : seules les tuiles qu'elle traverse le calculent, et un pixel hors de la bande est rejeté en 3 opérations (cas L4 : 4 fois plus rapide). Chaque trait est alors calculé exactement (point le plus proche du rayon), ce qui donne aussi des traits propres là où ils se rejoignent, près de la source.
+- Chaque fil calcule 2 pixels (8 lignes d'écart) : chaque segment est lu une fois en mémoire partagée pour les deux. 1 ou 4 pixels par fil sont plus lents (mesuré).
 
 ### Ombres des obstacles
 
@@ -313,11 +362,13 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 | `src/ui.cpp` | Panneau de contrôle. |
 | `src/gpu_profiler.cpp` | Temps GPU par passe, limiteur de latence et capture d'image (Direct3D 11). |
 | `src/floor_texture.cpp` | Chargement de la texture du sol (stb_image), mipmaps, couleur du sol pour les rebonds. |
+| `src/lasers.cpp` | Lasers : emplacements des 200 boîtiers, programmeur (formes, dégradés, diffraction, effets, galvos), motifs d'essai, découpage en segments d'éventail. |
 | `assets/Concrete031/` | Texture du sol (ambientCG, CC0). |
 | `shaders/lyreviz.glsl` | Tous les shaders (passes ci-dessus). |
 | `tools/compare_bench.py` | Compare deux résultats du banc d'essai (temps et images). |
 | `tools/perf_ab.ps1`, `tools/perf_report.py` | Compare deux versions en les lançant en alternance (voir `PERFORMANCE.md`). |
 | `tools/set_ab.ps1` | Compare deux jeux de réglages avec le même exécutable : coût d'une option seule. |
+| `tools/nettoyer_bench.py` | Liste les résultats de banc inutiles (non cités dans les documents ni dans l'historique) ; `--supprimer` les efface. |
 | `tools/historique.py`, `historique_perf.xlsx` | Historique des performances : chaque modification mesurée y est ajoutée (évolution des img/s). |
 | `PERFORMANCE.md` | Comment mesurer : procédure, valeurs de référence, pièges. À suivre pour toute nouvelle fonctionnalité. |
 
@@ -341,3 +392,4 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 - **Aberration chromatique :** sur les surfaces seulement (pas dans la fumée, où elle serait invisible). Coupée par défaut (+0,5 à +0,8 ms avec gobo + prisme 8 sur toutes les lyres).
 - **Gobos personnels :** pas encore de chargement de vos propres images de gobo.
 - **Art-Net / DMX :** pas de pilotage par une vraie console. Non prévu pour l'instant.
+- **Lasers :** étapes 1 et 2 de `PLAN-LASERS.md` (rendu par tuiles, moteur et onglet Lasers). Encore au-dessus du budget dans les cas lourds : lasers seuls 5,2 à 7,8 ms sur L1 (200 × 1 000 traits, selon la vue), 8,2 à 8,5 ms sur L2 (cônes), 5,3 ms sur L3, 15,4 ms sur L7 (démonstration : presque tous les lasers, figures larges braquées vers le public), pour ~4,6 ms disponibles ; L4 (traits séparés) 1,2 ms ; mix 100 lyres + 100 lasers à 8,1 – 11 ms au total. Puissance provisoire (pas encore en watts par couleur), fumée uniforme, pas d'impacts sur les surfaces.

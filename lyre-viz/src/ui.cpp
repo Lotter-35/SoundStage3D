@@ -213,6 +213,191 @@ void fog_ui() {
     if (ImGui::Button("Vider (aerer)")) app.fog.clear();
 }
 
+// ---------------------------------------------------------------------------------------------
+//  Onglet Lasers : selection, programmeur, effets, boitiers (meme organisation que les lyres)
+// ---------------------------------------------------------------------------------------------
+#define LAPPLY(field, value) app.lasers.for_selected([&](LaserParams& q) { q.field = (value); })
+
+const Swatch LASER_SWATCHES[] = {
+    {"Rouge", {1, 0, 0}},   {"Orange", {1, 0.35f, 0}}, {"Jaune", {1, 0.85f, 0}}, {"Vert", {0, 1, 0}},
+    {"Cyan", {0, 1, 1}},    {"Bleu", {0, 0.25f, 1}},   {"Violet", {0.6f, 0, 1}}, {"Magenta", {1, 0, 1}},
+    {"Blanc", {1, 1, 1}},
+};
+
+void laser_selection_ui() {
+    LaserRig& lr = app.lasers;
+    ImGui::Text("Selection : %d / %d lasers", lr.selected_count(), (int)lr.fixtures.size());
+    if (ImGui::Button("Tous##l")) lr.select_all(true);
+    ImGui::SameLine();
+    if (ImGui::Button("Aucun##l")) lr.select_all(false);
+    ImGui::SameLine();
+    if (ImGui::Button("Inverser##l")) lr.invert_selection();
+    ImGui::SameLine();
+    if (ImGui::Button("1 sur 2 (paires)##l")) lr.select_odd_even(false);
+    ImGui::SameLine();
+    if (ImGui::Button("Impaires##l")) lr.select_odd_even(true);
+    ImGui::TextDisabled("Groupes (Ctrl + clic pour ajouter) :");
+    for (int g = 0; g < (int)lr.group_names.size(); g++) {
+        if (g > 0 && g % 4 != 0) ImGui::SameLine();
+        char id[64];
+        std::snprintf(id, sizeof(id), "%s##lg", lr.group_names[g].c_str());
+        if (ImGui::Button(id)) lr.select_group(g, ImGui::GetIO().KeyCtrl);
+    }
+    if (ImGui::TreeNode("Selection fine (un par un)##l")) {
+        for (int g = 0; g < (int)lr.group_names.size(); g++) {
+            ImGui::TextDisabled("%s", lr.group_names[g].c_str());
+            int k = 0;
+            for (size_t i = 0; i < lr.fixtures.size(); i++) {
+                LaserFixture& f = lr.fixtures[i];
+                if (f.mount.group != g) continue;
+                if (k % 14 != 0) ImGui::SameLine();
+                char id[32];
+                std::snprintf(id, sizeof(id), "##lf%d", (int)i);
+                ImGui::PushStyleVar(ImGuiStyleVar_FramePadding, ImVec2(2, 2));
+                ImGui::Checkbox(id, &f.selected);
+                ImGui::PopStyleVar();
+                if (ImGui::IsItemHovered()) ImGui::SetTooltip("Laser %d", (int)i + 1);
+                k++;
+            }
+        }
+        ImGui::TreePop();
+    }
+}
+
+void laser_programmer_ui() {
+    LaserRig& lr = app.lasers;
+    const int first = lr.first_selected();
+    if (first < 0) {
+        ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "Selectionnez des lasers pour les regler.");
+        return;
+    }
+    LaserParams p = lr.fixtures[first].base;   // valeurs affichees : le 1er laser selectionne
+
+    ImGui::SeparatorText("Intensite##l");
+    if (ImGui::SliderFloat("Dimmer##l", &p.dimmer, 0, 1)) LAPPLY(dimmer, p.dimmer);
+    if (ImGui::SliderFloat("Strobe (Hz)##l", &p.strobe, 0, 25, p.strobe <= 0.05f ? "ouvert" : "%.1f Hz")) LAPPLY(strobe, p.strobe);
+    if (ImGui::Button("Plein feu##l")) { LAPPLY(dimmer, 1.0f); LAPPLY(strobe, 0.0f); }
+    ImGui::SameLine();
+    if (ImGui::Button("Noir##l")) LAPPLY(dimmer, 0.0f);
+
+    ImGui::SeparatorText("Couleur##l");
+    if (ImGui::ColorEdit3("Couleur##l", &p.color.x)) LAPPLY(color, p.color);
+    for (int i = 0; i < (int)(sizeof(LASER_SWATCHES) / sizeof(LASER_SWATCHES[0])); i++) {
+        if (i % 9 != 0) ImGui::SameLine();
+        const vec3& c = LASER_SWATCHES[i].c;
+        char id[48];
+        std::snprintf(id, sizeof(id), "%s##ls", LASER_SWATCHES[i].name);
+        if (ImGui::ColorButton(id, ImVec4(c.x, c.y, c.z, 1), 0, ImVec2(26, 20))) LAPPLY(color, c);
+    }
+    if (ImGui::Combo("Degrade##l", &p.gradient, LASER_GRADIENT_NAMES, LG_COUNT)) LAPPLY(gradient, p.gradient);
+    if (p.gradient == LG_TWO || p.gradient == LG_THREE || p.gradient == LG_SCROLL)
+        if (ImGui::ColorEdit3("Couleur 2##l", &p.color2.x)) LAPPLY(color2, p.color2);
+    if (p.gradient == LG_THREE)
+        if (ImGui::ColorEdit3("Couleur 3##l", &p.color3.x)) LAPPLY(color3, p.color3);
+    if (p.gradient == LG_SCROLL || p.gradient == LG_RAINBOW)
+        if (ImGui::SliderFloat("Defilement##l", &p.gradient_speed, -2, 2, "%.2f cycle/s")) LAPPLY(gradient_speed, p.gradient_speed);
+
+    ImGui::SeparatorText("Figure##l");
+    if (ImGui::Combo("Forme##l", &p.shape, LASER_SHAPE_NAMES, LS_COUNT)) LAPPLY(shape, p.shape);
+    if (ImGui::SliderFloat("Ouverture##l", &p.opening, 0, lr.max_angle, p.opening <= 0.05f ? "un point" : "%.1f deg")) LAPPLY(opening, p.opening);
+    if (ImGui::SliderInt("Traits##l", &p.traits, 1, 2000, "%d", ImGuiSliderFlags_Logarithmic)) LAPPLY(traits, p.traits);
+    if (p.shape == LS_DOUBLE_FAN && ImGui::SliderFloat("Ecart des deux eventails##l", &p.shape_param, 0, 40, "%.1f deg")) LAPPLY(shape_param, p.shape_param);
+    if (p.shape == LS_WAVE) {
+        if (ImGui::SliderFloat("Amplitude de la vague##l", &p.shape_param, 0, 20, "%.1f deg")) LAPPLY(shape_param, p.shape_param);
+        if (ImGui::SliderFloat("Ondulations##l", &p.wave_cycles, 0.5f, 6, "%.1f")) LAPPLY(wave_cycles, p.wave_cycles);
+    }
+    if (p.shape == LS_GRID) {
+        int rows = (int)std::lround(p.shape_param);
+        if (ImGui::SliderInt("Rangees##l", &rows, 2, 16)) LAPPLY(shape_param, (float)rows);
+    }
+    static const char* DIFF_NAMES[] = {"aucun", "x3", "x5", "x9"};
+    int di = p.diffraction >= 9 ? 3 : (p.diffraction >= 5 ? 2 : (p.diffraction >= 3 ? 1 : 0));
+    if (ImGui::Combo("Reseau de diffraction##l", &di, DIFF_NAMES, 4)) {
+        static const int DV[] = {1, 3, 5, 9};
+        LAPPLY(diffraction, DV[di]);
+    }
+    if (p.diffraction > 1 && ImGui::SliderFloat("Ecart des copies##l", &p.diffraction_angle, 1, 30, "%.1f deg")) LAPPLY(diffraction_angle, p.diffraction_angle);
+
+    ImGui::SeparatorText("Position##l");
+    const float hf = 0.5f * lr.max_angle;
+    if (ImGui::SliderFloat("Pan##l", &p.pan, -hf, hf, "%.1f deg")) LAPPLY(pan, p.pan);
+    if (ImGui::SliderFloat("Tilt##l", &p.tilt, -hf, hf, "%.1f deg")) LAPPLY(tilt, p.tilt);
+    if (ImGui::SliderFloat("Roulis##l", &p.roll, -180, 180, "%.0f deg")) LAPPLY(roll, p.roll);
+    if (ImGui::SliderFloat("Rotation continue##l", &p.roll_speed, -360, 360, "%.0f deg/s")) LAPPLY(roll_speed, p.roll_speed);
+    if (ImGui::Button("Centre (0 / 0 / 0)##l")) { LAPPLY(pan, 0.0f); LAPPLY(tilt, 0.0f); LAPPLY(roll, 0.0f); LAPPLY(roll_speed, 0.0f); }
+}
+
+void laser_effects_ui() {
+    LaserRig& lr = app.lasers;
+    static int new_type = 0;
+    ImGui::SetNextItemWidth(220);
+    ImGui::Combo("##ltype", &new_type, LASER_EFFECT_NAMES, LFX_COUNT);
+    ImGui::SameLine();
+    if (ImGui::Button("Ajouter sur la selection##l")) {
+        if (lr.selected_count() > 0) lr.add_effect(new_type);
+    }
+    if (lr.selected_count() == 0) ImGui::TextDisabled("(selectionnez des lasers d'abord)");
+    if (ImGui::Button("Supprimer tous les effets##l")) lr.effects.clear();
+    int remove = -1;
+    for (int i = 0; i < (int)lr.effects.size(); i++) {
+        Effect& e = lr.effects[i];
+        ImGui::PushID(1000 + i);
+        char title[96];
+        std::snprintf(title, sizeof(title), "%s  (%d lasers)###lfx", e.name.c_str(), (int)e.fixtures.size());
+        if (ImGui::CollapsingHeader(title, ImGuiTreeNodeFlags_DefaultOpen)) {
+            ImGui::Checkbox("Actif", &e.enabled);
+            ImGui::SameLine();
+            if (ImGui::Button("Reprendre la selection")) {
+                e.fixtures.clear();
+                for (size_t k = 0; k < lr.fixtures.size(); k++) if (lr.fixtures[k].selected) e.fixtures.push_back((int)k);
+            }
+            ImGui::SameLine();
+            if (ImGui::Button("Supprimer")) remove = i;
+            ImGui::Combo("Forme", &e.wave, WAVE_NAMES, WAVE_COUNT);
+            ImGui::SliderFloat("Vitesse", &e.speed, 0, 3, "%.2f cycle/s");
+            const bool angle = e.type <= LFX_ROLL;
+            if (angle) ImGui::SliderFloat("Amplitude", &e.size, 0, e.type == LFX_ROLL ? 180.0f : 60.0f, "%.0f deg");
+            else if (e.type == LFX_TRAIT_CHASE) ImGui::SliderFloat("Largeur de la vague", &e.size, 0.02f, 1);
+            else if (e.type != LFX_COLOR_ALT) ImGui::SliderFloat("Amplitude", &e.size, 0, 1);
+            ImGui::SliderFloat("Decalage", &e.spread, 0, 720, "%.0f deg");
+            ImGui::SliderInt("Ailes", &e.wings, 1, 8);
+            if (e.wave == WAVE_SQUARE) ImGui::SliderFloat("Rapport cyclique", &e.duty, 0.05f, 0.95f);
+            if (e.type == LFX_COLOR_ALT) {
+                ImGui::ColorEdit3("Couleur A", &e.color_a.x);
+                ImGui::ColorEdit3("Couleur B", &e.color_b.x);
+            }
+        }
+        ImGui::PopID();
+    }
+    if (remove >= 0) lr.effects.erase(lr.effects.begin() + remove);
+}
+
+void laser_global_ui() {
+    LaserRig& lr = app.lasers;
+    RenderSettings& r = app.rs;
+    ImGui::SeparatorText("Boitiers");
+    ImGui::Combo("Pilotage##l", &lr.pattern, LASER_PATTERN_NAMES, LP_COUNT);
+    if (lr.pattern != LP_PROGRAM && lr.pattern != LP_OFF)
+        ImGui::SliderInt("Boitiers allumes (motif d'essai)", &lr.count, 1, (int)lr.mounts.size());
+    if (ImGui::Button("Programmation de depart##l")) lr.program_default();
+    ImGui::SameLine();
+    if (ImGui::Button("Demonstration (toutes les formes)##l")) lr.program_showcase();
+    ImGui::SliderFloat("Grand master##l", &lr.master, 0, 1);
+    ImGui::SliderFloat("Puissance d'un boitier", &lr.power_w, 0.05f, 30, "%.2f W", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderFloat("Angle maximal du scanner", &lr.max_angle, 10, 90, "%.0f deg");
+    ImGui::SliderFloat("Inertie des galvos", &lr.galvo_ms, 0, 100, "%.0f ms");
+    ImGui::SliderFloat("Diametre de sortie", &lr.aperture_mm, 1, 20, "%.1f mm");
+    ImGui::SliderFloat("Divergence", &lr.divergence_mrad, 0.2f, 5, "%.2f mrad");
+    ImGui::Checkbox("Afficher les boitiers##l", &lr.show_housings);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d allumes, %d segments, %d traits)", lr.lit, app.renderer.stats.laser_segments, lr.total_traits);
+    ImGui::SeparatorText("Dans la fumee");
+    ImGui::Checkbox("Lasers dans la fumee", &r.lasers);
+    ImGui::SliderFloat("Intensite dans la fumee", &r.laser_gain, 0.01f, 100, "x %.2f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderFloat("Largeur minimale d'un trait", &r.laser_width_px, 0.3f, 2.0f, "%.2f pixel");
+    ImGui::SliderFloat("Diffusion de l'air", &r.laser_air, 0, 0.005f, "%.4f /m");
+}
+
 void render_ui() {
     RenderSettings& r = app.rs;
     const Timings& t = app.timings;
@@ -278,6 +463,9 @@ void render_ui() {
     ImGui::SliderFloat("Eau au sol", &r.floor_wet, 0, 1, r.floor_wet <= 0.001f ? "sec" : "%.2f");
     ImGui::Checkbox("Afficher les lyres", &r.show_fixtures);
     ImGui::SliderFloat("Eclat des lentilles", &r.lens_glow, 0, 4);
+    ImGui::Checkbox("Lasers dans la fumee (reglages : onglet Lasers)", &r.lasers);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d segments, %d traits)", s.laser_segments, app.lasers.total_traits);
     ImGui::SeparatorText("Image");
     ImGui::SliderFloat("Exposition", &r.exposure, 0.05f, 8, "%.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("Lumiere ambiante", &r.ambient, 0, 0.05f, "%.4f", ImGuiSliderFlags_Logarithmic);
@@ -313,6 +501,14 @@ void draw_ui() {
         }
         if (ImGui::BeginTabItem("Effets")) {
             effects_ui();
+            ImGui::EndTabItem();
+        }
+        if (ImGui::BeginTabItem("Lasers")) {
+            laser_selection_ui();
+            laser_programmer_ui();
+            ImGui::SeparatorText("Effets des lasers");
+            laser_effects_ui();
+            laser_global_ui();
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Fumee")) {

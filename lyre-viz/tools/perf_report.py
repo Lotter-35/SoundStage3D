@@ -39,8 +39,9 @@ def main():
         runs = f"A {['%.1f' % x for x in a['gpu']]} B {['%.1f' % x for x in b['gpu']]}"
         print(f"[{k:02d}] {a['name'][:40]:<40} GPU {ga:6.2f} -> {gb:6.2f} ms ({pct:+5.1f} %)  "
               f"img/s {1000 / max(mean(a['frame']), 1e-3):5.0f} -> {1000 / max(mean(b['frame']), 1e-3):5.0f}  {runs}")
-        for n in a['passes']:
-            va, vb = mean(a['passes'][n]), mean(b['passes'].get(n, []))
+        # passes de A, puis celles qui n'existent que dans B (une nouvelle passe, une autre methode)
+        for n in list(a['passes']) + [n for n in b['passes'] if n not in a['passes']]:
+            va, vb = mean(a['passes'].get(n, [])), mean(b['passes'].get(n, []))
             if va > 0.25 or vb > 0.25:
                 print(f"      {n:<30} {va:6.2f} -> {vb:6.2f}")
 

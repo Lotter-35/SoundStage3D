@@ -114,7 +114,7 @@ void Rig::aim_angles(const Fixture& f, vec3 target, float& pan, float& tilt) con
     if (best == 1e30f) { pan = p0; tilt = t0; }
 }
 
-static float wave_value(int wave, float phase, float duty) {
+float effect_wave(int wave, float phase, float duty) {
     float f = fractf(phase);
     switch (wave) {
         case WAVE_TRIANGLE: return 1.0f - 4.0f * std::fabs(f - 0.5f);
@@ -122,6 +122,15 @@ static float wave_value(int wave, float phase, float duty) {
         case WAVE_SAW: return 2.0f * f - 1.0f;
         default: return std::sin(2.0f * PI * f);
     }
+}
+
+float effect_phase(const Effect& e, int i, int n) {
+    const int wings = std::max(1, e.wings);
+    const float pos = n > 1 ? (float)i / (float)n : 0.0f;
+    const float seg = pos * wings;
+    float local = fractf(seg);
+    if (((int)seg) & 1) local = 1.0f - local;
+    return e.phase + local * e.spread / 360.0f;
 }
 
 void Rig::update(float dt) {
@@ -136,17 +145,12 @@ void Rig::update(float dt) {
         e.phase += e.speed * dt;
         if (!e.enabled || e.fixtures.empty()) continue;
         int n = (int)e.fixtures.size();
-        int wings = std::max(1, e.wings);
         for (int i = 0; i < n; i++) {
             int idx = e.fixtures[i];
             if (idx < 0 || idx >= (int)fixtures.size()) continue;
             FixtureParams& o = fixtures[idx].out;
-            float pos = n > 1 ? (float)i / (float)n : 0.0f;
-            float seg = pos * wings;
-            float local = fractf(seg);
-            if (((int)seg) & 1) local = 1.0f - local;
-            float ph = e.phase + local * e.spread / 360.0f;
-            float w = wave_value(e.wave, ph, e.duty);
+            float ph = effect_phase(e, i, n);
+            float w = effect_wave(e.wave, ph, e.duty);
             float w01 = 0.5f + 0.5f * w;
             switch (e.type) {
                 case FX_CIRCLE:
@@ -161,7 +165,7 @@ void Rig::update(float dt) {
                     break;
                 case FX_FAN: {
                     float centered = n > 1 ? 2.0f * (float)i / (float)(n - 1) - 1.0f : 0.0f;
-                    float amount = e.speed > 0 ? wave_value(e.wave, e.phase, e.duty) : 1.0f;
+                    float amount = e.speed > 0 ? effect_wave(e.wave, e.phase, e.duty) : 1.0f;
                     o.pan += e.size * centered * amount;
                     break;
                 }

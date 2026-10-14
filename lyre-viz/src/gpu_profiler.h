@@ -1,6 +1,7 @@
 // Chronometrage GPU par passe (requetes "timestamp") et capture de l'image affichee.
 // Disponible sous Direct3D 11 ; sur les autres API les fonctions ne font rien (available() = false).
 #pragma once
+#include "sokol_gfx.h"
 #include <string>
 #include <vector>
 
@@ -30,6 +31,10 @@ void stats_end();
 double last_fragments();
 // Le comptage des pixels calcules ralentit le GPU : desactive par defaut (--stats pour l'activer).
 void enable_stats(bool on);
+bool stats_enabled();
+// Lit les 4 premiers entiers d'un tampon du GPU (compteurs), sans attendre : valeurs d'il y a quelques
+// images. A appeler une fois par image, apres la passe qui les ecrit. Direct3D 11 seulement.
+bool readback_u32x4(sg_buffer buf, unsigned out[4]);
 // Temps GPU entre la fin d'une image et le debut de la suivante (presentation, autres programmes).
 float last_gap_ms();
 

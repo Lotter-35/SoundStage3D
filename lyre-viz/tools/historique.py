@@ -8,6 +8,8 @@
 # - La feuille "Comparaison" est refaite a chaque ajout : un cas par ligne, une modification par colonne
 #   (formules qui lisent "Mesures"), pour voir l'evolution des img/s et du temps GPU.
 # - Version : commit git courant, "+modifs" si lyre-viz contient des changements non commites.
+# - Banc des lasers (--bench-lasers) : meme format ; colonne "Lasers (ms)" (passes laser) et colonne "Banc"
+#   (lyres / lasers) pour distinguer les cas.
 import argparse
 import datetime
 import os
@@ -23,7 +25,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 FICHIER = os.path.join(ROOT, 'historique_perf.xlsx')
 COLONNES = ['Date', 'Version', 'Modification', 'Reglages', 'Lancements', 'Cas', 'Image (ms)', 'img/s reelles',
             'GPU moyen (ms)', 'GPU mediane (ms)', 'Surfaces (ms)', 'Fumee (ms)', 'Reflet sol (ms)', "Paires d'ombre",
-            'Dossiers']
+            'Dossiers', 'Lasers (ms)', 'Banc']
 POLICE = 'Arial'
 
 
@@ -31,11 +33,15 @@ def lire(dossier):
     """Cas -> mesures d'un fichier resultats.txt."""
     cas = {}
     cur = None
+    banc = 'lyres'
     with open(os.path.join(dossier, 'resultats.txt'), encoding='utf-8', errors='replace') as f:
         for ligne in f:
+            if "banc d'essai lasers" in ligne:
+                banc = 'lasers'
             m = re.match(r'\[(\d+)\] (.+)', ligne)
             if m:
-                cur = {'nom': m.group(2).strip(), 'surf': 0.0, 'fumee': 0.0, 'reflet': 0.0, 'paires': None}
+                cur = {'nom': m.group(2).strip(), 'surf': 0.0, 'fumee': 0.0, 'reflet': 0.0, 'lasers': 0.0, 'paires': None,
+                       'banc': banc}
                 cas[int(m.group(1))] = cur
                 continue
             if cur is None:
@@ -53,6 +59,8 @@ def lire(dossier):
                     cur['fumee'] += v
                 elif nom.startswith('reflet'):
                     cur['reflet'] += v
+                elif nom.startswith('lasers'):
+                    cur['lasers'] += v
                 continue
             m = re.search(r'ombres : \d+ lyres, (\d+) paires', ligne)
             if m:
@@ -79,13 +87,20 @@ def entete(ws, titres, ligne=1):
 
 def ouvrir():
     if os.path.exists(FICHIER):
-        return load_workbook(FICHIER)
+        wb = load_workbook(FICHIER)
+        ws = wb['Mesures']
+        # fichiers d'avant les lasers : colonnes ajoutees a la fin (les anciennes lignes restent vides)
+        if ws.max_column < len(COLONNES):
+            entete(ws, COLONNES)
+            ws.column_dimensions[get_column_letter(len(COLONNES) - 1)].width = 11
+            ws.column_dimensions[get_column_letter(len(COLONNES))].width = 9
+        return wb
     wb = Workbook()
     ws = wb.active
     ws.title = 'Mesures'
     entete(ws, COLONNES)
     ws.freeze_panes = 'A2'
-    largeurs = [17, 15, 38, 34, 11, 40, 11, 11, 13, 13, 12, 11, 12, 11, 40]
+    largeurs = [17, 15, 38, 34, 11, 40, 11, 11, 13, 13, 12, 11, 12, 11, 40, 11, 9]
     for i, w in enumerate(largeurs, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     ws.row_dimensions[1].height = 32
@@ -103,6 +118,7 @@ def ouvrir():
         "  GPU moyen / mediane : temps GPU total d'une image.",
         "  Surfaces : passe des surfaces + lyres douces. Fumee : toutes les passes de fumee. Reflet sol : passe miroir.",
         "  Paires d'ombre : paires (lyre, obstacle) de l'ombre (vide avant les ombres).",
+        "  Lasers : passes des lasers (banc --bench-lasers). Banc : lyres ou lasers.",
         "",
         "A comparer seulement entre lignes aux memes reglages (qualite adaptative, mouvement / immobile).",
         "Les temps varient de 10 a 20 % d'un lancement a l'autre : voir PERFORMANCE.md.",
@@ -174,11 +190,12 @@ def main():
         paires = vals[0]['paires']
         row = ws.max_row + 1
         ws.append([date, ver, a.modif, a.reglages, len(vals), vals[0]['nom'], moy('image'), None, moy('gpu'), moy('gpum'),
-                   moy('surf'), moy('fumee'), moy('reflet') or None, paires, ', '.join(os.path.basename(os.path.normpath(d)) for d in a.dossiers)])
+                   moy('surf'), moy('fumee'), moy('reflet') or None, paires, ', '.join(os.path.basename(os.path.normpath(d)) for d in a.dossiers),
+                   moy('lasers') or None, vals[0]['banc']])
         ws.cell(row=row, column=8, value=f'=IF(G{row}>0,1000/G{row},"")')
         for c in range(1, len(COLONNES) + 1):
             ws.cell(row=row, column=c).font = Font(name=POLICE)
-        for c, fmt in [(7, '0.00'), (8, '0'), (9, '0.00'), (10, '0.00'), (11, '0.00'), (12, '0.00'), (13, '0.00')]:
+        for c, fmt in [(7, '0.00'), (8, '0'), (9, '0.00'), (10, '0.00'), (11, '0.00'), (12, '0.00'), (13, '0.00'), (16, '0.00')]:
             ws.cell(row=row, column=c).number_format = fmt
         n += 1
     comparaison(wb)

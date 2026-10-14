@@ -2111,8 +2111,10 @@ layout(binding=5) uniform composite_params {
     vec4 floor_p;      // comme scene_fs_params (sol texture ; y : eau)
     vec4 floor_q;
     vec4 floor_w;
+    vec4 laser;        // x : ajoute le calque des lasers (tuiles en calcul)
 };
 layout(binding=6) uniform texture2D depth_tex;
+layout(binding=13) uniform texture2D laser_tex;    // lasers dans la fumee (cs_laser_shade)
 layout(binding=10) uniform texture2D vol_hist_tex;
 layout(binding=11) uniform texture2D scene_tex;
 layout(binding=24) uniform texture2D normal_tex;
@@ -2235,6 +2237,9 @@ void main() {
         }
         color += acc / wsum;
     }
+    if (laser.x > 0.5) {
+        color += texelFetch(sampler2D(laser_tex, point_smp), p, 0).rgb;
+    }
     frag_color = vec4(color, 1.0);
 }
 @end
@@ -2334,6 +2339,567 @@ void main() {
 @end
 
 // -------------------------------------------------------------------------------------
+//  10. Lasers dans la fumee (PLAN-LASERS.md, etape 1 : prototype)
+//
+//  Tout laser est fait de segments d'eventail plans : une source, n traits repartis entre deux
+//  directions de bord. La lumiere d'un segment dans un rayon de la camera se calcule en forme fermee,
+//  quel que soit n (voir laser_eval). Rendu par tuiles en calcul : tri des segments par tuiles d'ecran
+//  (cs_laser_setup, cs_laser_bin), puis chaque pixel additionne tous ses segments dans ses registres et
+//  ecrit une fois (cs_laser_shade). Les triangles en addition (un prisme par segment) ont ete essayes et
+//  ecartes : 25 a 43 % plus lents (PERFORMANCE.md).
+// -------------------------------------------------------------------------------------
+@block laser_data
+// Un segment d'eventail. Doit correspondre a sb_laser_t cote C (Renderer : envoi des segments).
+struct sb_laser {
+    vec4 ec_half;     // xyz : direction du milieu de l'eventail, w : sinus de la demi-ouverture
+    vec4 es_n;        // xyz : direction dans le plan, perpendiculaire a ec, w : nombre de traits
+    vec4 nrm_range;   // xyz : normale du plan (ec x es), w : portee (m)
+    vec4 cam_rel;     // xyz : camera - source dans le repere (ec, es, normale), w : cosinus de la demi-ouverture
+    vec4 flux;        // rgb : puissance d'un trait x diffusion par metre, au bord 0 ; w : 1 / ecart angulaire de deux traits (rad)
+    vec4 flux1;       // rgb : idem au bord 1 (degrade lineaire le long de l'eventail) ; w : 1 / nombre de traits
+};
+// source = camera - (ec, es, normale) . cam_rel
+vec3 laser_source(sb_laser L, vec3 cam) {
+    return cam - L.ec_half.xyz * L.cam_rel.x - L.es_n.xyz * L.cam_rel.y - L.nrm_range.xyz * L.cam_rel.z;
+}
+@end
+
+
+@block laser_uniforms_cs
+layout(binding=0) uniform laser_cs_params {
+    vec4 cam_pos;     // w : inutilise
+    vec4 cam_right;   // w : tan x
+    vec4 cam_up;      // w : tan y
+    vec4 cam_fwd;     // w : extinction moyenne par metre
+    vec4 res;         // xy : taille du rendu, z : nombre de segments, w : angle d'un pixel (rad)
+    vec4 beam;        // x : sigma^2 a la sortie (m2), y : (divergence / 4)^2, z : largeur minimale (sigma, pixels), w : g
+    vec4 tiles;       // x, y : tuiles de 16 pixels, z : grosses tuiles (128 pixels) en x, w : compteurs actifs
+    vec4 hall_min;    // interieur du hangar : rien n'est visible au-dela de ses parois
+    vec4 hall_max;
+};
+@end
+
+// Lumiere d'un segment dans un rayon de la camera. Necessite laser_uniforms_cs.
+// Tout est calcule dans le repere de l'eventail (ec, es, normale), ou la camera (cam_rel) est connue une fois
+// par image : par pixel, il ne reste que le rayon a exprimer dans ce repere.
+@block laser_eval
+const float LASER_TWO_PI = 6.2831853;
+
+// sigma^2 d'un trait a la distance s de la source, vu a la distance t de la camera : largeur physique
+// (ouverture + divergence) et largeur minimale en pixels, sommees en carre. L'energie est conservee :
+// un trait plus fin qu'un pixel devient plus large et plus sombre, sans escalier ni scintillement.
+float laser_sig2(float s, float t) {
+    float px = beam.z * res.w * t;
+    return beam.x + beam.y * s * s + px * px;
+}
+
+// Diffusion vers l'avant (Henyey-Greenstein) ; b : cos(rayon, trait), l'angle de diffusion est son oppose.
+float laser_phase(float b) {
+    float g = beam.w;
+    float hd = inversesqrt(1.0 + g * g + 2.0 * g * b);
+    return (1.0 - g * g) * 0.07957747 * hd * hd * hd;
+}
+
+// Un trait seul, le long du 1er axe du repere (longueur R), dans le rayon q + t dv (q : camera - source,
+// t <= tMax) : noyau gaussien a la distance des deux droites, divise par le sinus de leur angle (formule des
+// photon beams, Jarosz 2011), diffusion vers l'avant et attenuation. Le 1 / sin est plafonne par la longueur
+// du trait (trait vu dans son axe).
+float laser_trait(vec3 q, vec3 dv, float R, float tMax) {
+    float b = dv.x, d = dot(dv, q), ee = q.x;
+    float s2 = max(1.0 - b * b, 1e-7);
+    // points les plus proches du rayon (t dans [0, tMax]) et du trait (s dans [0, R])
+    float t = clamp((b * ee - d) / s2, 0.0, tMax);
+    float s = clamp(ee + b * t, 0.0, R);
+    t = clamp(s * b - d, 0.0, tMax);
+    vec3 w = q + dv * t - vec3(s, 0.0, 0.0);
+    float u2 = dot(w, w);
+    float sig2 = laser_sig2(s, t);
+    if (u2 > 16.0 * sig2) {
+        return 0.0;
+    }
+    float isig = inversesqrt(sig2);
+    float inv_sin = min(inversesqrt(s2), 0.4 * max(R, 1.0) * isig);
+    return exp(-0.5 * u2 * isig * isig) * isig * 0.39894228 * inv_sin * laser_phase(b) * exp(-cam_fwd.w * (t + s));
+}
+
+// Segment d'eventail de 2 traits ou plus (L0..L4 : sb_laser) dans le rayon de direction v (t <= tMax). Les
+// traits seuls passent par laser_trait (cs_laser_shade).
+// Le rayon traverse le plan de l'eventail en P (distance tP de la camera, rP de la source). Pres de P, les
+// traits sont des droites presque paralleles : la distance du rayon au trait k est (x - k) du, ou x est la
+// position de P en traits et du l'ecart de deux traits mesure sur le rayon. Chaque trait donne une gaussienne
+// en x, de largeur Q = sigma / du ; leur somme S(x) vaut 1 en moyenne (la nappe) :
+//   L = (puissance d'un trait x diffusion) x S(x) x phase x attenuation / (|n.v| rP dphi)
+//   - traits separes (Q < 0,35, et au moins 4 pixels entre deux traits a l'ecran) : somme des gaussiennes
+//     voisines ;
+//   - sinon : somme de Poisson, la moyenne plus une ondulation (1er terme) qui s'efface quand les traits se
+//     serrent (Q) ou quand leur ecart a l'ecran approche 2 pixels (f) : aucun moire ;
+//   - entre 4 et 3,3 pixels d'ecart, melange des deux (pas de saut visible).
+// Le cout vient surtout des operations speciales (divisions, racines, exponentielles, cosinus). La nappe lisse
+// (cas le plus courant) n'en demande que 4 : Q et f y sont compares au carre, et les bords sont testes avec le
+// sinus de l'angle vu de la source (juste pres des bords, la ou il sert) au lieu de l'arc tangente.
+vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 v, float tMax) {
+    float R = L2.w, nb = L1.w;
+    float ia = 1.0 / dot(v, L2.xyz);   // rayon dans le repere de l'eventail : composante sur la normale
+    float tP = -L3.z * ia;
+    // P devant la camera et devant la premiere surface (rayon dans le plan : division par 0, rejete aussi)
+    if (!(tP > 0.0 && tP <= tMax)) {
+        return vec3(0.0);
+    }
+    vec2 dxy = vec2(dot(v, L0.xyz), dot(v, L1.xyz));
+    vec2 p2 = L3.xy + dxy * tP;   // P dans le plan, depuis la source
+    float r2 = dot(p2, p2);
+    if (r2 > R * R || p2.x <= 0.0) {
+        return vec3(0.0);
+    }
+    float irP = inversesqrt(r2);
+    // distances angulaires aux bords, en traits (x + 1/2 et nb - 1/2 - x), par le sinus des angles aux bords
+    float sh = L0.w, ch = L3.w;   // sinus et cosinus de la demi-ouverture
+    float u0 = p2.y * ch + p2.x * sh, u1 = p2.x * sh - p2.y * ch;   // rP x sinus des angles aux bords
+    float e0 = u0 * irP * L4.w + 0.5, e1 = u1 * irP * L4.w + 0.5;
+    float rP = r2 * irP;
+    float bP = dot(dxy, p2) * irP;   // cos(rayon, trait)
+    float sig2 = laser_sig2(rP, tP);
+    // 1 / |n.v| plafonne par l'epaisseur de la nappe (nappe vue par la tranche : rare, la racine seulement alors)
+    float m = max(rP, 0.5);
+    float iaa = abs(ia);
+    if (ia * ia * sig2 > 0.16 * m * m) {
+        iaa = 0.4 * m * inversesqrt(sig2);
+    }
+    // 1 / sin plafonne par la longueur du trait jusqu'a P (trait vu dans son axe) ; tout au carre
+    float sin2 = max(1.0 - bP * bP, 6.25 * sig2 * irP * irP);
+    float k = L4.w * irP * iaa;
+    float idu2 = sin2 * k * k;          // (1 / ecart de deux traits, mesure sur le rayon)^2
+    float Q2 = sig2 * idu2;             // (largeur d'un trait / ecart)^2
+    float pt = res.w * tP;
+    float f2 = pt * pt * idu2;          // (pixel / ecart)^2
+    // hors de l'eventail, a plus de max(1,5 ; 4 Q) traits d'un bord
+    float emin = min(e0, e1);
+    if (emin < 0.0 && emin * emin > max(2.25, 16.0 * Q2)) {
+        return vec3(0.0);
+    }
+    float S;
+    float tc = 0.0;   // position le long de l'eventail (0 au bord 0, 1 au bord 1) : couleur du degrade
+    if (Q2 >= 0.5625 || f2 >= 0.25) {
+#ifdef LASER_GRADIENT
+        tc = clamp(e0 * L5.w, 0.0, 1.0);   // par le sinus de l'angle au bord 0 (morceaux de 15 deg au plus)
+#endif
+        // nappe lisse (traits confondus) : 1, sauf a moins de 2 largeurs de trait d'un bord
+        S = 1.0;
+        if (emin < 0.0 || emin * emin < 4.0 * Q2) {
+            float iq = inversesqrt(Q2);
+            S = smoothstep(-2.0, 2.0, e0 * iq) * smoothstep(-2.0, 2.0, e1 * iq);
+        }
+    } else {
+        // sans racine pour f, une seule pour Q (1 / Q)
+        float iq = inversesqrt(Q2);
+        float Q = Q2 * iq;
+        // position exacte de P en traits : angle depuis le bord 0 (arc tangente approche, erreur < 1e-5 rad)
+        float c0 = p2.x * ch - p2.y * sh;   // rP x cosinus de l'angle depuis le bord 0
+        float au = abs(u0), ac = abs(c0);
+        float z = min(au, ac) / max(max(au, ac), 1e-20);
+        float z2 = z * z;
+        float ang = z * (0.99997726 + z2 * (-0.33262347 + z2 * (0.19354346 + z2 * (-0.11643287 + z2 * (0.05265332 - 0.01172120 * z2)))));
+        ang = au > ac ? 1.5707963 - ang : ang;
+        ang = c0 < 0.0 ? 3.1415927 - ang : ang;
+        float x = (u0 < 0.0 ? -ang : ang) * L4.w;
+#ifdef LASER_GRADIENT
+        tc = clamp((x + 0.5) * L5.w, 0.0, 1.0);
+#endif
+        float wp = Q2 >= 0.1225 ? 1.0 : smoothstep(0.04, 0.09, f2);   // part de la somme de Poisson (f de 0,2 a 0,3)
+        S = 0.0;
+        if (wp < 1.0) {
+            // traits separes : le plus proche, et ses voisins s'ils sont a moins de 4 largeurs (Q > 0,125)
+            float kc = clamp(floor(x + 0.5), 0.0, nb - 1.0);
+            float e = (x - kc) * iq;
+            float sd = abs(e) < 4.0 ? exp(-0.5 * e * e) : 0.0;
+            if (Q2 > 0.015625) {
+                float em = e + iq, ep = e - iq;   // traits kc - 1 et kc + 1 (Q > 0,125)
+                if (kc > 0.5 && abs(em) < 4.0) {
+                    sd += exp(-0.5 * em * em);
+                }
+                if (kc < nb - 1.5 && abs(ep) < 4.0) {
+                    sd += exp(-0.5 * ep * ep);
+                }
+            }
+            S = sd * iq * 0.39894228 * (1.0 - wp);
+        }
+        if (wp > 0.0) {
+            // nappe : moyenne, bords adoucis sur la largeur d'un trait (seulement pres d'un bord), ondulation
+            // des traits, effacee quand leur ecart a l'ecran passe de 4 a 2 pixels (f de 0,25 a 0,5)
+            float edge = 1.0;
+            if (min(x + 0.5, nb - 0.5 - x) < 2.0 * Q) {
+                edge = smoothstep(-2.0, 2.0, (x + 0.5) * iq) * smoothstep(-2.0, 2.0, (nb - 0.5 - x) * iq);
+            }
+            float rip = 2.0 * exp(-19.739209 * Q2) * clamp((0.25 - f2) * 5.3333333, 0.0, 1.0) * cos(LASER_TWO_PI * fract(x));
+            S += (1.0 + rip) * edge * wp;
+        }
+        if (S <= 0.0) {
+            return vec3(0.0);   // entre deux traits separes
+        }
+    }
+#ifdef LASER_GRADIENT
+    vec3 col = mix(L4.rgb, L5.rgb, tc);
+#else
+    vec3 col = L4.rgb;
+#endif
+    return col * (S * laser_phase(bP) * exp(-cam_fwd.w * (tP + rP)) * L4.w * irP * iaa);
+}
+@end
+
+// Rayon du pixel (rendu plein) et distance de la premiere surface. Necessite laser_uniforms_cs.
+@block laser_ray
+vec3 laser_ray(vec2 pix, float viewZ, out float tMax) {
+    vec2 ndc = ndc_from_uv(pix / res.xy);
+    vec3 v = normalize(cam_fwd.xyz + cam_right.xyz * (ndc.x * cam_right.w) + cam_up.xyz * (ndc.y * cam_up.w));
+    tMax = viewZ / max(dot(v, cam_fwd.xyz), 1e-3);
+    return v;
+}
+@end
+
+// 10a. Tuiles en calcul. Ecran du segment (cs_laser_setup) : 9 vec4, rectangle puis 8 bords au plus
+//      (nx, ny, c : dedans si n.p <= c).
+@block laser_tiles
+const uint LASER_CAP = 4096u;   // segments au plus par grosse tuile (128 pixels)
+
+bool laser_tile_hit(uint i, vec2 c, vec2 hs) {
+    vec4 bb = scr[i * 9u].v;
+    if (c.x + hs.x < bb.x || c.x - hs.x > bb.z || c.y + hs.y < bb.y || c.y - hs.y > bb.w) {
+        return false;
+    }
+    for (uint k = 1u; k <= 8u; k++) {
+        vec4 e = scr[i * 9u + k].v;
+        if (dot(e.xy, c) - dot(abs(e.xy), hs) > e.z) {
+            return false;
+        }
+    }
+    return true;
+}
+@end
+
+@cs cs_laser_setup
+@include_block common
+@include_block laser_data
+@include_block laser_uniforms_cs
+layout(binding=10) readonly buffer lasers_cs { sb_laser lasers[]; };
+layout(binding=11) buffer laser_scr_rw { sb_vec4 scr_w[]; };
+layout(binding=12) buffer laser_stats_rw { sb_index stats_w[]; };
+layout(local_size_x=64, local_size_y=1, local_size_z=1) in;
+
+vec3 to_view(vec3 p) {
+    vec3 d = p - cam_pos.xyz;
+    return vec3(dot(d, cam_right.xyz), dot(d, cam_up.xyz), dot(d, cam_fwd.xyz));
+}
+
+// Plan du monde dot(n, p) <= d, dans le repere de la camera.
+vec4 view_plane(vec3 n, float d) {
+    return vec4(dot(n, cam_right.xyz), dot(n, cam_up.xyz), dot(n, cam_fwd.xyz), d - dot(n, cam_pos.xyz));
+}
+
+// Ecran d'un segment : triangle de l'eventail coupe par les parois du hangar (rien n'est visible au-dela),
+// par le plan proche et par l'ecran elargi de moitie (un sommet tres pres de la camera, loin hors de
+// l'ecran, aurait une marge de centaines de pixels, appliquee a tout un bord). Puis, en pixels, chaque bord
+// repousse de 3,5 largeurs de trait (marge de ses deux sommets) + 1 pixel.
+void main() {
+    uint i = gl_GlobalInvocationID.x;
+    if (i == 0u) {
+        for (int k = 0; k < 4; k++) {
+            stats_w[k].v = 0u;
+        }
+    }
+    if (i >= uint(res.z)) {
+        return;
+    }
+    sb_laser L = lasers[i];
+    vec3 S = laser_source(L, cam_pos.xyz), ec = L.ec_half.xyz, es = L.es_n.xyz;
+    float R = L.nrm_range.w;
+    float sh = L.ec_half.w, ch = L.cam_rel.w;   // sinus et cosinus de la demi-ouverture
+    float Rf = R / ch;   // la corde des bouts contient l'arc des traits
+    // sommets (xyz : repere de la camera, w : distance a la source), coupes plan par plan (Sutherland-Hodgman)
+    vec4 pl[11];
+    pl[0] = view_plane(vec3(-1, 0, 0), -hall_min.x);
+    pl[1] = view_plane(vec3(1, 0, 0), hall_max.x);
+    pl[2] = view_plane(vec3(0, -1, 0), -hall_min.y);
+    pl[3] = view_plane(vec3(0, 1, 0), hall_max.y);
+    pl[4] = view_plane(vec3(0, 0, -1), -hall_min.z);
+    pl[5] = view_plane(vec3(0, 0, 1), hall_max.z);
+    const float ZN = 0.05, G = 1.5;
+    pl[6] = vec4(0.0, 0.0, -1.0, -ZN);
+    pl[7] = vec4(1.0, 0.0, -G * cam_right.w, 0.0);
+    pl[8] = vec4(-1.0, 0.0, -G * cam_right.w, 0.0);
+    pl[9] = vec4(0.0, 1.0, -G * cam_up.w, 0.0);
+    pl[10] = vec4(0.0, -1.0, -G * cam_up.w, 0.0);
+    vec4 va[16], vb[16];
+    for (int k = 0; k < 16; k++) {
+        va[k] = vec4(0.0);
+        vb[k] = vec4(0.0);
+    }
+    va[0] = vec4(to_view(S), 0.0);
+    va[1] = vec4(to_view(S + (ec * ch - es * sh) * Rf), Rf);
+    va[2] = vec4(to_view(S + (ec * ch + es * sh) * Rf), Rf);
+    int np = 3;
+    for (int j = 0; j < 11; j++) {
+        vec4 P = pl[j];
+        int no = 0;
+        for (int k = 0; k < 16; k++) {
+            if (k >= np) {
+                break;
+            }
+            vec4 A = va[k], B = va[k + 1 < np ? k + 1 : 0];
+            float da = dot(P.xyz, A.xyz) - P.w, db = dot(P.xyz, B.xyz) - P.w;
+            if (da <= 0.0 && no < 16) {
+                vb[no] = A;
+                no++;
+            }
+            if ((da <= 0.0) != (db <= 0.0) && no < 16) {
+                vb[no] = mix(A, B, da / (da - db));
+                no++;
+            }
+        }
+        np = no;
+        for (int k = 0; k < 16; k++) {
+            va[k] = vb[k];
+        }
+    }
+    if (np < 3) {
+        scr_w[i * 9u].v = vec4(1e9, 1e9, -1e9, -1e9);
+        return;
+    }
+    vec2 pp[16];
+    float pm[16];
+    vec2 lo = vec2(1e30), hi = vec2(-1e30);
+    float mmax = 0.0, area = 0.0;
+    for (int k = 0; k < 16; k++) {
+        if (k >= np) {
+            break;
+        }
+        vec4 P = va[k];
+        pp[k] = uv_from_ndc(vec2(P.x / (P.z * cam_right.w), P.y / (P.z * cam_up.w))) * res.xy;
+        float sp = sqrt(beam.x + beam.y * P.w * P.w) / (P.z * res.w);
+        pm[k] = 3.5 * sqrt(sp * sp + beam.z * beam.z) + 1.0;
+        lo = min(lo, pp[k]);
+        hi = max(hi, pp[k]);
+        mmax = max(mmax, pm[k]);
+    }
+    for (int k = 0; k < 16; k++) {
+        if (k >= np) {
+            break;
+        }
+        vec2 a = pp[k], b = pp[k + 1 < np ? k + 1 : 0];
+        area += a.x * b.y - a.y * b.x;
+    }
+    scr_w[i * 9u].v = vec4(lo - mmax, hi + mmax);
+    float orient = area < 0.0 ? -1.0 : 1.0;
+    // Trait seul : sa droite a l'ecran (n.p + c = distance en pixels) et la demi-largeur ou il eclaire
+    // (4 largeurs de trait + 1 pixel), rangees dans les w des bords 1 a 4 : cs_laser_shade rejette les pixels
+    // hors de cette bande en 3 operations. Trait vu presque dans son axe (moins d'un pixel) : pas de rejet.
+    vec4 ln = vec4(0.0, 0.0, 0.0, 1e30);
+    if (L.es_n.w < 1.5) {
+        vec2 a = pp[0], b = pp[0];
+        float far2 = 0.0, mline = 0.0;
+        for (int k = 0; k < 16; k++) {
+            if (k >= np) {
+                break;
+            }
+            vec2 d = pp[k] - pp[0];
+            if (dot(d, d) > far2) {
+                far2 = dot(d, d);
+                b = pp[k];
+            }
+            vec4 P = va[k];
+            float sp = sqrt(beam.x + beam.y * P.w * P.w) / (P.z * res.w);
+            mline = max(mline, 4.0 * sqrt(sp * sp + beam.z * beam.z) + 1.0);
+        }
+        if (far2 > 1.0) {
+            vec2 nl = vec2(b.y - a.y, a.x - b.x) * inversesqrt(far2);
+            ln = vec4(nl, -dot(nl, a), mline);
+        }
+    }
+    // 8 bords au plus (garder une partie des bords seulement rend le test plus large, jamais faux)
+    for (int k = 0; k < 8; k++) {
+        vec4 e = vec4(0.0, 0.0, 1e30, k < 4 ? ln[k] : 0.0);
+        if (k < np) {
+            int k1 = k + 1 < np ? k + 1 : 0;
+            vec2 a = pp[k], b = pp[k1];
+            vec2 d = b - a;
+            float len = length(d);
+            if (len > 1e-3) {
+                vec2 n = vec2(d.y, -d.x) * (orient / len);
+                e = vec4(n, dot(n, a) + max(pm[k], pm[k1]), k < 4 ? ln[k] : 0.0);
+            }
+        }
+        scr_w[i * 9u + uint(k) + 1u].v = e;
+    }
+}
+@end
+
+// Grosses tuiles (128 pixels) : un groupe par tuile teste tous les segments.
+@cs cs_laser_bin
+@include_block common
+@include_block laser_uniforms_cs
+layout(binding=11) readonly buffer laser_scr_ro { sb_vec4 scr[]; };
+layout(binding=13) buffer laser_ccount_rw { sb_index ccount_w[]; };
+layout(binding=14) buffer laser_clist_rw { sb_index clist_w[]; };
+@include_block laser_tiles
+layout(local_size_x=256, local_size_y=1, local_size_z=1) in;
+
+shared uint s_n;
+shared uint s_list[4096];
+
+void main() {
+    uint ct = gl_WorkGroupID.x + gl_WorkGroupID.y * uint(tiles.z);
+    uint lid = gl_LocalInvocationIndex;
+    vec2 c = (vec2(gl_WorkGroupID.xy) + 0.5) * 128.0;
+    if (lid == 0u) {
+        s_n = 0u;
+    }
+    barrier();
+    int n = int(res.z);
+    for (int base = 0; base < n; base += 256) {
+        uint i = uint(base) + lid;
+        if (i < uint(n) && laser_tile_hit(i, c, vec2(64.0))) {
+            uint k = atomicAdd(s_n, 1u);
+            if (k < LASER_CAP) {
+                s_list[k] = i;
+            }
+        }
+    }
+    barrier();
+    uint m = min(s_n, LASER_CAP);
+    for (uint k = lid; k < m; k += 256u) {
+        clist_w[ct * LASER_CAP + k].v = s_list[k];
+    }
+    if (lid == 0u) {
+        ccount_w[ct].v = m;
+    }
+}
+@end
+
+// Tuiles de 16 pixels : le groupe garde les segments de sa grosse tuile qui touchent la sienne (un test par
+// fil), les met en memoire partagee, puis chaque pixel les additionne dans ses registres. Une seule
+// ecriture par pixel, la profondeur lue une fois.
+@block laser_shade_body
+@include_block common
+@include_block laser_data
+@include_block laser_uniforms_cs
+layout(binding=10) readonly buffer lasers_cs { sb_laser lasers[]; };
+layout(binding=11) readonly buffer laser_scr_ro { sb_vec4 scr[]; };
+layout(binding=12) buffer laser_stats_rw { sb_index stats_w[]; };
+layout(binding=13) readonly buffer laser_ccount_ro { sb_index ccount[]; };
+layout(binding=14) readonly buffer laser_clist_ro { sb_index clist[]; };
+layout(binding=6) uniform texture2D laser_depth_cs;
+layout(binding=1) uniform sampler laser_smp_cs;
+layout(binding=15, rgba16f) uniform writeonly image2D laser_w;
+@include_block laser_eval
+@include_block laser_ray
+@include_block laser_tiles
+// 128 fils pour une tuile de 16 x 16 : chaque fil calcule 2 pixels (8 lignes d'ecart), chaque segment est lu
+// une fois en memoire partagee pour les deux.
+layout(local_size_x=16, local_size_y=8, local_size_z=1) in;
+
+shared uint s_n;
+shared uint s_idx[128];
+#ifdef LASER_GRADIENT
+const uint LS = 6u;   // vec4 par segment en memoire partagee (couleur au bord 1 comprise)
+#else
+const uint LS = 5u;
+#endif
+shared vec4 s_seg[128u * LS];
+shared vec4 s_line[128];   // traits seuls : droite a l'ecran et demi-largeur (cs_laser_setup)
+
+void main() {
+    uint lid = gl_LocalInvocationIndex;
+    ivec2 pa = ivec2(gl_WorkGroupID.xy) * 16 + ivec2(gl_LocalInvocationID.xy);
+    ivec2 pb = pa + ivec2(0, 8);
+    uint ct = (gl_WorkGroupID.x >> 3u) + (gl_WorkGroupID.y >> 3u) * uint(tiles.z);
+    uint n = ccount[ct].v;
+    vec2 tc = (vec2(gl_WorkGroupID.xy) + 0.5) * 16.0;
+    ivec2 pmax = ivec2(res.xy) - 1;
+    float tMaxA, tMaxB;
+    vec3 va = laser_ray(vec2(pa) + 0.5, texelFetch(sampler2D(laser_depth_cs, laser_smp_cs), min(pa, pmax), 0).r, tMaxA);
+    vec3 vb = laser_ray(vec2(pb) + 0.5, texelFetch(sampler2D(laser_depth_cs, laser_smp_cs), min(pb, pmax), 0).r, tMaxB);
+    vec2 fpA = vec2(pa) + 0.5, fpB = vec2(pb) + 0.5;   // centres des pixels (meme repere que cs_laser_setup)
+    vec3 accA = vec3(0.0), accB = vec3(0.0);
+    uint total = 0u;
+    for (uint base = 0u; base < n; base += 128u) {
+        if (lid == 0u) {
+            s_n = 0u;
+        }
+        barrier();
+        uint i = base + lid;
+        if (i < n) {
+            uint si = clist[ct * LASER_CAP + i].v;
+            if (laser_tile_hit(si, tc, vec2(8.0))) {
+                s_idx[atomicAdd(s_n, 1u)] = si;
+            }
+        }
+        barrier();
+        uint m = s_n;
+        if (lid < m) {
+            sb_laser L = lasers[s_idx[lid]];
+            s_seg[lid * LS] = L.ec_half;
+            s_seg[lid * LS + 1u] = L.es_n;
+            s_seg[lid * LS + 2u] = L.nrm_range;
+            s_seg[lid * LS + 3u] = L.cam_rel;
+            s_seg[lid * LS + 4u] = L.flux;
+#ifdef LASER_GRADIENT
+            s_seg[lid * LS + 5u] = L.flux1;
+#endif
+            uint so = s_idx[lid] * 9u;
+            s_line[lid] = vec4(scr[so + 1u].v.w, scr[so + 2u].v.w, scr[so + 3u].v.w, scr[so + 4u].v.w);
+        }
+        barrier();
+        for (uint j = 0u; j < m; j++) {
+            uint o = j * LS;
+            vec4 L0 = s_seg[o], L1 = s_seg[o + 1u], L2 = s_seg[o + 2u], L3 = s_seg[o + 3u], L4 = s_seg[o + 4u];
+#ifdef LASER_GRADIENT
+            vec4 L5 = s_seg[o + 5u];
+#else
+            vec4 L5 = vec4(0.0);
+#endif
+            if (L1.w < 1.5) {
+                // trait seul : rien a calculer hors de sa bande a l'ecran
+                vec4 ln = s_line[j];
+                if (abs(dot(fpA, ln.xy) + ln.z) <= ln.w) {
+                    accA += L4.rgb * laser_trait(L3.xyz, vec3(dot(va, L0.xyz), dot(va, L1.xyz), dot(va, L2.xyz)), L2.w, tMaxA);
+                }
+                if (abs(dot(fpB, ln.xy) + ln.z) <= ln.w) {
+                    accB += L4.rgb * laser_trait(L3.xyz, vec3(dot(vb, L0.xyz), dot(vb, L1.xyz), dot(vb, L2.xyz)), L2.w, tMaxB);
+                }
+            } else {
+                accA += laser_eval(L0, L1, L2, L3, L4, L5, va, tMaxA);
+                accB += laser_eval(L0, L1, L2, L3, L4, L5, vb, tMaxB);
+            }
+        }
+        total += m;
+        barrier();
+    }
+    if (tiles.w > 0.5 && lid == 0u) {
+        atomicAdd(stats_w[0].v, total);
+        atomicMax(stats_w[1].v, total);
+        atomicAdd(stats_w[2].v, total > 0u ? 1u : 0u);
+    }
+    if (pa.x < int(res.x) && pa.y < int(res.y)) {
+        imageStore(laser_w, pa, vec4(min(accA, vec3(60000.0)), 1.0));
+    }
+    if (pb.x < int(res.x) && pb.y < int(res.y)) {
+        imageStore(laser_w, pb, vec4(min(accB, vec3(60000.0)), 1.0));
+    }
+}
+@end
+
+// Deux variantes : sans degrade (aucune figure n'en a : rien a lire ni a melanger), et avec.
+@cs cs_laser_shade
+@image_sample_type laser_depth_cs unfilterable_float
+@sampler_type laser_smp_cs nonfiltering
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad
+#define LASER_GRADIENT 1
+@include_block laser_shade_body
+@end
+
+// -------------------------------------------------------------------------------------
 //  Programmes
 // -------------------------------------------------------------------------------------
 @program cull_clusters cs_cull_clusters
@@ -2359,3 +2925,7 @@ void main() {
 @program bloom_down vs_fullscreen fs_bloom_down
 @program bloom_up vs_fullscreen fs_bloom_up
 @program final vs_fullscreen fs_final
+@program laser_setup cs_laser_setup
+@program laser_bin cs_laser_bin
+@program laser_shade cs_laser_shade
+@program laser_shade_grad cs_laser_shade_grad

@@ -3,6 +3,7 @@
 #include "sokol_gfx.h"
 #include "sokol_glue.h"
 #include <cstdio>
+#include <cstring>
 
 #if defined(SOKOL_D3D11)
 #ifndef WIN32_LEAN_AND_MEAN
@@ -32,6 +33,7 @@ unsigned last_id() { return g_last_id; }
 float last_wait_ms() { return g_wait_ms; }
 double last_fragments() { return g_last_frags; }
 void enable_stats(bool on) { g_stats_enabled = on; }
+bool stats_enabled() { return g_stats_enabled; }
 float last_gap_ms() { return g_gap_ms; }
 
 #if defined(SOKOL_D3D11)
@@ -148,6 +150,36 @@ void stats_end() {
     g_ctx->End(g_slots[g_cur].stats);
 }
 
+// Compteurs ecrits par le GPU : copies dans 4 tampons de lecture tour a tour, lus 3 images plus tard
+// (sans attendre le GPU).
+bool readback_u32x4(sg_buffer buf, unsigned out[4]) {
+    static ID3D11Buffer* staging[4] = {};
+    static unsigned frame = 0, last[4] = {};
+    if (!g_ctx) return false;
+    ID3D11Buffer* src = (ID3D11Buffer*)sg_d3d11_query_buffer_info(buf).buf;
+    if (!src) return false;
+    if (!staging[0]) {
+        D3D11_BUFFER_DESC bd = {};
+        bd.ByteWidth = 16;
+        bd.Usage = D3D11_USAGE_STAGING;
+        bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+        for (ID3D11Buffer*& b : staging) g_dev->CreateBuffer(&bd, nullptr, &b);
+    }
+    D3D11_BOX box = {0, 0, 0, 16, 1, 1};
+    g_ctx->CopySubresourceRegion(staging[frame % 4], 0, 0, 0, 0, src, 0, &box);
+    if (frame >= 3) {
+        D3D11_MAPPED_SUBRESOURCE m;
+        ID3D11Buffer* r = staging[(frame - 3) % 4];
+        if (SUCCEEDED(g_ctx->Map(r, 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &m))) {
+            std::memcpy(last, m.pData, sizeof(last));
+            g_ctx->Unmap(r, 0);
+        }
+    }
+    frame++;
+    std::memcpy(out, last, sizeof(last));
+    return true;
+}
+
 void frame_end() {
     if (!g_ctx || g_cur < 0) return;
     Slot& s = g_slots[g_cur];
@@ -244,6 +276,10 @@ void mark(const char*) {}
 void frame_end() {}
 void stats_begin() {}
 void stats_end() {}
+bool readback_u32x4(sg_buffer, unsigned out[4]) {
+    out[0] = out[1] = out[2] = out[3] = 0;
+    return false;
+}
 bool save_backbuffer_bmp(const std::string&) { return false; }
 
 #endif

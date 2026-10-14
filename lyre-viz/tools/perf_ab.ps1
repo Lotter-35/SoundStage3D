@@ -5,9 +5,11 @@
 # Options :
 #   -Rounds 2        nombre d'alternances (2 = 4 lancements ; 3 pour une decision serree)
 #   -Full            les 14 cas (3 scenarios x 3 vues + options coupees) au lieu des 3 cas rapides
+#                    (avec -Lasers : les 13 cas au lieu de 5)
 #   -Moving          lyres et fumee en mouvement (par defaut : immobiles, pour comparer les images)
 #   -Set "a=1","b=2" reglages passes a --set (par defaut : adaptive=0, qualite fixe)
 #   -Name essai      prefixe des dossiers de resultats (bench\essai_A0, bench\essai_B0, ...)
+#   -Lasers          banc des lasers (--bench-lasers : cas L1 a L6, M1, voir PLAN-LASERS.md) au lieu de celui des lyres
 #   -Fast            banc rapide : 30 images de chauffe et 60 mesurees par cas (au lieu de 60 et 150) ;
 #                    un banc complet en 20 s au lieu de 45. A utiliser par defaut ; sans -Fast pour une
 #                    decision serree ou les valeurs de reference.
@@ -28,6 +30,7 @@ param(
     [switch]$Moving,
     [switch]$Fast,
     [switch]$Behind,
+    [switch]$Lasers,
     [string[]]$Set = @('adaptive=0'),
     [string]$Name = 'ab'
 )
@@ -47,7 +50,7 @@ for ($i = 0; $i -lt $Rounds; $i++) {
         $exe = if ($k -eq 'A') { $pathA } else { $pathB }
         $dir = "bench\$Name`_$k$i"
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
-        $argList = @('--bench', '--fullscreen', '--benchdir', $dir)
+        $argList = @($(if ($Lasers) { '--bench-lasers' } else { '--bench' }), '--fullscreen', '--benchdir', $dir)
         if ($Fast) { $argList += '--fast' }
         if ($Behind) { $argList += '--behind' }
         if (-not $Full) { $argList += '--quick' }

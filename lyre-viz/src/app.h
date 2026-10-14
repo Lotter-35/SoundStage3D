@@ -4,18 +4,21 @@
 #include "floor_texture.h"
 #include "fog.h"
 #include "gobos.h"
+#include "lasers.h"
 #include "renderer.h"
 #include "scene.h"
 
 struct Timings {
     float frame_ms = 0, fps = 0;
     float rig_ms = 0, fog_ms = 0, render_cpu_ms = 0, ui_ms = 0;
+    float laser_ms = 0;   // moteur laser (figures -> segments)
     float cpu_ms = 0;   // tout le travail CPU d'une image (attente du GPU comprise)
 };
 
 struct App {
     Scene scene;
     Rig rig;
+    LaserRig lasers;
     GoboAtlas gobos;
     FloorTexture floor;
     FogSim fog;

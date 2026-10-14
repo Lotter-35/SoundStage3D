@@ -21,6 +21,7 @@ Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la proc
    - Sans `-Fast` seulement pour une décision serrée ou les valeurs de référence.
    - Un ancien exécutable qui ne connaît pas `--fast` l'ignore et fait le banc normal : comparer alors sans `-Fast`.
    - Pas de `-Behind` pour des mesures à garder : derrière les autres fenêtres, le GPU est 5 à 15 % plus lent.
+   - Lasers : ajouter `-Lasers` (banc `--bench-lasers`, cas L1 à L7 et M1 ; voir `PLAN-LASERS.md` et `PERFORMANCE.md`). Une modification des lasers se mesure sur ce banc, et sur celui des lyres pour vérifier qu'il ne change pas.
 4. Pour une fonctionnalité qui coûte du temps :
    - la rendre activable (case dans l'onglet Rendu et clé `--set`) ;
    - mesurer son coût seul ;
@@ -35,6 +36,7 @@ Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la proc
    - Un ajout par version mesurée (et par jeu de réglages : par exemple option à 0, puis à 1). Numéroter les modifications dans l'ordre.
    - Le banc complet en mouvement (`-Full -Moving`) de préférence, pour que les lignes se comparent.
    - Si Excel a le fichier ouvert, l'enregistrement échoue : demander à l'utilisateur de le fermer.
+9. **Après une série d'essais, vider les bancs inutiles** (`bench\` grossit vite : ~25 Mo par image) : `python tools\nettoyer_bench.py` les liste (garde ceux cités dans les documents ou l'historique) ; donner à l'utilisateur la commande avec `--supprimer` et la taille libérée.
 
 ## Rappels techniques
 

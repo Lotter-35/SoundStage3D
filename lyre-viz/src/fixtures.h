@@ -122,3 +122,8 @@ struct Rig {
 
 // Direction du faisceau pour un couple pan/tilt dans le repere de la lyre.
 vec3 fixture_dir(const Fixture& f, float pan_deg, float tilt_deg);
+
+// Moteur d'effets commun aux lyres et aux lasers : valeur de la forme d'onde (-1..1) a une phase (cycles),
+// et phase de l'appareil i parmi n (decalage reparti, ailes en miroir).
+float effect_wave(int wave, float phase, float duty);
+float effect_phase(const Effect& e, int i, int n);

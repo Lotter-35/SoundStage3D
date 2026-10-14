@@ -1,7 +1,8 @@
 # Compare deux jeux de reglages avec le MEME executable, en alternance : cout d'une option seule.
 #   powershell -ExecutionPolicy Bypass -File tools\set_ab.ps1 -SetA "adaptive=0","floor=0" -SetB "adaptive=0","floor=1"
 # Options : -Exe (LyreViz.exe), -Rounds 2, -Full, -Moving, -Name, -Fast (banc rapide, a utiliser par defaut),
-#           -Behind (fenetre derriere les autres : GPU 5 a 15 % plus lent, voir perf_ab.ps1)
+#           -Behind (fenetre derriere les autres : GPU 5 a 15 % plus lent, voir perf_ab.ps1),
+#           -Lasers (banc des lasers, --bench-lasers)
 param(
     [string]$Exe = 'LyreViz.exe',
     [Parameter(Mandatory = $true)][string[]]$SetA,
@@ -11,6 +12,7 @@ param(
     [switch]$Moving,
     [switch]$Fast,
     [switch]$Behind,
+    [switch]$Lasers,
     [string]$Name = 'set'
 )
 # lance avec powershell -File, "a=1","b=2" arrive en une seule chaine "a=1,b=2" : on la decoupe
@@ -29,7 +31,7 @@ for ($i = 0; $i -lt $Rounds; $i++) {
         $sets = if ($k -eq 'A') { $SetA } else { $SetB }
         $dir = "bench\$Name`_$k$i"
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
-        $argList = @('--bench', '--fullscreen', '--benchdir', $dir)
+        $argList = @($(if ($Lasers) { '--bench-lasers' } else { '--bench' }), '--fullscreen', '--benchdir', $dir)
         if ($Fast) { $argList += '--fast' }
         if ($Behind) { $argList += '--behind' }
         if (-not $Full) { $argList += '--quick' }

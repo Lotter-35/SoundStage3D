@@ -30,7 +30,7 @@ if not exist build\%MODE% mkdir build\%MODE%
 echo Compilation (%MODE%)...
 cl /nologo /std:c++17 /EHsc /MP /utf-8 /W1 %OPT% /DSOKOL_D3D11 /Isrc /Iexternal\sokol /Iexternal\imgui /Iexternal\stb ^
    /Fobuild\%MODE%\ /Fdbuild\%MODE%\ ^
-   src\main.cpp src\scene.cpp src\fixtures.cpp src\gobos.cpp src\fog.cpp src\renderer.cpp src\ui.cpp src\gpu_profiler.cpp src\floor_texture.cpp src\sokol_impl.cpp ^
+   src\main.cpp src\scene.cpp src\fixtures.cpp src\gobos.cpp src\fog.cpp src\renderer.cpp src\ui.cpp src\gpu_profiler.cpp src\floor_texture.cpp src\lasers.cpp src\sokol_impl.cpp ^
    external\imgui\imgui.cpp external\imgui\imgui_draw.cpp external\imgui\imgui_tables.cpp external\imgui\imgui_widgets.cpp ^
    /Fe:LyreViz.exe /link /INCREMENTAL:NO
 if errorlevel 1 goto failed
