@@ -22,6 +22,13 @@ case "$OS" in
         BACKEND="-DSOKOL_METAL"
         IMPL_FLAGS="-x objective-c++ -fobjc-arc"
         LIBS="-framework Metal -framework MetalKit -framework Cocoa -framework QuartzCore"
+        # Les versions recentes de sokol_app.h demandent le SDK macOS 14 (Xcode 15) ;
+        # avec un SDK plus ancien, on prend l'ancienne version (MTKView), voir external/sokol/legacy_macos.
+        SDK_VER=$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || echo 0)
+        if [ "${SDK_VER%%.*}" -lt 14 ] || [ -n "$LEGACY" ]; then
+            echo "SDK macOS $SDK_VER : fenetre en mode compatible (MTKView)"
+            LEGACY=1
+        fi
         ;;
     Linux)
         BACKEND="-DSOKOL_GLCORE"
@@ -34,7 +41,13 @@ case "$OS" in
         ;;
 esac
 
-OBJ=build/$MODE
+if [ -n "$LEGACY" ]; then
+    FLAGS="-Iexternal/sokol/legacy_macos $FLAGS -DLYREVIZ_LEGACY_SAPP"
+    MODE_DIR="$MODE-legacy"
+else
+    MODE_DIR="$MODE"
+fi
+OBJ=build/$MODE_DIR
 mkdir -p "$OBJ"
 SRCS="src/main.cpp src/scene.cpp src/fixtures.cpp src/gobos.cpp src/fog.cpp src/renderer.cpp src/ui.cpp
       external/imgui/imgui.cpp external/imgui/imgui_draw.cpp external/imgui/imgui_tables.cpp external/imgui/imgui_widgets.cpp"

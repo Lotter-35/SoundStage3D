@@ -1,1 +1,2 @@
 sokol 5e94d12, imgui v1.92.9b, sokol-tools-bin b975d56
+legacy_macos: sokol_app.h + sokol_glue.h @ e01e395c (pour SDK macOS < 14)

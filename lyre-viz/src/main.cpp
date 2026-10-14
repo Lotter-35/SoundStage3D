@@ -172,7 +172,7 @@ static void event(const sapp_event* ev) {
     ImGuiIO& io = ImGui::GetIO();
     switch (ev->type) {
         case SAPP_EVENTTYPE_KEY_DOWN:
-            if (ev->key_code >= 0 && ev->key_code < 512 && !io.WantCaptureKeyboard) app.keys[ev->key_code] = true;
+            if ((int)ev->key_code >= 0 && (int)ev->key_code < 512 && !io.WantCaptureKeyboard) app.keys[ev->key_code] = true;
             if (io.WantCaptureKeyboard) break;
             if (ev->key_code == SAPP_KEYCODE_H) app.show_ui = !app.show_ui;
             if (ev->key_code == SAPP_KEYCODE_F) {
@@ -183,7 +183,7 @@ static void event(const sapp_event* ev) {
             if (ev->key_code == SAPP_KEYCODE_ESCAPE) { app.looking = false; sapp_lock_mouse(false); app.pick_aim = -1; }
             break;
         case SAPP_EVENTTYPE_KEY_UP:
-            if (ev->key_code >= 0 && ev->key_code < 512) app.keys[ev->key_code] = false;
+            if ((int)ev->key_code >= 0 && (int)ev->key_code < 512) app.keys[ev->key_code] = false;
             break;
         case SAPP_EVENTTYPE_MOUSE_DOWN:
             if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT && !io.WantCaptureMouse) {
@@ -238,7 +238,11 @@ sapp_desc sokol_main(int argc, char* argv[]) {
     d.height = 900;
     d.high_dpi = true;
     d.swap_interval = 1;
+#if defined(LYREVIZ_LEGACY_SAPP)
+    if (g_novsync) d.swap_interval = 0;   // ancienne version de sokol_app (Mac avec un Xcode < 15)
+#else
     d.disable_vsync = g_novsync;
+#endif
     d.window_title = "LyreViz - banc d'essai lyres";
     d.logger.func = slog_func;
     d.win32.console_attach = true;
