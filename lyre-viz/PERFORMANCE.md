@@ -263,7 +263,7 @@ Masque de l'eau à la résolution du miroir, puis par blocs de 2 × 2 (voir le R
 
 - Images identiques à toutes les quantités d'eau (PSNR > 68 dB, aucun pixel changé de plus de 4/255).
 - Le masque coûte environ 0,15 ms (2 passes à la résolution du miroir).
-- Reste à faire : les tables des faisceaux du miroir (1,5 à 2,6 ms) sont calculées pour toutes les lyres vues dans le reflet, qu'il y ait beaucoup d'eau ou peu.
+- Reste à faire : les tables des faisceaux du miroir (1,5 à 2,6 ms) sont calculées pour toutes les lyres vues dans le reflet, qu'il y ait beaucoup d'eau ou peu (voir « Pistes d'optimisation futures »).
 
 | Essai | Résultat (eau 0,3) |
 |---|---|
@@ -320,6 +320,17 @@ S'y ajoutent les cases de lumière de la caméra miroir (environ 0,2 ms) et la c
 - **Basse résolution :** à n'utiliser que pour ce qui est vraiment flou.
   - La lumière indirecte de la brume calculée à 1/4 a rendu la brume tachée : annulé.
   - Les faisceaux très doux (frost) et les lyres très douces sur les surfaces, eux, passent à 1/2 ou 1/4 sans différence visible.
+
+## Pistes d'optimisation futures (pas encore essayées)
+
+### Tables des faisceaux du miroir : seulement pour les lyres reflétées dans l'eau
+
+- **Constat** (14 octobre 2026, historique 10a à 10c) : depuis que le reflet n'est calculé que dans l'eau, les surfaces et les faisceaux du miroir coûtent 2 à 3 fois moins à 10 % d'eau. Les tables des faisceaux du miroir, elles, sont toujours calculées pour toutes les lyres dont le cône est visible dans le reflet : 1,5 à 2,6 ms avec gobo + prisme 8 ou zoom 45° + frost, autant à 10 % d'eau qu'à 100 %. C'est maintenant la plus grosse part du reflet quand il y a peu d'eau.
+- **Idée** : ne calculer la table (et ne dessiner le cône) d'une lyre dans le miroir que si son reflet tombe sur de l'eau visible à l'écran.
+  - Sur le CPU, le modèle de l'eau existe déjà (`puddle_height`, `FloorTexture::water_levels`) : pour chaque lyre visible dans le reflet, tester quelques points du sol où son cône reflété peut apparaître à l'écran (rectangle d'écran du cône reflété, intersecté avec le sol visible), et la sauter si aucun n'est dans une flaque.
+  - Les creux remplis sont partout (de près) dès 0,1 : la piste ne vaut que pour les flaques ; garder une marge, et toujours calculer quand les creux remplis couvrent une part notable du sol proche.
+  - Variante sans CPU : réduire le masque de l'eau (`refl_beam_mask`) à une grille grossière lue par le calcul des tables, qui s'arrêterait pour les lignes dont le plan épipolaire ne traverse aucune case mouillée.
+- **À vérifier** : image identique dans l'eau (vue public et `--demo 5`, à 0,1, 0,3 et 1) ; gain attendu de l'ordre de 1 à 2 ms à 0,1 avec gobo + prisme ou frost, rien à 1.
 
 ## Essais écartés (mesurés, pas gardés)
 
