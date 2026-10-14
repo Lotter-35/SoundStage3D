@@ -650,13 +650,20 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
         if (spread > 0.0f) d0 = std::min(d0, lens_r / std::max(tenv - 0.01f, 1e-3f));
         const vec3 apex = f.lens_pos - f.dir * d0;
         float range = std::min(rs.beam_range + d0, cone_exit_distance(apex, f.dir, tenv, hall_min, hall_max) + 0.05f);
-        // Obstacles (sol de scene, decor, cube suspendu...) : le faisceau s'arrete au plus loin des points
-        // ou l'axe et 8 rayons du bord de l'enveloppe touchent un objet. Il n'est coupe que si tout le
-        // faisceau est arrete ; un obstacle qui n'en cache qu'une partie ne le coupe pas (pas d'ombre).
+        // Obstacles (sol, sol de scene, decor, cube suspendu...) : le faisceau n'est coupe que si tout le
+        // faisceau est arrete (l'axe et 8 rayons du bord de l'enveloppe touchent un objet) ; un obstacle
+        // qui n'en cache qu'une partie ne le coupe pas (son ombre est calculee a part).
+        // Longueur : le plus loin des 9 points touches, le long de l'axe. Si les 9 points sont sur un meme
+        // plan (le cas du sol), la distance exacte ou le cone entier l'a franchi (comme cone_exit_distance :
+        // point de la section le plus en arriere) : sur un sol vu en rasant, le bout de la tache (tres
+        // allongee) tombait entre deux rayons du bord et etait coupe net. Pas de plan infini pour des faces
+        // differentes : une face presque parallele au faisceau l'allongerait pour rien (+0,5 a +1 ms).
         {
             const vec3 rt = cross(f.dir, f.up);
             float far_z = 0.0f;
-            bool all_hit = true;
+            bool all_hit = true, one_plane = true;
+            vec3 n0 = {0, 0, 0};
+            float off0 = 0.0f;
             for (int k = 0; k < 9 && all_hit; k++) {
                 vec3 d = f.dir;
                 if (k > 0) {
@@ -665,9 +672,23 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
                 }
                 RayHit hit;
                 if (!scene.raycast(f.lens_pos, d, range, hit)) { all_hit = false; break; }
-                far_z = std::max(far_z, dot(hit.pos - f.lens_pos, f.dir));
+                far_z = std::max(far_z, d0 + dot(hit.pos - f.lens_pos, f.dir));   // depuis le sommet du cone
+                if (k == 0) {
+                    n0 = hit.normal;
+                    off0 = dot(hit.normal, hit.pos);
+                } else if (dot(hit.normal, n0) < 0.999f || std::fabs(dot(n0, hit.pos) - off0) > 1e-3f) {
+                    one_plane = false;
+                }
             }
-            if (all_hit) range = std::min(range, d0 + far_z + 0.1f);
+            if (all_hit && one_plane) {
+                // m : normale du plan vers l'interieur de l'objet (la normale renvoyee regarde la lyre)
+                const vec3 m = n0 * -1.0f;
+                const float mf = dot(m, f.dir);
+                const float rate = mf - tenv * std::sqrt(std::max(0.0f, 1.0f - mf * mf));
+                if (rate > 1e-4f) far_z = std::max(far_z, (off0 * -1.0f - dot(apex, m)) / rate);
+                else all_hit = false;   // le cone ne franchit jamais ce plan en entier
+            }
+            if (all_hit) range = std::min(range, far_z + 0.1f);
         }
         sb_light_t& l = L[num_lights++];
         set4(l.pos_range, apex, range);

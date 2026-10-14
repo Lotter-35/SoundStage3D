@@ -491,9 +491,35 @@ static void cleanup() {
 // --demo : 3 lyres en blanc, gobo etoile + prisme 8, nettes sur le sol, vues en biais depuis la salle.
 // Sert a verifier les franges colorees de l'aberration chromatique (captures avec --frames et --shot).
 // Variantes : --demo 1 hors de la mise au point (nettete a 60 % de la distance), --demo 2 frost 0,4,
-// --demo 3 iris 0,6 et zoom plus large.
+// --demo 3 iris 0,6 et zoom plus large, --demo 4 pont de scene en rasant (taches tres allongees).
 static void setup_demo() {
     app.rig.effects.clear();
+    if (g_demo == 4) {
+        // pont de scene en orange, gobo barres, zoom 2,2 deg, tilt 69 deg : taches tres allongees au sol,
+        // vues en rasant (verifie que la tache n'est pas coupee par le raccourcissement des faisceaux)
+        for (Fixture& f : app.rig.fixtures) {
+            FixtureParams& p = f.base;
+            p.dimmer = 0;
+            if (f.mount.group != 4) continue;
+            p = FixtureParams();
+            p.color = {1.0f, 165.0f / 255.0f, 0.0f};
+            p.gobo = 8;   // barres
+            p.zoom = 2.2f;
+            p.focus = 18;
+            p.pan = -3;
+            p.tilt = 69;
+        }
+        app.rig.instant_moves = true;
+        app.rig.update(0);
+        app.rig.update(0);
+        app.rig.instant_moves = false;
+        app.cam.pos = {-9, 4.0f, 22};
+        app.cam.yaw = -PI * 0.5f - 0.15f;
+        app.cam.pitch = -0.30f;
+        app.cam.update_basis();
+        app.paused = true;
+        return;
+    }
     const vec3 targets[3] = {{1, 0, -4}, {1, 0, 3}, {-4, 0, 9}};
     const vec3 near_pos[3] = {{4, 18, -5}, {4, 18, 5}, {-2, 18, 15}};
     std::vector<int> used;

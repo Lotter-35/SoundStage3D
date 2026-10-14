@@ -194,6 +194,13 @@ Paires (lyre, pavé) : 95 par défaut, 282 avec gobo + prisme 8, 941 avec zoom 4
 | + masques par tuile d'écran (CPU) et plages de profondeur dans le calcul des cases | calcul des cases +0,15 ms ; fumée et lyres douces encore +4,2 ms au total (rectangles « tout l'écran ») |
 | **+ volume coupé au plan avant de la caméra et prolongé au-delà des parois (au lieu de « tout l'écran »)** | **+0,5 ms : gardé.** Images identiques (PSNR > 73 dB) |
 
+Longueur des faisceaux arrêtés par un obstacle (correction : bout des taches rasantes coupé net, `--demo 4`), banc rapide complet, scène immobile, contre la version d'avant :
+
+| Essai | Résultat |
+|---|---|
+| Distance exacte pour le plan de chaque face touchée | surfaces +0,5 à +1 ms avec gobo + prisme, images identiques : une face presque parallèle au faisceau l'allongeait pour rien |
+| **Distance exacte seulement si les 9 points touchés sont sur un même plan (le sol), sinon comme avant** | **neutre (écarts dans le bruit), images identiques sur le banc (PSNR > 66 dB), bout des taches rasantes corrigé : gardé** (historique 8) |
+
 ### Aberration chromatique (14 octobre 2026)
 
 Franges colorées au bord des taches et des gobos (voir le README). Coupée par défaut : `--set chroma=1`, intensité `--set chromaforce=...`.

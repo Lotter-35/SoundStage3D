@@ -46,7 +46,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `--bench` | Banc d'essai (voir plus bas). |
   | `--fast` | Banc rapide : 30 images de chauffe et 60 mesurées par cas (au lieu de 60 et 150). |
   | `--behind` | La fenêtre s'ouvre derrière les autres sans prendre le clavier. Attention : le GPU est alors 5 à 15 % plus lent (Windows donne la priorité à la fenêtre active). |
-  | `--demo [0..3]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large. |
+  | `--demo [0..4]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large, 4 pont de scène en orange (gobo barres, zoom 2,2°, tilt 69°) : taches très allongées vues en rasant. |
 
   Réglages de `--set` :
 
@@ -220,6 +220,8 @@ Les obstacles fixes font de l'ombre aux faisceaux, sur les surfaces et dans la f
   - Calcul des cases de lumière : pour chaque case et chaque lyre, les pavés dont l'ombre peut toucher la case (8 bits). Une surface ne teste que ceux-là.
   - Fumée : une lecture du masque de la tuile ; rien de plus sans ombre près du pixel.
 - **Le faisceau entier arrêté par un obstacle** (les 9 rayons de son axe et de son bord touchent) est en plus raccourci à l'obstacle : moins de pixels à calculer.
+  - Longueur : le plus loin des 9 points touchés le long de l'axe. Si les 9 points sont sur un même plan (le sol), la distance exacte où le cône entier l'a franchi. Sinon, sur un sol vu en rasant (pont de scène, tilt 69°), le bout de la tache, très allongée, tombait entre deux rayons du bord et était coupé net (`--demo 4`).
+  - Pas de calcul exact quand les points touchés sont sur des faces différentes : le plan d'une face presque parallèle au faisceau l'allongerait pour rien (mesuré : +0,5 à +1 ms dans les surfaces, avec gobo + prisme).
 - **Limites.**
   - Dans la fumée, le bord de l'ombre reste net (la pénombre n'est que sur les surfaces).
   - Deux ombres qui se chevauchent le long d'un même rayon dans la fumée seraient retirées deux fois : le résultat est borné à 0.
