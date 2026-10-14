@@ -232,6 +232,47 @@ Coût (même exécutable, `chroma=0` contre `chroma=1`, banc complet en mouvemen
 - Formats essayés pour l'atlas en couleur : `R11G11B10F` (4 octets) est refusé en écriture par `sokol-shdc` ; RGBA8 donnerait des marches visibles dans les dégradés sombres (frost) : RGBA16F gardé.
 - Images (vue d'essai `--demo 0..3`, agrandissements des bords) : franges bleues côté extérieur, rouges puis orange côté axe, comme sur les photos ; elles suivent la mise au point, le frost et l'iris.
 
+### Eau au sol : creux, flaques, reflet net (14 octobre 2026)
+
+Nouveau modèle (voir le README) : les creux du béton se remplissent d'abord, puis des flaques de plus en plus grandes, le reste sec jusqu'à 0,45 ; reflet miroir net seulement dans l'eau (les passes de flou et de traînée du reflet sont supprimées).
+
+Mesures (banc rapide, scène immobile, contre la version d'avant ; historique 9a, 9b) :
+
+| Cas | Résultat |
+|---|---|
+| Sol sec (14 cas) | inchangé : 4 alternances, défaut 7,5 → 7,3 ms, gobo + prisme 8 19,4 → 19,2 ms (dans le bruit) ; images identiques (PSNR > 60 dB) |
+| Sol mouillé 0,8 (cas 15 et 16) | surfaces +0,4 et +0,6 ms (lecture des creux et bruit des cuvettes) ; reflet : composition −0,1 ms (flou et traînée supprimés) ; total +0,2 et +0,4 ms |
+| Eau à 0,1 (3 cas) | surfaces +0,3 ms (défaut), +0,6 ms (gobo + prisme 8) ; reflet inchangé |
+
+| Essai | Résultat |
+|---|---|
+| Une seule passe des surfaces, code de l'eau dans un vrai branchement (`[[dont_flatten]]`) | sol SEC plus lent : surfaces +0,25 ms (défaut), jusqu'à +0,9 ms (gobo + prisme), même registres (29) mais 47 instructions de plus : écarté |
+| Sans garder la quantité d'eau jusqu'après la boucle des lyres | défaut +0,07 ms : mieux, pas assez |
+| **Deux variantes de la passe des surfaces (sol sec sans aucun code d'eau, sol mouillé)** | **sol sec inchangé (907 instructions, contre 1 030 avant, l'ancien code de l'eau en est sorti aussi) : gardé** |
+| Creux lus en trilinéaire au lieu d'anisotrope ×4 | aucun gain (surfaces 1,97 → 1,98 ms), image changée (PSNR 49 dB) : écarté (historique 9e) |
+
+#### Reflet calculé seulement dans l'eau (historique 10a à 10c)
+
+Masque de l'eau à la résolution du miroir, puis par blocs de 2 × 2 (voir le README). Banc rapide, scène immobile, contre la version sans masque, 2 lancements :
+
+| Eau | Défaut | Gobo + prisme 8 | Zoom 45° + frost 0,6 |
+|---|---|---|---|
+| 0,1 | dans le bruit (reflet 0,69 → 0,32 ms) | −1,4 ms (25,1 → 23,7) | **−4,6 ms** (21,7 → 17,0) |
+| 0,3 | dans le bruit (reflet 0,69 → 0,50 ms) | −0,6 ms | −2,2 ms (21,4 → 19,3) |
+| 1 | dans le bruit | dans le bruit | dans le bruit |
+
+- Images identiques à toutes les quantités d'eau (PSNR > 68 dB, aucun pixel changé de plus de 4/255).
+- Le masque coûte environ 0,15 ms (2 passes à la résolution du miroir).
+- Reste à faire : les tables des faisceaux du miroir (1,5 à 2,6 ms) sont calculées pour toutes les lyres vues dans le reflet, qu'il y ait beaucoup d'eau ou peu.
+
+| Essai | Résultat (eau 0,3) |
+|---|---|
+| Masque : 1 point de l'écran par pixel du miroir | frost −3,5 ms, mais des creux remplis d'un pixel manqués (points sans reflet, PSNR 52 dB) : écarté |
+| + 4 points de l'écran par pixel du miroir, composition qui ignore les pixels du miroir non calculés | images identiques ; frost −1,3 ms seulement : les faisceaux du miroir lisaient la profondeur d'un seul des 4 pixels du miroir qu'ils couvrent |
+| + faisceaux du miroir seulement dans les flaques (pas dans les creux) | frost −3,4 ms, mais les creux paraissent plus sombres (sans la lueur des faisceaux reflétés) : écarté |
+| **+ masque par blocs de 2 × 2 pixels du miroir (= un pixel des faisceaux)** | **images identiques, frost −2,2 ms (−4,6 ms à 0,1) : gardé** |
+- Compter les registres et instructions d'un shader : compiler le HLSL de `sokol-shdc -l hlsl5` avec `fxc /T ps_5_0 /O3 /Fc` (`dcl_temps`, « instruction slots »).
+
 ### Sol mouillé : reflet miroir (14 octobre 2026)
 
 Cas 15 et 16 du banc complet (`floor_wet = 0,8`), qualité fixe, en mouvement, 2 lancements :

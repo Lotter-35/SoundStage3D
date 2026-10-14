@@ -977,7 +977,9 @@ uint occ_tile_mask(int li, vec2 ndc, int side) {
 // texture au hasard, tournee d'un quart de tour et retournee au hasard (128 variantes) : les joints
 // restent alignes et aucune repetition ne se voit de loin, pour une seule lecture par texture.
 // Necessite floor_tex, floor_smp et les uniformes floor_p, floor_q declares avant l'inclusion.
-@block floor_material
+// Eau au sol : quantite d'eau en un point du sol (materiau du sol, masque du reflet).
+// Necessite floor_cav, floor_smp, floor_p et floor_w declares avant l'inclusion.
+@block floor_water
 // Meme calcul que floor_hash() dans src/floor_texture.h.
 uint floor_hash(ivec2 c) {
     uint h = uint(c.x) * 0x8da6b343u ^ uint(c.y) * 0xd8163841u;
@@ -1000,22 +1002,70 @@ float floor_noise(vec2 p) {
     return mix(mix(a, b, f.x), mix(d, e, f.x), f.y) * (1.0 / 65535.0);
 }
 
-// Materiau du sol au point P. fw, gx, gy : coordonnees en dalles (P.xz * floor_p.x) et leurs derivees
-// a l'ecran (calculees hors de tout branchement). Modifie N, albedo, rough ; renvoie la quantite d'eau
-// en surface (0 : pas d'eau, 1 : flaque). Une seule lecture de texture (voir src/floor_texture.h) :
-// le filtrage anisotrope multiplie le cout de chaque lecture.
-float floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo, inout float rough) {
+// Dalle de la texture sous le point fw (coordonnees en dalles) : uv dans la texture, et M, rotation et
+// retournement de la dalle (memes calculs que FloorTexture::albedo_at).
+void floor_tile(vec2 fw, out vec2 uv, out mat2 M) {
     vec2 cell = floor(fw);
     vec2 q = fw - cell - 0.5;
     uint h = floor_hash(ivec2(cell));
     uint rot = h & 3u;
     uint idx = (h >> 2u) & 15u;
     float s = (rot & 2u) != 0u ? -1.0 : 1.0;
-    mat2 M = (rot & 1u) != 0u ? mat2(0.0, s, -s, 0.0) : mat2(s, 0.0, 0.0, s);
+    M = (rot & 1u) != 0u ? mat2(0.0, s, -s, 0.0) : mat2(s, 0.0, 0.0, s);
     if ((h & 64u) != 0u) {
         M = mat2(-1.0, 0.0, 0.0, 1.0) * M;
     }
-    vec2 uv = (vec2(float(idx & 3u), float(idx >> 2u)) + M * q + 0.5) * 0.25;
+    uv = (vec2(float(idx & 3u), float(idx >> 2u)) + M * q + 0.5) * 0.25;
+}
+
+// Eau au sol (curseur floor_p.y), d'apres Lagarde, « Water drop 2b » et « 3b ». Le niveau d'eau monte :
+//  1. les creux du beton (trous, pores, joints : floor_cav) se remplissent d'abord : miroir affleurant ;
+//  2. puis des flaques, de plus en plus nombreuses et grandes : cuvettes de quelques metres (bruit en
+//     coordonnees du monde, sans repetition) dont le bord suit les creux ; chaque flaque a un bord de
+//     beton detrempe (plus sombre, plus brillant) ;
+//  3. le reste du sol reste sec jusqu'a la moitie, puis se mouille ; a 1, l'eau couvre tout.
+// floor_w (calcule sur le CPU, FloorTexture::water_levels) : x niveau des flaques, y niveau des creux,
+// z film d'eau. Les niveaux suivent les repartitions de hF et hP : 2 % de flaques a 0,1, tout a 1.
+// Renvoie (flaque, bord detrempe, creux remplis), de 0 a 1. margin elargit l'eau (masque du reflet).
+// Profondeur des creux du beton (0 : fond d'un trou, 1 : surface).
+float floor_cavity(vec2 uv, mat2 M, vec2 gx, vec2 gy) {
+    return textureGrad(sampler2D(floor_cav, floor_smp), uv, (M * gx) * 0.25, (M * gy) * 0.25).r;
+}
+
+// Cuvettes ou l'eau s'accumule (sans les creux) : varie lentement (motifs de 1,5 a 5 m).
+float floor_basins(vec2 fw) {
+    vec2 pm = fw / floor_p.x;   // metres
+    return 0.55 * floor_noise(pm * 0.22) + 0.30 * floor_noise(pm * 0.7 + 17.0) + 0.15 * floor_noise(pm * 2.1 + 33.0);
+}
+
+// hP : creux (floor_cavity), hB : cuvettes (floor_basins).
+vec3 floor_water_at(float hP, float hB, vec2 gx, vec2 gy, float margin) {
+    float hF = hB + 0.15 * (hP - 0.5);
+    float d = floor_w.x - hF + margin;
+    // bord de flaque : net, mais sur au moins un pixel (sinon il scintille en 4K)
+    float pix = (length(gx) + length(gy)) / floor_p.x;
+    float puddle = smoothstep(0.0, max(0.004, 0.6 * pix), d);
+    float rim = smoothstep(-0.03, 0.0, d);                               // beton detrempe autour de la flaque
+    float holes = clamp((floor_w.y + margin - hP) / 0.06, 0.0, 1.0);     // eau dans les creux
+    return vec3(puddle, rim, holes);
+}
+
+vec3 floor_water(vec2 uv, mat2 M, vec2 fw, vec2 gx, vec2 gy, float margin) {
+    return floor_water_at(floor_cavity(uv, M, gx, gy), floor_basins(fw), gx, gy, margin);
+}
+@end
+
+@block floor_material
+@include_block floor_water
+
+// Materiau du sol au point P. fw, gx, gy : coordonnees en dalles (P.xz * floor_p.x) et leurs derivees
+// a l'ecran (calculees hors de tout branchement). Modifie N, albedo, rough ; renvoie la quantite d'eau
+// en surface (0 : pas d'eau, 1 : flaque). Une seule lecture de texture (voir src/floor_texture.h) :
+// le filtrage anisotrope multiplie le cout de chaque lecture.
+float floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo, inout float rough) {
+    vec2 uv;
+    mat2 M;
+    floor_tile(fw, uv, M);
     // derivees continues (celles du sol, tournees) : pas de couture de mipmap aux joints
     vec4 t = textureGrad(sampler2D(floor_tex, floor_smp), uv, (M * gx) * 0.25, (M * gy) * 0.25);
 
@@ -1027,31 +1077,25 @@ float floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo,
     rough = max(t.w, 0.04);   // recentree sur le beton uni et elargie au loin (Toksvig), voir floor_texture.cpp
     albedo = floor_q.rgb * (t.x * t.x);
 
-    // Eau au sol (curseur floor_p.y), d'apres Lagarde, « Water drop 3b - Physically based wet surfaces » :
-    //  0 .. 0,5 : le beton s'imbibe. L'eau remplit les pores : plus sombre selon la porosite (jusqu'a x 0,2),
-    //             un peu plus brillant ; relief et texture restent visibles. Pas de flaque.
-    //  0,5 .. 1 : le niveau d'eau monte : film d'eau puis flaques, d'abord dans les creux (cuvettes de
-    //             quelques metres + joints et pores, plus sombres), jusqu'a couvrir le sol. Sous l'eau,
-    //             la normale s'aplatit et la surface devient lisse (proprietes de l'eau).
-    float wet = floor_p.y;
+    // Eau au sol (voir floor_water). Dans l'eau : normale plate, surface lisse ; le reflet (passe miroir)
+    // y est toujours net.
+    // Seulement dans les variantes FLOOR_WET (fs_scene_wet...) : par temps sec, le code de l'eau, meme
+    // jamais execute, ralentissait la boucle des lyres de la passe des surfaces (+0,25 ms, +0,9 avec prisme).
     float water = 0.0;
-    if (wet > 0.0) {
-        float lum = clamp(t.x * floor_q.w, 0.0, 2.0);          // 1 en moyenne, < 1 dans les creux
-        float porosity = clamp(0.85 - 0.3 * lum, 0.4, 0.9);    // les creux boivent plus
-        float factor = mix(1.0, 0.2, porosity);
-        float wetLevel = smoothstep(0.0, 0.5, wet);
-        albedo *= mix(1.0, factor, wetLevel);
-        rough *= mix(1.0, factor, 0.6 * wetLevel);
-        float level = wet * 2.0 - 1.0;
-        if (level > 0.0) {
-            vec2 pm = fw / floor_p.x;                          // metres
-            float hgt = floor_noise(pm * 0.3) * 0.62 + floor_noise(pm * 1.1 + 17.0) * 0.25 + lum * 0.065;
-            water = smoothstep(0.0, 0.06, level * 1.02 - hgt);
-            rough = mix(rough, 0.05, water);
-            albedo *= mix(1.0, 0.8, water);
-            N = normalize(mix(N, vec3(0.0, 1.0, 0.0), water));
-        }
+#ifdef FLOOR_WET
+    [[dont_flatten]] if (floor_p.y > 0.0) {
+        vec3 w = floor_water(uv, M, fw, gx, gy, 0.0);
+        float puddle = w.x, holes = w.z;
+        float wetAmt = max(max(floor_w.z, w.y), holes);
+        // beton mouille : l'eau remplit les pores (porosite du beton ~0,75) : plus sombre, plus brillant
+        albedo *= mix(1.0, 0.45, wetAmt);
+        rough = mix(rough, max(rough * 0.4, 0.12), wetAmt);
+        // eau : surface plate et lisse (rugosite 0,05 : un reflet de lampe plus petit qu'un pixel scintillerait)
+        water = max(puddle, holes);
+        rough = mix(rough, 0.05, water);
+        N = normalize(mix(N, vec3(0.0, 1.0, 0.0), water));
     }
+#endif
     return water;
 }
 @end
@@ -1071,12 +1115,14 @@ layout(binding=2) uniform scene_fs_params {
     vec4 probe_dims;
     vec4 floor_p;     // sol texture : x : dalles par metre (4 / repetition), y : eau (0..1), w : actif
     vec4 floor_q;     // rgb : couleur lineaire = R^2 * floor_q.rgb, w : 1 / R moyen
+    vec4 floor_w;     // eau au sol : x niveau des flaques, y niveau des creux, z film d'eau (voir floor_material)
     vec4 chroma;      // aberration chromatique : laterale, prisme, axiale, active (voir beam_pattern_rgb)
 };
 layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
 layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
 layout(binding=5) uniform texture2DArray gobo_tex;
 layout(binding=30) uniform texture2D floor_tex;
+layout(binding=31) uniform texture2D floor_cav;   // creux du beton (eau au sol)
 layout(binding=4) uniform sampler floor_smp;
 layout(binding=22) readonly buffer occ_lights_ro { sb_occ occ_lights[]; };
 layout(binding=23) readonly buffer occ_planes_ro { sb_vec4 occ_planes[]; };
@@ -1127,8 +1173,9 @@ void main() {
     vec2 fgx = dFdx(fw);
     vec2 fgy = dFdy(fw);
     // vrai branchement : sinon le compilateur HLSL execute le materiau du sol sur tous les pixels
+    float water = 0.0;
     [[dont_flatten]] if (v_emissive.a < -0.5 && floor_p.w > 0.5) {
-        floor_material(fw, fgx, fgy, N, albedo, rough);
+        water = floor_material(fw, fgx, fgy, N, albedo, rough);
     }
     vec3 diffColor = albedo * (1.0 - metal);
     vec3 f0 = mix(vec3(0.04), albedo, metal);
@@ -1202,7 +1249,8 @@ void main() {
             spec += E * ggx_spec(N, V, l, rough, f0);
         }
     }
-    vec3 color = diffColor * diffuse * 0.31830989 + spec;
+    // dans l'eau, le reflet des lentilles est celui de la passe miroir (composition) : pas deux fois
+    vec3 color = diffColor * diffuse * 0.31830989 + spec * (1.0 - water);
 
     // lumiere indirecte (rebonds colores) + reflet approximatif de cette lumiere
     if (probe_min.w > 0.5) {
@@ -1228,9 +1276,21 @@ void main() {
 @include_block scene_fs_body
 @end
 
+// Sol mouille (curseur d'eau > 0) : memes passes, avec l'eau au sol (floor_material).
+@fs fs_scene_wet
+#define FLOOR_WET 1
+@include_block scene_fs_body
+@end
+
 // Meme passe, qui ecrit aussi normale et matiere pour la passe des lyres douces.
 @fs fs_scene_gb
 #define SCENE_GBUFFER 1
+@include_block scene_fs_body
+@end
+
+@fs fs_scene_gb_wet
+#define SCENE_GBUFFER 1
+#define FLOOR_WET 1
 @include_block scene_fs_body
 @end
 
@@ -1416,6 +1476,17 @@ vec3 vol_ray(vec2 pix, out float tMax) {
     tMax = viewZ / max(dot(dir, cam_fwd.xyz), 1e-3);
     return dir;
 }
+// Reflet : profondeur 0 hors de l'eau (passe fs_refl_mask) : pas de faisceau a calculer.
+#define VOL_RAY_SKIP(tMax) if (tMax <= 0.0) { discard; }
+@end
+
+// Faisceaux du reflet : seulement ou il y a de l'eau (masque de fs_refl_mask, a la resolution du miroir,
+// 2 fois celle des faisceaux). Lu en bilineaire au centre du pixel des faisceaux : moyenne des 2 x 2
+// pixels du miroir qu'il couvre, non nulle si l'un d'eux est mouille. probe_cell.w : camera miroir.
+// Necessite vol_uniforms.
+@block beam_mask
+layout(binding=9) uniform texture2D beam_mask_tex;
+#define BEAM_MASK_SKIP() if (probe_cell.w > 0.5 && textureLod(sampler2D(beam_mask_tex, lin_clamp_smp), gl_FragCoord.xy / res.xy, 0.0).r <= 0.0) { discard; }
 @end
 
 @block ray_cone
@@ -1488,6 +1559,7 @@ out vec4 frag_color;
 void main() {
     float tMax;
     vec3 dir = vol_ray(gl_FragCoord.xy, tMax);
+    VOL_RAY_SKIP(tMax)
     vec3 cam = cam_pos.xyz;
     float sigmaAvg = fog_box_min.w;
     float jitter = fract(ign(gl_FragCoord.xy) + cam_fwd.w * 0.61803399);
@@ -1552,6 +1624,7 @@ layout(binding=24) readonly buffer occ_tiles_ro { sb_index occ_tiles[]; };
 @include_block beam_pattern
 @include_block fog_density
 @include_block ray_cone
+@include_block beam_mask
 
 flat in int v_light;
 out vec4 frag_color;
@@ -1559,6 +1632,8 @@ out vec4 frag_color;
 void main() {
     float tMax;
     vec3 dir = vol_ray(gl_FragCoord.xy, tMax);
+    VOL_RAY_SKIP(tMax)
+    BEAM_MASK_SKIP()
     vec3 cam = cam_pos.xyz;
     float g = fog0.w;
     float sigmaAvg = fog_box_min.w;
@@ -1662,6 +1737,7 @@ layout(binding=24) readonly buffer occ_tiles_ro { sb_index occ_tiles[]; };
 @include_block ray_cone
 @include_block occlusion
 @include_block occlusion_tiles
+@include_block beam_mask
 
 flat in int v_light;
 out vec4 frag_color;
@@ -1675,6 +1751,8 @@ float table_at(vec4 lay, float row, float col) {
 void main() {
     float tMax;
     vec3 dir = vol_ray(gl_FragCoord.xy, tMax);
+    VOL_RAY_SKIP(tMax)
+    BEAM_MASK_SKIP()
     vec3 cam = cam_pos.xyz;
     float g = fog0.w;
     float sigmaAvg = fog_box_min.w;
@@ -1915,6 +1993,83 @@ void main() {
 //  6b. Reflet du sol mouille : composition de l'image miroir (surfaces attenuees par la fumee +
 //      faisceaux), a demi-resolution. Les niveaux plus flous sont faits par la reduction du bloom.
 // -------------------------------------------------------------------------------------
+// Masque du reflet (passe miroir) : ou y a-t-il de l'eau au sol, pixel par pixel de l'image miroir ?
+// (seulement la presence d'eau : la quantite est calculee par la composition)
+// Le point du sol est celui que voit la camera principale a la meme place a l'ecran (le reflet y est lu
+// par la composition). Passe 1 : eau sous chaque pixel du miroir ; passe 2 (fs_refl_block) : blocs.
+// Marge : l'eau est un peu elargie (bords des flaques ; le bruit des cuvettes est pris au centre).
+@fs fs_refl_mask
+#extension GL_EXT_control_flow_attributes : require
+@include_block common
+layout(binding=5) uniform refl_mask_params {
+    vec4 cam_pos;      // camera principale
+    vec4 cam_right;    // w : tan x
+    vec4 cam_up;       // w : tan y
+    vec4 cam_fwd;
+    vec4 res;          // xy : taille du miroir, zw : taille du rendu plein
+    vec4 floor_p;      // comme scene_fs_params
+    vec4 floor_w;
+};
+layout(binding=6) uniform texture2D depth_tex;     // profondeur lineaire de la camera principale
+layout(binding=31) uniform texture2D floor_cav;
+layout(binding=1) uniform sampler point_smp;
+layout(binding=4) uniform sampler floor_smp;
+@include_block floor_water
+layout(location=0) out vec4 frag_wet;   // 1 : de l'eau sous l'un des 4 pixels pleins
+// Point du sol vu par la camera principale au pixel plein fp (y : hauteur, 1000 si rien).
+vec3 floor_point(ivec2 fp) {
+    float viewZ = texelFetch(sampler2D(depth_tex, point_smp), fp, 0).r;
+    vec2 ndc = ndc_from_uv((vec2(fp) + 0.5) / res.zw);
+    vec3 dir = normalize(cam_fwd.xyz + cam_right.xyz * (ndc.x * cam_right.w) + cam_up.xyz * (ndc.y * cam_up.w));
+    vec3 P = cam_pos.xyz + dir * (viewZ / max(dot(dir, cam_fwd.xyz), 1e-3));
+    return viewZ < 900.0 ? P : vec3(0.0, 1000.0, 0.0);
+}
+
+void main() {
+    // les 4 pixels pleins couverts par ce pixel du miroir (la composition y lit le reflet) : les creux
+    // remplis ne font souvent qu'un pixel
+    vec2 r = res.zw / res.xy;
+    ivec2 base = ivec2(floor((gl_FragCoord.xy - 0.5) * r + 0.5));
+    ivec2 fmax = ivec2(res.zw) - 1;
+    vec3 Pc = floor_point(clamp(base, ivec2(0), fmax));
+    vec2 fwc = Pc.xz * floor_p.x;
+    vec2 gx = dFdx(fwc) / r.x;   // derivees d'un pixel plein (meme flou des creux que la composition)
+    vec2 gy = dFdy(fwc) / r.y;
+    bool wet = false;
+    float hB = floor_basins(fwc);   // varie lentement : une fois pour les 4 pixels (marge ci-dessous)
+    for (int k = 0; k < 4; k++) {
+        vec3 P = floor_point(clamp(base + ivec2(k & 1, k >> 1), ivec2(0), fmax));
+        if (abs(P.y) < 0.03) {
+            vec2 fw = P.xz * floor_p.x;
+            vec2 tuv;
+            mat2 M;
+            floor_tile(fw, tuv, M);
+            vec3 w = floor_water_at(floor_cavity(tuv, M, gx, gy), hB, gx, gy, 0.02);
+            wet = wet || max(w.x, w.z) > 0.0;
+        }
+    }
+    frag_wet = vec4(wet ? 1.0 : 0.0, 0.0, 0.0, 1.0);
+}
+@end
+
+// Masque du reflet, passe 2 : par blocs de 2 x 2 pixels du miroir (un pixel des faisceaux du miroir) :
+// tout le bloc est calcule si l'un de ses pixels est mouille. Hors des blocs mouilles : profondeur au plus
+// pres (Z inverse : 1 ; la scene miroir y est rejetee avant le shader) et profondeur lineaire a 0.
+@fs fs_refl_block
+layout(binding=12) uniform texture2D src_tex;   // eau par pixel (fs_refl_mask)
+layout(binding=1) uniform sampler point_smp;
+layout(location=0) out vec4 frag_depth_lin;
+void main() {
+    ivec2 b = (ivec2(gl_FragCoord.xy) / 2) * 2;
+    ivec2 m = textureSize(sampler2D(src_tex, point_smp), 0) - 1;
+    float w = texelFetch(sampler2D(src_tex, point_smp), b, 0).r + texelFetch(sampler2D(src_tex, point_smp), min(b + ivec2(1, 0), m), 0).r
+            + texelFetch(sampler2D(src_tex, point_smp), min(b + ivec2(0, 1), m), 0).r + texelFetch(sampler2D(src_tex, point_smp), min(b + ivec2(1, 1), m), 0).r;
+    bool wet = w > 0.0;
+    gl_FragDepth = wet ? 0.0 : 1.0;
+    frag_depth_lin = vec4(wet ? 1000.0 : 0.0, 0.0, 0.0, 1.0);
+}
+@end
+
 @fs fs_refl_compose
 @include_block common
 layout(binding=5) uniform refl_params {
@@ -1942,28 +2097,6 @@ void main() {
 }
 @end
 
-// Trainees verticales du reflet (beton humide) : flou vertical continu (31 points rapproches) de l'image
-// miroir reduite. Un flou en quelques points espaces recopiait chaque lentille en une echelle de points.
-@fs fs_refl_streak
-layout(binding=6) uniform streak_params {
-    vec4 texel;        // xy : 1 / taille, z : demi-longueur de la trainee (pixels)
-};
-layout(binding=12) uniform texture2D src_tex;
-layout(binding=2) uniform sampler lin_clamp_smp;
-out vec4 frag_color;
-void main() {
-    vec2 uv = gl_FragCoord.xy * texel.xy;
-    vec3 acc = vec3(0.0);
-    float wsum = 0.0;
-    for (int k = -15; k <= 15; k++) {
-        float o = float(k) / 15.0;
-        float w = exp(-3.0 * o * o);
-        acc += textureLod(sampler2D(src_tex, lin_clamp_smp), uv + vec2(0.0, o * texel.z * texel.y), 0.0).rgb * w;
-        wsum += w;
-    }
-    frag_color = vec4(acc / wsum, 1.0);
-}
-@end
 
 @fs fs_composite
 #extension GL_EXT_control_flow_attributes : require
@@ -1977,6 +2110,7 @@ layout(binding=5) uniform composite_params {
     vec4 cam_pos;      // xyz : camera, w : reflet du sol calcule (passe miroir)
     vec4 floor_p;      // comme scene_fs_params (sol texture ; y : eau)
     vec4 floor_q;
+    vec4 floor_w;
 };
 layout(binding=6) uniform texture2D depth_tex;
 layout(binding=10) uniform texture2D vol_hist_tex;
@@ -1987,8 +2121,8 @@ layout(binding=26) uniform texture2D soft_diffuse_tex;
 layout(binding=27) uniform texture2D soft_spec_tex;
 layout(binding=30) uniform texture2D floor_tex;
 layout(binding=28) uniform texture2D refl0_tex;
-layout(binding=31) uniform texture2D refl1_tex;
-layout(binding=9) uniform texture2D refl2_tex;
+layout(binding=9) uniform texture2D refl_mask_tex;   // profondeur lineaire du miroir : 0 hors de l'eau
+layout(binding=31) uniform texture2D floor_cav;
 layout(binding=1) uniform sampler point_smp;
 layout(binding=2) uniform sampler lin_clamp_smp;
 layout(binding=4) uniform sampler floor_smp;
@@ -1997,28 +2131,40 @@ layout(binding=4) uniform sampler floor_smp;
 
 out vec4 frag_color;
 
+#define FLOOR_WET 1
 @include_block floor_material
 
 // Reflet du sol mouille (passe miroir, voir Renderer::render) : la scene vue d'une camera miroir sous
-// le sol, a la meme position a l'ecran.
-//  - flaque : miroir net (refl0, un peu adouci par refl1 selon la rugosite) ;
-//  - beton humide : reflet ETIRE VERTICALEMENT (refl2 : flou vertical continu de la passe miroir),
-//    comme une route mouillee la nuit : chaque lentille devient une trainee, les faisceaux des traits.
-// Pas de decalage par le relief : une normale differente a chaque pixel allait chercher le reflet au
-// hasard (paillettes).
+// le sol, a la meme position a l'ecran. Seulement dans l'eau (flaques, creux remplis), et toujours net :
+// pas de reflet flou ou etire intermediaire (le beton mouille garde les reflets des lampes, rugueux, de la
+// passe des surfaces). Fresnel de l'eau (F0 = 0,02). Pas de decalage par le relief : l'eau est plate.
 vec3 floor_reflection(vec3 P, vec3 dir, vec2 fw, vec2 gx, vec2 gy, vec2 uv) {
     vec3 N = vec3(0.0, 1.0, 0.0);
     vec3 alb = vec3(0.0);
     float rough = 0.32;
     float water = floor_material(fw, gx, gy, N, alb, rough);
-    float wetLevel = smoothstep(0.0, 0.5, floor_p.y);
-    float amount = max(water, wetLevel * 0.85);
+    if (water <= 0.0) {
+        return vec3(0.0);
+    }
     float cosv = max(-dir.y, 0.02);                     // sol horizontal
     float F = 0.02 + 0.98 * pow(1.0 - cosv, 5.0);       // eau
-    vec3 sharp = mix(textureLod(sampler2D(refl0_tex, lin_clamp_smp), uv, 0.0).rgb,
-                     textureLod(sampler2D(refl1_tex, lin_clamp_smp), uv, 0.0).rgb, clamp((rough - 0.05) / 0.08, 0.0, 1.0));
-    vec3 streak = textureLod(sampler2D(refl2_tex, lin_clamp_smp), uv, 0.0).rgb;
-    return mix(streak, sharp, water) * (F * amount);
+    // lecture bilineaire du reflet sans les pixels du miroir hors de l'eau (non calcules : masque), pour
+    // ne pas melanger du noir au bord d'une flaque ou d'un creux rempli
+    ivec2 rs = textureSize(sampler2D(refl0_tex, point_smp), 0);
+    vec2 mp = uv * vec2(rs) - 0.5;
+    ivec2 i0 = ivec2(floor(mp));
+    vec2 f = mp - vec2(i0);
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    for (int k = 0; k < 4; k++) {
+        ivec2 o = ivec2(k & 1, k >> 1);
+        ivec2 c = clamp(i0 + o, ivec2(0), rs - 1);
+        float wb = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+        wb *= texelFetch(sampler2D(refl_mask_tex, point_smp), c, 0).r > 0.0 ? 1.0 : 0.0;
+        acc += texelFetch(sampler2D(refl0_tex, point_smp), c, 0).rgb * wb;
+        wsum += wb;
+    }
+    return acc / max(wsum, 1e-4) * (F * water);
 }
 
 void main() {
@@ -2194,6 +2340,8 @@ void main() {
 @program probes cs_probes
 @program scene vs_scene fs_scene
 @program scene_gb vs_scene fs_scene_gb
+@program scene_wet vs_scene fs_scene_wet
+@program scene_gb_wet vs_scene fs_scene_gb_wet
 @program soft_light vs_fullscreen fs_soft_light
 @program depth_only vs_scene fs_depth_only
 @program vol_ambient vs_fullscreen fs_vol_ambient
@@ -2204,8 +2352,9 @@ void main() {
 @program pattern_images cs_pattern_images
 @program pattern_images_rgb cs_pattern_images_rgb
 @program temporal vs_fullscreen fs_temporal
+@program refl_mask vs_fullscreen fs_refl_mask
+@program refl_block vs_fullscreen fs_refl_block
 @program refl_compose vs_fullscreen fs_refl_compose
-@program refl_streak vs_fullscreen fs_refl_streak
 @program composite vs_fullscreen fs_composite
 @program bloom_down vs_fullscreen fs_bloom_down
 @program bloom_up vs_fullscreen fs_bloom_up

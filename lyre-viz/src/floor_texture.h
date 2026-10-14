@@ -31,9 +31,31 @@ struct FloorTexture {
     // tile : taille de repetition de la texture (m). Meme melange des dalles que le shader.
     vec3 albedo_at(float x, float z, float tile) const;
 
+    // Eau au sol. Creux du beton (trous, pores, joints), tires de la texture au chargement : R8 avec
+    // mipmaps, 0 au fond d'un creux, 1 sur la surface (passe-haut de la luminance + divergence des normales).
+    std::vector<std::vector<uint8_t>> cav_mips;
+    // Niveaux d'eau pour la quantite d'eau w (0..1), pour le shader (floor_material) :
+    //   out[0] : niveau des flaques (champ de cuvettes hF, voir puddle_height) ;
+    //   out[1] : niveau de l'eau dans les creux (hauteur hP de cav_mips) ;
+    //   out[2] : film d'eau sur tout le sol (0..1) ; out[3] : part du sol en flaques.
+    // Les niveaux sont tires des repartitions de hP et hF : la part de sol couverte suit w (2 % de flaques
+    // a 0,1, tout couvert a 1), quelle que soit la forme du bruit.
+    void water_levels(float w, float out[4]) const;
+
   private:
     std::vector<float> coarse_lum;   // luminance lineaire du niveau 32 x 32
+    float hp_q[257] = {};            // quantiles de hP (texture pleine)
+    float hf_q[257] = {};            // quantiles de hF (cuvettes + creux)
+    void build_water(const std::vector<float>& lum, const std::vector<float>& nr, int s);
 };
+
+// Bruit de valeur lisse (0..1), meme calcul que floor_noise() dans shaders/lyreviz.glsl.
+float floor_noise(float x, float y);
+// Champ des cuvettes ou l'eau s'accumule (metres), sans les creux : meme calcul que dans floor_material().
+inline float puddle_height(float x, float z) {
+    return 0.55f * floor_noise(x * 0.22f, z * 0.22f) + 0.30f * floor_noise(x * 0.7f + 17.0f, z * 0.7f + 17.0f) +
+           0.15f * floor_noise(x * 2.1f + 33.0f, z * 2.1f + 33.0f);
+}
 
 // Melange des dalles : meme calcul que floor_hash() dans shaders/lyreviz.glsl.
 inline uint32_t floor_hash(int cx, int cz) {

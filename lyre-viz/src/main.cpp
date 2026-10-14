@@ -491,9 +491,44 @@ static void cleanup() {
 // --demo : 3 lyres en blanc, gobo etoile + prisme 8, nettes sur le sol, vues en biais depuis la salle.
 // Sert a verifier les franges colorees de l'aberration chromatique (captures avec --frames et --shot).
 // Variantes : --demo 1 hors de la mise au point (nettete a 60 % de la distance), --demo 2 frost 0,4,
-// --demo 3 iris 0,6 et zoom plus large, --demo 4 pont de scene en rasant (taches tres allongees).
+// --demo 3 iris 0,6 et zoom plus large, --demo 4 pont de scene en rasant (taches tres allongees),
+// --demo 5 eau au sol : 6 taches blanches larges vues en biais (avec --set wet=...).
 static void setup_demo() {
     app.rig.effects.clear();
+    if (g_demo == 5) {
+        // eau au sol : 6 lyres blanches, zoom large, taches qui se touchent devant la camera (avec --set wet=...)
+        for (Fixture& f : app.rig.fixtures) f.base.dimmer = 0;
+        std::vector<int> used;
+        for (int k = 0; k < 6; k++) {
+            const vec3 target = {-2.0f + 5.0f * (float)(k % 3), 0, k < 3 ? -3.0f : 3.0f};
+            const vec3 near_pos = {target.x, 18, k < 3 ? -5.0f : 5.0f};
+            int best = -1;
+            float bd = 1e30f;
+            for (int i = 0; i < (int)app.rig.fixtures.size(); i++) {
+                const vec3 d = app.rig.fixtures[i].mount.pos - near_pos;
+                if (dot(d, d) < bd && std::find(used.begin(), used.end(), i) == used.end()) { bd = dot(d, d); best = i; }
+            }
+            if (best < 0) continue;
+            used.push_back(best);
+            Fixture& f = app.rig.fixtures[best];
+            f.base = FixtureParams();
+            f.base.zoom = 22;
+            f.base.focus = length(target - f.mount.pos);
+            app.rig.aim_points[k % 4] = target;
+            // visee directe (4 points de visee seulement) : angles calcules ici
+            app.rig.update(0);
+            app.rig.aim_angles(f, target, f.base.pan, f.base.tilt);
+        }
+        app.rig.instant_moves = true;
+        app.rig.update(0);
+        app.rig.instant_moves = false;
+        app.cam.pos = {19, 1.7f, 10};
+        app.cam.yaw = PI + 0.45f;
+        app.cam.pitch = -0.07f;
+        app.cam.update_basis();
+        app.paused = true;
+        return;
+    }
     if (g_demo == 4) {
         // pont de scene en orange, gobo barres, zoom 2,2 deg, tilt 69 deg : taches tres allongees au sol,
         // vues en rasant (verifie que la tache n'est pas coupee par le raccourcissement des faisceaux)

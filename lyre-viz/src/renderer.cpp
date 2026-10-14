@@ -369,6 +369,25 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         d.label = "floor";
         floor_img = sg_make_image(&d);
         floor_view = texture_view(floor_img);
+        // creux du beton (eau au sol) ; sans texture : aucun creux
+        static const uint8_t no_cav[1] = {255};
+        sg_image_desc dc = {};
+        dc.pixel_format = SG_PIXELFORMAT_R8;
+        if (floor.ok) {
+            dc.width = dc.height = floor.size;
+            dc.num_mipmaps = (int)floor.cav_mips.size();
+            for (int m = 0; m < dc.num_mipmaps; m++) {
+                dc.data.mip_levels[m].ptr = floor.cav_mips[m].data();
+                dc.data.mip_levels[m].size = floor.cav_mips[m].size();
+            }
+        } else {
+            dc.width = dc.height = 1;
+            dc.data.mip_levels[0].ptr = no_cav;
+            dc.data.mip_levels[0].size = 1;
+        }
+        dc.label = "floor-cavities";
+        floor_cav_img = sg_make_image(&dc);
+        floor_cav_view = texture_view(floor_cav_img);
         // luminance moyenne = celle du beton uni (instance du sol, scene.cpp) : 0,2007
         floor_scale = floor.ok ? 0.2007f / std::max(floor.mean_lum, 1e-3f) : 1.0f;
         sg_sampler_desc s = {};
@@ -407,10 +426,12 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     pip_beam_tables = make_compute_pipeline(beam_tables_shader_desc(backend), "beam-tables");
     pip_pattern_images = make_compute_pipeline(pattern_images_shader_desc(backend), "pattern-images");
     pip_pattern_images_rgb = make_compute_pipeline(pattern_images_rgb_shader_desc(backend), "pattern-images-rgb");
-    for (int pass = 0; pass < 2; pass++) {
-        // pass 0 : pre-passe de profondeur ; pass 1 : surfaces eclairees
+    for (int pass = 0; pass < 3; pass++) {
+        // pass 0 : pre-passe de profondeur ; pass 1 : surfaces eclairees ; pass 2 : idem, sol mouille
+        const int wet = pass == 2 ? 1 : 0;
         sg_pipeline_desc p = {};
-        p.shader = sg_make_shader(pass == 0 ? depth_only_shader_desc(backend) : scene_shader_desc(backend));
+        p.shader = sg_make_shader(pass == 0 ? depth_only_shader_desc(backend)
+                                            : (wet ? scene_wet_shader_desc(backend) : scene_shader_desc(backend)));
         p.layout.buffers[0].stride = sizeof(Vertex);
         p.layout.buffers[1].stride = sizeof(Instance);
         p.layout.buffers[1].step_func = SG_VERTEXSTEP_PER_INSTANCE;
@@ -435,26 +456,26 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
             p.color_count = 2;
             p.colors[0].pixel_format = SG_PIXELFORMAT_RGBA16F;
             p.colors[1].pixel_format = SG_PIXELFORMAT_R32F;
-            p.label = "scene";
+            p.label = wet ? "scene-wet" : "scene";
             p.depth.compare = SG_COMPAREFUNC_GREATER;
             p.depth.write_enabled = true;
-            pip_scene = sg_make_pipeline(&p);
+            pip_scene[wet] = sg_make_pipeline(&p);
             // apres la pre-passe : meme profondeur exactement (meme vertex shader), pas d'ecriture
             p.depth.compare = SG_COMPAREFUNC_GREATER_EQUAL;
             p.depth.write_enabled = false;
-            p.label = "scene-after-prepass";
-            pip_scene_eq = sg_make_pipeline(&p);
+            p.label = wet ? "scene-wet-after-prepass" : "scene-after-prepass";
+            pip_scene_eq[wet] = sg_make_pipeline(&p);
             // variantes qui ecrivent aussi normale et matiere (passe des lyres douces)
-            p.shader = sg_make_shader(scene_gb_shader_desc(backend));
+            p.shader = sg_make_shader(wet ? scene_gb_wet_shader_desc(backend) : scene_gb_shader_desc(backend));
             p.color_count = 4;
             p.colors[2].pixel_format = SG_PIXELFORMAT_RGBA16F;
             p.colors[3].pixel_format = SG_PIXELFORMAT_RGBA8;
-            p.label = "scene-gb-after-prepass";
-            pip_scene_eq_gb = sg_make_pipeline(&p);
+            p.label = wet ? "scene-gb-wet-after-prepass" : "scene-gb-after-prepass";
+            pip_scene_eq_gb[wet] = sg_make_pipeline(&p);
             p.depth.compare = SG_COMPAREFUNC_GREATER;
             p.depth.write_enabled = true;
-            p.label = "scene-gb";
-            pip_scene_gb = sg_make_pipeline(&p);
+            p.label = wet ? "scene-gb-wet" : "scene-gb";
+            pip_scene_gb[wet] = sg_make_pipeline(&p);
         }
     }
     pip_vol_ambient = make_fullscreen_pipeline(vol_ambient_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "vol-ambient");
@@ -504,7 +525,21 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         pip_beams_an_m = sg_make_pipeline(&p);
     }
     pip_refl_compose = make_fullscreen_pipeline(refl_compose_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "refl-compose");
-    pip_refl_streak = make_fullscreen_pipeline(refl_streak_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "refl-streak");
+    {
+        // masque du reflet : eau par pixel du miroir, puis par blocs : profondeur de la camera miroir (ecrite
+        // par le shader) et profondeur lineaire
+        pip_refl_mask = make_fullscreen_pipeline(refl_mask_shader_desc(backend), SG_PIXELFORMAT_R8, false, "refl-mask");
+        sg_pipeline_desc p = {};
+        p.shader = sg_make_shader(refl_block_shader_desc(backend));
+        p.color_count = 1;
+        p.colors[0].pixel_format = SG_PIXELFORMAT_R32F;
+        p.depth.pixel_format = SG_PIXELFORMAT_DEPTH;
+        p.depth.compare = SG_COMPAREFUNC_ALWAYS;
+        p.depth.write_enabled = true;
+        p.sample_count = 1;
+        p.label = "refl-block";
+        pip_refl_block = sg_make_pipeline(&p);
+    }
     pip_temporal = make_fullscreen_pipeline(temporal_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "temporal");
     pip_composite = make_fullscreen_pipeline(composite_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "composite");
     pip_bloom_down = make_fullscreen_pipeline(bloom_down_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "bloom-down");
@@ -569,18 +604,17 @@ void Renderer::resize(int w, int h, int volw, int volh) {
         make_target(soft_diffuse, soft_w, soft_h, SG_PIXELFORMAT_RGBA16F, "soft-diffuse");
         make_target(soft_spec, soft_w, soft_h, SG_PIXELFORMAT_RGBA16F, "soft-spec");
         // reflet du sol mouille (camera miroir), a demi-resolution ; sa fumee a 1/4
-        for (Target* t : {&refl_color, &refl_depth_lin, &refl_depth, &refl_vol, &refl_final, &refl_blur[0], &refl_streak}) destroy_target(*t);
+        for (Target* t : {&refl_color, &refl_depth_lin, &refl_depth, &refl_vol, &refl_final, &refl_beam_mask}) destroy_target(*t);
         refl_w = std::max(8, w / 2);
         refl_h = std::max(8, h / 2);
         refl_vw = std::max(4, refl_w / 2);
         refl_vh = std::max(4, refl_h / 2);
         make_target(refl_color, refl_w, refl_h, SG_PIXELFORMAT_RGBA16F, "refl-color");
         make_target(refl_depth_lin, refl_w, refl_h, SG_PIXELFORMAT_R32F, "refl-depth-lin");
+        make_target(refl_beam_mask, refl_w, refl_h, SG_PIXELFORMAT_R8, "refl-beam-mask");
         make_target(refl_depth, refl_w, refl_h, SG_PIXELFORMAT_DEPTH, "refl-depth");
         make_target(refl_vol, refl_vw, refl_vh, SG_PIXELFORMAT_RGBA16F, "refl-vol");
         make_target(refl_final, refl_w, refl_h, SG_PIXELFORMAT_RGBA16F, "refl-final");
-        make_target(refl_blur[0], refl_w / 2, refl_h / 2, SG_PIXELFORMAT_RGBA16F, "refl-blur1");
-        make_target(refl_streak, refl_w / 2, refl_h / 2, SG_PIXELFORMAT_RGBA16F, "refl-streak");
         num_bloom = 0;
         int bw = w, bh = h;
         for (int i = 0; i < BLOOM_LEVELS; i++) {
@@ -1017,8 +1051,11 @@ void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& g
     (void)rig;
     // sol texture : couleur lue sous la tache (meme melange des dalles que le shader), assombrie par l'eau
     const bool tex_floor = floor_tex && rs.floor_texture;
-    // memes etapes que floor_material (shader) : imbibe (facteur moyen 0,56), puis eau en surface
-    const float wet_factor = lerpf(1.0f, 0.56f, smoothstepf(0.0f, 0.5f, rs.floor_wet)) * lerpf(1.0f, 0.8f, smoothstepf(0.5f, 1.0f, rs.floor_wet));
+    // comme floor_material (shader) : le beton mouille (film, flaques et leur bord) fonce jusqu'a x 0,45 ;
+    // en moyenne sur la tache, selon la part de sol mouillee
+    float wl[4] = {-1.0f, -1.0f, 0.0f, 0.0f};
+    if (floor_tex) floor_tex->water_levels(rs.floor_wet, wl);
+    const float wet_factor = lerpf(1.0f, 0.45f, std::max(wl[2], std::min(1.0f, wl[3] * 1.3f)));
     const float tile = std::max(rs.floor_tile, 0.25f);
     num_vpls = 0;
     sb_vpl_t* V = (sb_vpl_t*)vpl_data.data();
@@ -1291,6 +1328,9 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     float floor_p[4] = {4.0f / std::max(rs.floor_tile, 0.25f), saturate(rs.floor_wet), 0, (floor_tex && rs.floor_texture) ? 1.0f : 0.0f};
     float floor_q[4] = {};
     if (floor_tex) set4(floor_q, floor_tex->tint * floor_scale, 1.0f / std::max(std::sqrt(floor_tex->mean_lum), 0.01f));
+    // niveaux d'eau : flaques, creux, film (voir FloorTexture::water_levels)
+    float floor_w[4] = {-1.0f, -1.0f, 0.0f, 0.0f};
+    if (floor_tex) floor_tex->water_levels(floor_p[1], floor_w);
     // reflet du sol mouille : camera miroir sous le sol, seulement si de l'eau et du sol sont visibles
     float floor_rect[4] = {};
     bool mirror = floor_p[3] > 0.5f && floor_p[1] > 0.0f &&
@@ -1610,8 +1650,9 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         pass.action.depth.clear_value = 0.0f;
         pass.label = "scene";
         sg_begin_pass(&pass);
-        if (soft_pass) sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq_gb : pip_scene_gb);
-        else sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq : pip_scene);
+        const int wet = (floor_p[3] > 0.5f && floor_p[1] > 0.0f) ? 1 : 0;   // eau au sol : variante mouillee
+        if (soft_pass) sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq_gb[wet] : pip_scene_gb[wet]);
+        else sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq[wet] : pip_scene[wet]);
         scene_fs_params_t fsp = {};
         set4(fsp.cam_pos, cam.pos, (float)num_lights);
         set4(fsp.cam_fwd, cam.fwd, 2.0f * tanY / (float)h);
@@ -1624,6 +1665,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(fsp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
         std::memcpy(fsp.floor_p, floor_p, sizeof(fsp.floor_p));
         std::memcpy(fsp.floor_q, floor_q, sizeof(fsp.floor_q));
+        std::memcpy(fsp.floor_w, floor_w, sizeof(fsp.floor_w));
         rs.chroma_params(fsp.chroma);
         if (!rs.surface_lights) fsp.cam_pos[3] = 0;   // pas d'eclairage direct
         sg_apply_uniforms(UB_scene_vs_params, SG_RANGE_REF(vsp));
@@ -1644,6 +1686,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
             b.views[VIEW_pimg_tex] = pimg_t;
             b.views[VIEW_floor_tex] = floor_view;
+            if (wet) b.views[VIEW_floor_cav] = floor_cav_view;   // creux du beton : variante mouillee seulement
             b.views[VIEW_occ_lights_ro] = occ_light_view;
             b.views[VIEW_occ_planes_ro] = occ_plane_view;
             b.samplers[SMP_gobo_smp] = gobo_smp;
@@ -1755,6 +1798,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             bb.views[VIEW_occ_lights_ro] = occ_light_view;
             bb.views[VIEW_occ_planes_ro] = occ_plane_view;
             bb.views[VIEW_occ_tiles_ro] = occ_tile_view;
+            bb.views[VIEW_beam_mask_tex] = refl_beam_mask.tex;   // masque des faisceaux du reflet (lu par la camera miroir seulement)
             bb.views[VIEW_fog_tex] = fog_view;
             bb.views[VIEW_detail_tex] = detail_view;
             bb.samplers[SMP_point_smp] = point_smp;
@@ -1892,6 +1936,56 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             sg_dispatch(gx, gy, 1);
             sg_end_pass();
         }
+        // Masque : le reflet n'est calcule que la ou il y a de l'eau au sol (fs_refl_mask). Hors de l'eau,
+        // profondeur au plus pres (la scene miroir y est rejetee avant le shader) et profondeur lineaire a 0
+        // (les faisceaux du miroir s'arretent tout de suite).
+        gpuprof::mark("reflet : masque");
+        {
+            sg_pass pass = {};
+            pass.attachments.colors[0] = refl_beam_mask.att;
+            pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+            pass.action.colors[0].clear_value = {0.0f, 0, 0, 1};
+            pass.label = "mirror-mask";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_refl_mask);
+            scissor(refl_w, refl_h);
+            refl_mask_params_t mp = {};
+            set4(mp.cam_pos, cam.pos, 0);
+            set4(mp.cam_right, cam.right, tanX);
+            set4(mp.cam_up, cam.up, tanY);
+            set4(mp.cam_fwd, cam.fwd, 0);
+            set4(mp.res, (float)refl_w, (float)refl_h, (float)w, (float)h);
+            std::memcpy(mp.floor_p, floor_p, sizeof(mp.floor_p));
+            std::memcpy(mp.floor_w, floor_w, sizeof(mp.floor_w));
+            sg_bindings b = {};
+            b.views[VIEW_depth_tex] = scene_depth_lin.tex;
+            b.views[VIEW_floor_cav] = floor_cav_view;
+            b.samplers[SMP_point_smp] = point_smp;
+            b.samplers[SMP_floor_smp] = floor_smp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_refl_mask_params, SG_RANGE_REF(mp));
+            sg_draw(0, 3, 1);
+            sg_end_pass();
+        }
+        {
+            sg_pass pass = {};
+            pass.attachments.colors[0] = refl_depth_lin.att;
+            pass.attachments.depth_stencil = refl_depth.att;
+            pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+            pass.action.colors[0].clear_value = {0.0f, 0, 0, 1};
+            pass.action.depth.load_action = SG_LOADACTION_CLEAR;
+            pass.action.depth.clear_value = 1.0f;
+            pass.label = "mirror-block";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_refl_block);
+            scissor(refl_w, refl_h);
+            sg_bindings b = {};
+            b.views[VIEW_src_tex] = refl_beam_mask.tex;
+            b.samplers[SMP_point_smp] = point_smp;
+            sg_apply_bindings(&b);
+            sg_draw(0, 3, 1);
+            sg_end_pass();
+        }
         gpuprof::mark("reflet : surfaces");
         {
             sg_pass pass = {};
@@ -1900,13 +1994,11 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             pass.attachments.depth_stencil = refl_depth.att;
             pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
             pass.action.colors[0].clear_value = {0, 0, 0, 1};
-            pass.action.colors[1].load_action = SG_LOADACTION_CLEAR;
-            pass.action.colors[1].clear_value = {1000.0f, 0, 0, 1};
-            pass.action.depth.load_action = SG_LOADACTION_CLEAR;
-            pass.action.depth.clear_value = 0.0f;
+            pass.action.colors[1].load_action = SG_LOADACTION_LOAD;   // masque
+            pass.action.depth.load_action = SG_LOADACTION_LOAD;       // masque
             pass.label = "mirror-scene";
             sg_begin_pass(&pass);
-            sg_apply_pipeline(pip_scene);
+            sg_apply_pipeline(pip_scene[0]);   // le sol n'est pas vu par la camera miroir
             scissor(refl_w, refl_h);
             scene_vs_params_t mvsp;
             std::memcpy(mvsp.view_proj, view_proj_m.m, sizeof(mvsp.view_proj));
@@ -2005,6 +2097,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                 bb.views[VIEW_occ_lights_ro] = occ_light_view;
                 bb.views[VIEW_occ_planes_ro] = occ_plane_view;
                 bb.views[VIEW_occ_tiles_ro] = occ_tile_view;
+                bb.views[VIEW_beam_mask_tex] = refl_beam_mask.tex;   // masque des faisceaux du reflet (lu par la camera miroir seulement)
                 bb.views[VIEW_fog_tex] = fog_view;
                 bb.views[VIEW_detail_tex] = detail_view;
                 bb.samplers[SMP_point_smp] = point_smp;
@@ -2017,7 +2110,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             }
             sg_end_pass();
         }
-        gpuprof::mark("reflet : composition et flou");
+        gpuprof::mark("reflet : composition");
         {
             sg_pass pass = {};
             pass.attachments.colors[0] = refl_final.att;
@@ -2043,43 +2136,6 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             sg_draw(0, 3, 1);
             sg_end_pass();
         }
-        // niveau flou (reduction du bloom, sans anti-luciole), puis trainees verticales (beton humide)
-        {
-            sg_pass pass = {};
-            pass.attachments.colors[0] = refl_blur[0].att;
-            pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
-            pass.label = "mirror-blur";
-            sg_begin_pass(&pass);
-            sg_apply_pipeline(pip_bloom_down);
-            bloom_params_t bp = {};
-            set4(bp.texel, 1.0f / refl_w, 1.0f / refl_h, 0.0f, 1.0f);
-            sg_bindings b = {};
-            b.views[VIEW_src_tex] = refl_final.tex;
-            b.samplers[SMP_lin_clamp_smp] = lin_clamp;
-            sg_apply_bindings(&b);
-            sg_apply_uniforms(UB_bloom_params, SG_RANGE_REF(bp));
-            sg_draw(0, 3, 1);
-            sg_end_pass();
-        }
-        {
-            sg_pass pass = {};
-            pass.attachments.colors[0] = refl_streak.att;
-            pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
-            pass.label = "mirror-streak";
-            sg_begin_pass(&pass);
-            sg_apply_pipeline(pip_refl_streak);
-            // trainees longues sur le beton juste humide, plus courtes quand l'eau lisse la surface
-            const float len = (float)(refl_h / 2) * lerpf(0.12f, 0.05f, smoothstepf(0.25f, 0.6f, rs.floor_wet));
-            streak_params_t sp = {};
-            set4(sp.texel, 2.0f / refl_w, 2.0f / refl_h, len, 0.0f);
-            sg_bindings b = {};
-            b.views[VIEW_src_tex] = refl_blur[0].tex;
-            b.samplers[SMP_lin_clamp_smp] = lin_clamp;
-            sg_apply_bindings(&b);
-            sg_apply_uniforms(UB_streak_params, SG_RANGE_REF(sp));
-            sg_draw(0, 3, 1);
-            sg_end_pass();
-        }
     }
 
     // ---- 7 : composition --------------------------------------------------------------------
@@ -2100,6 +2156,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(cpp.cam_pos, cam.pos, mirror ? 1.0f : 0.0f);
         std::memcpy(cpp.floor_p, floor_p, sizeof(cpp.floor_p));   // memes valeurs que la passe des surfaces
         std::memcpy(cpp.floor_q, floor_q, sizeof(cpp.floor_q));
+        std::memcpy(cpp.floor_w, floor_w, sizeof(cpp.floor_w));
         sg_bindings b = {};
         b.views[VIEW_depth_tex] = scene_depth_lin.tex;
         b.views[VIEW_vol_hist_tex] = vol_hist[cur].tex;
@@ -2110,8 +2167,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         b.views[VIEW_soft_spec_tex] = soft_spec.tex;
         b.views[VIEW_floor_tex] = floor_view;
         b.views[VIEW_refl0_tex] = refl_final.tex;
-        b.views[VIEW_refl1_tex] = refl_blur[0].tex;
-        b.views[VIEW_refl2_tex] = refl_streak.tex;
+        b.views[VIEW_refl_mask_tex] = refl_depth_lin.tex;
+        b.views[VIEW_floor_cav] = floor_cav_view;
         b.samplers[SMP_point_smp] = point_smp;
         b.samplers[SMP_lin_clamp_smp] = lin_clamp;
         b.samplers[SMP_floor_smp] = floor_smp;

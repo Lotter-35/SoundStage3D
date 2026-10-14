@@ -46,7 +46,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `--bench` | Banc d'essai (voir plus bas). |
   | `--fast` | Banc rapide : 30 images de chauffe et 60 mesurées par cas (au lieu de 60 et 150). |
   | `--behind` | La fenêtre s'ouvre derrière les autres sans prendre le clavier. Attention : le GPU est alors 5 à 15 % plus lent (Windows donne la priorité à la fenêtre active). |
-  | `--demo [0..4]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large, 4 pont de scène en orange (gobo barres, zoom 2,2°, tilt 69°) : taches très allongées vues en rasant. |
+  | `--demo [0..5]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large, 4 pont de scène en orange (gobo barres, zoom 2,2°, tilt 69°) : taches très allongées vues en rasant ; 5 eau au sol (6 taches blanches larges, avec `--set wet=...`). |
 
   Réglages de `--set` :
 
@@ -62,7 +62,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `density`, `haze`, `smoke`, `detail` | Fumée : densité, brume, amas, volutes. |
   | `floor` | Sol en béton texturé (1) ou béton uni (0). |
   | `floortile` | Taille de répétition de la texture du sol, en mètres (8 par défaut). |
-  | `wet` | Eau au sol : 0 sec, 0,4 humide, 1 inondé. |
+  | `wet` | Eau au sol : 0 sec, 0,1 creux remplis et quelques flaques, 0,5 environ 30 % de flaques, 1 inondé. |
   | `shadows` | Ombres exactes des obstacles (1) ou non (0). |
   | `chroma`, `chromaforce` | Aberration chromatique des lyres sur les surfaces (0 par défaut, 1 active) et son intensité (1 = lyre courante). |
   | `flooraniso` | Filtrage anisotrope de la texture du sol (1 à 16, 4 par défaut). |
@@ -265,14 +265,18 @@ Texture [Concrete031](https://ambientcg.com/view?id=Concrete031) d'ambientCG, en
   - La normale et la rugosité de la texture servent aux taches des lyres, aux gobos et aux reflets (`ggx_spec`), ainsi qu'à la lumière indirecte reçue.
   - La passe des lyres douces lit la même normale, la même rugosité et la même couleur (sorties normale et matière de la passe des surfaces).
   - Les rebonds de lumière (sondes) prennent la couleur du sol sous chaque tache : même mélange des dalles, calculé sur le CPU.
-- **Eau au sol** (onglet Rendu, `--set wet=...`), d'après Lagarde, « Water drop 3b – Physically based wet surfaces ».
-  - **0 à 0,5 : le béton s'imbibe, sans flaque.** L'eau remplit les pores : il fonce selon sa porosité (les creux et les joints davantage) et devient plus brillant. La texture reste visible.
-  - **0,5 à 1 : le niveau d'eau monte.** Film d'eau puis flaques, d'abord dans les cuvettes (2 à 3 m) et les joints, jusqu'à couvrir le sol. Dans l'eau, le sol est plat et lisse.
-  - **Reflet** (méthode des sols plats des jeux : reflet planaire).
-    - Une caméra miroir sous le sol redessine la scène à demi-résolution : surfaces éclairées par toutes les lyres, lentilles, faisceaux dans la fumée (avec leurs propres tables analytiques, deux fois moins fines). Le reflet contient donc aussi ce qui est au-dessus de la caméra, hors de l'écran.
-    - Béton humide : reflet étiré verticalement (flou vertical continu), comme une route mouillée la nuit. Flaques : miroir net.
-    - Fresnel de l'eau : fort en rasant, faible en regardant vers le bas.
-    - Seule la partie de l'écran où le sol est visible est calculée, et seulement les lyres dont le cône est visible dans le reflet. Rien n'est calculé quand le sol est sec ou hors de l'écran.
+- **Eau au sol** (onglet Rendu, `--set wet=...`), d'après Lagarde, « Water drop 2b » (niveau d'eau qui monte dans une carte de hauteur) et « 3b » (béton mouillé). Le niveau d'eau monte :
+  1. **Les creux du béton se remplissent d'abord** (trous, pores, joints : les taches sombres) : eau affleurante, lisse et réfléchissante. 10 % de la texture remplis à 0,35.
+  2. **Puis des flaques** de plus en plus nombreuses et grandes : environ 2 % du sol à 0,1, 10 % à 0,3, 30 % à 0,5, 60 % à 0,75, tout à 1. Chaque flaque a un bord de béton détrempé (plus sombre, plus brillant) d'environ 5 à 10 cm.
+  3. **Le reste du sol reste sec** jusqu'à 0,45, puis se mouille (plus sombre, plus brillant) ; à 1, l'eau couvre tout.
+  - **Creux du béton** : la texture n'a pas de carte de hauteur. Au chargement (`src/floor_texture.cpp`), les creux sont tirés du passe-haut de la luminance (plus sombre que le voisinage : pas les grandes taches, simples salissures) et de la divergence des normales (elles convergent dans un trou ou un joint). Texture R8 avec mipmaps, lue seulement s'il y a de l'eau.
+  - **Cuvettes** : 3 octaves de bruit en coordonnées du monde (motifs de 1,5 à 5 m), sans répétition ; le bord des flaques suit les creux de la texture.
+  - **Part de sol voulue** : le CPU tabule la répartition des creux et celle des cuvettes. Le niveau d'eau donne exactement la part de sol couverte prévue, quelle que soit la forme du bruit.
+  - **Dans l'eau** (flaques et creux remplis) : surface plate et lisse ; **le reflet est toujours le miroir net**, avec le Fresnel de l'eau (F0 = 0,02) : fort en rasant, faible en regardant vers le bas. Hors de l'eau, pas de reflet miroir : le béton mouillé garde seulement les reflets des lampes, rugueux, de la passe des surfaces (plus de reflet flou ou étiré intermédiaire).
+  - **Reflet** (méthode des sols plats des jeux : reflet planaire). Une caméra miroir sous le sol redessine la scène à demi-résolution : surfaces éclairées par toutes les lyres, lentilles, faisceaux dans la fumée (avec leurs propres tables analytiques, deux fois moins fines). Le reflet contient donc aussi ce qui est au-dessus de la caméra, hors de l'écran. Seule la partie de l'écran où le sol est visible est calculée, et seulement les lyres dont le cône est visible dans le reflet. Rien n'est calculé quand le sol est sec ou hors de l'écran.
+  - **Reflet calculé seulement dans l'eau.** Une passe de masque cherche, pour chaque pixel du miroir, s'il y a de l'eau sous les 4 pixels de l'écran qu'il couvre (même calcul que le matériau du sol, creux compris). Puis, par blocs de 2 × 2 pixels du miroir (un pixel des faisceaux du miroir) : hors des blocs mouillés, la profondeur du miroir est mise au plus près, et la scène miroir y est rejetée avant le shader ; les faisceaux du miroir s'y arrêtent tout de suite. La composition lit le reflet sans les pixels du miroir non calculés. Image identique ; à 10 % d'eau, le reflet coûte 2 à 3 fois moins.
+  - **Sol sec : aucun coût.** La passe des surfaces existe en deux variantes : sol sec (sans aucun code d'eau) et sol mouillé. Le code de l'eau, même jamais exécuté, ralentissait la boucle des lyres.
+  - Vue d'essai : `LyreViz.exe --demo 5 --set wet=0.3` (6 taches blanches larges vues en biais).
 - **Non utilisée : l'occlusion ambiante.** Il faudrait une deuxième texture, donc doubler le coût du filtrage anisotrope.
 - **Coût mesuré** (GTX 1080, 4K, passe des surfaces) :
   - par défaut : +0,2 ms ;
@@ -333,7 +337,7 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
   - Ce qui coûte encore : le dessin des cônes (environ 25 millions de pixels de fumée à additionner), l'éclairage des surfaces par ces faisceaux, et les tables.
 - **Ombres :** obstacles fixes seulement (pavés), pénombre sur les surfaces mais bord net dans la fumée ; le personnage et les lyres ne font pas d'ombre.
 - **Reflet des faisceaux :** les faisceaux ne se reflètent pas encore dans le sol brillant (seules les taches le font). Prévu. Avec de l'eau au sol, ce serait le reflet le plus visible.
-- **Eau au sol :** le reflet coûte environ 1,5 ms (4 ms avec gobo + prisme 8 sur toutes les lyres) : avec de l'eau, le cas par défaut passe un peu sous 120 img/s sans la qualité adaptative. Pas encore de pluie ni d'ondulations dans les flaques.
+- **Eau au sol :** le reflet coûte environ 1 ms (4 ms avec gobo + prisme 8 sur toutes les lyres, 11 ms avec zoom 45° + frost : faisceaux larges vus dans le reflet) quand l'eau couvre le sol ; 2 à 3 fois moins à 10 % d'eau (calculé seulement dans l'eau). Les tables des faisceaux du miroir (1,5 à 2,6 ms avec gobo + prisme ou frost) sont encore calculées pour toutes les lyres vues dans le reflet, même si peu de sol est dans l'eau. Pas encore de pluie ni d'ondulations dans les flaques.
 - **Aberration chromatique :** sur les surfaces seulement (pas dans la fumée, où elle serait invisible). Coupée par défaut (+0,5 à +0,8 ms avec gobo + prisme 8 sur toutes les lyres).
 - **Gobos personnels :** pas encore de chargement de vos propres images de gobo.
 - **Art-Net / DMX :** pas de pilotage par une vraie console. Non prévu pour l'instant.

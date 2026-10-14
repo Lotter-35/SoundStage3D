@@ -51,7 +51,7 @@ struct RenderSettings {
     bool shadows = true;          // ombres exactes des obstacles fixes (paves) : surfaces et fumee
     bool floor_texture = true;    // sol en beton texture (Concrete031) : couleur, relief, rugosite, occlusion
     float floor_tile = 8.0f;      // taille de repetition de la texture du sol (m) : 4 x 4 dalles de 2 m
-    float floor_wet = 0.0f;       // eau au sol : 0 sec, 0,4 humide, 1 inonde (flaques)
+    float floor_wet = 0.0f;       // eau au sol : 0 sec, 0,1 creux remplis et quelques flaques, 1 inonde (voir floor_material)
     int floor_aniso = 4;          // filtrage anisotrope du sol (1 a 16, fixe au lancement) : 4 = meme image que 16, 3 x moins cher
     bool chroma = false;          // aberration chromatique de l'optique : franges colorees au bord des taches et des gobos (coupee : +0,5 a +0,9 ms avec gobo + prisme)
     float chroma_strength = 1.0f; // intensite (1 = lyre courante)
@@ -208,6 +208,8 @@ class Renderer {
     const FloorTexture* floor_tex = nullptr;
     sg_image floor_img = {};
     sg_view floor_view = {};
+    sg_image floor_cav_img = {};   // creux du beton (eau au sol), R8
+    sg_view floor_cav_view = {};
     sg_sampler floor_smp = {};
     float floor_scale = 1.0f;   // echelle de couleur : luminance moyenne du sol = celle du beton uni
 
@@ -217,7 +219,8 @@ class Renderer {
     Target scene_normal, scene_albedo;  // pour la passe des lyres douces
     Target soft_diffuse, soft_spec;     // lyres douces, a 1/4 de la resolution
     // reflet du sol mouille : la scene vue d'une camera miroir sous le sol, a demi-resolution
-    Target refl_color, refl_depth_lin, refl_depth, refl_vol, refl_final, refl_blur[1], refl_streak;
+    Target refl_color, refl_depth_lin, refl_depth, refl_vol, refl_final;
+    Target refl_beam_mask;   // reflet : eau sous chaque pixel du miroir (fs_refl_mask), lu par les faisceaux
     int refl_w = 0, refl_h = 0, refl_vw = 0, refl_vh = 0;
     int soft_w = 0, soft_h = 0;
     int num_soft = 0;
@@ -234,11 +237,13 @@ class Renderer {
 
     // pipelines
     sg_pipeline pip_cull_clusters = {}, pip_probes = {};
-    sg_pipeline pip_depth = {}, pip_scene_eq = {}, pip_scene_gb = {}, pip_scene_eq_gb = {}, pip_soft = {};
+    sg_pipeline pip_depth = {}, pip_soft = {};
+    // surfaces : [0] sol sec, [1] sol mouille (eau au sol : variante plus lourde, seulement si de l'eau)
+    sg_pipeline pip_scene[2] = {}, pip_scene_eq[2] = {}, pip_scene_gb[2] = {}, pip_scene_eq_gb[2] = {};
     sg_pipeline pip_beam_tables = {}, pip_beams_an = {}, pip_vol_merge = {}, pip_pattern_images = {}, pip_pattern_images_rgb = {};
-    sg_pipeline pip_scene = {}, pip_vol_ambient = {}, pip_beams = {}, pip_temporal = {}, pip_composite = {};
+    sg_pipeline pip_vol_ambient = {}, pip_beams = {}, pip_temporal = {}, pip_composite = {};
     sg_pipeline pip_bloom_down = {}, pip_bloom_up = {}, pip_final = {};
-    sg_pipeline pip_beams_m = {}, pip_beams_an_m = {}, pip_refl_compose = {}, pip_refl_streak = {};   // passe miroir
+    sg_pipeline pip_beams_m = {}, pip_beams_an_m = {}, pip_refl_compose = {}, pip_refl_mask = {}, pip_refl_block = {};   // passe miroir
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;
