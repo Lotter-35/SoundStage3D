@@ -1,0 +1,7 @@
+build/
+LyreViz
+LyreViz.exe
+*.pdb
+*.ilk
+lyreviz-ui.ini
+tools/bin/
