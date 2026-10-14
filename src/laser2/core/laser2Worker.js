@@ -2,7 +2,7 @@
  * laser2Worker.js — Web Worker des nouveaux lasers.
  * ─────────────────────────────────────────────────────────────
  * Tout le calcul lourd des lasers tourne ici, en parallèle du rendu :
- * simulation des galvos, réduction en faisceaux / nappes, collisions, géométrie monde.
+ * image du laser, réduction en faisceaux / nappes, collisions, géométrie monde.
  * Le fil principal envoie les réglages (quand ils changent) et l'heure commune à chaque image,
  * et reçoit la géométrie prête à dessiner dans UN tampon (rendu au worker pour être réutilisé).
  *
@@ -43,7 +43,7 @@ self.onmessage = (e) => {
             spare = null;
             const preview = m.preview ? sys.preview(m.preview) : null;
             const transfer = [buffer];
-            if (preview) for (const k of ['ux', 'uy', 'ax', 'ay', 'pr', 'pg', 'pb']) transfer.push(preview[k].buffer);
+            if (preview) for (const k of ['ax', 'ay', 'pr', 'pg', 'pb']) transfer.push(preview[k].buffer);
             self.postMessage({
                 type: 'result', buffer, header, preview, previewId: m.preview,
                 ms: performance.now() - t0, prims: sys.totalPrims, shared: sys.shared, tolScale: sys.tolScale,

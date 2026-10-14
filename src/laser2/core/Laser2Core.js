@@ -5,7 +5,7 @@
  *  - LaserCore  : un laser (réglages, repère monde, forme ILDA) → géométrie monde :
  *                 faisceaux, nappes coupées sur les surfaces, traces d'impact, couleur de la lentille
  *  - CoreSystem : tous les lasers, avec
- *      · CACHE PARTAGÉ : les lasers qui dessinent exactement la même chose (même contenu, mêmes galvos,
+ *      · CACHE PARTAGÉ : les lasers qui dessinent exactement la même chose (même contenu,
  *        mêmes effets) partagent UNE simulation de scanner ; seule la géométrie monde reste par laser
  *      · BUDGET GLOBAL : au-delà d'un nombre de primitives, la simplification des trajectoires se renforce
  *        (et se relâche quand la charge baisse)
@@ -34,6 +34,10 @@ const _D = [0, 0, 0];
 const _dA = new V3();
 const _dB = new V3();
 const _last = [NaN, NaN];
+/** Extrémités des nappes de l'image (bords libres : début ou fin d'un tracé, adoucis au rendu) */
+const _starts = new Set();
+const _ends = new Set();
+const endKey = (x, y) => x * 1048573 + y;
 const newHit = () => ({ t: 0, id: SURF_SKY, nx: 0, ny: 1, nz: 0 });
 const _hitA = newHit();
 const _hitB = newHit();
@@ -174,6 +178,14 @@ export class LaserCore {
         const ns = sc.sheetCount;
         _last[0] = NaN;
         this._sn = 0;
+        // Bord libre : aucune autre nappe ne s'y raccorde (début / fin d'un tracé) → bord adouci au rendu ;
+        // les raccords entre nappes d'un même trait restent nets (pas de couture sombre)
+        _starts.clear(); _ends.clear();
+        for (let i = 0; i < ns; i++) {
+            const s = i * 7;
+            _starts.add(endKey(sc.sheets[s], sc.sheets[s + 1]));
+            _ends.add(endKey(sc.sheets[s + 2], sc.sheets[s + 3]));
+        }
         for (let i = 0; i < ns; i++) {
             const s = i * 7;
             _D[0] = sc.sheets[s + 4]; _D[1] = sc.sheets[s + 5]; _D[2] = sc.sheets[s + 6];
@@ -194,6 +206,7 @@ export class LaserCore {
             _last[0] = a1x; _last[1] = a1y;
             this._angle = Math.sqrt((a1x - a0x) * (a1x - a0x) + (a1y - a0y) * (a1y - a0y));
             this._M = M;
+            this._edges = (_ends.has(endKey(a0x, a0y)) ? 0 : 1) + (_starts.has(endKey(a1x, a1y)) ? 0 : 2);
             this._piece(0, _dA, _hitA, 1, _dB, _hitB, 0);
         }
         this.sheetN = this._sn;
@@ -270,6 +283,8 @@ export class LaserCore {
         S[o + 16] = this._g;
         const sm4 = this._smoke;
         S[o + 17] = sm4[0]; S[o + 18] = sm4[1]; S[o + 19] = sm4[2]; S[o + 20] = sm4[3];
+        // Position de la portion dans la nappe entière (angles depuis son début) et bords libres
+        S[o + 21] = s0 * this._angle; S[o + 22] = s1 * this._angle; S[o + 23] = this._edges;
         // Trait lumineux sur la surface touchée par les deux bords
         if (h0.id === h1.id && h0.id !== SURF_SKY) {
             const tm = (h0.t + h1.t) * 0.5;
@@ -395,19 +410,14 @@ export class CoreSystem {
         else if (prims < PRIM_BUDGET * 0.6 && this.tolScale > 1) this.tolScale = Math.max(1, this.tolScale / 1.1);
     }
 
-    /** Aperçu du tracé d'un laser : consigne et trajectoire réelle sur 2 images (ou 40 ms) */
+    /** Aperçu du tracé d'un laser : l'image courante, refermée (point 0 = dernier point) */
     preview(id) {
         const c = this.cores.get(id);
         const s = c && c.scanner;
-        if (!s || !Number.isFinite(s.k)) return null;
-        const win = Math.max(2, Math.min(s.frame.n * 2, Math.round(s.pps / 25), 4000));
-        const out = { n: win, maxAngle: s.maxAngle, ux: new Float32Array(win), uy: new Float32Array(win), ax: new Float32Array(win), ay: new Float32Array(win), pr: new Float32Array(win), pg: new Float32Array(win), pb: new Float32Array(win) };
-        const M = s.ax.length - 1;
-        for (let i = 0; i < win; i++) {
-            const o = (s.k - win + 1 + i) & M;
-            out.ux[i] = s.ux[o]; out.uy[i] = s.uy[o]; out.ax[i] = s.ax[o]; out.ay[i] = s.ay[o];
-            out.pr[i] = s.pr[o]; out.pg[i] = s.pg[o]; out.pb[i] = s.pb[o];
-        }
+        if (!s || !s.ready) return null;
+        const win = Math.min(s.frame.n + 1, 8000);
+        if (win < 2) return null;
+        const out = { n: win, maxAngle: s.maxAngle, ax: s.ax.slice(0, win), ay: s.ay.slice(0, win), pr: s.pr.slice(0, win), pg: s.pg.slice(0, win), pb: s.pb.slice(0, win) };
         return out;
     }
 }

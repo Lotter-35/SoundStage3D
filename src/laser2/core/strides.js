@@ -3,5 +3,5 @@
  * tourner dans un Web Worker sans Three.js, et par le rendu batché).
  */
 export const BEAM_STRIDE = 17;   // aO(4) aE(4) aC(4) aG(1) aS(4)
-export const SHEET_STRIDE = 21;  // aO(4) aA(4) aB(4) aC(4) aG(1) aS(4)
+export const SHEET_STRIDE = 24;  // aO(4) aA(4) aB(4) aC(4) aG(1) aS(4) aT(3) : angles des bords dans la nappe entière, bords libres
 export const IMPACT_STRIDE = 14; // aP0(4) aP1(4) aN(3) aC(3)

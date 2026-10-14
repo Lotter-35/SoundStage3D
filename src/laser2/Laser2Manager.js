@@ -1,10 +1,10 @@
 /**
  * Laser2Manager.js
  * ─────────────────────────────────────────────────────────────
- * Orchestrateur des nouveaux lasers (moteur de points + galvos) :
+ * Orchestrateur des nouveaux lasers (moteur de points, laser parfait) :
  *   - ajout / suppression / duplication / recherche (identifiants uniques réseau)
  *   - mise à jour sur l'horloge commune (même image chez tous les joueurs)
- *   - calcul (galvos, faisceaux, collisions) dans un Web Worker (core/) : le fil principal envoie
+ *   - calcul (image, faisceaux, collisions) dans un Web Worker (core/) : le fil principal envoie
  *     les réglages quand ils changent et l'heure à chaque image, puis dessine la géométrie reçue
  *   - rendu batché : 3 draw calls (faisceaux, nappes, impacts) ; boîtiers de l'ancien laser (instanciés)
  *   - éblouissement réaliste : puissance reçue par l'œil (faisceau fixe = très fort, balayé = flash)
@@ -108,6 +108,7 @@ export class Laser2Manager {
     setDazzle(dazzle) {
         this.dazzle = dazzle;
     }
+
 
     addLaser(position = null, params = {}, id = null) {
         const laserId = id || makeId();

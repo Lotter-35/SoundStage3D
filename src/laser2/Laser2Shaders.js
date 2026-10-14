@@ -1,15 +1,29 @@
 /**
  * Laser2Shaders.js
  * ─────────────────────────────────────────────────────────────
- * Rendu des primitives du nouveau laser (1 draw call par type pour TOUS les lasers) :
- *   - faisceaux : quads alignés sur la caméra, largeur physique (diamètre de sortie + divergence),
- *     jamais plus fins qu'un pixel (énergie conservée → aucun fourmillement au loin)
- *   - nappes    : triangles source → A → B, énergie répartie sur l'arc balayé
+ * Rendu des primitives du nouveau laser (1 draw call par type pour TOUS les lasers), modèle physique simple
+ * de la diffusion dans la fumée (référence visuelle : Depence R4) :
  *
- * Luminosité physique (diffusion dans l'air, TOUJOURS visible, indépendante du brouillard de la scène) :
- *   luminance ∝ puissance / largeur éclairée × 1/sin(angle de vue) × diffusion vers l'avant (Henyey-Greenstein)
- * puis compression perceptive (l'œil n'est pas linéaire : un faisceau fixe reste bien plus brillant
- * qu'une nappe, sans que la nappe disparaisse).
+ *   Lumière diffusée vers l'œil = densité de fumée × puissance restante × fonction de phase / largeur éclairée
+ *     - densité de fumée σ (m⁻¹) : réglage GLOBAL des lasers (🔴 Post-traitement Laser › Fumée des lasers),
+ *       indépendant du brouillard de salle, partagé par tous les lasers (0 : faisceaux invisibles dans l'air,
+ *       seuls restent les impacts et la sortie) ; volutes = variations locales de densité ;
+ *     - puissance restante : extinction e^(−σ r) le long du faisceau → le laser s'éteint progressivement avec la
+ *       distance (portée visible ≈ 5 / σ, au-delà rien n'est dessiné) ;
+ *     - fonction de phase : diffusion vers l'avant (Henyey-Greenstein) ;
+ *     - largeur éclairée : faisceau = diamètre physique (sortie + divergence) ; nappe = arc balayé (angle × r).
+ *   - faisceaux : quads face caméra, cœur au profil lisse (≥ 3 pixels de la cible en cours : trait régulier) +
+ *     auréole (diffusion multiple autour du faisceau, part d'énergie ∝ densité de fumée), énergie conservée ;
+ *   - nappes : triangles source → A → B, luminance en 1/r × extinction ; bords libres d'un tracé adoucis sur la
+ *     largeur du faisceau (jamais moins d'un pixel et demi), raccords entre nappes d'un même trait nets.
+ *
+ * Réponse de l'œil / d'un capteur (respond) :
+ *   1. un canal qui sature déborde dans les autres (sensibilités spectrales qui se recouvrent) → un rouge intense
+ *      vire à l'orange, au jaune puis au blanc — calculé sur la lumière présente au point seulement : la zone
+ *      blanche est attachée au laser, pas au point de vue ;
+ *   2. le point de vue (nappe par la tranche, diffusion vers l'avant, faisceau plus fin qu'un pixel) ne change
+ *      que la luminosité, jusqu'à la saturation ;
+ *   3. épaule douce par canal : les fortes lumières se tassent progressivement, jamais d'aplat écrêté.
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -74,10 +88,54 @@ export const LASER2_UNIFORMS = {
     uSmokeTex:  { value: createSmokeTexture() },
     uTime:      { value: 0 },              // horloge commune (s) : volutes identiques chez tous
     uPixelK:    { value: 0.001 },          // taille d'un pixel (m) par mètre de profondeur
-    uRange:     { value: new THREE.Vector2(600, 1000) }, // fondu de fin de portée
-    uGain:      { value: 0.1 },            // gain d'affichage
-    uGamma:     { value: 0.42 },           // compression perceptive
+    uRange:     { value: new THREE.Vector2(600, 1000) }, // fin de portée visible (m) : réglée par la densité de fumée
+    uHaze:      { value: 0.015 },          // densité de fumée σ (m⁻¹) des lasers : réglage global (setLaser2Haze)
+    uHazeRef:   { value: 0.015 },          // densité pour laquelle les gains sont réglés (= réglage par défaut)
+    uGain:      { value: 0.1 },            // gain d'affichage (impacts)
+    uGamma:     { value: 0.42 },           // compression perceptive (impacts)
+    uBeamGain:  { value: 0.2 },            // gain d'affichage des faisceaux
+    uBeamGamma: { value: 0.85 },           // luminance des faisceaux presque physique
+    // Auréole discrète (un faisceau reste un trait fin) : part de l'énergie (à la densité de référence) et étendue de
+    // chaque côté, en largeurs du cœur
+    uHalo:      { value: 0.08 },
+    uHaloSize:  { value: 0.75 },
+    // Gain d'affichage des nappes (luminance physique, en 1/r) : le virage au blanc ne compte plus l'angle de vue
+    // (×1,5 à ×4 selon la position, appliqué ensuite à la luminosité seule) → gain réglé pour le compenser
+    uSheetGain: { value: 1.6 },
+    uSheetGamma: { value: 1.0 },           // 1 : luminance physique des nappes
+    uSpill:     { value: 1.0 },            // débordement des canaux saturés (0 : couleur toujours pure)
 };
+
+/** Densité de fumée des lasers par défaut (m⁻¹) */
+export const LASER2_HAZE_DEFAULT = 0.015;
+
+/**
+ * Densité de la fumée dans laquelle les faisceaux sont visibles (m⁻¹), commune à tous les lasers. Elle règle aussi
+ * la portée visible : extinction e^(−σ r), plus rien à dessiner au-delà de ~5 / σ (99 % de la puissance diffusée ou
+ * absorbée en chemin).
+ */
+export function setLaser2Haze(density) {
+    _haze = Math.max(0, Number(density) || 0);
+    LASER2_UNIFORMS.uHaze.value = _haze;
+    applyRange();
+}
+
+/** Distance d'affichage (m, depuis le laser) : option locale ⚙️ Options › Lasers › Distance, commune aux deux lasers */
+export function setLaser2Range(meters) {
+    _range = Math.max(10, Number(meters) || 300);
+    applyRange();
+}
+
+let _haze = LASER2_HAZE_DEFAULT;
+let _range = 300;
+/** Portée visible : la plus courte entre la distance d'affichage (fondu sur les 20 derniers %) et la fumée (3 → 5 / σ) */
+function applyRange() {
+    const hazeEnd = _haze > 0 ? 5 / _haze : 1000;
+    const end = Math.min(1000, _range, hazeEnd);
+    const start = Math.min(0.8 * _range, _haze > 0 ? 3 / _haze : 600, end * 0.99);
+    LASER2_UNIFORMS.uRange.value.set(start, end);
+}
+setLaser2Haze(LASER2_HAZE_DEFAULT);
 
 const PHASE = /* glsl */`
     // Diffusion vers l'avant (Henyey-Greenstein), normalisée à 1 pour une vue de côté
@@ -95,6 +153,50 @@ const COMMON = /* glsl */`
     uniform float uTime;
     uniform float uGain;
     uniform float uGamma;
+    uniform float uSheetGain;
+    uniform float uSheetGamma;
+    uniform float uBeamGain;
+    uniform float uBeamGamma;
+    uniform float uSpill;
+    uniform float uHaze;
+    uniform float uHazeRef;
+    uniform float uPixelK;
+    // Densité de fumée relative à la référence (diffusion ∝ densité)
+    float hazeK() { return uHaze / uHazeRef; }
+    // Diffusion vers l'avant (réglage du laser, g = 0…0,9) : fumée qui renvoie plus de lumière dans l'axe du faisceau →
+    // plus de lumière là où elle est concentrée, d'où une sortie plus blanche et plus étendue. 1 au réglage par défaut
+    // (35 %) ; indépendant du point de vue (la zone blanche reste attachée au laser)
+    float forwardK(float g) { return (1.0 + 8.0 * g * g) / 1.98; }   // 0 % : ×0,5 · 35 % : ×1 · 90 % : ×3,8
+    // Part de la puissance restante après r mètres de fumée (extinction)
+    float transmit(float r) { return exp(-uHaze * r); }
+    // Œil / capteur : au-delà de la saturation (1), l'énergie d'un canal déborde dans les autres, selon le
+    // recouvrement des sensibilités spectrales (une raie rouge à 638 nm excite aussi un peu le vert, à peine le
+    // bleu ; 520 nm un peu le bleu ; 450 nm un peu le vert) : rouge intense → orange → jaune → blanc.
+    // Sous la saturation, la couleur est inchangée.
+    const mat3 SPILL = mat3(0.00, 0.16, 0.04,    // depuis le rouge (638 nm)
+                            0.07, 0.00, 0.12,    // depuis le vert (520 nm)
+                            0.05, 0.10, 0.00);   // depuis le bleu (450 nm)
+    vec3 sensor(vec3 e) {
+        return e + uSpill * (SPILL * max(e - 1.0, 0.0));
+    }
+    // Effet du point de vue sur une couleur déjà « vue » : plus sombre, ou plus lumineuse jusqu'à la saturation de
+    // son canal le plus fort seulement — l'écran ne la fait jamais virer au blanc (la teinte reste celle du point)
+    vec3 viewScale(vec3 s, float k) {
+        if (k <= 1.0) return s * k;
+        float m = max(s.r, max(s.g, s.b));
+        return s * min(k, max(1.0, 1.0 / max(m, 1e-4)));
+    }
+    // Épaule douce : linéaire jusqu'à 0,6, puis tend vers 1 sans jamais l'atteindre (pas d'aplat écrêté)
+    float shoulder(float x) {
+        return x < 0.6 ? x : 0.6 + 0.4 * (1.0 - exp(-(x - 0.6) / 0.4));
+    }
+    // Couleur vue : débordement des canaux (lumière au point e), point de vue (k), épaule
+    vec3 respond(vec3 e, float k) {
+        // Point de vue plafonné à ×3 (nappe vue par la tranche × diffusion vers l'avant iraient jusqu'à ×17 : tout
+        // saturerait, l'œil s'adapte) — la nappe reste un voile translucide
+        vec3 c = viewScale(sensor(e), min(k, 3.0));
+        return vec3(shoulder(c.r), shoulder(c.g), shoulder(c.b));
+    }
     // Bruit signé (≈ −1…1) ; 1 unité de texture = 16 cellules
     float sn(vec3 q) { return texture(uSmokeTex, q).r * 2.0 - 1.0; }
     // Rotations entre les échelles : les répétitions de la texture ne s'alignent jamais
@@ -106,12 +208,17 @@ const COMMON = /* glsl */`
      *   - distorsion qui enroule la fumée (volutes), échelles de tailles non multiples et tournées ;
      *   - veines fines claires (filaments) et creux sombres ; chaque échelle dérive à sa vitesse.
      * Le détail fin s'efface avec la distance (pas de fourmillement) et tout s'efface au-delà de ~250 m.
+     * Contraste à 100 % : les creux sont vides (aucune fumée → on voit totalement à travers le laser), quelle que
+     * soit l'intensité ; en dessous de ~80 %, rendu quasi inchangé (contraste⁴).
      * s = intensité, taille (m), vitesse, contraste.
      */
     float smoke(vec3 p, vec4 s, float dist) {
         // Intensité perçue : 55 % donne déjà une fumée bien marquée
-        float fade = pow(s.x, 0.6) * (1.0 - smoothstep(160.0, 260.0, dist));
-        if (fade <= 0.001) return 1.0;
+        float far = 1.0 - smoothstep(160.0, 260.0, dist);
+        if (s.x <= 0.001 || far <= 0.001) return 1.0;
+        // Profondeur des creux : intensité, portée à 100 % par un contraste maximal
+        float c4 = s.w * s.w * s.w * s.w;
+        float fade = mix(pow(s.x, 0.6), 1.0, c4) * far;
         float t = uTime * s.z;
         vec3 q = p / (s.y * 16.0);
         // Très grande échelle : zones plus denses / plus claires
@@ -137,7 +244,7 @@ const COMMON = /* glsl */`
         float k = 1.15 + 2.6 * s.w;
         float d = smoothstep(-0.62, 0.62, dens * k * 0.55);
         d = clamp(d + 0.45 * veins * smoothstep(-0.4, 0.3, dens), 0.0, 1.0);
-        return mix(1.0, 0.03 + 1.95 * d * d * (3.0 - 2.0 * d), fade);
+        return mix(1.0, 0.03 * (1.0 - c4) + 1.95 * d * d * (3.0 - 2.0 * d), fade);
     }
     vec3 shade(vec3 chroma, float L) {
         return chroma * (uGain * pow(max(L, 0.0), uGamma));
@@ -167,17 +274,22 @@ export function createLaser2BeamMaterial() {
             attribute float aG;           // diffusion vers l'avant (g)
             attribute vec4 aS;            // volutes : intensité, taille, vitesse, contraste
             uniform float uPixelK;
+            uniform float uHaloSize;
             ${PHASE}
 
-            varying float vSide;
+            varying float vX;             // distance à l'axe (m)
+            varying float vW;             // largeur dessinée du cœur (m)
             varying float vDist;
-            varying float vLum;
+            varying float vLum;           // luminance du faisceau au point (puissance / diamètre physique)
+            varying float vView;          // facteur du point de vue (pixel, angle de vue, diffusion vers l'avant)
             varying vec3 vWorld;
             varying float vCam;
             flat varying vec3 vChroma;
             flat varying vec4 vSmoke;
+            flat varying float vG;
 
             void main() {
+                vG = aG;
                 vec3 O = aO.xyz;
                 vec3 E = aE.xyz;
                 vec3 axis = E - O;
@@ -193,17 +305,21 @@ export function createLaser2BeamMaterial() {
                 float sl = length(side);
                 side = sl < 1e-4 ? vec3(1.0, 0.0, 0.0) : side / sl;
 
+                // Cœur : largeur physique, jamais moins de 3 pixels ; auréole : uHaloSize largeurs de chaque côté
                 float phys = aO.w + r * aE.w;
                 float pix = max(-vP.z, 0.05) * uPixelK;
-                float w = max(phys, pix * 1.6);
-                vP += side * aCorner.x * w * 0.5;
+                float w = max(phys, pix * 3.0);
+                float halfW = w * (0.5 + uHaloSize);
+                vP += side * aCorner.x * halfW;
 
-                // Luminance (sans compression) : puissance / largeur, angle de vue, diffusion vers l'avant
+                // Lumière au point (puissance / diamètre physique) ; point de vue : pixel, angle, diffusion vers l'avant
                 float sinB = max(sl, 0.2);
                 float cosT = dot(vDir, -toP);
-                vLum = aC.w / w / sinB * phaseHG(cosT, aG);
+                vLum = aC.w / phys;
+                vView = (phys / w) / sinB * phaseHG(cosT, aG);
                 vChroma = aC.rgb;
-                vSide = aCorner.x;
+                vX = aCorner.x * halfW;
+                vW = w;
                 vDist = r;
                 vWorld = P;
                 vCam = -vP.z;
@@ -214,19 +330,35 @@ export function createLaser2BeamMaterial() {
         fragmentShader: /* glsl */`
             ${COMMON}
             uniform vec2 uRange;
-            varying float vSide;
+            uniform float uHalo;
+            uniform float uHaloSize;
+            varying float vX;
+            varying float vW;
             varying float vDist;
             varying float vLum;
+            varying float vView;
             varying vec3 vWorld;
             varying float vCam;
             flat varying vec3 vChroma;
             flat varying vec4 vSmoke;
+            flat varying float vG;
             void main() {
-                float x = abs(vSide);
-                float prof = (1.0 - x * x) * (1.0 - x) * 1.8;   // profil gaussien approché (aire ≈ 1)
+                float hk = hazeK();
+                if (hk <= 0.0) discard;
+                // Profil en travers (intégrale = largeur du cœur : énergie conservée) : cœur lisse + auréole
+                float x = abs(vX);
+                float u = x / (0.5 * vW);
+                float q = max(1.0 - u * u, 0.0);
+                float core = q * q * 1.875;
+                float ext = vW * (0.5 + uHaloSize);
+                float lam = ext * 0.25;
+                float halo = exp(-x / lam) * vW / (2.0 * lam) * (1.0 - smoothstep(0.7 * ext, ext, x));
+                float fh = clamp(uHalo * hk, 0.0, 0.6);
+                float prof = (1.0 - fh) * core + fh * halo;
                 float fade = 1.0 - smoothstep(uRange.x, uRange.y, vDist);
-                vec3 c = shade(vChroma, vLum) * prof * fade * smoke(vWorld, vSmoke, vCam);
-                gl_FragColor = vec4(c, 1.0);
+                float lum = vLum * hk * forwardK(vG) * transmit(vDist);
+                vec3 e = vChroma * (uBeamGain * pow(max(lum, 0.0), uBeamGamma)) * prof * fade * smoke(vWorld, vSmoke, vCam);
+                gl_FragColor = vec4(respond(e, pow(max(vView, 0.0), uBeamGamma)), 1.0);
             }
         `,
         ...baseOptions(),
@@ -241,26 +373,31 @@ export function createLaser2SheetMaterial() {
             attribute float aCornerId;    // 0 source, 1 A, 2 B
             attribute vec4 aO;            // source.xyz, diamètre de sortie (m)
             attribute vec4 aA;            // A.xyz, divergence (rad)
-            attribute vec4 aB;            // B.xyz, angle A→B (rad)
+            attribute vec4 aB;            // B.xyz, angle de la nappe entière (rad)
             attribute vec4 aC;            // chroma.rgb, puissance affichée
             attribute float aG;
             attribute vec4 aS;            // volutes
+            attribute vec3 aT;            // angles de A et B depuis le début de la nappe entière, bords libres (1 début, 2 fin)
 
             varying vec3 vWorld;
+            varying vec2 vAB;             // coordonnées barycentriques de A et B (position en travers de la nappe)
             flat varying vec4 vSmoke;
             flat varying vec3 vO;
             flat varying vec3 vN;
             flat varying vec4 vPar;       // diamètre, divergence, angle, g
             flat varying vec4 vCol;
+            flat varying vec3 vT;
 
             void main() {
                 vec3 P = aCornerId < 0.5 ? aO.xyz : (aCornerId < 1.5 ? aA.xyz : aB.xyz);
                 vWorld = P;
+                vAB = aCornerId < 0.5 ? vec2(0.0) : (aCornerId < 1.5 ? vec2(1.0, 0.0) : vec2(0.0, 1.0));
                 vO = aO.xyz;
                 vN = normalize(cross(aA.xyz - aO.xyz, aB.xyz - aO.xyz) + vec3(0.0, 1e-7, 0.0));
                 vPar = vec4(aO.w, aA.w, aB.w, aG);
                 vCol = aC;
                 vSmoke = aS;
+                vT = aT;
                 gl_Position = projectionMatrix * viewMatrix * vec4(P, 1.0);
             }
         `,
@@ -268,23 +405,41 @@ export function createLaser2SheetMaterial() {
             ${COMMON}
             uniform vec2 uRange;
             varying vec3 vWorld;
+            varying vec2 vAB;
             flat varying vec3 vO;
             flat varying vec3 vN;
             flat varying vec4 vPar;
             flat varying vec4 vCol;
             flat varying vec4 vSmoke;
+            flat varying vec3 vT;
             void main() {
+                float hk = hazeK();
+                if (hk <= 0.0) discard;
                 vec3 d = vWorld - vO;
                 float r = length(d);
                 vec3 dir = d / max(r, 1e-4);
-                vec3 view = normalize(vWorld - cameraPosition);
+                vec3 view = vWorld - cameraPosition;
+                float camDist = length(view);
+                view /= max(camDist, 1e-4);
                 // Largeur éclairée : l'arc balayé, jamais moins que le faisceau lui-même
-                float w = max(r * vPar.z, vPar.x + r * vPar.y);
+                float beamW = vPar.x + r * vPar.y;
+                float w = max(r * vPar.z, beamW);
+                // Bords libres d'un tracé (début / fin) : adoucis sur la largeur du faisceau, au moins 1,5 pixel
+                float edge = 1.0;
+                float ff = vT.z;
+                if (ff > 0.5) {
+                    float ang = mix(vT.x, vT.y, vAB.y / max(vAB.x + vAB.y, 1e-6));
+                    float soft = max(beamW, 1.5 * camDist * uPixelK) / max(r, 1e-3);
+                    if (mod(ff, 2.0) > 0.5) edge *= smoothstep(0.0, soft, ang);
+                    if (ff > 1.5) edge *= smoothstep(0.0, soft, vPar.z - ang);
+                }
+                // Lumière au point (virage au blanc) ; point de vue (par la tranche, dans l'axe) : luminosité seule
+                float L = vCol.w / w * hk * forwardK(vPar.w) * transmit(r);
                 float cosA = max(abs(dot(vN, view)), 0.25);
-                float L = vCol.w / w / cosA * phaseHG(dot(dir, -view), vPar.w);
+                float viewK = phaseHG(dot(dir, -view), vPar.w) / cosA;
                 float fade = 1.0 - smoothstep(uRange.x, uRange.y, r);
-                float camDist = length(vWorld - cameraPosition);
-                gl_FragColor = vec4(shade(vCol.rgb, L) * fade * smoke(vWorld, vSmoke, camDist), 1.0);
+                vec3 e = vCol.rgb * (uSheetGain * pow(L, uSheetGamma)) * fade * edge * smoke(vWorld, vSmoke, camDist);
+                gl_FragColor = vec4(respond(e, pow(viewK, uSheetGamma)), 1.0);
             }
         `,
         ...baseOptions(),
@@ -349,7 +504,7 @@ export function createLaser2ImpactMaterial() {
                 float gk = d / halo;
                 float glow = max(0.0, exp(-gk * gk * 1.3) - exp(-(R / halo) * (R / halo) * 1.3)) * 0.12 * (1.0 - smoothstep(0.3 * R, R, d));
                 vec3 c = shade(vChroma, vDim.w) * uImpactK * (core + glow);
-                gl_FragColor = vec4(c, 1.0);
+                gl_FragColor = vec4(sensor(c), 1.0);
             }
         `,
         ...baseOptions(),

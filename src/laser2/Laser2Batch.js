@@ -79,7 +79,7 @@ export class Laser2Batch {
         sheetGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0], 3));
         sheetGeo.setAttribute('aCornerId', new THREE.Float32BufferAttribute([0, 1, 2], 1));
         sheetGeo.instanceCount = 0;
-        this.sheets = new InstanceStream(sheetGeo, SHEET_STRIDE, [['aO', 0, 4], ['aA', 4, 4], ['aB', 8, 4], ['aC', 12, 4], ['aG', 16, 1], ['aS', 17, 4]], 512);
+        this.sheets = new InstanceStream(sheetGeo, SHEET_STRIDE, [['aO', 0, 4], ['aA', 4, 4], ['aB', 8, 4], ['aC', 12, 4], ['aG', 16, 1], ['aS', 17, 4], ['aT', 21, 3]], 512);
 
         const impGeo = new THREE.InstancedBufferGeometry();
         impGeo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0], 3));
@@ -108,9 +108,19 @@ export class Laser2Batch {
         this.impactMesh.name = 'laser2-impacts';
         this.sourceMesh = new THREE.Mesh(srcGeo, this.sourceMaterial);
         this.sourceMesh.name = 'laser2-sources';
+        // Taille d'un pixel de la cible EN COURS (image principale, ou bloom en ½ résolution) : la largeur minimale des
+        // faisceaux (3 pixels) est comptée dans la cible où ils sont dessinés. Comptée en pixels de l'image principale,
+        // elle était deux fois plus fine dans le bloom (sans anticrénelage) : le trait n'y était tracé que par tronçons
+        // et le flou en faisait des perles qui glissent quand la caméra bouge. Énergie conservée (luminance ∝ 1 / largeur).
+        const _vp = new THREE.Vector4();
+        const setPixelSize = (renderer, s, camera) => {
+            const h = renderer.getCurrentViewport(_vp).w;
+            LASER2_UNIFORMS.uPixelK.value = 2 / (camera.projectionMatrix.elements[5] * Math.max(1, h));
+        };
         for (const m of [this.sheetMesh, this.beamMesh, this.impactMesh, this.sourceMesh]) {
             m.frustumCulled = false;
             m.renderOrder = 5;
+            m.onBeforeRender = setPixelSize;
             scene.add(m);
             enableLaserBloom(m);
         }

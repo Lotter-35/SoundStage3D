@@ -90,7 +90,8 @@ const CHANNELS = [
           else { o.playMode = 'Boucle'; o.ildaFps = 1 + ((v - 128) / 127) * 59; }
       },
       enc: p => (p.playMode === 'Image fixe' ? clamp(round(p.ildaFrame), 0, 127) : 128 + round(clamp((p.ildaFps - 1) / 59, 0, 1) * 127)) },
-    { name: 'Vitesse de dessin (5 → 60 kpps)', dec: (v, o) => { o.scanRate = 5 + (v / 255) * 55; }, enc: p => round(clamp((p.scanRate - 5) / 55, 0, 1) * 255) },
+    // Ancienne « vitesse de dessin » : canal gardé (adresses des canaux suivants inchangées) mais ignoré — laser parfait
+    { name: 'Réservé (ignoré)', dec: () => {}, enc: () => 0 },
     { name: 'Tracé : début', dec: (v, o) => { o.drawStart = pct(v); }, enc: p => enc(p.drawStart) },
     { name: 'Tracé : fin (0 = tout)', dec: (v, o) => { o.drawEnd = v === 0 ? 100 : pct(v); }, enc: p => (p.drawEnd >= 100 ? 0 : Math.max(1, enc(p.drawEnd))) },
     { name: 'Pointillés', dec: (v, o) => { o.dots = pct(v); }, enc: p => enc(p.dots) },

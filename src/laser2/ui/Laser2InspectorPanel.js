@@ -6,10 +6,10 @@
  *   - couleur : sélecteur de couleur classique (stockée en RGB dans le code)
  *   - modèle de boîtier : applique sa fiche technique ; modifier une valeur → « Personnalisé »
  *   - aperçu 2D du tracé (comme la fenêtre de prévisualisation d'un logiciel laser) :
- *     consigne envoyée aux galvos (gris) et trajectoire réelle des miroirs (couleur émise)
+ *     parcours de l'image (gris) et traits allumés (couleur émise)
  *   - source « Fichier ILDA » : banque puis forme de la bibliothèque du serveur (listes mises à jour
  *     en direct quand un fichier est ajouté dans server/storage/ilda)
- *   - informations : points par image, images/s (scintillement), primitives
+ *   - informations : points par image, animation, primitives
  *   - chaque modification est synchronisée en multijoueur (laser2_update)
  * ─────────────────────────────────────────────────────────────
  */
@@ -22,7 +22,7 @@ import { describeChannels, encode, getFootprint } from '../Laser2Profile.js';
 import { isAnimatedPattern } from '../Laser2Patterns.js';
 
 const PER_FIXTURE_FOLDERS = new Set(['place', 'dmx']);
-const HARDWARE_KEYS = new Set(['powerR', 'powerG', 'powerB', 'scanner', 'divergence', 'aperture']);
+const HARDWARE_KEYS = new Set(['powerR', 'powerG', 'powerB', 'divergence', 'aperture']);
 const PREVIEW = 232;
 
 export class Laser2InspectorPanel {
@@ -272,7 +272,7 @@ export class Laser2InspectorPanel {
         const cv = document.createElement('canvas');
         cv.width = PREVIEW; cv.height = PREVIEW;
         cv.style.cssText = `width:${PREVIEW}px;height:${PREVIEW}px;background:#05060a;border:1px solid rgba(255,255,255,0.12);border-radius:6px;`;
-        cv.title = 'Gris : consigne envoyée aux galvos · Couleur : trajectoire réelle des miroirs (laser allumé)';
+        cv.title = 'Gris : parcours de l’image · Couleur : traits allumés';
         const info = document.createElement('div');
         info.style.cssText = 'font:11px/1.45 ui-monospace,Consolas,monospace;color:#b8c2d6;text-align:center;';
         wrap.appendChild(cv);
@@ -312,7 +312,7 @@ export class Laser2InspectorPanel {
             c.strokeStyle = 'rgba(150,160,180,0.35)';
             c.beginPath();
             for (let i = 0; i < n; i++) {
-                const X = cx + s.ux[i] * sc, Y = cy - s.uy[i] * sc;
+                const X = cx + s.ax[i] * sc, Y = cy - s.ay[i] * sc;
                 if (i === 0) c.moveTo(X, Y); else c.lineTo(X, Y);
             }
             c.stroke();
@@ -329,15 +329,9 @@ export class Laser2InspectorPanel {
                 c.stroke();
             }
         }
-        const hz = st.frameHz;
-        const flicker = hz < 20 ? ' <span style="color:#ff8a65">⚠ scintille</span>' : '';
-        const anim = st.frames > 1 ? ` · animation ${st.frames} images` : '';
-        // Réglage automatique : valeurs choisies
-        const auto = st.auto && st.pps
-            ? `<br>Auto : ${(st.pps / 1000).toFixed(1)} kpps · décalage ${st.shift} pts${st.frames > 1 ? ` · ${st.fps.toFixed(0)} img/s d'animation` : ''}`
-            : '';
-        this._info.innerHTML = `${st.points} points · <b>${hz.toFixed(0)} images/s</b>${flicker}${anim}<br>`
-            + `${st.beams} faisceaux · ${st.sheets} nappes · calcul ${(this.laser2Manager.coreMs || 0).toFixed(2)} ms (${this.laser2Manager.computeMode === 'worker' ? 'worker' : 'direct'})${auto}`;
+        const anim = st.frames > 1 ? ` · animation ${st.frames} images à ${(st.fps || 0).toFixed(0)} img/s` : '';
+        this._info.innerHTML = `${st.points} points${anim}<br>`
+            + `${st.beams} faisceaux · ${st.sheets} nappes · calcul ${(this.laser2Manager.coreMs || 0).toFixed(2)} ms (${this.laser2Manager.computeMode === 'worker' ? 'worker' : 'direct'})`;
     }
 
     // ── Choix de la forme ILDA (banque → forme) ─────────────────────────
@@ -412,7 +406,7 @@ export class Laser2InspectorPanel {
         this._show('pattern', !ilda && !live);
         this._show('beamCount', beams);
         this._show('beamDwell', beams || (!ilda && p.pattern === 'Point fixe'));
-        for (const k of ['density', 'cornerPoints', 'blankPoints']) this._show(k, !ilda && !live);
+        this._show('density', !ilda && !live);
         const fixed = p.playMode === 'Image fixe';
         const anim = ilda || (!live && isAnimatedPattern(p.pattern));
         this._show('playMode', anim);
@@ -431,10 +425,6 @@ export class Laser2InspectorPanel {
         for (const c of [this._ildaBankCtrl, this._ildaFileCtrl]) if (c) { if (ilda) c.show(); else c.hide(); }
         if (this._ildaInfo) this._ildaInfo.style.display = ilda ? '' : 'none';
         this._show('strobeRate', p.shutter === 'Strobe');
-        // Réglage automatique : vitesse de dessin et décalage couleur choisis par le laser
-        const auto = p.autoTune !== false;
-        this._show('scanRate', !auto);
-        this._show('colorShift', !auto);
     }
 
     _tick() {

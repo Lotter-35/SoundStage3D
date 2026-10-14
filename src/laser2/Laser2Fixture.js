@@ -71,7 +71,7 @@ export class Laser2Fixture {
         this.beamN = 0;
         this.sheetN = 0;
         this.impactN = 0;
-        this.stats = { points: 0, frameHz: 0, window: 0, beams: 0, sheets: 0, frames: 1 };
+        this.stats = { points: 0, beams: 0, sheets: 0, frames: 1, fps: 0 };
         this.preview = null;
         // Point lumineux à la sortie : couleur émise (chroma) + intensité
         this.glow = [0, 0, 0, 0];

@@ -4,13 +4,9 @@
  * Générateur interne de motifs : produit une IMAGE laser = suite de points (x, y ∈ [-1, 1],
  * niveau de couleur r g b ∈ [0, 1], 0 = masqué), exactement comme une image ILDA.
  *
- * Les images sont « optimisées » comme le fait un vrai logiciel laser :
- *   - points interpolés au pas choisi (densité)
- *   - points d'angle répétés dans les coins (sinon les galvos les arrondissent)
- *   - points de masquage au début / à la fin de chaque trait (laser éteint pendant que les
- *     miroirs sautent au trait suivant)
- * Ces réglages ont un effet VISIBLE : peu de points d'angle = coins arrondis, peu de points de
- * masquage = traînées de lumière entre deux traits.
+ * Laser parfait (miroirs sans inertie) : points interpolés au pas choisi (densité), un point éteint à la
+ * fin de chaque trait (le saut vers le trait suivant ne s'allume pas), aucun point d'angle ni de masquage
+ * supplémentaire. Les faisceaux fixes sont des points répétés (« Points par faisceau »).
  * ─────────────────────────────────────────────────────────────
  */
 
@@ -43,13 +39,11 @@ export class LaserFrame {
     }
 }
 
-/** Construction d'une image à partir de traits (moveTo / lineTo), avec optimisation laser */
+/** Construction d'une image à partir de traits (moveTo / lineTo) */
 class PathBuilder {
-    constructor(frame, { step, corner, blank }) {
+    constructor(frame, { step }) {
         this.f = frame;
         this.step = step;
-        this.corner = corner;
-        this.blank = blank;
         this.cx = 0; this.cy = 0;
         this.lit = false;       // un trait est en cours
         this.dx = 0; this.dy = 0; // direction du dernier segment
@@ -58,21 +52,16 @@ class PathBuilder {
         this.strokes = 0;
     }
 
-    /** Fin du trait courant : points de masquage sur place (le faisceau s'éteint avant le saut) */
+    /** Fin du trait courant : un point éteint sur place (le saut vers le trait suivant ne s'allume pas) */
     _endStroke() {
         if (!this.lit) return;
-        for (let i = 0; i < this.blank; i++) this.f.push(this.cx, this.cy, 0, 0, 0);
+        this.f.push(this.cx, this.cy, 0, 0, 0);
         this.lit = false;
     }
 
     moveTo(x, y) {
         this._endStroke();
-        if (this.started) {
-            // Saut masqué : quelques points intermédiaires (les miroirs ne sautent pas instantanément)
-            this._blankTravel(x, y);
-        } else {
-            this.fx = x; this.fy = y;
-        }
+        if (!this.started) { this.fx = x; this.fy = y; }
         this.started = true;
         this.strokes++;
         this.cx = x; this.cy = y;
@@ -80,18 +69,7 @@ class PathBuilder {
         this.dx = 0; this.dy = 0;
     }
 
-    /** Saut masqué : points intermédiaires selon la distance (les miroirs ne sautent pas instantanément) */
-    _blankTravel(x, y) {
-        const d = Math.hypot(x - this.cx, y - this.cy);
-        const n = Math.min(40, Math.ceil(d / 0.06));
-        for (let i = 1; i <= n; i++) {
-            const t = i / (n + 1);
-            this.f.push(this.cx + (x - this.cx) * t, this.cy + (y - this.cy) * t, 0, 0, 0);
-        }
-        for (let i = 0; i < this.blank; i++) this.f.push(x, y, 0, 0, 0);
-    }
-
-    /** Point allumé répété (faisceau fixe / point d'angle) */
+    /** Point allumé répété (faisceau fixe ; 1 : début d'un trait) */
     dwell(count, level = 1) {
         for (let i = 0; i < count; i++) this.f.push(this.cx, this.cy, level, level, level);
         this.lit = true;
@@ -114,9 +92,8 @@ class PathBuilder {
         const d = Math.hypot(ex, ey);
         if (d < 1e-6) return;
         const ux = ex / d, uy = ey / d;
-        // Coin : répétition du point si la direction change nettement
-        if (!this.lit) this.dwell(Math.max(1, this.corner));
-        else if (ux * this.dx + uy * this.dy < 0.94) this.dwell(this.corner);
+        // Début d'un trait : son premier point
+        if (!this.lit) this.dwell(1);
         const n = Math.max(1, Math.ceil(d / this.step));
         for (let i = 1; i <= n; i++) {
             const t = i / n;
@@ -131,9 +108,8 @@ class PathBuilder {
     curve(fn, steps, closed) {
         const p0 = fn(0);
         this.moveTo(p0[0], p0[1]);
-        if (!closed) this.dwell(Math.max(1, this.corner));
+        if (!closed) this.dwell(1);
         this.curveTo(fn, steps);
-        if (!closed) this.dwell(Math.max(1, this.corner));
     }
 
     /** Prolonge le trait courant le long d'une courbe (sans point d'arrêt) */
@@ -150,19 +126,14 @@ class PathBuilder {
         this.moveTo(pts[0][0], pts[0][1]);
         for (let i = 1; i < pts.length; i++) this.lineTo(pts[i][0], pts[i][1]);
         this.lineTo(pts[0][0], pts[0][1]);
-        this.dwell(this.corner);
     }
 
-    /** Fin de l'image : saut masqué vers le premier point (l'image est redessinée en boucle) */
+    /** Fin de l'image (redessinée en boucle) : éteinte avant de revenir au premier point */
     finish() {
         // Un seul trait qui se referme sur lui-même (cercle, polygone, aller-retour) : il est
         // redessiné en boucle sans jamais s'éteindre
         if (this.strokes === 1 && Math.hypot(this.cx - this.fx, this.cy - this.fy) < 1e-4) return;
         this._endStroke();
-        if (this.started) {
-            this._blankTravel(this.fx, this.fy);
-            this.cx = this.fx; this.cy = this.fy;
-        }
     }
 }
 
@@ -344,7 +315,6 @@ function drawPattern(b, p, name, phase) {
             const steps = Math.ceil(4.2 / b.step);
             b.curve((t) => [-1 + 2 * t, Math.sin(t * TAU * 2) * 0.6], steps, false);
             b.curveTo((t) => [1 - 2 * t, -Math.sin((1 - t) * TAU * 2) * 0.6], steps);
-            b.dwell(Math.max(1, b.corner));
             break;
         }
         case 'Zigzag': {
@@ -387,8 +357,6 @@ function buildOne(p, name, frame, phase) {
     frame.n = 0;
     const b = new PathBuilder(frame, {
         step: stepFromDensity(p.density),
-        corner: Math.round(p.cornerPoints),
-        blank: Math.round(p.blankPoints),
     });
     drawPattern(b, p, name, phase);
     b.finish();
