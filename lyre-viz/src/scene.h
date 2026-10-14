@@ -26,6 +26,11 @@ struct Collider {
     vec3 albedo;
 };
 
+// Obstacle fixe qui fait de l'ombre (pave oriente : centre et 3 demi-axes).
+struct Occluder {
+    vec3 c, ax, ay, az;
+};
+
 struct RayHit {
     float t = 1e30f;
     vec3 pos, normal, albedo;
@@ -43,6 +48,7 @@ struct Scene {
     std::vector<Instance> cubes;       // geometrie statique (cubes unitaires -1..1)
     std::vector<Instance> cylinders;   // geometrie statique (cylindres unitaires)
     std::vector<Collider> colliders;
+    std::vector<Occluder> occluders;   // ombres des faisceaux (pas les parois du hangar)
     std::vector<FixtureMount> mounts;
     std::vector<std::string> group_names;
     vec3 bounds_min, bounds_max;       // volume interieur du hangar

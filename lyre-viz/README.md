@@ -60,6 +60,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `floor` | Sol en béton texturé (1) ou béton uni (0). |
   | `floortile` | Taille de répétition de la texture du sol, en mètres (8 par défaut). |
   | `wet` | Eau au sol : 0 sec, 0,4 humide, 1 inondé. |
+  | `shadows` | Ombres exactes des obstacles (1) ou non (0). |
   | `flooraniso` | Filtrage anisotrope de la texture du sol (1 à 16, 4 par défaut). |
 
 ### Banc d'essai
@@ -108,6 +109,7 @@ python tools\compare_bench.py bench\avant bench\apres --diff bench\ecarts
 ### Scène
 
 - Un hangar de 100 × 44 × 34 m, avec poteaux et poutres de toit.
+- Un cube suspendu à 9 m sous le truss 2, pour tester les ombres : sa face coupe en deux, dans leur longueur, les faisceaux bleus qui passent dessous.
 - Un sol en béton texturé (voir « Sol en béton » plus bas), avec un réglage d'eau au sol.
 - 4 lignes de trusses à 18 m de haut.
 - Une scène avec pont, mur LED éteint, stacks, régie et mannequins.
@@ -198,6 +200,26 @@ C'est ce qui rend les gobos, les prismes et le frost presque gratuits dans la fu
 - La table existe en plusieurs niveaux de flou, pour la mise au point et le frost.
 - L'ancien calcul par échantillons reste disponible : décocher « calcul analytique » dans l'onglet Rendu.
 
+### Ombres des obstacles
+
+Les obstacles fixes font de l'ombre aux faisceaux, sur les surfaces et dans la fumée : scène, mur LED, stacks, régie, décor, cube suspendu, mannequins (2 pavés chacun). Les parois du hangar, elles, reçoivent la lumière sans faire d'ombre. Onglet Rendu : « Ombres des obstacles », `--set shadows=0/1`.
+
+- **Ombres exactes, sans cartes d'ombre précalculées.**
+  - Tous les obstacles sont des pavés. Pour chaque lyre, à chaque image, le CPU garde les pavés qui touchent son cône (8 au plus) et calcule le **volume d'ombre** de chacun vu de la lentille : un convexe d'au plus 9 plans (faces éclairées, plans des arêtes de silhouette).
+  - Surface : distance du point au volume (produits scalaires, arrêt dès qu'il est hors de la pénombre), adoucie sur la largeur de la **pénombre** : rayon de la lentille × (distance obstacle → surface) / (distance lentille → obstacle). Bord net quand l'obstacle est près de la surface, flou quand il est près de la lyre (environ 14 cm au sol sous le cube suspendu).
+  - Fumée : morceau exact du rayon dans le volume (découpe de la droite par les plans). Son intégrale (différence de deux valeurs de la table du faisceau) est retirée.
+  - Ne dépend ni du gobo, ni du prisme, ni du zoom, ni du frost : seulement de la lentille et des pavés.
+  - Des cartes d'ombre par lyre auraient demandé des centaines de Mo pour des faisceaux de 1,5°, avec des bords en escalier.
+- **Ne calculer que là où une ombre peut tomber.**
+  - CPU : rectangle d'écran et plage de profondeur de chaque volume (coupé au plan avant de la caméra et aux parois), puis masque par tuile d'écran (32 × 18) et par lyre.
+  - Calcul des cases de lumière : pour chaque case et chaque lyre, les pavés dont l'ombre peut toucher la case (8 bits). Une surface ne teste que ceux-là.
+  - Fumée : une lecture du masque de la tuile ; rien de plus sans ombre près du pixel.
+- **Le faisceau entier arrêté par un obstacle** (les 9 rayons de son axe et de son bord touchent) est en plus raccourci à l'obstacle : moins de pixels à calculer.
+- **Limites.**
+  - Dans la fumée, le bord de l'ombre reste net (la pénombre n'est que sur les surfaces).
+  - Deux ombres qui se chevauchent le long d'un même rayon dans la fumée seraient retirées deux fois : le résultat est borné à 0.
+  - Seuls les obstacles fixes : le personnage (mode F) et les lyres ne font pas d'ombre.
+
 ### Sol en béton
 
 Texture [Concrete031](https://ambientcg.com/view?id=Concrete031) d'ambientCG, en 2K : couleur, normales (format DirectX) et rugosité, dans `assets/Concrete031/`.
@@ -265,6 +287,7 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 | `tools/compare_bench.py` | Compare deux résultats du banc d'essai (temps et images). |
 | `tools/perf_ab.ps1`, `tools/perf_report.py` | Compare deux versions en les lançant en alternance (voir `PERFORMANCE.md`). |
 | `tools/set_ab.ps1` | Compare deux jeux de réglages avec le même exécutable : coût d'une option seule. |
+| `tools/historique.py`, `historique_perf.xlsx` | Historique des performances : chaque modification mesurée y est ajoutée (évolution des img/s). |
 | `PERFORMANCE.md` | Comment mesurer : procédure, valeurs de référence, pièges. À suivre pour toute nouvelle fonctionnalité. |
 
 ## Limites actuelles et prochaines étapes
@@ -281,7 +304,7 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 
   - Le dernier cas (toutes les lyres avec gobo et prisme 8, faisceaux larges qui se superposent partout) reste au-dessus de 8,3 ms.
   - Ce qui coûte encore : le dessin des cônes (environ 25 millions de pixels de fumée à additionner), l'éclairage des surfaces par ces faisceaux, et les tables.
-- **Ombres :** pas encore d'ombres (les trusses et les objets ne cachent pas la lumière). Prévu en option, activable.
+- **Ombres :** obstacles fixes seulement (pavés), pénombre sur les surfaces mais bord net dans la fumée ; le personnage et les lyres ne font pas d'ombre.
 - **Reflet des faisceaux :** les faisceaux ne se reflètent pas encore dans le sol brillant (seules les taches le font). Prévu. Avec de l'eau au sol, ce serait le reflet le plus visible.
 - **Eau au sol :** le reflet coûte environ 1,5 ms (4 ms avec gobo + prisme 8 sur toutes les lyres) : avec de l'eau, le cas par défaut passe un peu sous 120 img/s sans la qualité adaptative. Pas encore de pluie ni d'ondulations dans les flaques.
 - **Gobos personnels :** pas encore de chargement de vos propres images de gobo.

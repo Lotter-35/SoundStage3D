@@ -25,6 +25,13 @@ Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la proc
 5. Vérifier l'image : PSNR en scène immobile, puis agrandissements (brume, bords des faisceaux, gobos, lentilles).
 6. Avant de conclure : banc complet en mouvement (`-Full -Moving`), et comparaison aux valeurs de référence de `PERFORMANCE.md`. Mettre ces valeurs à jour si elles changent.
 7. Les mesures varient de 10 à 20 % d'un lancement à l'autre : ne jamais conclure sur un seul lancement.
+8. **À chaque modification mesurée, ajouter les résultats à l'historique `historique_perf.xlsx`** (obligatoire, sans attendre qu'on le demande) :
+   ```bat
+   python tools\historique.py --modif "N. nom court de la modification" --reglages "adaptive=0, en mouvement" bench\essai_B0 bench\essai_B1
+   ```
+   - Un ajout par version mesurée (et par jeu de réglages : par exemple option à 0, puis à 1). Numéroter les modifications dans l'ordre.
+   - Le banc complet en mouvement (`-Full -Moving`) de préférence, pour que les lignes se comparent.
+   - Si Excel a le fichier ouvert, l'enregistrement échoue : demander à l'utilisateur de le fermer.
 
 ## Rappels techniques
 

@@ -265,6 +265,9 @@ void render_ui() {
     ImGui::SliderFloat("Rebonds dans la fumee", &r.gi_fog, 0, 4);
     ImGui::Checkbox("Bloom (halo)", &r.bloom);
     ImGui::SliderFloat("Force du bloom", &r.bloom_strength, 0, 0.3f);
+    ImGui::Checkbox("Ombres des obstacles (exactes)", &r.shadows);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d lyres)", s.occluded_lights);
     ImGui::Checkbox("Sol en beton texture", &r.floor_texture);
     if (!app.floor.ok) {
         ImGui::SameLine();

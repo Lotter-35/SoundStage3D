@@ -38,6 +38,11 @@ struct sb_vec4 {
     vec4 v;
 };
 
+// Obstacles dans le cone d'une lyre : x nombre de paves (0..8), y premier bloc de plans (voir occlusion).
+struct sb_occ {
+    uvec4 v;
+};
+
 // Table d'un faisceau pour le calcul analytique dans la fumee (doit correspondre a sb_btab_t cote C).
 // Repere "epipolaire" de la lyre : a = direction lyre -> camera. Une direction u se note
 // u = cos(psi) a + sin(psi) (cos(phi) e1 + sin(phi) e2). Tout rayon de camera reste dans un plan
@@ -376,10 +381,13 @@ layout(binding=0) uniform cull_params {
     vec4 cam_up;      // w : tan(fov y / 2)
     vec4 cam_fwd;
     vec4 grid;        // x, y : cases ecran, z : tranches de profondeur, w : profondeur de la 1re tranche
-    vec4 grid2;       // x : profondeur max
+    vec4 grid2;       // x : profondeur max, y : camera miroir (rectangles d'ombre)
 };
 layout(binding=0) readonly buffer lights_cs { sb_light lights[]; };
 layout(binding=1) buffer clusters_rw { sb_index clusters_w[]; };
+layout(binding=22) readonly buffer occ_lights_cs { sb_occ occ_lights[]; };
+layout(binding=23) readonly buffer occ_planes_cs { sb_vec4 occ_planes[]; };
+layout(binding=24) readonly buffer occ_tiles_cs { sb_index occ_tiles[]; };
 
 layout(local_size_x=64, local_size_y=1, local_size_z=1) in;
 
@@ -433,7 +441,29 @@ void main() {
         float dist_closest = cosA * sqrt(max(vlen2 - v1 * v1, 0.0)) - v1 * sinA;
         bool cull = (dist_closest > radius) || (v1 > radius + L.pos_range.w) || (v1 < -radius);
         if (!cull && count < CL_STRIDE - 1) {
-            clusters_w[base + 1 + count].v = uint(i);
+            // ombres : un des volumes d'ombre de la lyre touche-t-il la case ? (sphere de la case contre
+            // les plans de chaque volume) -> bit 16 : seules ces cases testent l'ombre pixel par pixel
+            uint entry = uint(i);
+            // paves dont le rectangle d'ecran touche cette colonne de cases : masque calcule sur le CPU
+            // (memes 32 x 18 tuiles que les cases), une seule lecture
+            uint tmask = (occ_tiles[(int(grid2.y) * 576 + iy * 32 + ix) * 64 + i / 4].v >> uint(8 * (i & 3))) & 255u;
+            uvec4 oi = tmask != 0u ? occ_lights[i].v : uvec4(0u);
+            for (int k = 0; k < 8; k++) {
+                if ((tmask >> uint(k)) == 0u) {
+                    break;
+                }
+                if ((tmask & (1u << uint(k))) == 0u) {
+                    continue;
+                }
+                // plage de profondeur du volume (CPU) contre la tranche de la case : test large, le pixel
+                // fait ensuite le test exact
+                vec4 zr = occ_planes[(int(oi.y) + k) * 13 + 3].v;
+                vec2 zz = grid2.y > 0.5 ? zr.zw : zr.xy;
+                if (z1 >= zz.x && z0 <= zz.y) {
+                    entry |= 65536u << uint(k);   // bits 16..23 : paires dont l'ombre touche la case
+                }
+            }
+            clusters_w[base + 1 + count].v = entry;
             count++;
         }
     }
@@ -746,6 +776,130 @@ vec3 ggx_spec(vec3 n, vec3 v, vec3 l, float rough, vec3 f0) {
 }
 @end
 
+// -------------------------------------------------------------------------------------
+//  Ombres des obstacles fixes (paves : scene, decor, mannequins, cube suspendu).
+//  Pour chaque lyre, le CPU garde les paves qui touchent son cone (8 au plus, presque toujours 0
+//  a 2) et calcule le VOLUME D'OMBRE de chacun vu de la lentille : un convexe defini par 9 plans au
+//  plus (faces eclairees + plans des aretes de silhouette), en coordonnees monde, n.X <= h.
+//  occ_lights[lyre] = (nombre de paves, premier bloc) ; un bloc = 13 vec4 : (nombre de plans), rectangle
+//  de l'ecran couvert par le volume (camera, puis camera miroir), plage de profondeur (camera, miroir),
+//  plans.
+//  Tri : sur le CPU, rectangle d'ecran et plage de profondeur de chaque volume -> masques par tuile
+//  d'ecran (32 x 18) ; le calcul des cases de lumiere en deduit, pour chaque case et chaque lyre, les
+//  paves dont l'ombre peut la toucher (bits 16..23 de l'entree de la case). Un pixel ne teste que
+//  ceux-la ; un pixel de fumee lit le masque de sa tuile. Sans ombre pres d'un pixel : rien de plus.
+//  - surfaces : le point est-il dans un volume d'ombre ? (produits scalaires, sortie au 1er plan) ;
+//  - fumee : morceau exact du rayon dans le volume (decoupe de la droite par les plans).
+//  Ne depend ni du gobo, ni du prisme, ni du zoom : seulement de la lentille et des paves.
+//  Necessite occ_lights et occ_planes declares avant l'inclusion.
+// -------------------------------------------------------------------------------------
+@block occlusion
+const int OCC_BLOCK = 13;
+
+// Le point P est-il dans un des volumes d'ombre de la lyre designes par le masque (bit k : k-ieme pave) ?
+bool occ_blocked_mask(uvec4 oi, vec3 P, uint mask) {
+    for (int k = 0; k < 8; k++) {
+        if ((mask >> uint(k)) == 0u) {
+            break;
+        }
+        if ((mask & (1u << uint(k))) == 0u) {
+            continue;
+        }
+        int base = (int(oi.y) + k) * OCC_BLOCK;
+        int np = int(occ_planes[base].v.x);
+        bool inside = true;
+        for (int q = 0; q < 9; q++) {
+            if (q >= np) {
+                break;
+            }
+            vec4 pl = occ_planes[base + 4 + q].v;
+            if (dot(pl.xyz, P) > pl.w) {
+                inside = false;
+                break;
+            }
+        }
+        if (inside) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Part de la lumiere de la lyre qui atteint P (0 : ombre, 1 : eclaire), avec penombre : la lentille n'est pas
+// un point. Distance signee de P au volume d'ombre (le plus grand ecart aux plans, normales unitaires),
+// adoucie sur la largeur de la penombre : rayon de la lentille x (distance pave -> P) / (lentille -> pave).
+// Bord net quand l'obstacle est pres de la surface, doux quand il est pres de la lyre.
+float occ_light(uvec4 oi, vec3 P, uint mask, vec3 Lw) {
+    float vis = 1.0;
+    float dP = length(P - Lw);
+    for (int k = 0; k < 8; k++) {
+        if ((mask >> uint(k)) == 0u) {
+            break;
+        }
+        if ((mask & (1u << uint(k))) == 0u) {
+            continue;
+        }
+        int base = (int(oi.y) + k) * OCC_BLOCK;
+        vec4 hd = occ_planes[base].v;   // nombre de plans, distance lentille -> pave, rayon de la lentille
+        float w = max(hd.z * max(dP - hd.y, 0.0) / max(hd.y, 0.1), 0.004);
+        float m = -1e30;
+        for (int q = 0; q < 9; q++) {
+            if (q >= int(hd.x)) {
+                break;
+            }
+            vec4 pl = occ_planes[base + 4 + q].v;
+            m = max(m, dot(pl.xyz, P) - pl.w);
+            if (m >= w) {
+                break;   // hors de la penombre : eclaire par ce pave
+            }
+        }
+        vis *= smoothstep(-w, w, m);
+        if (vis <= 0.0) {
+            break;
+        }
+    }
+    return vis;
+}
+
+// Morceau [ta, tb] du rayon cam + t dir dans le volume d'ombre du bloc 'blk' ; faux s'il est vide.
+bool occ_interval(int blk, vec3 cam, vec3 dir, out float ta, out float tb) {
+    ta = -1e30;
+    tb = 1e30;
+    int base = blk * OCC_BLOCK;
+    int np = int(occ_planes[base].v.x);
+    for (int q = 0; q < 9; q++) {
+        if (q >= np) {
+            break;
+        }
+        vec4 pl = occ_planes[base + 4 + q].v;
+        float nd = dot(pl.xyz, dir);
+        float num = pl.w - dot(pl.xyz, cam);
+        if (abs(nd) < 1e-9) {
+            if (num < 0.0) {
+                return false;
+            }
+        } else if (nd > 0.0) {
+            tb = min(tb, num / nd);
+        } else {
+            ta = max(ta, num / nd);
+        }
+    }
+    return tb > ta;
+}
+@end
+
+// Tuiles d'ecran des ombres (passes des faisceaux) : necessite occ_tiles.
+@block occlusion_tiles
+// Masque des paves de la lyre li dont l'ombre touche la tuile d'ecran du pixel (32 x 18 tuiles, ndc ;
+// side 1 camera, 2 miroir). Rempli sur le CPU avec les rectangles : une seule lecture par pixel.
+uint occ_tile_mask(int li, vec2 ndc, int side) {
+    ivec2 t = clamp(ivec2((ndc * 0.5 + 0.5) * vec2(32.0, 18.0)), ivec2(0), ivec2(31, 17));
+    int idx = ((side - 1) * 576 + t.y * 32 + t.x) * 64 + li / 4;
+    return (occ_tiles[idx].v >> uint(8 * (li & 3))) & 255u;
+}
+
+@end
+
 // Sol en beton texture (Concrete031, ambientCG) : voir src/floor_texture.h.
 // La texture contient 4 x 4 dalles separees par des joints. Chaque dalle du sol prend une dalle de la
 // texture au hasard, tournee d'un quart de tour et retournee au hasard (128 variantes) : les joints
@@ -851,6 +1005,8 @@ layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
 layout(binding=5) uniform texture2DArray gobo_tex;
 layout(binding=30) uniform texture2D floor_tex;
 layout(binding=4) uniform sampler floor_smp;
+layout(binding=22) readonly buffer occ_lights_ro { sb_occ occ_lights[]; };
+layout(binding=23) readonly buffer occ_planes_ro { sb_vec4 occ_planes[]; };
 layout(binding=15) uniform texture2D probe_a;
 layout(binding=16) uniform texture2D probe_b;
 layout(binding=17) uniform texture2D probe_c;
@@ -864,6 +1020,7 @@ layout(binding=29) uniform texture2D pimg_tex;
 @include_block probe_sampling_full
 #define pimg_inv res.zw
 @include_block pattern_image
+@include_block occlusion
 @include_block floor_material
 
 in vec3 v_world;
@@ -924,7 +1081,8 @@ void main() {
     vec3 spec = vec3(0.0);
     for (int i = 0; i < count; i++) {
         // les donnees de la lyre ne sont lues qu'au fur et a mesure des tests
-        uint li = clusters[base + 1 + i].v;
+        uint ce = clusters[base + 1 + i].v;   // lyre (16 bits) ; bits 16..23 : ombres qui touchent la case
+        uint li = ce & 65535u;
         vec3 rel = P - lights[li].pos_range.xyz;
         float d2 = dot(rel, rel);
         float d = sqrt(d2);
@@ -935,7 +1093,7 @@ void main() {
         }
         vec4 dte = lights[li].dir_tanenv;
         float z = dot(rel, dte.xyz);
-        if (z <= lights[li].optics.w) {   // derriere la lentille
+        if (z <= lights[li].optics.w || z > lights[li].pos_range.w) {   // derriere la lentille, ou apres un obstacle
             continue;
         }
         vec4 ut = lights[li].up_tanbeam;
@@ -956,6 +1114,12 @@ void main() {
         }
         if (pat <= 0.0) {
             continue;
+        }
+        if (ce > 65535u) {   // un volume d'ombre de la lyre touche cette case : ombre et penombre
+            pat *= occ_light(occ_lights[li].v, P, ce >> 16u, lights[li].pos_range.xyz + dte.xyz * lights[li].optics.w);
+            if (pat <= 0.0) {
+                continue;
+            }
         }
         vec3 E = cg.rgb * (pat * nl * exp(-sigma * d) / max(d2, 0.04));
         diffuse += E;
@@ -1022,10 +1186,13 @@ layout(binding=1) uniform sampler point_smp;
 layout(binding=26) readonly buffer pimg_desc_ro { sb_vec4 pdesc[]; };
 layout(binding=29) uniform texture2D pimg_tex;
 layout(binding=2) uniform sampler lin_clamp_smp;
+layout(binding=22) readonly buffer occ_lights_ro { sb_occ occ_lights[]; };
+layout(binding=23) readonly buffer occ_planes_ro { sb_vec4 occ_planes[]; };
 @image_sample_type normal_tex unfilterable_float
 #define pimg_inv shade.xy
 @include_block beam_pattern
 @include_block pattern_image
+@include_block occlusion
 @include_block ggx
 
 layout(location=0) out vec4 out_diffuse;   // eclairement (rgb), profondeur utilisee
@@ -1059,7 +1226,8 @@ void main() {
     vec3 diffuse = vec3(0.0);
     vec3 spec = vec3(0.0);
     for (int i = first; i < total; i++) {
-        uint li = clusters[base + 1 + i].v;
+        uint ce = clusters[base + 1 + i].v;   // lyre (16 bits) ; bits 16..23 : ombres qui touchent la case
+        uint li = ce & 65535u;
         vec3 rel = P - lights[li].pos_range.xyz;
         float d2 = dot(rel, rel);
         float d = sqrt(d2);
@@ -1070,7 +1238,7 @@ void main() {
         }
         vec4 dte = lights[li].dir_tanenv;
         float z = dot(rel, dte.xyz);
-        if (z <= lights[li].optics.w) {   // derriere la lentille
+        if (z <= lights[li].optics.w || z > lights[li].pos_range.w) {   // derriere la lentille, ou apres un obstacle
             continue;
         }
         vec4 ut = lights[li].up_tanbeam;
@@ -1091,6 +1259,12 @@ void main() {
         }
         if (pat <= 0.0) {
             continue;
+        }
+        if (ce > 65535u) {   // un volume d'ombre de la lyre touche cette case : ombre et penombre
+            pat *= occ_light(occ_lights[li].v, P, ce >> 16u, lights[li].pos_range.xyz + dte.xyz * lights[li].optics.w);
+            if (pat <= 0.0) {
+                continue;
+            }
         }
         vec3 E = cg.rgb * (pat * nl * exp(-sigma * d) / max(d2, 0.04));
         diffuse += E;
@@ -1292,6 +1466,11 @@ void main() {
 layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
 layout(binding=5) uniform texture2DArray gobo_tex;
 layout(binding=0) uniform sampler gobo_smp;
+layout(binding=22) readonly buffer occ_lights_ro { sb_occ occ_lights[]; };
+layout(binding=23) readonly buffer occ_planes_ro { sb_vec4 occ_planes[]; };
+layout(binding=24) readonly buffer occ_tiles_ro { sb_index occ_tiles[]; };
+@include_block occlusion
+@include_block occlusion_tiles
 @include_block beam_pattern
 @include_block fog_density
 @include_block ray_cone
@@ -1353,6 +1532,8 @@ void main() {
     if (t1 <= t0) {
         discard;
     }
+    uint omask = occ_tile_mask(li, ndc_from_uv(gl_FragCoord.xy / res.xy), probe_cell.w > 0.5 ? 2 : 1);   // ombres
+    uvec4 oi = omask != 0u ? occ_lights[li].v : uvec4(0u);
     // echantillonnage equiangulaire : les echantillons se resserrent pres de la lyre (1/d^2)
     float D = sqrt(dot(cc, cc) + 1e-6);
     float thA = atan(t0 / D), thB = atan(t1 / D);
@@ -1366,6 +1547,9 @@ void main() {
         float t = delta + tr;
         float z = Z.x + Z.y * tr;
         if (z <= d0) {
+            continue;
+        }
+        if (omask != 0u && occ_blocked_mask(oi, cam + dir * t, omask)) {
             continue;
         }
         vec2 p = vec2(X.x + X.y * tr, Y.x + Y.y * tr) / z;
@@ -1393,8 +1577,13 @@ void main() {
 layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
 layout(binding=4) readonly buffer btabs_ro { sb_btab btabs[]; };
 layout(binding=19) uniform texture2D table_tex;
+layout(binding=22) readonly buffer occ_lights_ro { sb_occ occ_lights[]; };
+layout(binding=23) readonly buffer occ_planes_ro { sb_vec4 occ_planes[]; };
+layout(binding=24) readonly buffer occ_tiles_ro { sb_index occ_tiles[]; };
 @include_block fog_density
 @include_block ray_cone
+@include_block occlusion
+@include_block occlusion_tiles
 
 flat in int v_light;
 out vec4 frag_color;
@@ -1487,6 +1676,38 @@ void main() {
         float ph = phase_hg(-sin(thm), g);
         acc += I * dens * ph * exp(-sigmaAvg * (t + dl));
     }
+    // ombres des paves : integrale de chaque morceau du rayon dans un volume d'ombre (difference de deux
+    // valeurs de la table, termes lents pris en son milieu), retiree. Deux ombres qui se chevauchent
+    // sur le rayon seraient retirees deux fois : le total est borne a 0.
+    uint omask = occ_tile_mask(li, ndc_from_uv(gl_FragCoord.xy / res.xy), probe_cell.w > 0.5 ? 2 : 1);
+    uvec4 oi = omask != 0u ? occ_lights[li].v : uvec4(0u);
+    for (int k = 0; k < 8; k++) {
+        if ((omask >> uint(k)) == 0u) {
+            break;
+        }
+        if ((omask & (1u << uint(k))) == 0u) {
+            continue;
+        }
+        float sa, sb;
+        if (!occ_interval(int(oi.y) + k, cam, dir, sa, sb)) {
+            continue;
+        }
+        float lo = max(atan((sa - delta) / D), thA), hi = min(atan((sb - delta) / D), thB);
+        if (hi <= lo) {
+            continue;
+        }
+        float I = mix(table_at(L0, row0, (cb + hi) * cs0), table_at(L1, row1, (cb + hi) * cs1), fk)
+                - mix(table_at(L0, row0, (cb + lo) * cs0), table_at(L1, row1, (cb + lo) * cs1), fk);
+        if (I <= 0.0) {
+            continue;
+        }
+        float thm = 0.5 * (lo + hi);
+        float t = delta + D * tan(thm);
+        float dl = D / cos(thm);
+        float dens = fog_density(cam + dir * t, fog_box_min, fog_box_inv, fog0, fog1, fog2);
+        acc -= I * dens * phase_hg(-sin(thm), g) * exp(-sigmaAvg * (t + dl));
+    }
+    acc = max(acc, 0.0);
     frag_color = vec4(cg.rgb * (acc / D) * (fog0.x * fog1.w), 0.0);
 }
 @end

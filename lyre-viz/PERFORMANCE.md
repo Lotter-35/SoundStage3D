@@ -40,8 +40,11 @@ build.bat
 rem 3. Comparer (3 cas, scene immobile, qualite fixe, 2 alternances)
 powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Name essai
 
-rem 4. Avant de garder : les 14 cas, en mouvement
+rem 4. Avant de garder : tous les cas, en mouvement
 powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Name essai_complet -Full -Moving
+
+rem 5. Toujours : ajouter la nouvelle version a l'historique des performances (historique_perf.xlsx)
+python tools\historique.py --modif "N. nom de la modification" --reglages "adaptive=0, en mouvement" bench\essai_complet_B0 bench\essai_complet_B1
 ```
 
 `perf_ab.ps1` affiche :
@@ -61,6 +64,12 @@ powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant
 
 - Deux lancements de la **même** version donnent environ 63 à 75 dB entre eux.
 - En mouvement (`-Moving`), les écarts d'image sont plus grands : les effets ne sont pas exactement synchronisés avec le lissage dans le temps. Comparer les images en scène immobile.
+
+## Historique des performances (`historique_perf.xlsx`)
+
+- Une ligne par cas du banc et par modification, dans la feuille « Mesures » : date, version (commit), modification, réglages, durée d'une image, img/s réelles, temps GPU, surfaces, fumée, reflet du sol, paires d'ombre.
+- La feuille « Comparaison » montre l'évolution : un cas par ligne, une modification par colonne (img/s, puis temps GPU).
+- Rempli par `tools\historique.py` après chaque mesure (plusieurs dossiers = lancements moyennés). Ne comparer que des colonnes aux mêmes réglages.
 
 ## Le banc d'essai (`LyreViz.exe --bench`)
 
@@ -137,6 +146,39 @@ Coûts mesurés de fonctionnalités, à titre d'exemple :
   - zoom 45° + frost 0,6 : +0,2 à +0,3 ms ;
   - gobo + prisme 8 : +0,6 à +0,7 ms (vue sous les trusses : +0,2 ms).
   - Le coût vient du filtrage anisotrope, pas du calcul. Il grandit avec le nombre de lectures de gobos de la boucle des lyres, qui partagent les unités de texture.
+
+### Ombres des obstacles (14 octobre 2026)
+
+Même exécutable, `shadows=0` contre `shadows=1`, banc complet en mouvement, qualité fixe, 2 lancements :
+
+| Cas | Sans ombres | Avec ombres |
+|---|---|---|
+| Défaut (3 vues) | 6,4 à 7,1 ms | +0,15 à +0,27 ms |
+| Gobo + prisme 8 (3 vues) | 11,9 à 17,6 ms | +0,9 à +1,4 ms |
+| Zoom 45° + frost 0,6 (3 vues) | 8,0 à 10,6 ms | +0,4 à +0,5 ms |
+| Sol mouillé (2 cas) | 9,1 et 21,2 ms | +0,3 et +0,9 ms |
+
+**Avec la pénombre sur les surfaces** (même mesure refaite, `bench\penombre_*`, historique 6a / 6b) :
+
+| Cas | Sans ombres | Avec ombres et pénombre |
+|---|---|---|
+| Défaut (3 vues) | 6,5 à 7,2 ms | +0,01 à +0,18 ms |
+| Gobo + prisme 8 (3 vues) | 11,9 à 17,6 ms | +0,9 à +1,6 ms |
+| Zoom 45° + frost 0,6 (3 vues) | 7,6 à 10,5 ms | +0,7 à +0,9 ms |
+
+- La pénombre coûte surtout avec le frost : +0,3 à +0,5 ms de plus qu'avec le bord net, dans la passe des lyres douces (1/4) et les cases de lumière (plus de cases touchées par la pénombre).
+- Ailleurs, l'écart avec le bord net reste dans le bruit de mesure.
+
+Paires (lyre, pavé) : 95 par défaut, 282 avec gobo + prisme 8, 941 avec zoom 45° + frost (presque toutes les lyres ont des pavés dans leur cône large).
+
+| Essai | Résultat (cas zoom 45° + frost, vue scène) |
+|---|---|
+| Volume d'ombre recalculé par pixel (12 arêtes), tableaux de 8 morceaux triés dans la fumée | +11 ms : tous les pixels ralentis (registres), même sans obstacle |
+| Volumes calculés sur le CPU (plans), sans tri à l'écran | +12 ms : chaque pixel de fumée testait ~5 volumes |
+| + rectangle d'écran par paire, lu dans la fumée | +3 ms |
+| + bit « ombre » par case de lumière (plans testés dans le calcul des cases) | surfaces quasi gratuites, mais calcul des cases +1,2 ms |
+| + masques par tuile d'écran (CPU) et plages de profondeur dans le calcul des cases | calcul des cases +0,15 ms ; fumée et lyres douces encore +4,2 ms au total (rectangles « tout l'écran ») |
+| **+ volume coupé au plan avant de la caméra et prolongé au-delà des parois (au lieu de « tout l'écran »)** | **+0,5 ms : gardé.** Images identiques (PSNR > 73 dB) |
 
 ### Sol mouillé : reflet miroir (14 octobre 2026)
 

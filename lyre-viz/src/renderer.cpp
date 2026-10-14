@@ -238,6 +238,17 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         probe_tex[i] = texture_view(probe_img[i]);
     }
     light_data.resize(MAX_LIGHTS * sizeof(sb_light_t));
+    // obstacles fixes (ombres) : volumes d'ombre recalcules a chaque image (les lyres bougent)
+    occluders = scene.occluders;
+    occ_light_buf = make_storage(MAX_LIGHTS * sizeof(sb_occ_t), true, "occluders-per-light");
+    occ_light_view = storage_view(occ_light_buf);
+    occ_light_data.assign(MAX_LIGHTS * 4, 0);
+    occ_plane_buf = make_storage(MAX_OCC_PAIRS * OCC_BLOCK * sizeof(sb_vec4_t), true, "shadow-volumes");
+    occ_plane_view = storage_view(occ_plane_buf);
+    occ_plane_data.assign(MAX_OCC_PAIRS * OCC_BLOCK * 4, 0.0f);
+    occ_tile_data.assign(2 * 576 * 64, 0u);   // 2 cameras x 32 x 18 tuiles x 256 lyres (8 bits)
+    occ_tile_buf = make_storage(occ_tile_data.size() * sizeof(uint32_t), true, "shadow-tiles");
+    occ_tile_view = storage_view(occ_tile_buf);
     btab_buf = make_storage(MAX_LIGHTS * sizeof(sb_btab_t), true, "beam-tables");
     btab_view = storage_view(btab_buf);
     btab_data.resize(MAX_LIGHTS * sizeof(sb_btab_t));
@@ -604,7 +615,9 @@ void Renderer::shutdown() {
 // --------------------------------------------------------------------------------------------
 //  Donnees par image
 // --------------------------------------------------------------------------------------------
-void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const GoboAtlas& gobos) {
+static bool shadow_volume(const Occluder& o, vec3 L, float* out);   // plus bas
+
+void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const GoboAtlas& gobos, const Scene& scene) {
     (void)gobos;
     num_lights = 0;
     sb_light_t* L = (sb_light_t*)light_data.data();
@@ -629,7 +642,26 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
         // l'enveloppe des facettes tienne dans la lentille : tous les rayons sortent de la lyre.
         if (spread > 0.0f) d0 = std::min(d0, lens_r / std::max(tenv - 0.01f, 1e-3f));
         const vec3 apex = f.lens_pos - f.dir * d0;
-        const float range = std::min(rs.beam_range + d0, cone_exit_distance(apex, f.dir, tenv, hall_min, hall_max) + 0.05f);
+        float range = std::min(rs.beam_range + d0, cone_exit_distance(apex, f.dir, tenv, hall_min, hall_max) + 0.05f);
+        // Obstacles (sol de scene, decor, cube suspendu...) : le faisceau s'arrete au plus loin des points
+        // ou l'axe et 8 rayons du bord de l'enveloppe touchent un objet. Il n'est coupe que si tout le
+        // faisceau est arrete ; un obstacle qui n'en cache qu'une partie ne le coupe pas (pas d'ombre).
+        {
+            const vec3 rt = cross(f.dir, f.up);
+            float far_z = 0.0f;
+            bool all_hit = true;
+            for (int k = 0; k < 9 && all_hit; k++) {
+                vec3 d = f.dir;
+                if (k > 0) {
+                    const float a = (k - 1) * (PI * 0.25f);
+                    d = normalize(f.dir + (f.up * std::cos(a) + rt * std::sin(a)) * (tenv - 0.01f));
+                }
+                RayHit hit;
+                if (!scene.raycast(f.lens_pos, d, range, hit)) { all_hit = false; break; }
+                far_z = std::max(far_z, dot(hit.pos - f.lens_pos, f.dir));
+            }
+            if (all_hit) range = std::min(range, d0 + far_z + 0.1f);
+        }
         sb_light_t& l = L[num_lights++];
         set4(l.pos_range, apex, range);
         set4(l.dir_tanenv, f.dir, tenv);
@@ -678,6 +710,59 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
         pimg_list.push_back((uint32_t)i);
     }
     stats.pattern_images = (int)pimg_list.size();
+
+    // Obstacles dans le cone de chaque lyre (ombres) : test de la sphere englobante de chaque pave contre
+    // le cone (lentille, axe, ouverture de l'enveloppe, longueur) ; les 8 plus proches de la lentille.
+    const float lens_r = std::max(rig.lens_diameter * 0.5f, 0.005f);
+    if (!rs.shadows) std::fill(occ_light_data.begin(), occ_light_data.begin() + num_lights * 4, 0u);
+    int occ_lights_n = 0;
+    occ_pairs = 0;
+    for (int i = 0; i < num_lights && rs.shadows; i++) {
+        uint32_t* oi = &occ_light_data[i * 4];
+        oi[0] = oi[1] = oi[2] = oi[3] = 0;
+        const sb_light_t& l = L[i];
+        const vec3 dir = {l.dir_tanenv[0], l.dir_tanenv[1], l.dir_tanenv[2]};
+        const vec3 lens = vec3(l.pos_range[0], l.pos_range[1], l.pos_range[2]) + dir * l.optics[3];
+        const float len = l.pos_range[3] - l.optics[3], tenv = l.dir_tanenv[3];
+        const float slope = std::sqrt(1.0f + tenv * tenv);
+        std::pair<float, int> found[8];
+        int n = 0;
+        for (size_t k = 0; k < occluders.size(); k++) {
+            const Occluder& o = occluders[k];
+            const float r = std::sqrt(dot(o.ax, o.ax) + dot(o.ay, o.ay) + dot(o.az, o.az));
+            const vec3 v = o.c - lens;
+            const float a = dot(v, dir);
+            if (a < -r || a > len + r) continue;
+            const float perp = std::sqrt(std::max(dot(v, v) - a * a, 0.0f));
+            if (perp > lens_r + std::max(a, 0.0f) * tenv + r * slope) continue;
+            if (n < 8) found[n++] = {a, (int)k};
+            else {
+                int far_k = 0;
+                for (int q = 1; q < 8; q++) if (found[q].first > found[far_k].first) far_k = q;
+                if (a < found[far_k].first) found[far_k] = {a, (int)k};
+            }
+        }
+        if (n == 0) continue;
+        std::sort(found, found + n);
+        int kept = 0;
+        for (int q = 0; q < n && occ_pairs + kept < MAX_OCC_PAIRS; q++) {
+            float* blk = &occ_plane_data[(size_t)(occ_pairs + kept) * OCC_BLOCK * 4];
+            if (shadow_volume(occluders[found[q].second], lens, blk)) {
+                blk[1] = length(occluders[found[q].second].c - lens);   // penombre : distance lentille -> pave
+                blk[2] = lens_r;                                        // et rayon de la lentille
+                occ_pair_lens[occ_pairs + kept] = lens;
+                occ_pair_box[occ_pairs + kept] = found[q].second;
+                kept++;
+            }
+        }
+        if (kept == 0) continue;
+        oi[0] = (uint32_t)kept;
+        oi[1] = (uint32_t)occ_pairs;
+        occ_pairs += kept;
+        occ_lights_n++;
+    }
+    stats.occluded_lights = occ_lights_n;
+    stats.occ_pairs = occ_pairs;
 }
 
 // Qualite adaptative (comme la resolution dynamique des jeux) : si une image prend plus que la
@@ -989,6 +1074,127 @@ void Renderer::build_fixture_instances(const Rig& rig, const RenderSettings& rs)
     }
 }
 
+// Volume d'ombre du pave o vu du point L : convexe { X : n.X <= h } (faces eclairees, aretes de silhouette),
+// en coordonnees monde, normales unitaires. Ecrit (nombre de plans) puis les plans dans out (10 vec4).
+// Faux si L est dans le pave.
+static bool shadow_volume(const Occluder& o, vec3 L, float* out) {
+    const vec3 axw[3] = {o.ax, o.ay, o.az};
+    vec3 a[3];
+    float off[3], Ll[3];
+    for (int i = 0; i < 3; i++) {
+        a[i] = axw[i] / std::max(dot(axw[i], axw[i]), 1e-8f);   // ligne de monde -> local
+        off[i] = -dot(a[i], o.c);
+        Ll[i] = dot(a[i], L) + off[i];
+    }
+    if (std::fabs(Ll[0]) <= 1 && std::fabs(Ll[1]) <= 1 && std::fabs(Ll[2]) <= 1) return false;
+    int n = 0;
+    auto add = [&](float nl0, float nl1, float nl2, float hl) {
+        // plan local nl.x_l <= hl -> monde : (sum nl_i a_i).X <= hl - sum nl_i off_i
+        vec3 nw = a[0] * nl0 + a[1] * nl1 + a[2] * nl2;
+        float hw = hl - (nl0 * off[0] + nl1 * off[1] + nl2 * off[2]);
+        const float len = std::max(length(nw), 1e-12f);
+        set4(out + 4 * (4 + n), nw / len, hw / len);
+        n++;
+    };
+    // faces eclairees : l'ombre est derriere (2 cm en retrait : le point sur la face reste eclaire)
+    for (int i = 0; i < 3; i++) {
+        const float sg = Ll[i] > 1 ? 1.0f : (Ll[i] < -1 ? -1.0f : 0.0f);
+        if (sg == 0) continue;
+        float nl[3] = {0, 0, 0};
+        nl[i] = sg;
+        add(nl[0], nl[1], nl[2], 1.0f);
+        float* pl = out + 4 * (3 + n);   // dernier plan ajoute
+        pl[3] -= 0.02f;
+    }
+    // aretes de silhouette : plan passant par L et l'arete, le pave du cote de l'ombre
+    const vec3 Lv = {Ll[0], Ll[1], Ll[2]};
+    for (int k = 0; k < 3; k++) {
+        const int i = (k + 1) % 3, j = (k + 2) % 3;
+        for (int q = 0; q < 4; q++) {
+            const float si = (q & 1) ? 1.0f : -1.0f, sj = (q & 2) ? 1.0f : -1.0f;
+            if ((si * Ll[i] > 1) == (sj * Ll[j] > 1)) continue;
+            vec3 E = {0, 0, 0}, ek = {0, 0, 0};
+            E[i] = si;
+            E[j] = sj;
+            ek[k] = 1;
+            vec3 nl = cross(E - Lv, ek);
+            if (dot(nl, Lv * -1.0f) < 0) nl = nl * -1.0f;
+            // dot(nl, X - L) >= 0  <=>  -nl.X <= -nl.L
+            add(-nl.x, -nl.y, -nl.z, -dot(nl, Lv));
+        }
+    }
+    out[0] = (float)n;
+    out[1] = out[2] = out[3] = 0;
+    return n > 0;
+}
+
+// Rectangle de l'ecran (ndc x0 y0 x1 y1) et plage de profondeur (zr) couverts par le volume d'ombre du pave o
+// vu de L, dans le hangar : enveloppe convexe des coins du pave et de leurs prolongements, coupee au plan
+// avant de la camera (points devant + intersections du plan avec les segments entre les points : elles
+// contiennent celles des aretes de l'enveloppe). Prolongements : jusqu'a la paroi touchee si tous les
+// coins sortent par la meme paroi, sinon jusqu'a une distance qui depasse toutes les parois.
+static void shadow_rect(const Occluder& o, vec3 L, const Camera& c, float tanX, float tanY, vec3 hmin, vec3 hmax, float* r,
+                        float* zr) {
+    vec3 V[8], D[8];
+    float T[8];
+    int face0 = -1;
+    bool same = true;
+    for (int k = 0; k < 8; k++) {
+        V[k] = o.c + o.ax * ((k & 1) ? 1.0f : -1.0f) + o.ay * ((k & 2) ? 1.0f : -1.0f) + o.az * ((k & 4) ? 1.0f : -1.0f);
+        D[k] = normalize(V[k] - L);
+        T[k] = 1e9f;
+        int face = -1;
+        for (int i = 0; i < 3; i++) {
+            if (std::fabs(D[k][i]) < 1e-6f) continue;
+            const float ti = ((D[k][i] > 0 ? hmax[i] : hmin[i]) - V[k][i]) / D[k][i];
+            if (ti < T[k]) { T[k] = ti; face = i * 2 + (D[k][i] > 0 ? 1 : 0); }
+        }
+        if (face0 < 0) face0 = face;
+        else if (face != face0) same = false;
+    }
+    vec3 pts[16];
+    for (int k = 0; k < 8; k++) {
+        float t = std::max(T[k], 0.0f);
+        if (!same) {   // plus loin que toutes les parois
+            t = 0.0f;
+            for (int q = 0; q < 8; q++) {
+                const vec3 h = {(q & 1) ? hmax.x : hmin.x, (q & 2) ? hmax.y : hmin.y, (q & 4) ? hmax.z : hmin.z};
+                t = std::max(t, length(h - V[k]));
+            }
+        }
+        pts[k] = V[k];
+        pts[8 + k] = V[k] + D[k] * t;
+    }
+    const float near_z = 0.06f;
+    float z[16];
+    for (int k = 0; k < 16; k++) z[k] = dot(pts[k] - c.pos, c.fwd);
+    float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f, zmin = 1e9f, zmax = -1e9f;
+    auto add = [&](vec3 p) {
+        const vec3 rel = p - c.pos;
+        const float zz = std::max(dot(rel, c.fwd), near_z);
+        const float x = dot(rel, c.right) / (zz * tanX), y = dot(rel, c.up) / (zz * tanY);
+        x0 = std::min(x0, x); y0 = std::min(y0, y);
+        x1 = std::max(x1, x); y1 = std::max(y1, y);
+        zmin = std::min(zmin, zz); zmax = std::max(zmax, zz);
+    };
+    for (int k = 0; k < 16; k++)
+        if (z[k] >= near_z) add(pts[k]);
+    for (int a = 0; a < 16; a++)
+        for (int b = a + 1; b < 16; b++)
+            if ((z[a] >= near_z) != (z[b] >= near_z)) add(pts[a] + (pts[b] - pts[a]) * ((near_z - z[a]) / (z[b] - z[a])));
+    if (zmax < near_z) {   // tout derriere la camera : jamais
+        r[0] = r[1] = 2.0f; r[2] = r[3] = -2.0f;
+        zr[0] = 1e9f; zr[1] = -1e9f;
+        return;
+    }
+    const float m = 0.01f;
+    r[0] = std::max(x0 - m, -1.0f); r[1] = std::max(y0 - m, -1.0f);
+    r[2] = std::min(x1 + m, 1.0f); r[3] = std::min(y1 + m, 1.0f);
+    if (r[2] < r[0] || r[3] < r[1]) { r[0] = r[1] = 2.0f; r[2] = r[3] = -2.0f; }   // hors de l'ecran : jamais
+    zr[0] = zmin - 0.1f;
+    zr[1] = zmax + 0.1f;
+}
+
 // Rectangle de l'ecran (ndc, x0 y0 x1 y1) ou le sol (y = 0) du hangar est visible ; faux s'il ne l'est pas.
 static bool floor_screen_rect(const Camera& cam, float tanX, float tanY, vec3 mn, vec3 mx, float r[4]) {
     vec3 poly[4] = {{mn.x, 0, mn.z}, {mx.x, 0, mn.z}, {mx.x, 0, mx.z}, {mn.x, 0, mx.z}};
@@ -1058,7 +1264,37 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     const mat4 view_proj_m = proj * look_basis(mcam.pos, mcam.right, mcam.up, mcam.fwd);
 
     // donnees CPU -> GPU
-    build_lights(rig, rs, gobos);
+    build_lights(rig, rs, gobos, scene);
+    // rectangles d'ecran des volumes d'ombre (camera, camera miroir), puis masques des tuiles d'ecran
+    // (32 x 18) : pour chaque tuile et chaque lyre, les paves dont l'ombre peut toucher la tuile
+    std::fill(occ_tile_data.begin(), occ_tile_data.end(), 0u);
+    {
+        const sb_occ_t* OL = (const sb_occ_t*)occ_light_data.data();
+        for (int i = 0; i < num_lights; i++) {
+            for (uint32_t k = 0; k < OL[i].v[0]; k++) {
+                const int p = (int)OL[i].v[1] + (int)k;
+                float* blk = &occ_plane_data[(size_t)p * OCC_BLOCK * 4];
+                // pave grossi de 2 rayons de lentille : la penombre deborde du volume d'ombre
+                Occluder o = occluders[occ_pair_box[p]];
+                const float pad = 2.0f * std::max(rig.lens_diameter * 0.5f, 0.005f);
+                o.ax = o.ax * (1.0f + pad / std::max(length(o.ax), 1e-3f));
+                o.ay = o.ay * (1.0f + pad / std::max(length(o.ay), 1e-3f));
+                o.az = o.az * (1.0f + pad / std::max(length(o.az), 1e-3f));
+                shadow_rect(o, occ_pair_lens[p], cam, tanX, tanY, hall_min, hall_max, blk + 4, blk + 12);
+                if (mirror) shadow_rect(o, occ_pair_lens[p], mcam, tanX, tanY, hall_min, hall_max, blk + 8, blk + 14);
+                else { set4(blk + 8, -1, -1, 1, 1); blk[14] = 0.0f; blk[15] = 1e9f; }
+                for (int side = 0; side < (mirror ? 2 : 1); side++) {
+                    const float* r = blk + 4 + 4 * side;
+                    if (r[2] < r[0]) continue;
+                    const int tx0 = std::clamp((int)((r[0] * 0.5f + 0.5f) * 32), 0, 31), tx1 = std::clamp((int)((r[2] * 0.5f + 0.5f) * 32), 0, 31);
+                    const int ty0 = std::clamp((int)((r[1] * 0.5f + 0.5f) * 18), 0, 17), ty1 = std::clamp((int)((r[3] * 0.5f + 0.5f) * 18), 0, 17);
+                    for (int ty = ty0; ty <= ty1; ty++)
+                        for (int tx = tx0; tx <= tx1; tx++)
+                            occ_tile_data[(size_t)((side * 576 + ty * 32 + tx) * 64 + i / 4)] |= (1u << k) << (8 * (i & 3));
+                }
+            }
+        }
+    }
     const bool analytic = rs.volumetrics && rs.analytic_beams && num_lights > 0;
     const float vol_pixel_angle = 2.0f * std::tan(cam.fovy * 0.5f) / (float)std::max(8, h / div);
     assign_beam_tiers(cam, vol_pixel_angle, rs.volumetrics && rs.beam_tiers, rs.soft_lights && rs.surface_lights, div);
@@ -1101,6 +1337,17 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     sg_write_buffer_transient(&wb);
     wb.src.data = {pimg_desc.data(), (size_t)std::max(1, num_lights) * 4 * sizeof(float)};
     wb.dst.buffer = pimg_desc_buf;
+    sg_write_buffer_transient(&wb);
+    wb.src.data = {occ_light_data.data(), (size_t)std::max(1, num_lights) * sizeof(sb_occ_t)};
+    wb.dst.buffer = occ_light_buf;
+    sg_write_buffer_transient(&wb);
+    if (occ_pairs > 0) {
+        wb.src.data = {occ_plane_data.data(), (size_t)occ_pairs * OCC_BLOCK * sizeof(sb_vec4_t)};
+        wb.dst.buffer = occ_plane_buf;
+        sg_write_buffer_transient(&wb);
+    }
+    wb.src.data = {occ_tile_data.data(), occ_tile_data.size() * sizeof(uint32_t)};
+    wb.dst.buffer = occ_tile_buf;
     sg_write_buffer_transient(&wb);
     if (!pimg_list.empty()) {
         wb.src.data = {pimg_list.data(), pimg_list.size() * sizeof(uint32_t)};
@@ -1192,11 +1439,15 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         if (rs.surface_lights) {
             sg_apply_pipeline(pip_cull_clusters);
             b.views[VIEW_clusters_rw] = cluster_view;
+            b.views[VIEW_occ_lights_cs] = occ_light_view;
+            b.views[VIEW_occ_planes_cs] = occ_plane_view;
+            b.views[VIEW_occ_tiles_cs] = occ_tile_view;
             sg_apply_bindings(&b);
             sg_apply_uniforms(UB_cull_params, SG_RANGE_REF(cp));
             sg_dispatch((CL_X * CL_Y * CL_Z + 63) / 64, 1, 1);
             if (mirror) {
                 cull_params_t cpm = cp;
+                cpm.grid2[1] = 1.0f;   // rectangles d'ombre de la camera miroir
                 set4(cpm.cam_pos, mcam.pos, (float)num_lights);
                 set4(cpm.cam_right, mcam.right, tanX);
                 set4(cpm.cam_up, mcam.up, tanY);
@@ -1329,6 +1580,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
             b.views[VIEW_pimg_tex] = pimg_tex;
             b.views[VIEW_floor_tex] = floor_view;
+            b.views[VIEW_occ_lights_ro] = occ_light_view;
+            b.views[VIEW_occ_planes_ro] = occ_plane_view;
             b.samplers[SMP_gobo_smp] = gobo_smp;
             b.samplers[SMP_lin_clamp_smp] = lin_clamp;
             b.samplers[SMP_floor_smp] = floor_smp;
@@ -1373,6 +1626,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         b.views[VIEW_albedo_tex] = scene_albedo.tex;
         b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
         b.views[VIEW_pimg_tex] = pimg_tex;
+        b.views[VIEW_occ_lights_ro] = occ_light_view;
+        b.views[VIEW_occ_planes_ro] = occ_plane_view;
         b.samplers[SMP_gobo_smp] = gobo_smp;
         b.samplers[SMP_point_smp] = point_smp;
         b.samplers[SMP_lin_clamp_smp] = lin_clamp;
@@ -1432,6 +1687,9 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                 bb.samplers[SMP_gobo_smp] = gobo_smp;
             }
             bb.views[VIEW_depth_tex] = scene_depth_lin.tex;
+            bb.views[VIEW_occ_lights_ro] = occ_light_view;
+            bb.views[VIEW_occ_planes_ro] = occ_plane_view;
+            bb.views[VIEW_occ_tiles_ro] = occ_tile_view;
             bb.views[VIEW_fog_tex] = fog_view;
             bb.views[VIEW_detail_tex] = detail_view;
             bb.samplers[SMP_point_smp] = point_smp;
@@ -1615,6 +1873,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                 b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
                 b.views[VIEW_pimg_tex] = pimg_tex;
                 b.views[VIEW_floor_tex] = floor_view;
+                b.views[VIEW_occ_lights_ro] = occ_light_view;
+                b.views[VIEW_occ_planes_ro] = occ_plane_view;
                 b.samplers[SMP_gobo_smp] = gobo_smp;
                 b.samplers[SMP_lin_clamp_smp] = lin_clamp;
                 b.samplers[SMP_floor_smp] = floor_smp;
@@ -1657,7 +1917,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                 set4(vp.tiles, 1.0f / BTAB_W, 1.0f / BTAB_H, (float)std::clamp(rs.vol_samples, 1, 32) * (mirror_an ? std::max(quality, 0.5f) : 1.0f),
                      2.0f * tanY / (float)refl_vh);
                 set4(vp.probe_min, probe_min, 0.0f);
-                set4(vp.probe_cell, probe_cell, 0);
+                set4(vp.probe_cell, probe_cell, 1.0f);   // camera miroir (rectangles d'ombre)
                 set4(vp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
                 beam_vs_params_t bvp = {};
                 std::memcpy(bvp.view_proj, view_proj_m.m, sizeof(bvp.view_proj));
@@ -1676,6 +1936,9 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                     bb.samplers[SMP_gobo_smp] = gobo_smp;
                 }
                 bb.views[VIEW_depth_tex] = refl_depth_lin.tex;
+                bb.views[VIEW_occ_lights_ro] = occ_light_view;
+                bb.views[VIEW_occ_planes_ro] = occ_plane_view;
+                bb.views[VIEW_occ_tiles_ro] = occ_tile_view;
                 bb.views[VIEW_fog_tex] = fog_view;
                 bb.views[VIEW_detail_tex] = detail_view;
                 bb.samplers[SMP_point_smp] = point_smp;

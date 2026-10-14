@@ -224,7 +224,8 @@ void after_frame(int w, int h) {
     for (const std::string& n : order) log("    %-26s %7.3f ms   (moyenne %.3f)\n", n.c_str(), median(samples[n]), mean(samples[n]));
     log("  CPU (moyennes) : %.2f ms dont lyres %.2f, fumee %.2f, preparation du rendu %.2f ; attente du GPU %.2f ms\n",
         mean(cpu_total), mean(cpu_rig), mean(cpu_fog), mean(cpu_render), mean(cpu_wait));
-    log("  Qualite adaptative : %.2f\n", app.renderer.stats.quality);
+    log("  Qualite adaptative : %.2f ; ombres : %d lyres, %d paires (lyre, pave)\n", app.renderer.stats.quality,
+        app.renderer.stats.occluded_lights, app.renderer.stats.occ_pairs);
     log("  GPU entre deux images (presentation, autres programmes) : %.2f ms ; hors image (presentation, fenetre) : %.2f ms\n",
         median(gpu_gaps), median(outside));
     log("  Fumee : %.1f millions de couples (pixel, faisceau) calcules ; faisceaux par niveau %d / %d / %d ; tables : %d lignes, %.2f millions de cases, echelle %.2f\n",
@@ -481,6 +482,7 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "floortile") r.floor_tile = v;
     else if (k == "wet") r.floor_wet = v;
     else if (k == "flooraniso") r.floor_aniso = (int)v;
+    else if (k == "shadows") r.shadows = v != 0;
     // fumee
     else if (k == "density") app.fog_settings.density = v;
     else if (k == "haze") app.fog_settings.haze = v;

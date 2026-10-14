@@ -54,9 +54,11 @@ void add_truss(Scene& s, vec3 a, vec3 b, float size = 0.4f) {
     }
 }
 
-void add_collider_box(Scene& s, vec3 c, vec3 h, vec3 albedo, float rough, float metal = 0.0f, bool visible = true) {
+void add_collider_box(Scene& s, vec3 c, vec3 h, vec3 albedo, float rough, float metal = 0.0f, bool visible = true,
+                      bool occluder = true) {
     if (visible) s.cubes.push_back(make_box(c, h, albedo, rough, metal));
     s.colliders.push_back({c - h, c + h, albedo});
+    if (occluder) s.occluders.push_back({c, {h.x, 0, 0}, {0, h.y, 0}, {0, 0, h.z}});
 }
 
 // Mannequin simple (silhouette humaine en paves).
@@ -66,6 +68,9 @@ void add_mannequin(Scene& s, vec3 feet, float yaw, vec3 albedo) {
         vec3 c = feet + fx * local.x + vec3(0, local.y, 0) + fz * local.z;
         s.cubes.push_back(make_instance(c, fx * half.x, {0, half.y, 0}, fz * half.z, albedo, 0.7f));
     };
+    // ombre : 2 paves (corps de la tete aux pieds, bras) au lieu de 6 pieces
+    s.occluders.push_back({feet + vec3(0, 0.9f, 0), fx * 0.12f, {0, 0.9f, 0}, fz * 0.2f});
+    s.occluders.push_back({feet + vec3(0, 1.2f, 0), fx * 0.06f, {0, 0.3f, 0}, fz * 0.33f});
     part({0, 0.45f, -0.1f}, {0.07f, 0.45f, 0.07f});   // jambes
     part({0, 0.45f, 0.1f}, {0.07f, 0.45f, 0.07f});
     part({0, 1.22f, 0}, {0.12f, 0.32f, 0.2f});       // torse
@@ -78,7 +83,7 @@ void add_mannequin(Scene& s, vec3 feet, float yaw, vec3 albedo) {
 }  // namespace
 
 void Scene::build() {
-    cubes.clear(); cylinders.clear(); colliders.clear(); mounts.clear(); group_names.clear();
+    cubes.clear(); cylinders.clear(); colliders.clear(); occluders.clear(); mounts.clear(); group_names.clear();
 
     // Hangar : 100 m (X) x 44 m (Z) x 34 m (Y)
     const float HX = 50, HZ = 22, H = 34;
@@ -90,12 +95,13 @@ void Scene::build() {
     const vec3 roof = {0.07f, 0.07f, 0.075f};
 
     // sol (beton lisse) ; metal = -1 : le shader y pose la texture de beton (si elle est active)
-    add_collider_box(*this, {0, -0.5f, 0}, {HX + 1, 0.5f, HZ + 1}, concrete, 0.32f, -1.0f);
-    add_collider_box(*this, {0, H + 0.5f, 0}, {HX + 1, 0.5f, HZ + 1}, roof, 0.9f);        // toit
-    add_collider_box(*this, {-HX - 0.5f, H * 0.5f, 0}, {0.5f, H * 0.5f, HZ + 1}, wall, 0.8f);
-    add_collider_box(*this, {HX + 0.5f, H * 0.5f, 0}, {0.5f, H * 0.5f, HZ + 1}, wall, 0.8f);
-    add_collider_box(*this, {0, H * 0.5f, -HZ - 0.5f}, {HX + 1, H * 0.5f, 0.5f}, wall, 0.8f);
-    add_collider_box(*this, {0, H * 0.5f, HZ + 0.5f}, {HX + 1, H * 0.5f, 0.5f}, wall, 0.8f);
+    // parois du hangar : recoivent la lumiere, ne font pas d'ombre (rien n'est derriere)
+    add_collider_box(*this, {0, -0.5f, 0}, {HX + 1, 0.5f, HZ + 1}, concrete, 0.32f, -1.0f, true, false);
+    add_collider_box(*this, {0, H + 0.5f, 0}, {HX + 1, 0.5f, HZ + 1}, roof, 0.9f, 0.0f, true, false);        // toit
+    add_collider_box(*this, {-HX - 0.5f, H * 0.5f, 0}, {0.5f, H * 0.5f, HZ + 1}, wall, 0.8f, 0.0f, true, false);
+    add_collider_box(*this, {HX + 0.5f, H * 0.5f, 0}, {0.5f, H * 0.5f, HZ + 1}, wall, 0.8f, 0.0f, true, false);
+    add_collider_box(*this, {0, H * 0.5f, -HZ - 0.5f}, {HX + 1, H * 0.5f, 0.5f}, wall, 0.8f, 0.0f, true, false);
+    add_collider_box(*this, {0, H * 0.5f, HZ + 0.5f}, {HX + 1, H * 0.5f, 0.5f}, wall, 0.8f, 0.0f, true, false);
 
     // Poteaux en H le long des murs et poutres de toit
     for (float x = -48; x <= 48.1f; x += 8) {
@@ -131,6 +137,9 @@ void Scene::build() {
         {{-20, 0.5f, 0}, {0.5f, 0.5f, 0.5f}, {0.9f, 0.75f, 0.1f}},      // jaune
     };
     for (const Prop& p : props) add_collider_box(*this, p.c, p.h, p.col, 0.6f);
+    // Cube suspendu sous le truss 2 (essai des ombres) : sa face z = -5 est dans le plan des faisceaux du
+    // truss 2, qu'elle coupe en deux dans leur longueur : demi-taches au sol, demi-faisceaux dans la fumee
+    add_collider_box(*this, {10, 9, -3.5f}, {2.0f, 0.4f, 1.5f}, {0.5f, 0.5f, 0.52f}, 0.5f);
 
     // Mannequins sur scene et dans la salle
     add_mannequin(*this, {-41, stageH, -6}, 0, {0.6f, 0.6f, 0.6f});

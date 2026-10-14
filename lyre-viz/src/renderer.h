@@ -48,6 +48,7 @@ struct RenderSettings {
     float beam_range = 110.0f;    // portee des faisceaux (m)
     float lens_glow = 1.0f;       // eclat des lentilles
     bool show_fixtures = true;
+    bool shadows = true;          // ombres exactes des obstacles fixes (paves) : surfaces et fumee
     bool floor_texture = true;    // sol en beton texture (Concrete031) : couleur, relief, rugosite, occlusion
     float floor_tile = 8.0f;      // taille de repetition de la texture du sol (m) : 4 x 4 dalles de 2 m
     float floor_wet = 0.0f;       // eau au sol : 0 sec, 0,4 humide, 1 inonde (flaques)
@@ -67,6 +68,8 @@ struct RenderStats {
     double table_cells = 0;       // cases de tables
     float table_scale = 1;        // reduction de resolution (atlas plein)
     int mirror_beams = 0;         // reflet du sol mouille : faisceaux visibles dans le reflet
+    int occluded_lights = 0;      // lyres avec un obstacle (ombre) dans leur cone
+    int occ_pairs = 0;            // paires (lyre, pave) : volumes d'ombre
 };
 
 class Renderer {
@@ -91,7 +94,7 @@ class Renderer {
     void make_target(Target& t, int w, int h, sg_pixel_format fmt, const char* label);
     void destroy_target(Target& t);
     void resize(int iw, int ih, int vw, int vh);
-    void build_lights(const Rig& rig, const RenderSettings& rs, const GoboAtlas& gobos);
+    void build_lights(const Rig& rig, const RenderSettings& rs, const GoboAtlas& gobos, const Scene& scene);
     void build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const RenderSettings& rs, float sigma_ext, float sigma_scat);
     void build_fixture_instances(const Rig& rig, const RenderSettings& rs);
     // mirror : tables de la camera miroir (reflet du sol mouille), dans leurs propres tampons
@@ -139,6 +142,18 @@ class Renderer {
     sg_buffer beam_list_buf = {};
     sg_view beam_list_view = {};
     // reflet du sol mouille : lyres dont le cone est visible dans le reflet (tables et dessin)
+    // ombres des obstacles fixes : paves (une fois), et pour chaque lyre ceux qui touchent son cone
+    // volume d'ombre de chaque paire (lyre, pave) : bloc de 10 vec4 (nombre de plans, 9 plans au plus)
+    static constexpr int MAX_OCC_PAIRS = 2048, OCC_BLOCK = 13;   // nombre de plans, 2 rectangles, 2 plages de profondeur, 9 plans
+    sg_buffer occ_light_buf = {}, occ_plane_buf = {}, occ_tile_buf = {};
+    sg_view occ_light_view = {}, occ_plane_view = {}, occ_tile_view = {};
+    std::vector<uint32_t> occ_tile_data;   // masques des paves par tuile d'ecran et par lyre (8 bits)
+    std::vector<Occluder> occluders;
+    std::vector<uint32_t> occ_light_data;   // 4 par lyre (sb_occ_t) : nombre de paves, premier bloc
+    std::vector<float> occ_plane_data;      // blocs des volumes d'ombre
+    int occ_pairs = 0;
+    vec3 occ_pair_lens[MAX_OCC_PAIRS];   // lentille et pave de chaque paire (rectangles d'ecran)
+    int occ_pair_box[MAX_OCC_PAIRS] = {};
     std::vector<uint8_t> mirror_vis;
     std::vector<uint32_t> beam_order_m;
     sg_buffer beam_list_buf_m = {};
