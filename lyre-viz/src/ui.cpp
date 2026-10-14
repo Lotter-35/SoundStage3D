@@ -268,6 +268,8 @@ void render_ui() {
     ImGui::Checkbox("Ombres des obstacles (exactes)", &r.shadows);
     ImGui::SameLine();
     ImGui::TextDisabled("(%d lyres)", s.occluded_lights);
+    ImGui::Checkbox("Aberration chromatique (franges des gobos)", &r.chroma);
+    ImGui::SliderFloat("Intensite de l'aberration", &r.chroma_strength, 0, 4, "%.2f");
     ImGui::Checkbox("Sol en beton texture", &r.floor_texture);
     if (!app.floor.ok) {
         ImGui::SameLine();

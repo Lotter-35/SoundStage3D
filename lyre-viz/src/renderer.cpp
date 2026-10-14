@@ -263,7 +263,7 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         sg_image_desc d = {};
         d.width = PIMG_ATLAS_W;
         d.height = PIMG_ATLAS_H;
-        d.pixel_format = SG_PIXELFORMAT_R32F;
+        d.pixel_format = SG_PIXELFORMAT_R32F;   // en couleur avec l'aberration chromatique : pimg_img_rgb
         d.usage.storage_image = true;
         d.label = "pattern-images";
         pimg_img = sg_make_image(&d);
@@ -406,6 +406,7 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     pip_probes = make_compute_pipeline(probes_shader_desc(backend), "probes");
     pip_beam_tables = make_compute_pipeline(beam_tables_shader_desc(backend), "beam-tables");
     pip_pattern_images = make_compute_pipeline(pattern_images_shader_desc(backend), "pattern-images");
+    pip_pattern_images_rgb = make_compute_pipeline(pattern_images_rgb_shader_desc(backend), "pattern-images-rgb");
     for (int pass = 0; pass < 2; pass++) {
         // pass 0 : pre-passe de profondeur ; pass 1 : surfaces eclairees
         sg_pipeline_desc p = {};
@@ -632,7 +633,13 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
         float Tf = T * (1.0f + frost * 1.2f);
         float gain = clampf((ref_tan / T) * (ref_tan / T), 0.02f, 40.0f) / ((1.0f + frost * 1.2f) * (1.0f + frost * 1.2f));
         float spread = o.prism != PRISM_NONE ? 0.11f * o.prism_spread : 0.0f;
-        const float tenv = Tf + spread * max_facet_offset(o.prism) + 0.01f;
+        float tenv = Tf + spread * max_facet_offset(o.prism);
+        // aberration chromatique : l'image bleue deborde un peu (grandissement, facettes plus ecartees).
+        // La marge de 0,01 suffit jusqu'a l'intensite 2 environ : l'enveloppe ne grandit qu'au-dela (elle
+        // agrandit les cones de fumee, les tables et le test des surfaces : +2 % = jusqu'a +0,5 ms).
+        float ch[4];
+        rs.chroma_params(ch);
+        tenv += std::max(tenv * ch[0] + spread * max_facet_offset(o.prism) * ch[1] - 0.005f, 0.0f) + 0.01f;
         // le faisceau sort de toute la lentille : sommet du cone place derriere elle
         const float lens_r = std::max(rig.lens_diameter * 0.5f, 0.005f);
         float d0 = std::min(lens_r / std::max(Tf * clampf(o.iris, 0.05f, 1.0f), 1e-3f), 15.0f);
@@ -677,19 +684,28 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
     // au lieu d'additionner 3 a 9 facettes a chaque lecture.
     // L'image ne depend que des reglages de la lyre (pas de sa position) : les lyres reglees pareil
     // (programmees ensemble, cas courant) partagent la meme image, calculee une seule fois.
+    // Une image n'est recalculee que si les reglages de sa case ont change depuis l'image precedente :
+    // lyres immobiles en gobo et en prisme (cas courant), aucun calcul. Sinon, la passe de calcul devait
+    // aussi attendre que les surfaces de l'image precedente aient fini de lire l'atlas (+0,2 a +0,8 ms).
     pimg_list.clear();
+    pimg_dirty.clear();
     const int per_row = PIMG_ATLAS_W / PIMG_W, max_img = per_row * (PIMG_ATLAS_H / PIMG_H);
-    struct Key {
-        float v[10];
-    };
+    using Key = PimgKey;
+    // Avec l'aberration chromatique, les lyres sans prisme ont aussi leur image en cache (en couleur) :
+    // les surfaces la lisent en 2 fois au lieu de lire 3 fois le gobo (une par couleur, 2 niveaux de flou
+    // chacune). Marquee 2 : les tables de la fumee, elles, lisent toujours le gobo (1 lecture).
+    float chp[4];
+    rs.chroma_params(chp);
+    const bool chroma_img = chp[3] > 0.5f;
     std::vector<Key> keys;
     for (int i = 0; i < num_lights; i++) {
         float* d = &pimg_desc[i * 4];
         d[0] = d[1] = d[2] = d[3] = 0;
         const int prism = (int)(L[i].prism[0] + 0.5f);
-        if (prism == PRISM_NONE) continue;
+        if (prism == PRISM_NONE && !chroma_img) continue;
+        // le dernier terme : intensite de l'aberration chromatique (0 si coupee), commune a toutes les images
         const Key key = {{L[i].up_tanbeam[3], L[i].dir_tanenv[3], L[i].color_gobo[3], L[i].prism[0], L[i].prism[1], L[i].prism[2],
-                          L[i].prism[3], L[i].optics[0], L[i].optics[2], 0}};
+                          L[i].prism[3], L[i].optics[0], L[i].optics[2], chp[3] > 0.5f ? chp[0] : 0.0f}};
         int slot = -1;
         for (size_t k = 0; k < keys.size() && slot < 0; k++)
             if (std::memcmp(&keys[k], &key, sizeof(Key)) == 0) slot = (int)k;
@@ -706,9 +722,11 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
         d[0] = (float)((slot % per_row) * PIMG_W);
         d[1] = (float)((slot / per_row) * PIMG_H);
         d[2] = lod0;
-        d[3] = 1.0f;
+        d[3] = prism == PRISM_NONE ? 2.0f : 1.0f;
         pimg_list.push_back((uint32_t)i);
+        if (slot >= (int)pimg_keys.size() || std::memcmp(&pimg_keys[slot], &key, sizeof(Key)) != 0) pimg_dirty.push_back((uint32_t)i);
     }
+    pimg_keys = keys;
     stats.pattern_images = (int)pimg_list.size();
 
     // Obstacles dans le cone de chaque lyre (ombres) : test de la sphere englobante de chaque pave contre
@@ -884,7 +902,7 @@ void Renderer::build_beam_tables(const Camera& cam, float pixel_angle, bool mirr
             // lit l'image projetee en cache : son texel est le detail le plus fin qui existe
             float lod_base = l.optics[0] * 5.0f;
             float texel = 2.0f * std::atan(T) / 256.0f * std::exp2(lod_base);
-            if (pimg_desc[i * 4 + 3] > 0.5f) {
+            if (pimg_desc[i * 4 + 3] > 0.5f && pimg_desc[i * 4 + 3] < 1.5f) {
                 lod_base = pimg_desc[i * 4 + 2];
                 texel = 2.0f * std::atan(tenv) / (float)PIMG_SIZE;
             }
@@ -1349,8 +1367,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     wb.src.data = {occ_tile_data.data(), occ_tile_data.size() * sizeof(uint32_t)};
     wb.dst.buffer = occ_tile_buf;
     sg_write_buffer_transient(&wb);
-    if (!pimg_list.empty()) {
-        wb.src.data = {pimg_list.data(), pimg_list.size() * sizeof(uint32_t)};
+    if (!pimg_dirty.empty()) {
+        wb.src.data = {pimg_dirty.data(), pimg_dirty.size() * sizeof(uint32_t)};
         wb.dst.buffer = pimg_list_buf;
         sg_write_buffer_transient(&wb);
     }
@@ -1415,26 +1433,31 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     set4(cp.cam_fwd, cam.fwd, 0);
     set4(cp.grid, (float)CL_X, (float)CL_Y, (float)CL_Z, near_cluster);
     set4(cp.grid2, far_cluster, 0, 0, 0);
-    gpuprof::mark(pimg_list.empty() ? "calcul : tri + sondes" : "calcul : images projetees");
+    // atlas des images projetees : en couleur avec l'aberration chromatique (cree a la premiere activation)
+    float chp[4];
+    rs.chroma_params(chp);
+    const bool chroma_on = chp[3] > 0.5f;
+    if (chroma_on && pimg_img_rgb.id == SG_INVALID_ID) {
+        sg_image_desc d = {};
+        d.width = PIMG_ATLAS_W;
+        d.height = PIMG_ATLAS_H;
+        d.pixel_format = SG_PIXELFORMAT_RGBA16F;
+        d.usage.storage_image = true;
+        d.label = "pattern-images-rgb";
+        pimg_img_rgb = sg_make_image(&d);
+        sg_view_desc vd = {};
+        vd.storage_image.image = pimg_img_rgb;
+        pimg_store_rgb = sg_make_view(&vd);
+        pimg_tex_rgb = texture_view(pimg_img_rgb);
+    }
+    const sg_view pimg_t = chroma_on ? pimg_tex_rgb : pimg_tex;
+    gpuprof::mark("calcul : tri + sondes");
     {
         sg_pass pass = {};
         pass.compute = true;
         pass.label = "compute";
         sg_begin_pass(&pass);
         sg_bindings b = {};
-        if (!pimg_list.empty()) {
-            sg_apply_pipeline(pip_pattern_images);
-            b.views[VIEW_lights_cs] = light_view;
-            b.views[VIEW_pimg_desc_cs] = pimg_desc_view;
-            b.views[VIEW_pimg_list_cs] = pimg_list_view;
-            b.views[VIEW_gobo_tex_ci] = gobo_view;
-            b.views[VIEW_pimg_w] = pimg_store;
-            b.samplers[SMP_gobo_smp_ci] = gobo_smp;
-            sg_apply_bindings(&b);
-            sg_dispatch(PIMG_W / 8, PIMG_H / 8, (int)pimg_list.size());
-            b = {};
-        }
-        if (!pimg_list.empty()) gpuprof::mark("calcul : tri + sondes");
         b.views[VIEW_lights_cs] = light_view;
         if (rs.surface_lights) {
             sg_apply_pipeline(pip_cull_clusters);
@@ -1473,6 +1496,25 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             sg_apply_uniforms(UB_probe_params, SG_RANGE_REF(pp));
             sg_dispatch((PR_X * PR_Y * PR_Z + 63) / 64, 1, 1);
         }
+        // Images projetees en cache : apres le tri et les sondes, qui n'en ont pas besoin (lancees avant,
+        // elles retardaient le tri de 0,1 ms), avant les tables qui les lisent.
+        if (!pimg_dirty.empty()) {
+            gpuprof::mark("calcul : images projetees");
+            sg_apply_pipeline(chroma_on ? pip_pattern_images_rgb : pip_pattern_images);
+            b = {};
+            b.views[VIEW_lights_cs] = light_view;
+            b.views[VIEW_pimg_desc_cs] = pimg_desc_view;
+            b.views[VIEW_pimg_list_cs] = pimg_list_view;
+            b.views[VIEW_gobo_tex_ci] = gobo_view;
+            if (chroma_on) b.views[VIEW_pimg_w_rgb] = pimg_store_rgb;
+            else b.views[VIEW_pimg_w] = pimg_store;
+            b.samplers[SMP_gobo_smp_ci] = gobo_smp;
+            sg_apply_bindings(&b);
+            pimg_params_t pp = {};
+            rs.chroma_params(pp.chroma);
+            sg_apply_uniforms(UB_pimg_params, SG_RANGE_REF(pp));
+            sg_dispatch(PIMG_W / 8, PIMG_H / 8, (int)pimg_dirty.size());
+        }
         if (analytic && !btab_jobs.empty()) {
             gpuprof::mark("calcul : tables fumee");
             sg_apply_pipeline(pip_beam_tables);
@@ -1485,7 +1527,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             b.views[VIEW_btabs_cs] = btab_view;
             b.views[VIEW_btab_jobs] = btab_job_view;
             b.views[VIEW_pimg_desc_tb] = pimg_desc_view;
-            b.views[VIEW_pimg_tex_tb] = pimg_tex;
+            b.views[VIEW_pimg_tex_tb] = pimg_t;
             b.samplers[SMP_lin_clamp_tb] = lin_clamp;
             b.views[VIEW_gobo_tex_cs] = gobo_view;
             b.views[VIEW_table_w] = btab_store;
@@ -1561,6 +1603,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(fsp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
         std::memcpy(fsp.floor_p, floor_p, sizeof(fsp.floor_p));
         std::memcpy(fsp.floor_q, floor_q, sizeof(fsp.floor_q));
+        rs.chroma_params(fsp.chroma);
         if (!rs.surface_lights) fsp.cam_pos[3] = 0;   // pas d'eclairage direct
         sg_apply_uniforms(UB_scene_vs_params, SG_RANGE_REF(vsp));
         sg_apply_uniforms(UB_scene_fs_params, SG_RANGE_REF(fsp));
@@ -1578,7 +1621,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             b.views[VIEW_probe_c] = probe_tex[2];
             b.views[VIEW_gobo_tex] = gobo_view;
             b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
-            b.views[VIEW_pimg_tex] = pimg_tex;
+            b.views[VIEW_pimg_tex] = pimg_t;
             b.views[VIEW_floor_tex] = floor_view;
             b.views[VIEW_occ_lights_ro] = occ_light_view;
             b.views[VIEW_occ_planes_ro] = occ_plane_view;
@@ -1617,6 +1660,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         std::memcpy(sp.grid2, cp.grid2, sizeof(sp.grid2));
         set4(sp.res, (float)w, (float)h, (float)soft_w, (float)soft_h);
         set4(sp.shade, 1.0f / PIMG_ATLAS_W, 1.0f / PIMG_ATLAS_H, rs.specular ? 1.0f : 0.0f, 0);
+        rs.chroma_params(sp.chroma);
         sg_bindings b = {};
         b.views[VIEW_lights_ssbo] = light_view;
         b.views[VIEW_clusters_ro] = cluster_view;
@@ -1625,7 +1669,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         b.views[VIEW_normal_tex] = scene_normal.tex;
         b.views[VIEW_albedo_tex] = scene_albedo.tex;
         b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
-        b.views[VIEW_pimg_tex] = pimg_tex;
+        b.views[VIEW_pimg_tex] = pimg_t;
         b.views[VIEW_occ_lights_ro] = occ_light_view;
         b.views[VIEW_occ_planes_ro] = occ_plane_view;
         b.samplers[SMP_gobo_smp] = gobo_smp;
@@ -1817,7 +1861,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             b.views[VIEW_btabs_cs] = btab_view_m;
             b.views[VIEW_btab_jobs] = btab_job_view_m;
             b.views[VIEW_pimg_desc_tb] = pimg_desc_view;
-            b.views[VIEW_pimg_tex_tb] = pimg_tex;
+            b.views[VIEW_pimg_tex_tb] = pimg_t;
             b.samplers[SMP_lin_clamp_tb] = lin_clamp;
             b.views[VIEW_gobo_tex_cs] = gobo_view;
             b.views[VIEW_table_w] = btab_store;
@@ -1854,6 +1898,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             set4(fsp.shade, sigma_ext, rs.gi_strength, rs.specular ? 1.0f : 0.0f, rs.ambient);
             set4(fsp.probe_min, probe_min, rs.gi ? 1.0f : 0.0f);
             set4(fsp.probe_cell, probe_cell, 1.0f);   // toutes les lyres (pas de passe des lyres douces ici)
+            rs.chroma_params(fsp.chroma);
             set4(fsp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
             sg_apply_uniforms(UB_scene_vs_params, SG_RANGE_REF(mvsp));
             sg_apply_uniforms(UB_scene_fs_params, SG_RANGE_REF(fsp));
@@ -1871,7 +1916,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                 b.views[VIEW_probe_c] = probe_tex[2];
                 b.views[VIEW_gobo_tex] = gobo_view;
                 b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
-                b.views[VIEW_pimg_tex] = pimg_tex;
+                b.views[VIEW_pimg_tex] = pimg_t;
                 b.views[VIEW_floor_tex] = floor_view;
                 b.views[VIEW_occ_lights_ro] = occ_light_view;
                 b.views[VIEW_occ_planes_ro] = occ_plane_view;

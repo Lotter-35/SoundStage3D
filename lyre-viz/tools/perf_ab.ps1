@@ -8,6 +8,14 @@
 #   -Moving          lyres et fumee en mouvement (par defaut : immobiles, pour comparer les images)
 #   -Set "a=1","b=2" reglages passes a --set (par defaut : adaptive=0, qualite fixe)
 #   -Name essai      prefixe des dossiers de resultats (bench\essai_A0, bench\essai_B0, ...)
+#   -Fast            banc rapide : 30 images de chauffe et 60 mesurees par cas (au lieu de 60 et 150) ;
+#                    un banc complet en 20 s au lieu de 45. A utiliser par defaut ; sans -Fast pour une
+#                    decision serree ou les valeurs de reference.
+#   -Behind          fenetre ouverte derriere les autres, sans prendre le clavier. ATTENTION : Windows
+#                    donne la priorite a la fenetre active : derriere (ou si l'on clique ailleurs pendant
+#                    le banc), le GPU est 5 a 15 % plus lent dans les cas lourds. A n'utiliser que pour
+#                    comparer A et B entre eux, jamais pour les valeurs de reference.
+#   Clavier et souris sont ignores pendant le banc (un clic ne deplace pas la camera).
 #
 # Pourquoi en alternance : sur la GTX 1080, les temps varient de 10 a 20 % d'un lancement a
 # l'autre (frequence, temperature, autres programmes). Un seul lancement de chaque version ne
@@ -18,6 +26,8 @@ param(
     [int]$Rounds = 2,
     [switch]$Full,
     [switch]$Moving,
+    [switch]$Fast,
+    [switch]$Behind,
     [string[]]$Set = @('adaptive=0'),
     [string]$Name = 'ab'
 )
@@ -38,6 +48,8 @@ for ($i = 0; $i -lt $Rounds; $i++) {
         $dir = "bench\$Name`_$k$i"
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
         $argList = @('--bench', '--fullscreen', '--benchdir', $dir)
+        if ($Fast) { $argList += '--fast' }
+        if ($Behind) { $argList += '--behind' }
         if (-not $Full) { $argList += '--quick' }
         if (-not $Moving) { $argList += '--static' }
         foreach ($s in $Set) { $argList += @('--set', $s) }

@@ -167,6 +167,14 @@ float beam_lod(float lod0, float log2_focus, float T, float z, float dist, float
     return clamp(lod0 + defocus * 1.4 + lod_aa, 0.0, 7.5);
 }
 
+// Les 3 couleurs (aberration chromatique axiale) : le rouge est net ez plus loin, le bleu ez plus pres
+// (log2 de la distance). Seul l'ecart a la nettete change d'une couleur a l'autre.
+vec3 beam_lod3(float lod0, float log2_focus, float T, float z, float dist, float pix_world, float ez) {
+    float D = log2(max(dist, 0.2)) - log2_focus;
+    float base = lod0 + log2(max(pix_world * 128.0 / (T * z), 1.0));
+    return clamp(base + 1.4 * vec3(abs(D - ez), abs(D), abs(D + ez)), 0.0, 7.5);
+}
+
 vec4 btab_layer(sb_btab B, int k) {
     if (k <= 0) return B.lay0;
     if (k == 1) return B.lay1;
@@ -251,7 +259,8 @@ float facet_value(beam_ctx b, vec2 q, float lod, float e0, float prof) {
     return g * edge * (1.0 - r2 * prof);
 }
 
-float beam_pattern_lod(beam_ctx b, vec2 p, float lod) {
+// fs : echelle des ecarts des facettes du prisme (1 ; un peu plus ou moins selon la couleur, voir chroma).
+float beam_pattern_lod_s(beam_ctx b, vec2 p, float lod, float fs) {
     float invT = 1.0 / b.T;
     float e0 = b.iris * (1.0 - b.soft);
     float prof = 0.2 + 0.6 * b.frost;
@@ -262,15 +271,37 @@ float beam_pattern_lod(beam_ctx b, vec2 p, float lod) {
     // du gobo ensemble ; avec des "continue", chaque lecture attendait la precedente (5 fois plus lent).
     float sum = 0.0;
     for (int k = 0; k < 9; k++) {
-        vec2 q = (p - facet_center(b, min(k, b.n - 1))) * invT;
+        vec2 q = (p - facet_center(b, min(k, b.n - 1)) * fs) * invT;
         float v = facet_value(b, q, lod, e0, prof);
         sum += (k < b.n) ? v : 0.0;
     }
     return sum / float(b.n);
 }
 
+float beam_pattern_lod(beam_ctx b, vec2 p, float lod) {
+    return beam_pattern_lod_s(b, p, lod, 1.0);
+}
+
 float beam_pattern(beam_ctx b, vec2 p, float z, float dist, float pix_world) {
     return beam_pattern_lod(b, p, beam_lod(b.lod0, b.log2_focus, b.T, z, dist, pix_world));
+}
+
+// Aberration chromatique de l'optique (surfaces) : le verre devie plus le bleu que le rouge.
+//  - laterale : l'image bleue est un peu plus grande, la rouge un peu plus petite (ch.x) ; le decalage
+//    croit avec la distance a l'axe : franges bleues vers l'exterieur, rouges / jaunes vers l'axe ;
+//  - prisme : il ecarte un peu plus les facettes bleues (ch.y) ;
+//  - axiale : le bleu est net un peu plus pres, le rouge un peu plus loin (ch.z, en log2 de la distance).
+//    Le frost diffuse toutes les couleurs pareil : l'ecart de flou entre couleurs s'efface avec lui.
+// ch = (laterale, prisme, axiale, active). Le vert est l'image sans aberration (celle de la fumee).
+vec3 beam_pattern_rgb(beam_ctx b, vec2 p, float z, float dist, float pix_world, vec4 ch) {
+    if (ch.w < 0.5) {
+        return vec3(beam_pattern(b, p, z, dist, pix_world));
+    }
+    vec3 lod3 = beam_lod3(b.lod0, b.log2_focus, b.T, z, dist, pix_world, ch.z * (1.0 - b.frost));
+    float r = beam_pattern_lod_s(b, p / (1.0 - ch.x), lod3.r, 1.0 - ch.y);
+    float g = beam_pattern_lod(b, p, lod3.g);
+    float bl = beam_pattern_lod_s(b, p / (1.0 + ch.x), lod3.b, 1.0 + ch.y);
+    return vec3(r, g, bl);
 }
 @end
 
@@ -278,23 +309,42 @@ float beam_pattern(beam_ctx b, vec2 p, float z, float dist, float pix_world) {
 // p : point dans le plan image (unites : tan), tenv : demi-largeur couverte par l'image.
 // 2 lectures (deux niveaux de flou) au lieu d'une par facette du prisme.
 // Necessite pimg_tex, lin_clamp_smp et tiles2 (xy : 1 / taille de l'atlas) declares avant l'inclusion.
+// Canal r : l'image sans aberration chromatique. Avec l'aberration (atlas RGBA16F), g et b contiennent
+// les images rouge et bleue (aberration laterale et du prisme). Sans elle, l'atlas est en R32F.
 @block pattern_image
-float pimg_level(vec4 desc, vec2 uv, int k) {
+vec3 pimg_level(vec4 desc, vec2 uv, int k) {
     float sz = PIMG_SIZE / exp2(float(k));
     vec2 org = desc.xy;
     if (k > 0) {
         org += vec2(PIMG_SIZE, PIMG_SIZE - 2.0 * sz);
     }
     vec2 tc = org + clamp(uv * sz, vec2(0.5), vec2(sz - 0.5));
-    return textureLod(sampler2D(pimg_tex, lin_clamp_smp), tc * pimg_inv, 0.0).r;
+    return textureLod(sampler2D(pimg_tex, lin_clamp_smp), tc * pimg_inv, 0.0).rgb;
 }
 
+// Image sans aberration (fumee).
 float pattern_image(vec4 desc, vec2 p, float tenv, float lod) {
     vec2 uv = p / (2.0 * tenv) + 0.5;
     float lv = clamp(lod - desc.z, 0.0, PIMG_LEVELS - 1.0);
     int k0 = int(floor(lv));
     int k1 = min(k0 + 1, int(PIMG_LEVELS) - 1);
-    return mix(pimg_level(desc, uv, k0), pimg_level(desc, uv, k1), lv - float(k0));
+    return mix(pimg_level(desc, uv, k0).r, pimg_level(desc, uv, k1).r, lv - float(k0));
+}
+
+// Surfaces : les 3 couleurs, chacune a son flou (aberration axiale : lod3 differe d'une couleur a l'autre).
+// Memes 2 lectures : seul le melange des deux niveaux change selon la couleur. on : aberration active.
+vec3 pattern_image_rgb(vec4 desc, vec2 p, float tenv, vec3 lod3, float on) {
+    vec2 uv = p / (2.0 * tenv) + 0.5;
+    float lv = clamp(lod3.g - desc.z, 0.0, PIMG_LEVELS - 1.0);
+    int k0 = int(floor(lv));
+    int k1 = min(k0 + 1, int(PIMG_LEVELS) - 1);
+    vec3 c0 = pimg_level(desc, uv, k0);
+    vec3 c1 = pimg_level(desc, uv, k1);
+    if (on < 0.5) {
+        return vec3(mix(c0.r, c1.r, lv - float(k0)));
+    }
+    vec3 t = clamp(lod3 - desc.z - float(k0), vec3(0.0), vec3(1.0));
+    return mix(c0.grb, c1.grb, t);
 }
 @end
 
@@ -555,7 +605,7 @@ void main() {
 // -------------------------------------------------------------------------------------
 //  3a. Images projetees des lyres a prisme (gobo x facettes x iris x frost), avec niveaux de flou.
 // -------------------------------------------------------------------------------------
-@cs cs_pattern_images
+@block pattern_images_body
 @include_block common
 layout(binding=0) readonly buffer lights_cs { sb_light lights[]; };
 layout(binding=26) readonly buffer pimg_desc_cs { sb_vec4 pdesc[]; };
@@ -564,7 +614,9 @@ layout(binding=5) uniform texture2DArray gobo_tex_ci;
 layout(binding=0) uniform sampler gobo_smp_ci;
 #define gobo_tex gobo_tex_ci
 #define gobo_smp gobo_smp_ci
-layout(binding=28, r32f) uniform writeonly image2D pimg_w;
+layout(binding=0) uniform pimg_params {
+    vec4 chroma;   // aberration chromatique : laterale, prisme, axiale, active (voir beam_pattern_rgb)
+};
 @include_block beam_pattern
 
 layout(local_size_x=8, local_size_y=8, local_size_z=1) in;
@@ -595,9 +647,29 @@ void main() {
     sb_light L = lights[li];
     beam_ctx b = make_beam(L.dir_tanenv, L.up_tanbeam, L.color_gobo, L.prism, L.optics);
     vec2 p = ((vec2(t) + 0.5) / sz * 2.0 - 1.0) * L.dir_tanenv.w;
-    float v = beam_pattern_lod(b, p, desc.z + float(k));
-    imageStore(pimg_w, ivec2(desc.xy) + xy, vec4(v));
+    float lod = desc.z + float(k);
+    // r : image sans aberration (fumee, et surfaces si l'aberration est coupee : atlas R32F) ;
+    // g, b : images rouge et bleue avec l'aberration laterale et celle du prisme (atlas RGBA16F)
+    vec4 v = vec4(beam_pattern_lod(b, p, lod));
+    if (chroma.w > 0.5) {
+        v.g = beam_pattern_lod_s(b, p / (1.0 - chroma.x), lod, 1.0 - chroma.y);
+        v.b = beam_pattern_lod_s(b, p / (1.0 + chroma.x), lod, 1.0 + chroma.y);
+    }
+    imageStore(pimg_w, ivec2(desc.xy) + xy, v);
 }
+@end
+
+// Aberration coupee : atlas R32F (comme avant, 2 fois moins d'octets a lire que RGBA16F).
+@cs cs_pattern_images
+layout(binding=28, r32f) uniform writeonly image2D pimg_w;
+@include_block pattern_images_body
+@end
+
+// Aberration active : atlas RGBA16F (r : image, g : rouge, b : bleu).
+@cs cs_pattern_images_rgb
+layout(binding=28, rgba16f) uniform writeonly image2D pimg_w_rgb;
+#define pimg_w pimg_w_rgb
+@include_block pattern_images_body
 @end
 
 // -------------------------------------------------------------------------------------
@@ -649,7 +721,7 @@ void main() {
     sb_light L = lights[li];
     beam_ctx b = make_beam(L.dir_tanenv, L.up_tanbeam, L.color_gobo, L.prism, L.optics);
     float lod = B.info.y + float(k) * BTAB_LOD_STEP;
-    vec4 pd = pdesc[li].v;   // image projetee en cache (prisme) ?
+    vec4 pd = pdesc[li].v;   // image projetee en cache (prisme) ? (2 : lyre sans prisme, surfaces seulement)
     float phi = mix(B.e2_phimin.w, B.info.x, float(r) / float(max(R - 1, 1)));
     vec3 a = B.a_psimin.xyz;
     vec3 side = cos(phi) * B.e1_psimax.xyz + sin(phi) * B.e2_phimin.xyz;
@@ -677,7 +749,7 @@ void main() {
                 if (z > 1e-4) {
                     vec2 p = vec2(dot(u, b.rt), dot(u, b.up)) / z;
                     if (dot(p, p) <= b.tenv2) {
-                        inc += (pd.w > 0.5) ? pattern_image(pd, p, L.dir_tanenv.w, lod) : beam_pattern_lod(b, p, lod);
+                        inc += (pd.w > 0.5 && pd.w < 1.5) ? pattern_image(pd, p, L.dir_tanenv.w, lod) : beam_pattern_lod(b, p, lod);
                     }
                 }
             }
@@ -999,6 +1071,7 @@ layout(binding=2) uniform scene_fs_params {
     vec4 probe_dims;
     vec4 floor_p;     // sol texture : x : dalles par metre (4 / repetition), y : eau (0..1), w : actif
     vec4 floor_q;     // rgb : couleur lineaire = R^2 * floor_q.rgb, w : 1 / R moyen
+    vec4 chroma;      // aberration chromatique : laterale, prisme, axiale, active (voir beam_pattern_rgb)
 };
 layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
 layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
@@ -1103,25 +1176,27 @@ void main() {
         }
         vec4 cg = lights[li].color_gobo;
         vec4 pd = pdesc[li].v;
-        float pat;
+        vec3 pat;   // image projetee, par couleur (aberration chromatique)
         if (pd.w > 0.5) {
-            // image projetee en cache (prisme) : seul le flou est a calculer
+            // image projetee en cache (prisme) : seul le flou est a calculer (un par couleur : aberration axiale)
             vec4 op = lights[li].optics;
-            pat = pattern_image(pd, p, dte.w, beam_lod(op.x * 5.0, log2(max(op.y, 0.2)), ut.w, z, d, pixWorld));
+            vec3 lod3 = beam_lod3(op.x * 5.0, log2(max(op.y, 0.2)), ut.w, z, d, pixWorld, chroma.z * (1.0 - op.x));
+            pat = pattern_image_rgb(pd, p, dte.w, lod3, chroma.w);
         } else {
             beam_ctx b = make_beam(dte, ut, cg, lights[li].prism, lights[li].optics);
-            pat = beam_pattern(b, p, z, d, pixWorld);
+            pat = beam_pattern_rgb(b, p, z, d, pixWorld, chroma);
         }
-        if (pat <= 0.0) {
+        if (max(pat.r, max(pat.g, pat.b)) <= 0.0) {
             continue;
         }
         if (ce > 65535u) {   // un volume d'ombre de la lyre touche cette case : ombre et penombre
-            pat *= occ_light(occ_lights[li].v, P, ce >> 16u, lights[li].pos_range.xyz + dte.xyz * lights[li].optics.w);
-            if (pat <= 0.0) {
+            float sh = occ_light(occ_lights[li].v, P, ce >> 16u, lights[li].pos_range.xyz + dte.xyz * lights[li].optics.w);
+            if (sh <= 0.0) {
                 continue;
             }
+            pat *= sh;
         }
-        vec3 E = cg.rgb * (pat * nl * exp(-sigma * d) / max(d2, 0.04));
+        vec3 E = cg.rgb * pat * (nl * exp(-sigma * d) / max(d2, 0.04));
         diffuse += E;
         if (shade.z > 0.5) {
             spec += E * ggx_spec(N, V, l, rough, f0);
@@ -1174,6 +1249,7 @@ layout(binding=3) uniform soft_params {
     vec4 grid2;       // comme cull_params.grid2
     vec4 res;         // xy : rendu plein, zw : cette passe
     vec4 shade;       // xy : 1 / taille de l'atlas des images projetees, z : speculaire (0/1)
+    vec4 chroma;      // aberration chromatique (comme scene_fs_params)
 };
 layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
 layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
@@ -1248,25 +1324,27 @@ void main() {
         }
         vec4 cg = lights[li].color_gobo;
         vec4 pd = pdesc[li].v;
-        float pat;
+        vec3 pat;   // image projetee, par couleur (aberration chromatique)
         if (pd.w > 0.5) {
-            // image projetee en cache (prisme) : seul le flou est a calculer
+            // image projetee en cache (prisme) : seul le flou est a calculer (un par couleur : aberration axiale)
             vec4 op = lights[li].optics;
-            pat = pattern_image(pd, p, dte.w, beam_lod(op.x * 5.0, log2(max(op.y, 0.2)), ut.w, z, d, pixWorld));
+            vec3 lod3 = beam_lod3(op.x * 5.0, log2(max(op.y, 0.2)), ut.w, z, d, pixWorld, chroma.z * (1.0 - op.x));
+            pat = pattern_image_rgb(pd, p, dte.w, lod3, chroma.w);
         } else {
             beam_ctx b = make_beam(dte, ut, cg, lights[li].prism, lights[li].optics);
-            pat = beam_pattern(b, p, z, d, pixWorld);
+            pat = beam_pattern_rgb(b, p, z, d, pixWorld, chroma);
         }
-        if (pat <= 0.0) {
+        if (max(pat.r, max(pat.g, pat.b)) <= 0.0) {
             continue;
         }
         if (ce > 65535u) {   // un volume d'ombre de la lyre touche cette case : ombre et penombre
-            pat *= occ_light(occ_lights[li].v, P, ce >> 16u, lights[li].pos_range.xyz + dte.xyz * lights[li].optics.w);
-            if (pat <= 0.0) {
+            float sh = occ_light(occ_lights[li].v, P, ce >> 16u, lights[li].pos_range.xyz + dte.xyz * lights[li].optics.w);
+            if (sh <= 0.0) {
                 continue;
             }
+            pat *= sh;
         }
-        vec3 E = cg.rgb * (pat * nl * exp(-sigma * d) / max(d2, 0.04));
+        vec3 E = cg.rgb * pat * (nl * exp(-sigma * d) / max(d2, 0.04));
         diffuse += E;
         if (shade.z > 0.5) {
             spec += E * ggx_spec(N, V, l, rough, f0);
@@ -2124,6 +2202,7 @@ void main() {
 @program vol_merge vs_fullscreen fs_vol_merge
 @program beam_tables cs_beam_tables
 @program pattern_images cs_pattern_images
+@program pattern_images_rgb cs_pattern_images_rgb
 @program temporal vs_fullscreen fs_temporal
 @program refl_compose vs_fullscreen fs_refl_compose
 @program refl_streak vs_fullscreen fs_refl_streak

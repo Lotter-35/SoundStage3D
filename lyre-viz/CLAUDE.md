@@ -14,10 +14,13 @@ Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la proc
 
 1. Avant de modifier : `build.bat`, puis copier `LyreViz.exe` vers `bench\ref\avant.exe`.
 2. Après : `tools\compile_shaders.bat` (si `shaders/lyreviz.glsl` a changé), puis `build.bat`.
-3. Comparer en alternance :
+3. Comparer en alternance, **en banc rapide (`-Fast`) par défaut** (l'utilisateur ne veut pas attendre) :
    ```bat
-   powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Name essai
+   powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Fast -Name essai
    ```
+   - Sans `-Fast` seulement pour une décision serrée ou les valeurs de référence.
+   - Un ancien exécutable qui ne connaît pas `--fast` l'ignore et fait le banc normal : comparer alors sans `-Fast`.
+   - Pas de `-Behind` pour des mesures à garder : derrière les autres fenêtres, le GPU est 5 à 15 % plus lent.
 4. Pour une fonctionnalité qui coûte du temps :
    - la rendre activable (case dans l'onglet Rendu et clé `--set`) ;
    - mesurer son coût seul ;
@@ -40,3 +43,5 @@ Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la proc
 - Mesures GPU par passe : Direct3D 11 seulement. Les appels `gpuprof::mark("nom")` dans `Renderer::render` découpent l'image en passes ; en ajouter un pour chaque nouvelle passe.
 - Vérifier aussi que le code compile pour OpenGL : `cl /c /DSOKOL_GLCORE` sur les fichiers de `src`.
 - Aucune autre instance de LyreViz pendant les mesures (elles faussent tout) : si une instance est ouverte, demander a l'utilisateur de la fermer, ne pas la fermer soi-meme.
+- L'utilisateur travaille sur le PC pendant les mesures : c'est la principale source d'ecarts. Alterner A et B, ne pas conclure sur un ecart sous le bruit, et preferer la scene immobile (sans `-Moving`) pour juger d'une optimisation.
+- Depuis l'outil, appeler `build.bat` par son chemin complet (`cmd //c "C:\...\lyre-viz\build.bat"`) : `cmd /c build.bat` ne le trouve pas.

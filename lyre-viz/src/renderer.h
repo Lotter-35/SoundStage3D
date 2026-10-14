@@ -53,6 +53,16 @@ struct RenderSettings {
     float floor_tile = 8.0f;      // taille de repetition de la texture du sol (m) : 4 x 4 dalles de 2 m
     float floor_wet = 0.0f;       // eau au sol : 0 sec, 0,4 humide, 1 inonde (flaques)
     int floor_aniso = 4;          // filtrage anisotrope du sol (1 a 16, fixe au lancement) : 4 = meme image que 16, 3 x moins cher
+    bool chroma = false;          // aberration chromatique de l'optique : franges colorees au bord des taches et des gobos (coupee : +0,5 a +0,9 ms avec gobo + prisme)
+    float chroma_strength = 1.0f; // intensite (1 = lyre courante)
+    // (laterale, prisme, axiale, active) pour les shaders : voir beam_pattern_rgb
+    void chroma_params(float out[4]) const {
+        const float k = chroma ? chroma_strength : 0.0f;
+        out[0] = 0.006f * k;   // grandissement : +0,6 % en bleu, -0,6 % en rouge
+        out[1] = 0.02f * k;    // ecart des facettes du prisme : +2 % en bleu, -2 % en rouge
+        out[2] = 0.08f * k;    // distance de nettete : bleu 5 % plus pres, rouge 5 % plus loin (log2)
+        out[3] = k > 0.0f ? 1.0f : 0.0f;
+    }
 };
 
 struct RenderStats {
@@ -162,10 +172,20 @@ class Renderer {
     static constexpr int PIMG_ATLAS_W = 8064, PIMG_ATLAS_H = 3072, PIMG_SIZE = 256, PIMG_W = 384, PIMG_H = 256;
     sg_image pimg_img = {};
     sg_view pimg_store = {}, pimg_tex = {};
+    // atlas en couleur (aberration chromatique), cree a la premiere activation : 2 fois plus d'octets a
+    // lire (+0,5 a +1 ms avec gobo + prisme 8) ; l'atlas R32F sert quand l'aberration est coupee
+    sg_image pimg_img_rgb = {};
+    sg_view pimg_store_rgb = {}, pimg_tex_rgb = {};
     sg_buffer pimg_desc_buf = {}, pimg_list_buf = {};
     sg_view pimg_desc_view = {}, pimg_list_view = {};
     std::vector<float> pimg_desc;      // vec4 par lyre
     std::vector<uint32_t> pimg_list;   // lyres qui ont une image
+    // reglages de l'image de chaque case (image precedente) : une case n'est recalculee que s'ils changent
+    struct PimgKey {
+        float v[10];
+    };
+    std::vector<PimgKey> pimg_keys;
+    std::vector<uint32_t> pimg_dirty;   // lyres dont l'image est a recalculer cette image-ci
     sg_buffer btab_job_buf = {};
     sg_view btab_job_view = {};
     std::vector<uint32_t> btab_jobs;   // une entree par ligne de table a calculer
@@ -215,7 +235,7 @@ class Renderer {
     // pipelines
     sg_pipeline pip_cull_clusters = {}, pip_probes = {};
     sg_pipeline pip_depth = {}, pip_scene_eq = {}, pip_scene_gb = {}, pip_scene_eq_gb = {}, pip_soft = {};
-    sg_pipeline pip_beam_tables = {}, pip_beams_an = {}, pip_vol_merge = {}, pip_pattern_images = {};
+    sg_pipeline pip_beam_tables = {}, pip_beams_an = {}, pip_vol_merge = {}, pip_pattern_images = {}, pip_pattern_images_rgb = {};
     sg_pipeline pip_scene = {}, pip_vol_ambient = {}, pip_beams = {}, pip_temporal = {}, pip_composite = {};
     sg_pipeline pip_bloom_down = {}, pip_bloom_up = {}, pip_final = {};
     sg_pipeline pip_beams_m = {}, pip_beams_an_m = {}, pip_refl_compose = {}, pip_refl_streak = {};   // passe miroir

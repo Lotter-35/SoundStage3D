@@ -11,8 +11,17 @@
 #include "sokol_time.h"
 #include "imgui.h"
 #include "util/sokol_imgui.h"
-#include <cstdio>
 #include <algorithm>
+#include <cstdio>
+#if defined(_WIN32)
+// les 3 fonctions de fenetre utilisees par --behind (windows.h definit des macros SC_... qui genent)
+extern "C" {
+__declspec(dllimport) void* __stdcall GetForegroundWindow(void);
+__declspec(dllimport) int __stdcall SetForegroundWindow(void* hwnd);
+__declspec(dllimport) int __stdcall SetWindowPos(void* hwnd, void* after, int x, int y, int cx, int cy, unsigned flags);
+}
+#pragma comment(lib, "user32")
+#endif
 #include <cstdarg>
 #include <cstdlib>
 #include <cstring>
@@ -25,7 +34,16 @@ App app;
 static int g_quit_after_frames = 0;   // --frames N : quitte apres N images (tests)
 static bool g_novsync = false;
 static bool g_fullscreen = false;
+// --behind : la fenetre s'ouvre derriere les autres et rend le clavier a la fenetre active (bancs lances
+// pendant que l'on travaille a cote). Elle reste visible si on la ramene devant. Mais Windows donne la
+// priorite a la fenetre active : derriere, le GPU est 5 a 15 % plus lent dans les cas lourds (mesure).
+static bool g_behind = false;
+#if defined(_WIN32)
+static void* g_prev_foreground = nullptr;
+#endif
 static bool g_bench_requested = false;
+static int g_demo = -1;           // --demo [variante] : vue d'essai des gobos au sol (aberration chromatique)
+static void setup_demo();
 static std::string g_shot_path;
 static bool g_stats = false;      // --stats : compte les couples (pixel, faisceau) de la fumee   // --shot fichier.bmp : capture de la derniere image (avec --frames)
 
@@ -79,7 +97,8 @@ bool quick = false;
 bool frozen = false;   // --static : lyres et fumee immobiles (comparaison d'images sans mouvement)
 std::string dir = "bench";
 int index = -1, frame_in_case = 0;
-const int WARMUP = 60, MEASURE = 150;
+// --fast : 30 images de chauffe et 60 mesurees (au lieu de 60 et 150) : un banc complet en 20 s au lieu de 45.
+int WARMUP = 60, MEASURE = 150;
 // mesures image par image ; on garde la mediane (insensible aux pics dus a d'autres programmes)
 std::map<std::string, std::vector<float>> samples;
 std::vector<std::string> order;
@@ -255,6 +274,16 @@ static float ground_height(vec3 p) {
 }
 
 static void init() {
+#if defined(_WIN32)
+    if (g_behind) {
+        // la fenetre vient d'etre affichee (et activee) par sokol : derriere toutes les autres, et le
+        // clavier rendu a la fenetre qui l'avait
+        const unsigned SWP_NOSIZE_ = 0x0001, SWP_NOMOVE_ = 0x0002, SWP_NOACTIVATE_ = 0x0010;
+        void* const HWND_BOTTOM_ = (void*)1;
+        SetWindowPos((void*)sapp_win32_get_hwnd(), HWND_BOTTOM_, 0, 0, 0, 0, SWP_NOMOVE_ | SWP_NOSIZE_ | SWP_NOACTIVATE_);
+        if (g_prev_foreground) SetForegroundWindow(g_prev_foreground);
+    }
+#endif
     sg_desc desc = {};
     desc.environment = sglue_environment();
     desc.logger.func = slog_func;
@@ -281,6 +310,7 @@ static void init() {
     gpuprof::init();
     gpuprof::enable_stats(g_stats);
     app.cam.update_basis();
+    if (g_demo >= 0) setup_demo();
     if (g_bench_requested) bench::begin();
     std::printf("LyreViz : %d lyres, %d objets statiques, backend %d\n", (int)app.rig.fixtures.size(),
                 (int)app.scene.cubes.size(), (int)sg_query_backend());
@@ -403,6 +433,8 @@ static void pick_aim_point(float mx, float my) {
 }
 
 static void event(const sapp_event* ev) {
+    // banc d'essai et captures automatiques : clavier et souris ignores (on peut travailler a cote)
+    if (bench::active || g_quit_after_frames > 0) return;
     const bool ui_used = simgui_handle_event(ev);
     ImGuiIO& io = ImGui::GetIO();
     switch (ev->type) {
@@ -456,6 +488,54 @@ static void cleanup() {
     sg_shutdown();
 }
 
+// --demo : 3 lyres en blanc, gobo etoile + prisme 8, nettes sur le sol, vues en biais depuis la salle.
+// Sert a verifier les franges colorees de l'aberration chromatique (captures avec --frames et --shot).
+// Variantes : --demo 1 hors de la mise au point (nettete a 60 % de la distance), --demo 2 frost 0,4,
+// --demo 3 iris 0,6 et zoom plus large.
+static void setup_demo() {
+    app.rig.effects.clear();
+    const vec3 targets[3] = {{1, 0, -4}, {1, 0, 3}, {-4, 0, 9}};
+    const vec3 near_pos[3] = {{4, 18, -5}, {4, 18, 5}, {-2, 18, 15}};
+    std::vector<int> used;
+    for (Fixture& f : app.rig.fixtures) f.base.dimmer = 0;
+    for (int k = 0; k < 3; k++) {
+        int best = -1;
+        float bd = 1e30f;
+        for (int i = 0; i < (int)app.rig.fixtures.size(); i++) {
+            const vec3 d = app.rig.fixtures[i].mount.pos - near_pos[k];
+            const float dd = dot(d, d);
+            if (dd < bd && std::find(used.begin(), used.end(), i) == used.end()) { bd = dd; best = i; }
+        }
+        if (best < 0) continue;
+        used.push_back(best);
+        Fixture& f = app.rig.fixtures[best];
+        FixtureParams& p = f.base;
+        p = FixtureParams();
+        p.color = {1, 1, 1};
+        p.gobo = 2;   // etoile
+        p.prism = k == 2 ? PRISM_NONE : PRISM_8;
+        p.zoom = k == 2 ? 9.0f : 7.0f;
+        p.focus = length(targets[k] - f.mount.pos);
+        if (g_demo == 1) p.focus *= 0.6f;
+        if (g_demo == 2) p.frost = 0.4f;
+        if (g_demo == 3) {
+            p.iris = 0.6f;
+            p.zoom *= 1.6f;
+        }
+        app.rig.aim_points[k] = targets[k];
+        p.aim_point = k;
+    }
+    app.rig.instant_moves = true;
+    app.rig.update(0);
+    app.rig.update(0);   // la visee part de la tete de la lyre, connue apres la premiere mise a jour
+    app.rig.instant_moves = false;
+    app.cam.pos = {13, 5.0f, 0.5f};
+    app.cam.yaw = PI;
+    app.cam.pitch = -0.42f;
+    app.cam.update_basis();
+    app.paused = true;
+}
+
 // --set nom=valeur : change un reglage de l'onglet Rendu au lancement (mesures, comparaisons).
 static bool set_render_option(RenderSettings& r, const char* kv) {
     const char* eq = std::strchr(kv, '=');
@@ -483,6 +563,8 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "wet") r.floor_wet = v;
     else if (k == "flooraniso") r.floor_aniso = (int)v;
     else if (k == "shadows") r.shadows = v != 0;
+    else if (k == "chroma") r.chroma = v != 0;
+    else if (k == "chromaforce") r.chroma_strength = v;
     // fumee
     else if (k == "density") app.fog_settings.density = v;
     else if (k == "haze") app.fog_settings.haze = v;
@@ -503,14 +585,26 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         else if (!std::strcmp(argv[i], "--fullscreen")) g_fullscreen = true;
         else if (!std::strcmp(argv[i], "--bench")) { g_bench_requested = true; g_novsync = true; }
         else if (!std::strcmp(argv[i], "--quick")) bench::quick = true;
+        else if (!std::strcmp(argv[i], "--fast")) {
+            bench::WARMUP = 30;
+            bench::MEASURE = 60;
+        }
+        else if (!std::strcmp(argv[i], "--behind")) g_behind = true;
         else if (!std::strcmp(argv[i], "--static")) bench::frozen = true;
         else if (!std::strcmp(argv[i], "--stats")) g_stats = true;
+        else if (!std::strcmp(argv[i], "--demo")) {
+            g_demo = 0;
+            if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') g_demo = std::atoi(argv[++i]);
+        }
         else if (!std::strcmp(argv[i], "--shot") && i + 1 < argc) g_shot_path = argv[++i];
         else if (!std::strcmp(argv[i], "--benchdir") && i + 1 < argc) bench::dir = argv[++i];
         else if (!std::strcmp(argv[i], "--set") && i + 1 < argc) {
             if (!set_render_option(app.rs, argv[++i])) std::printf("Option inconnue : %s\n", argv[i]);
         }
     }
+#if defined(_WIN32)
+    if (g_behind) g_prev_foreground = GetForegroundWindow();
+#endif
     sapp_desc d = {};
     d.init_cb = init;
     d.frame_cb = frame;

@@ -4,7 +4,9 @@
 
 Pour chaque cas : temps GPU avant / apres, et ecart entre les deux images
 (PSNR en dB, part des pixels qui changent de plus de 4/255 et de plus de 16/255).
-Avec --diff, ecrit une image d'ecart amplifiee (x8) par cas.
+Avec --diff, ecrit une image d'ecart amplifiee (x8) pour chaque cas ou des pixels changent de plus
+de 4/255 : a demi-resolution, en gardant le plus grand ecart de chaque carre de 2 x 2 pixels (rien ne
+disparait), pour aller 4 fois plus vite.
 """
 import os
 import re
@@ -60,8 +62,10 @@ def main():
                 psnr = 99.0 if mse == 0 else 10 * np.log10(255.0 ** 2 / mse)
                 dm = d.max(axis=2)
                 line += f"   {psnr:>6.1f}  {100 * np.mean(dm > 4):>6.2f}%  {100 * np.mean(dm > 16):>6.3f}%"
-                if diff_dir:
-                    Image.fromarray(np.clip(d * 8, 0, 255).astype(np.uint8)).save(os.path.join(diff_dir, f"{k:02d}_diff.png"))
+                if diff_dir and np.any(dm > 4):
+                    h, w = (d.shape[0] // 2) * 2, (d.shape[1] // 2) * 2
+                    d2 = d[:h, :w].reshape(h // 2, 2, w // 2, 2, 3).max(axis=(1, 3))
+                    Image.fromarray(np.clip(d2 * 8, 0, 255).astype(np.uint8)).save(os.path.join(diff_dir, f"{k:02d}_diff.png"))
         print(line)
     # detail par passe pour les cas communs
     print()

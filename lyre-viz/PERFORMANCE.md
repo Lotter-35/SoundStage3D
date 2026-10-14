@@ -37,15 +37,29 @@ rem 2. Faire la modification, recompiler les shaders si besoin, puis le programm
 tools\compile_shaders.bat
 build.bat
 
-rem 3. Comparer (3 cas, scene immobile, qualite fixe, 2 alternances)
-powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Name essai
+rem 3. Comparer (3 cas, scene immobile, qualite fixe, 2 alternances, banc rapide)
+powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Fast -Name essai
 
 rem 4. Avant de garder : tous les cas, en mouvement
-powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Name essai_complet -Full -Moving
+powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant.exe -ExeB LyreViz.exe -Fast -Name essai_complet -Full -Moving
 
 rem 5. Toujours : ajouter la nouvelle version a l'historique des performances (historique_perf.xlsx)
 python tools\historique.py --modif "N. nom de la modification" --reglages "adaptive=0, en mouvement" bench\essai_complet_B0 bench\essai_complet_B1
 ```
+
+**Banc rapide (`-Fast`, option `--fast` du programme) : à utiliser par défaut.**
+
+- 30 images de chauffe et 60 mesurées par cas, au lieu de 60 et 150. Un lancement du banc complet prend environ 20 s au lieu de 46 s.
+- Le banc normal (sans `-Fast`) reste pour une décision serrée et pour les valeurs de référence.
+- Un ancien exécutable qui ne connaît pas `--fast` l'ignore et fait le banc normal : comparer alors sans `-Fast`.
+- La comparaison d'images n'écrit l'image d'écart que pour les cas qui changent, à demi-résolution (le plus grand écart de chaque carré de 2 × 2 pixels) : 4 fois plus rapide.
+
+**La fenêtre du banc doit rester la fenêtre active.**
+
+- Windows donne la priorité à la fenêtre active. Mesuré (même exécutable, en alternance) : derrière les autres fenêtres, ou si l'on clique ailleurs pendant le banc, le GPU est 5 à 15 % plus lent dans les cas lourds (gobo + prisme / public : 17,8 et 18,5 ms devant ; 20,1 et 21,4 ms derrière). Les images sont identiques.
+- L'option `-Behind` (`--behind`) ouvre la fenêtre derrière les autres sans prendre le clavier. Elle n'est pas utilisée par défaut : seulement pour comparer A et B entre eux pendant que l'on travaille, jamais pour des valeurs de référence.
+- Pendant le banc, le clavier et la souris sont ignorés : un clic ou une touche ne déplace pas la caméra.
+- Utiliser le PC pendant les mesures est la principale source d'écarts : alterner A et B, et juger une optimisation en scène immobile.
 
 `perf_ab.ps1` affiche :
 
@@ -179,6 +193,37 @@ Paires (lyre, pavé) : 95 par défaut, 282 avec gobo + prisme 8, 941 avec zoom 4
 | + bit « ombre » par case de lumière (plans testés dans le calcul des cases) | surfaces quasi gratuites, mais calcul des cases +1,2 ms |
 | + masques par tuile d'écran (CPU) et plages de profondeur dans le calcul des cases | calcul des cases +0,15 ms ; fumée et lyres douces encore +4,2 ms au total (rectangles « tout l'écran ») |
 | **+ volume coupé au plan avant de la caméra et prolongé au-delà des parois (au lieu de « tout l'écran »)** | **+0,5 ms : gardé.** Images identiques (PSNR > 73 dB) |
+
+### Aberration chromatique (14 octobre 2026)
+
+Franges colorées au bord des taches et des gobos (voir le README). Coupée par défaut : `--set chroma=1`, intensité `--set chromaforce=...`.
+
+Coût (même exécutable, `chroma=0` contre `chroma=1`, banc complet en mouvement, banc rapide, qualité fixe, 2 lancements ; historique 7b / 7c) :
+
+| Cas | Effet coupé | Effet actif |
+|---|---|---|
+| Défaut (3 vues) | 6,9 à 7,0 ms | +0,05 à +0,14 ms |
+| Gobo + prisme 8 (3 vues) | 12,3 à 18,4 ms | +0,5 à +0,8 ms |
+| Zoom 45° + frost 0,6 (3 vues) | 7,2 à 11,1 ms | −0,2 à +0,5 ms (environ +0,2) |
+| Sol mouillé + gobo + prisme 8 | 22,0 ms | +3 ms, dont +1,1 ms dans les surfaces (le reflet varie de 0,9 à 2,8 ms d'un lancement à l'autre) |
+
+- Budget restant dans le cas par défaut avec l'effet : environ 1 ms (8,3 − 7,2 ms sans qualité adaptative).
+- Effet coupé, rien n'est perdu par rapport à avant (historique 7a, banc normal : −0,5 à +0,3 ms, dans le bruit ; images identiques, PSNR > 69 dB).
+- Dans la fumée : non fait. La frange ferait 1 à 3 % de la largeur d'un faisceau, moyennée sur toute sa traversée : invisible. Il faudrait des tables en 3 couleurs : 3 fois le calcul des tables (0,9 à 2,4 ms aujourd'hui) et des lectures plus grosses dans la passe des faisceaux, la plus chère.
+
+| Essai | Résultat (effet actif contre coupé) |
+|---|---|
+| v0 : 3 lectures du gobo par lyre sans prisme, image en cache RGBA16F, enveloppe des faisceaux élargie de 2 % pour le bleu | défaut +0,1 à +0,2 ms ; prisme +1,5 à +2,2 ; frost +0,4 à +0,8 |
+| v1 : enveloppe inchangée (la marge de 0,01 suffit jusqu'à l'intensité 2), flou des 3 couleurs en un seul calcul | prisme encore +1,3 à +2,3 ms : pas de gain mesurable |
+| Intensité 0,001 contre 1 (effet actif) | +0,02 à +0,3 ms : les franges elles-mêmes (taches un peu plus larges) ne coûtent presque rien ; c'est le calcul en couleur qui coûte |
+| v2 : image en cache aussi pour les lyres sans prisme (2 lectures au lieu de 3 × 2) | lyres douces −0,1 à −0,2 ms ; le reste dans le bruit : gardé |
+| v3 : images en cache calculées après le tri et les sondes | neutre : gardé (mesure propre de cette passe) |
+| v4 : image en cache recalculée seulement si les réglages de sa lyre changent | défaut et frost : coût de l'effet dans le bruit (au lieu de +0,5 à +1,1 ms) ; prisme +0,4 à +0,5 ms (au lieu de +1,9 à +2,9). Le calcul à chaque image obligeait la carte à attendre que les surfaces de l'image précédente aient fini de lire l'atlas |
+| v4, effet coupé, contre avant | prisme +0,45 à +1,0 ms : l'atlas RGBA16F (8 octets par point au lieu de 4) coûte même sans l'effet |
+| **v5 : atlas R32F quand l'effet est coupé, RGBA16F créé à la première activation** | **effet coupé : comme avant ; effet actif : voir le tableau ci-dessus. Gardé** |
+
+- Formats essayés pour l'atlas en couleur : `R11G11B10F` (4 octets) est refusé en écriture par `sokol-shdc` ; RGBA8 donnerait des marches visibles dans les dégradés sombres (frost) : RGBA16F gardé.
+- Images (vue d'essai `--demo 0..3`, agrandissements des bords) : franges bleues côté extérieur, rouges puis orange côté axe, comme sur les photos ; elles suivent la mise au point, le frost et l'iris.
 
 ### Sol mouillé : reflet miroir (14 octobre 2026)
 

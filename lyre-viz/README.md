@@ -44,6 +44,9 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `--fullscreen` | Plein écran, à la résolution de l'écran. |
   | `--set nom=valeur` | Change un réglage au lancement (voir la liste ci-dessous). Exemple : `--set gi=0 --set analytic=0`. |
   | `--bench` | Banc d'essai (voir plus bas). |
+  | `--fast` | Banc rapide : 30 images de chauffe et 60 mesurées par cas (au lieu de 60 et 150). |
+  | `--behind` | La fenêtre s'ouvre derrière les autres sans prendre le clavier. Attention : le GPU est alors 5 à 15 % plus lent (Windows donne la priorité à la fenêtre active). |
+  | `--demo [0..3]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large. |
 
   Réglages de `--set` :
 
@@ -61,6 +64,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `floortile` | Taille de répétition de la texture du sol, en mètres (8 par défaut). |
   | `wet` | Eau au sol : 0 sec, 0,4 humide, 1 inondé. |
   | `shadows` | Ombres exactes des obstacles (1) ou non (0). |
+  | `chroma`, `chromaforce` | Aberration chromatique des lyres sur les surfaces (0 par défaut, 1 active) et son intensité (1 = lyre courante). |
   | `flooraniso` | Filtrage anisotrope de la texture du sol (1 à 16, 4 par défaut). |
 
 ### Banc d'essai
@@ -156,6 +160,7 @@ Chaque lyre a les canaux d'une vraie lyre :
   - Chaque tache de lumière (sur le sol, les murs, le décor) renvoie sa couleur dans la pièce.
   - La lumière diffusée par la fumée éclaire aussi la salle.
   - Les deux sont réunis dans une grille 3D de sondes, qui éclaire les surfaces et la fumée.
+- **Aberration chromatique** (coupée par défaut). Franges bleues d'un côté et orange de l'autre au bord des taches et des gobos, comme sur les photos de vraies lyres (voir plus bas).
 - **Bloom.** Le halo autour des lentilles et des zones très lumineuses.
 - **Tonemapping ACES.** Les couleurs saturées tirent vers le blanc quand elles sont très intenses, comme sur une photo.
 
@@ -219,6 +224,26 @@ Les obstacles fixes font de l'ombre aux faisceaux, sur les surfaces et dans la f
   - Dans la fumée, le bord de l'ombre reste net (la pénombre n'est que sur les surfaces).
   - Deux ombres qui se chevauchent le long d'un même rayon dans la fumée seraient retirées deux fois : le résultat est borné à 0.
   - Seuls les obstacles fixes : le personnage (mode F) et les lyres ne font pas d'ombre.
+
+### Aberration chromatique
+
+Sur les photos de lyres, le bord des taches de gobo au sol est bleu d'un côté et rouge puis jaune / orange de l'autre. Ce n'est pas de la diffraction (franges de l'ordre du micron, pareilles des deux côtés du bord) : c'est la **dispersion** du verre, qui dévie plus le bleu que le rouge. Onglet Rendu : « Aberration chromatique » et son intensité, `--set chroma=1`, `--set chromaforce=...`.
+
+- **Ce qui est simulé**, pour chaque couleur (rouge, vert, bleu), dans l'image projetée de la lyre (en angle) :
+  - **aberration latérale** : l'image bleue est 0,6 % plus grande, la rouge 0,6 % plus petite. Le décalage croît avec la distance à l'axe : rien au centre ; frange bleue côté extérieur, rouge puis jaune côté axe ;
+  - **prisme** : il écarte les facettes bleues de 2 % de plus, les rouges de 2 % de moins. Les copies du prisme, loin de l'axe, ont les franges les plus visibles ;
+  - **aberration axiale** : le bleu est net 5 % plus près, le rouge 5 % plus loin. Hors de la mise au point, les couleurs ne sont pas floues pareil (halo coloré) ; le frost, qui diffuse toutes les couleurs pareil, efface cet écart.
+- Le vert est l'image sans aberration. Tout est calculé dans l'image projetée, donc l'effet suit n'importe quel gobo, prisme, zoom, frost, mise au point et iris. L'étirement des franges sur une surface de travers (incidence rasante) vient tout seul de la projection.
+- **Ce n'est pas l'incidence qui crée les franges, mais la distance à l'axe.** À la verticale, une tache sans prisme n'a qu'une frange de quelques millimètres ; les copies d'un prisme, loin de l'axe, en ont de plusieurs centimètres. Une surface de travers les étire (1 / cos de l'angle d'incidence) et sort une partie de la tache de la mise au point.
+- **Sur les surfaces seulement.** Dans la fumée, la frange ferait 1 à 3 % de la largeur d'un faisceau (quelques millimètres à quelques centimètres) et serait moyennée sur toute la traversée du faisceau : invisible, alors qu'il faudrait des tables en 3 couleurs (3 fois le calcul des tables et des lectures dans la passe la plus chère). Sur les photos non plus, les faisceaux dans la fumée n'ont pas de franges.
+- **Comment c'est calculé.**
+  - Images projetées en cache (lyres à prisme ; avec l'effet, toutes les lyres) : en couleur dans un atlas RGBA16F (r : image sans aberration, g : rouge, b : bleu), créé à la première activation. L'effet coupé, l'atlas reste en R32F (2 fois moins d'octets à lire).
+  - Les surfaces font toujours 2 lectures par lyre ; l'aberration axiale ne change que le mélange des deux niveaux de flou, couleur par couleur.
+  - Lyres sans prisme : avec l'effet, elles ont aussi leur image en cache, lue en 2 fois (au lieu de 3 lectures du gobo, une par couleur, chacune sur 2 niveaux de flou).
+  - **Une image en cache n'est recalculée que si les réglages de sa lyre changent** (gobo, prisme, rotation, zoom, frost, iris). Lyres immobiles en gobo et en prisme : aucun calcul. Avant, la recalculer à chaque image obligeait aussi la carte à attendre que les surfaces de l'image précédente aient fini de la lire.
+  - La fumée lit le canal r : son image ne change pas.
+- **Coût** (GTX 1080, 4K, effet coupé contre actif, en mouvement) : défaut +0,05 à +0,14 ms ; gobo + prisme 8 +0,5 à +0,8 ms ; zoom 45° + frost 0,6 environ +0,2 ms. Coupé par défaut, car le cas gobo + prisme 8 est déjà au-dessus du budget (voir `PERFORMANCE.md`).
+- **Vue d'essai** : `LyreViz.exe --demo` (3 lyres en blanc, gobo étoile, prisme 8, vues en biais), avec `--demo 1` à `3` pour la mise au point, le frost, l'iris.
 
 ### Sol en béton
 
@@ -307,5 +332,6 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 - **Ombres :** obstacles fixes seulement (pavés), pénombre sur les surfaces mais bord net dans la fumée ; le personnage et les lyres ne font pas d'ombre.
 - **Reflet des faisceaux :** les faisceaux ne se reflètent pas encore dans le sol brillant (seules les taches le font). Prévu. Avec de l'eau au sol, ce serait le reflet le plus visible.
 - **Eau au sol :** le reflet coûte environ 1,5 ms (4 ms avec gobo + prisme 8 sur toutes les lyres) : avec de l'eau, le cas par défaut passe un peu sous 120 img/s sans la qualité adaptative. Pas encore de pluie ni d'ondulations dans les flaques.
+- **Aberration chromatique :** sur les surfaces seulement (pas dans la fumée, où elle serait invisible). Coupée par défaut (+0,5 à +0,8 ms avec gobo + prisme 8 sur toutes les lyres).
 - **Gobos personnels :** pas encore de chargement de vos propres images de gobo.
 - **Art-Net / DMX :** pas de pilotage par une vraie console. Non prévu pour l'instant.
