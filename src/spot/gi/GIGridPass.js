@@ -9,7 +9,9 @@
  *   1. lumières virtuelles : K rayons par cône de lyre (budget total fixe, K = budget / cônes, 2 à 16),
  *      arrêtés sur le décor par la cubemap de distances de la lyre (GIShaders.js) — une petite texture ;
  *   2. 1/div des couches z de la grille (div = 4 en Haute, 8 en Basse), une couche par dessin ; mélange
- *      alpha (nouvelle valeur × α + ancienne × (1 − α)) : une lyre qui bouge ne fait pas scintiller la GI.
+ *      alpha (nouvelle valeur × α + ancienne × (1 − α)) : une lyre qui bouge ne fait pas scintiller la GI ;
+ *   3. champ lointain (5 texels) : toutes les lumières virtuelles résumées, lu hors de la grille et sur ses
+ *      bords (fondu) — la lumière ne s'arrête pas net au bord de la boîte.
  *
  * Choix de la texture 3D (WebGL3DRenderTarget, RGBA16F) plutôt qu'un atlas 2D de couches : la lecture est
  * le chemin chaud (chaque pixel du décor, chaque tranche du brouillard) et le filtrage trilinéaire matériel
@@ -20,7 +22,7 @@
 
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
-import { createVPLMaterial, createGIGridMaterial, GI_MAX_VPL_PER_CONE, GI_MAX_BEAM_PTS } from './GIShaders.js';
+import { createVPLMaterial, createGIGridMaterial, createGIFarMaterial, GI_MAX_VPL_PER_CONE, GI_MAX_BEAM_PTS } from './GIShaders.js';
 import { createGIUniforms } from './giGLSL.js';
 import { SS_MAX_LIGHTS, SS_GEO } from '../ssdepth/SSDepthLights.js';
 import { gpuPassTimer } from '../../render/GpuPassTimer.js';
@@ -39,6 +41,8 @@ export const GI_BOUNDS_SIZE = [60, 25, 80];
 
 const _bMin = new THREE.Vector3();
 const _bSize = new THREE.Vector3();
+const _n0 = new THREE.Vector3();
+const _n1 = new THREE.Vector3();
 
 export class GIGridPass extends Pass {
     /**
@@ -70,8 +74,9 @@ export class GIGridPass extends Pass {
         this._frame = 0;
         this._bmin = new THREE.Vector3();
         this._bmax = new THREE.Vector3();
-        this._smallSince = 0;
-        this._fill = 0;
+        this._winSince = 0;            // début de la fenêtre de rétrécissement (0 : aucune)
+        this._win0 = new THREE.Vector3();
+        this._win1 = new THREE.Vector3();
         this._hasLight = false;
         this.vplTarget = new THREE.WebGLRenderTarget(2 * (GI_MAX_VPL_PER_CONE + GI_MAX_BEAM_PTS), SS_MAX_LIGHTS, {
             type: THREE.FloatType, depthBuffer: false, stencilBuffer: false,
@@ -79,6 +84,13 @@ export class GIGridPass extends Pass {
         });
         this.vplMaterial = createVPLMaterial(shadowUniforms);
         this.gridMaterial = createGIGridMaterial();
+        this.farTarget = new THREE.WebGLRenderTarget(5, 1, {
+            type: THREE.FloatType, depthBuffer: false, stencilBuffer: false,
+            minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false,
+        });
+        this.farMaterial = createGIFarMaterial();
+        this._farQuad = new FullScreenQuad(this.farMaterial);
+        this.uniforms.uGIFar.value = this.farTarget.texture;
         this._vplQuad = new FullScreenQuad(this.vplMaterial);
         this._gridQuad = new FullScreenQuad(this.gridMaterial);
     }
@@ -130,8 +142,12 @@ export class GIGridPass extends Pass {
 
     /**
      * Grille placée autour des lyres allumées et des points où leurs cônes touchent le sol (+ marge pour le
-     * rebond), arrondie à 4 m. Grandit tout de suite ; rétrécit seulement si le volume utile reste plus petit
-     * d'un quart pendant 3 s (chaque déplacement efface la lumière accumulée : pas de clignotement en show).
+     * rebond : la moitié de l'étendue, 12 à 30 m, pour que le fondu vers le champ lointain se fasse là où la
+     * lumière est déjà faible), arrondie à 4 m. Lyres en mouvement : la boîte choisie a du jeu (8 m de plus de
+     * chaque côté, hauteur arrondie à 8 m) pour ne pas se recaler à chaque balayage ; elle grandit dès que le
+     * volume utile en sort (sans rétrécir ailleurs), rétrécit seulement si tout ce qui a servi pendant 10 s en
+     * occupe moins de 60 % (un balayage régulier finit donc avec une boîte qui ne bouge plus). Chaque recalage
+     * recalcule toute la grille d'un coup (render) : pas de lumière décalée qui clignote.
      */
     _autoBounds(n, now) {
         const geo = this.lights._geo;
@@ -147,8 +163,10 @@ export class GIGridPass extends Pass {
             let dx = ex - sx, dy = ey - sy, dz = ez - sz;
             const len = Math.hypot(dx, dy, dz) || 1;
             dx /= len; dy /= len; dz /= len;
-            // Jusqu'au sol (ou 40 m au plus pour un cône qui ne le touche pas)
-            const t = dy < -0.02 ? Math.min(len, sy / -dy) : Math.min(len, 40);
+            // Jusqu'au sol, borné à 1,5 × la hauteur (40 m au moins) que le cône touche le sol ou non : sinon la
+            // boîte bondit quand une lyre qui balaie passe l'horizontale ; au-delà, le champ lointain prend le relais
+            const cap = Math.max(40, 1.5 * sy);
+            const t = Math.min(len, cap, dy < -0.02 ? sy / -dy : Infinity);
             const k = t / len;
             const r = geo[g + 3] + (er - geo[g + 3]) * k;
             const px = sx + dx * t, py = sy + dy * t, pz = sz + dz * t;
@@ -157,24 +175,49 @@ export class GIGridPass extends Pass {
             lo.z = Math.min(lo.z, sz, pz - r); hi.z = Math.max(hi.z, sz, pz + r);
         }
         if (!(lo.x <= hi.x)) return;
-        const S = 4;
-        const minX = Math.floor((lo.x - 6) / S) * S, maxX = Math.ceil((hi.x + 6) / S) * S;
-        const minZ = Math.floor((lo.z - 6) / S) * S, maxZ = Math.ceil((hi.z + 6) / S) * S;
-        const minY = Math.min(-1.5, Math.floor(lo.y) - 1.5);
-        const maxY = Math.max(8, Math.ceil(hi.y + 3));
+        const mg = Math.min(30, Math.max(12, 0.5 * Math.max(hi.x - lo.x, hi.z - lo.z)));
+        // Volume utile de cette image
+        const n0 = _n0.set(lo.x - mg, Math.min(-1.5, lo.y - 1.5), lo.z - mg);
+        const n1 = _n1.set(hi.x + mg, Math.max(8, hi.y + 3), hi.z + mg);
         const cur = this._min, cs = this._size;
-        const fits = minX >= cur.x && minZ >= cur.z && minY >= cur.y - 0.01
-            && maxX <= cur.x + cs.x && maxZ <= cur.z + cs.z && maxY <= cur.y + cs.y + 0.01;
-        const small = (maxX - minX) * (maxZ - minZ) < 0.75 * cs.x * cs.z;
-        if (fits && !small) { this._smallSince = 0; return; }
-        if (fits && small) {
-            if (!this._smallSince) this._smallSince = now;
-            if (now - this._smallSince < 3000) return;
+        const fits = n0.x >= cur.x && n0.z >= cur.z && n0.y >= cur.y - 0.01
+            && n1.x <= cur.x + cs.x && n1.z <= cur.z + cs.z && n1.y <= cur.y + cs.y + 0.01;
+        if (!fits) {
+            // Grandit tout de suite, sans rétrécir ailleurs (union avec la boîte actuelle : pas de va-et-vient
+            // pendant un balayage)
+            this._winSince = 0;
+            this._boxAround(n0, n1);
+            _bSize.add(_bMin);   // coin haut
+            _bMin.min(cur);
+            _bSize.max(_n1.copy(cur).add(cs)).sub(_bMin);
+            this.setBounds(_bMin, _bSize);
+            return;
         }
-        this._smallSince = 0;
+        // Rétrécit vers l'union des volumes utiles des 10 dernières secondes, s'il en occupe moins de 60 %
+        if (!this._winSince) { this._winSince = now; this._win0.copy(n0); this._win1.copy(n1); }
+        else { this._win0.min(n0); this._win1.max(n1); }
+        this._boxAround(this._win0, this._win1);
+        if (_bSize.x * _bSize.y * _bSize.z >= 0.6 * cs.x * cs.y * cs.z) {
+            this._winSince = now; this._win0.copy(n0); this._win1.copy(n1);
+            return;
+        }
+        if (now - this._winSince < 10000) return;
+        this._winSince = 0;
+        this.setBounds(_bMin, _bSize);
+    }
+
+    /** Boîte de la grille (_bMin, _bSize) autour du volume [a, b] : 8 m de jeu de chaque côté, arrondie à 4 m,
+     *  hauteur arrondie à 8 m ; sol à plus d'une cellule du bas (fondu d'une demi-cellule en hauteur), même
+     *  avec des lyres très hautes */
+    _boxAround(a, b) {
+        const S = 4, SLACK = 8;
+        const minX = Math.floor((a.x - SLACK) / S) * S, maxX = Math.ceil((b.x + SLACK) / S) * S;
+        const minZ = Math.floor((a.z - SLACK) / S) * S, maxZ = Math.ceil((b.z + SLACK) / S) * S;
+        const maxY = Math.ceil((b.y + 4) / 8) * 8;
+        const ny = this.quality.dims[1];
+        const minY = Math.min(Math.floor(a.y), -Math.ceil(1.6 * (maxY + 1.5) / ny));
         _bMin.set(minX, minY, minZ);
         _bSize.set(maxX - minX, maxY - minY, maxZ - minZ);
-        this.setBounds(_bMin, _bSize);
     }
 
     _applyCells() {
@@ -184,6 +227,7 @@ export class GIGridPass extends Pass {
         u.uMin.value.copy(this._min);
         u.uCell.value.set(this._size.x / nx, this._size.y / ny, this._size.z / nz);
         u.uR0.value = 0.35 * u.uCell.value.lengthSq();
+        this.uniforms.uGIR0.value = u.uR0.value;
     }
 
     /** Lumière effacée (GI désactivée puis réactivée : pas de reste d'une ancienne image) */
@@ -227,11 +271,10 @@ export class GIGridPass extends Pass {
             return;
         }
         this._autoBounds(n, performance.now());
-        if (!this._hasLight) {
-            // Première lumière (ou grille neuve) : un cycle complet sans lissage
-            this._fill = Q.div;
-            this._hasLight = true;
-        }
+        // Première lumière, grille neuve ou recalée : TOUTES les couches recalculées dans cette image, sans
+        // lissage (sinon, pendant div images, les couches pas encore refaites montrent l'ancienne lumière décalée)
+        const full = !this._hasLight;
+        this._hasLight = true;
         const timer = gpuPassTimer.enabled ? gpuPassTimer : null;
         // Budget : ⅗ sur le décor, ⅖ le long des faisceaux
         const K = Math.max(2, Math.min(GI_MAX_VPL_PER_CONE, Math.floor(Q.vpl * 0.6 / n)));
@@ -263,19 +306,27 @@ export class GIGridPass extends Pass {
         g.uCones.value = n;
         g.uK.value = K;
         g.uM.value = M;
-        g.uAlpha.value = this._fill > 0 ? 1 : Q.alpha;
+        g.uAlpha.value = full ? 1 : Q.alpha;
         const nz = Q.dims[2];
-        const phase = this._frame % Q.div;
+        const step = full ? 1 : Q.div;
         let layers = 0;
-        for (let z = phase; z < nz; z += Q.div) {
+        for (let z = full ? 0 : this._frame % Q.div; z < nz; z += step) {
             g.uZ.value = z;
             renderer.setRenderTarget(this.grid, z);
             this._gridQuad.render(renderer);
             layers++;
         }
+
+        // 3. Champ lointain (toutes les lumières virtuelles de l'image, sans lissage : 5 pixels)
+        const f = this.farMaterial.uniforms;
+        f.uVPL.value = this.vplTarget.texture;
+        f.uCones.value = n;
+        f.uK.value = K;
+        f.uM.value = M;
+        renderer.setRenderTarget(this.farTarget);
+        this._farQuad.render(renderer);
         if (timer) timer.end();
         this.layersPerFrame = layers;
-        if (this._fill > 0) this._fill--;
         this._frame++;
         this.active = true;
         renderer.autoClear = oldAutoClear;
@@ -286,6 +337,9 @@ export class GIGridPass extends Pass {
         this.vplTarget.dispose();
         this.vplMaterial.dispose();
         this.gridMaterial.dispose();
+        this.farTarget.dispose();
+        this.farMaterial.dispose();
+        this._farQuad.dispose();
         this._vplQuad.dispose();
         this._gridQuad.dispose();
     }

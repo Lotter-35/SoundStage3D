@@ -24,6 +24,7 @@ import { createHazeMaterial, HAZE_MAX_LIGHTS } from './HazeShaders.js?v=3';
 import { HazePass } from './HazePass.js?v=3';
 import { defaultHazeParams, HAZE_PARAMS_SCHEMA, migrateHazeBox } from './hazeParams.js';
 import { RES_AUTO } from '../render/resolutionScale.js';
+import { BEAM_STRIDE, SHEET_STRIDE } from '../laser2/core/strides.js';
 
 // Calibrage des puissances (unités différentes selon le type de source)
 const STROBE_K = 1.0;
@@ -376,9 +377,9 @@ export class HazeVolume {
         // Faisceaux : origine, fin, chroma, puissance
         // (tampons du worker : ignorés s'ils ne contiennent pas les données annoncées)
         const B = l.beamData;
-        const nb = B.length >= l.beamN * 17 ? l.beamN : 0;
+        const nb = B.length >= l.beamN * BEAM_STRIDE ? l.beamN : 0;
         for (let i = 0; i < nb; i++) {
-            const o = i * 17;
+            const o = i * BEAM_STRIDE;
             let dx = B[o + 4] - B[o], dy = B[o + 5] - B[o + 1], dz = B[o + 6] - B[o + 2];
             const L = Math.hypot(dx, dy, dz);
             if (L < 1e-3) continue;
@@ -387,9 +388,9 @@ export class HazeVolume {
         }
         // Nappes : origine, bords A et B, arc total, chroma, puissance de la nappe entière (→ part de ce morceau)
         const S = l.sheetData;
-        const ns = S.length >= l.sheetN * 21 ? l.sheetN : 0;
+        const ns = S.length >= l.sheetN * SHEET_STRIDE ? l.sheetN : 0;
         for (let i = 0; i < ns; i++) {
-            const o = i * 21;
+            const o = i * SHEET_STRIDE;
             let ax = S[o + 4] - S[o], ay = S[o + 5] - S[o + 1], az = S[o + 6] - S[o + 2];
             let bx = S[o + 8] - S[o], by = S[o + 9] - S[o + 1], bz = S[o + 10] - S[o + 2];
             const la = Math.hypot(ax, ay, az), lb = Math.hypot(bx, by, bz);

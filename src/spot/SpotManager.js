@@ -85,7 +85,7 @@ export class SpotManager {
             laserManager: this._hasPass ? laserManager : null,
         });
         // Taches de lumière de toutes les lyres : passe insérée avant les faisceaux SS Depth
-        this.poolPass = new LightPoolPass(this.ssLights, this.batch, camera, this.shadows.uniforms, this.fx.giUniforms);
+        this.poolPass = new LightPoolPass(this.ssLights, this.batch, camera, this.shadows.uniforms, this.fx.giUniforms, scene);
         this.poolPass.enabled = false;
         this._hasPoolPass = this._hasPass && laserManager.addScenePass(this.poolPass);
         if (this._hasPoolPass) this.poolPass.sceneDepth = laserManager.sceneDepth;

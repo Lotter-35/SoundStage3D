@@ -19,6 +19,7 @@ import { StrobeInspectorPanel } from '../strobe/ui/StrobeInspectorPanel.js?v=8';
 import { SpotInspectorPanel } from '../spot/ui/SpotInspectorPanel.js';
 import { LedBarInspectorPanel } from '../ledbar/ui/LedBarInspectorPanel.js';
 import { Laser2InspectorPanel } from '../laser2/ui/Laser2InspectorPanel.js';
+import { LASER2_HAZE_DEFAULT } from '../laser2/Laser2Shaders.js';
 import { LASER_PARAMS_SCHEMA } from '../laser/config/laserParams.js?v=27';
 import { GI_PRESETS } from '../scene/staticGI.js';
 import { probeObjectAdded } from '../audio/debugProbes.js?v=4';
@@ -2808,6 +2809,7 @@ export class AmbiancePanel {
             this.laserManager.setPostProcessingParam('fogEnabled', false);
             this.laserManager.setPostProcessingParam('fogDensity', 0.005);
             this.laserManager.setPostProcessingParam('fogColor', '#111122');
+            this.laserManager.setPostProcessingParam('laserHaze', LASER2_HAZE_DEFAULT);
         }
 
         // Remettre la première en sélection
@@ -4625,6 +4627,14 @@ export class AmbiancePanel {
                 this.laserManager.setPostProcessingParam('fogColor', v);
             });
             this._setupController(cFogCol, () => '#111122', v => this.laserManager.setPostProcessingParam('fogColor', v));
+
+            // Fumée des lasers ILDA (commune à tous) : plus dense = faisceaux plus lumineux, auréole plus large,
+            // mais ils s'éteignent plus vite avec la distance (portée visible ≈ 5 / densité)
+            const fHaze2 = fLaser.addFolder('🌫️ Fumée des lasers ILDA');
+            const cHaze2 = fHaze2.add(globalLaserPostParams, 'laserHaze', 0, 0.06, 0.001).name('Densité (m⁻¹)').onChange(v => {
+                this.laserManager.setPostProcessingParam('laserHaze', v);
+            });
+            this._setupController(cHaze2, () => LASER2_HAZE_DEFAULT, v => this.laserManager.setPostProcessingParam('laserHaze', v));
         }
 
         // Rendre le panneau déplaçable avec la souris sur le titre

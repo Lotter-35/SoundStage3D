@@ -160,7 +160,7 @@ vec3 beamScatter(vec3 ro, vec3 rd, float tin, float tout, float dz, float apexDi
             if (segBlocked(cLens, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8)) continue;
         }
         float zl = zA - apexDist;
-        float fade = 1.0 - smoothstep(fadeB, beamEnd, zl);
+        float fade = beamFade(zl, fadeB, beamEnd);
         float cosT = dot(lp, -rd) / max(1e-4, length(lp));
         // Répartition en 1/z : l'éclairement 1/z² est intégré exactement (poids sans 1/z²)
         float e = imp ? 1.0 : 1.0 / (zA * zA);

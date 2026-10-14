@@ -54,6 +54,8 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
             uPoolTiles:  { value: null },
             uGrass:      { value: null },
             uGrassOn:    { value: 0 },
+            tAlbedo:     { value: null },   // albédo réel de la scène (SceneAlbedo.js), a = 1 : pixel couvert
+            uAlbedoOn:   { value: 0 },
             uFull:       { value: new THREE.Vector2(1, 1) },
             uDiv:        { value: 1 },
             uCamPos:     { value: new THREE.Vector3() },
@@ -88,6 +90,20 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
             uniform float uGIOffset;
             uniform float uPoolsOn;
             uniform float uSat;
+            uniform highp sampler2D tAlbedo;
+            uniform float uAlbedoOn;
+
+            // Matériau du pixel c : classement par position (rugosité, spéculaire, albédo de repli) ; couleur du
+            // VRAI matériau quand l'albédo de la scène couvre le pixel — teinte et clarté du matériau, sans
+            // descendre sous la clarté du classement (lino noir relevé pour que les taches restent lisibles)
+            void pixelSurface(ivec2 c, vec3 P, vec3 N, out vec3 albedo, out float rough, out float specK) {
+                surface(P, N, albedo, rough, specK);
+                if (uAlbedoOn < 0.5) return;
+                vec4 A = texelFetch(tAlbedo, c, 0);
+                const vec3 LUM = vec3(0.2126, 0.7152, 0.0722);
+                float lr = dot(A.rgb, LUM);
+                if (A.a > 0.5 && lr > 1e-3) albedo = A.rgb * max(1.0, dot(albedo, LUM) / lr);
+            }
             uniform float uDebugCost;
             float gWork = 0.0;
 
@@ -117,7 +133,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                 if (gi) {
                     haveN = true;
                     N = screenNormal(c, vp);
-                    surface(P, N, albedo, rough, specK);
+                    pixelSurface(c, P, N, albedo, rough, specK);
                     float a = rough * rough;
                     a2 = a * a;
                     acc += albedo * (uGIGain / PI) * giAt(P + N * uGIOffset);
@@ -151,7 +167,7 @@ export function createLightPoolMaterial(shadowUniforms = createShadowUniforms(),
                     if (!haveN) {
                         haveN = true;
                         N = screenNormal(c, vp);
-                        surface(P, N, albedo, rough, specK);
+                        pixelSurface(c, P, N, albedo, rough, specK);
                         float a = rough * rough;
                         a2 = a * a;
                     }

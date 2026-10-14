@@ -30,7 +30,7 @@ vec3 plainGate(vec2 g, float blur) {
     float r2 = dot(g, g);
     if (r2 >= cOutR2) return vec3(0.0);
     if (r2 < cPlainR2) return cCol * (1.0 - 0.2 * r2);
-    float e = 0.012 + blur;
+    float e = irisEdge(cIris, cFrostBlur, blur);
     return cCol * ((1.0 - smoothstep(cIris - e, cIris + e, sqrt(r2))) * (1.0 - 0.2 * min(r2, 1.0)));
 }
 
@@ -39,8 +39,8 @@ vec3 atlasGate(vec2 g, float blur) {
     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
     vec2 cell = vec2(mod(cTile, ${GATE_ATLAS_SIDE.toFixed(1)}), floor(cTile / ${GATE_ATLAS_SIDE.toFixed(1)}));
     float texelG = ${(2 * GATE_ATLAS_R / GATE_ATLAS_TILE).toFixed(6)};
-    // Jusqu'au niveau 5 (4 × 4 texels par tuile) : flou d'intégration le long des rayons (voir beamScatter)
-    float lod = clamp(log2(max(1.0, (blur - cFrostBlur) / texelG)), 0.0, 5.0);
+    // Jusqu'au niveau 6 (4 × 4 texels par tuile) : flou d'intégration le long des rayons (voir beamScatter)
+    float lod = clamp(log2(max(1.0, (blur - cFrostBlur) / texelG)), 0.0, 6.0);
     return textureLod(uGateAtlas, (cell + uv) / ${GATE_ATLAS_SIDE.toFixed(1)}, lod).rgb;
 }
 
@@ -61,7 +61,7 @@ vec3 gateAtPoint(vec3 P, bool full, float extraBlur, out float zA, out vec3 lp) 
     vec3 rad = lp - cW * zA;
     float zl = max(dot(P - cLens, cW), 0.0);   // distance à la lentille le long de l'axe
     vec2 g = vec2(dot(rad, cR), dot(rad, cU)) / (zA * cTanHalf) - cV * (zl / zA);
-    float blur = cFrostBlur + min(0.14, abs(log(zl + 0.5) - cLogFocus) * 0.035) + extraBlur;
+    float blur = cFrostBlur + focusBlur(zl, cLogFocus) + extraBlur;
     if (cKind > 1.5) {
         if (cKind < 2.5) return atlasGate(g, blur);
         if (full) {

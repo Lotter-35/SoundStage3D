@@ -9,7 +9,7 @@
  *     traversent le faisceau, défilement rainbow continu)
  *   - Roues de gobos : glissement des motifs dans la fenêtre, secousse, rotation
  *   - Prisme et roue d'animation : insertion / retrait progressifs
- *   - Zoom, focus, iris, frost, couteaux : moteurs avec temps de course
+ *   - Zoom, iris, frost, couteaux : moteurs avec temps de course
  *   - Obturateur : strobe régulier, pulse, strobe aléatoire
  *   - Reset : routines de calibration (pan/tilt, effets, complet)
  * ─────────────────────────────────────────────────────────────
@@ -81,7 +81,6 @@ export class SpotMotion {
         this.prismAngle = params.prismIndex * DEG;
         this.prismVel = 0;
         this.zoom = params.zoom;
-        this.focus = params.focus;
         this.iris = params.iris;
         this.frost = params.frost;
         this.blades = [params.blade1, params.blade2, params.blade3, params.blade4];
@@ -101,7 +100,7 @@ export class SpotMotion {
             pan: 0, tilt: 0,
             intensity: 0,
             colorA: [1, 1, 1], colorB: [1, 1, 1], split: 2,
-            zoom: 14, iris: 1, frost: 0, focus: 0.5,
+            zoom: 14, iris: 1, frost: 0,
             goboFixedPos: 0, goboRotPos: 0, goboAngle: 0,
             animSlot: 0, animIn: 0, animAngle: 0,
             prismType: 0, prismIn: 0, prismAngle: 0,
@@ -281,7 +280,7 @@ export class SpotMotion {
         out.prismIn = this.prismIn;
         out.prismAngle = this.prismAngle;
 
-        // ── Optique : zoom, focus, iris, frost, couteaux ───────────────────
+        // ── Optique : zoom, iris, frost, couteaux ───────────────────
         let zoomT = p.zoom, irisT = p.iris, frostT = p.frost;
         if (resetFX) {
             zoomT = rt < 1.2 ? 48 : rt < 2.2 ? 5 : p.zoom;
@@ -289,7 +288,6 @@ export class SpotMotion {
             frostT = 0;
         }
         this.zoom = approach(this.zoom, zoomT, dt * 75);
-        this.focus = approach(this.focus, p.focus, dt * 160);
         this.iris = approach(this.iris, irisT, dt * 320);
         this.frost = approach(this.frost, frostT, dt * 280);
         for (let i = 0; i < 4; i++) {
@@ -305,7 +303,6 @@ export class SpotMotion {
         out.zoom = this.zoom;
         out.iris = clamp(this.iris / 100, 0.2, 1);
         out.frost = clamp(this.frost / 100, 0, 1);
-        out.focus = clamp(this.focus / 100, 0, 1);
         return out;
     }
 

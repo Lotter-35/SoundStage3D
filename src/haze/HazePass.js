@@ -87,6 +87,8 @@ export class HazePass extends Pass {
             u.uGIMin.value.copy(g.uGIMin.value);
             u.uGISize.value.copy(g.uGISize.value);
             u.uGIEdge.value.copy(g.uGIEdge.value);
+            u.uGIFar.value = g.uGIFar.value;
+            u.uGIR0.value = g.uGIR0.value;
         }
 
         renderer.setRenderTarget(this.target);

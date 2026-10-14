@@ -171,6 +171,9 @@ export function createVPLMaterial(shadowUniforms) {
                 if (zl <= 0.0 || zl >= range || gate.r + gate.g + gate.b < 1e-5) { gl_FragColor = NONE; return; }
                 vec3 albedo; float rough, specK;
                 surface(X, N, albedo, rough, specK);
+                // Rebond NEUTRE : luminance de l'albédo seulement — la lumière renvoyée garde la couleur de la lyre
+                // (la pelouse teintait tout le rebond en vert-jaune : décor et personnages beiges sous un spot blanc)
+                albedo = vec3(dot(albedo, vec3(0.2126, 0.7152, 0.0722)));
                 // Flux réfléchi : albédo × intensité (éclairement à 1 m) × angle solide du rayon
                 float t2 = cTanHalf * cTanHalf * dot(g, g);
                 float omega = PI * cTanHalf * cTanHalf * rDisc * rDisc / float(uK) / pow(1.0 + t2, 1.5);
@@ -178,6 +181,58 @@ export function createVPLMaterial(shadowUniforms) {
                 if (any(isnan(phi)) || any(isinf(phi))) { gl_FragColor = NONE; return; }
                 // Texel pair : position + normale ; impair : Φ / π (intensité diffuse dans l'axe de la normale)
                 gl_FragColor = (p.x & 1) == 0 ? vec4(X + N * 0.05, packNormal(N)) : vec4(phi * (1.0 / PI), 1.0);
+            }
+        `,
+        depthTest: false,
+        depthWrite: false,
+    });
+}
+
+/**
+ * CHAMP LOINTAIN : toutes les lumières virtuelles résumées en 5 texels (cible 5 × 1, un pixel par texel),
+ * lus hors de la grille (giGLSL.js) ; w = luminance du flux (moments en float32 : précision suffisante) :
+ *   0 : Σ flux des points des faisceaux (rgb), Σ w     1 : Σ w·position, Σ w·|position|²
+ *   2 : Σ flux des points du décor (rgb), Σ w          3 : Σ w·position, Σ w·|position|²
+ *   4 : Σ w·normale (décor)
+ */
+export function createGIFarMaterial() {
+    return new THREE.ShaderMaterial({
+        uniforms: {
+            uVPL:   { value: null },
+            uCones: { value: 0 },
+            uK:     { value: 8 },
+            uM:     { value: 4 },
+        },
+        vertexShader: VERT,
+        fragmentShader: /* glsl */`
+            precision highp float;
+            precision highp int;
+            ${NORMAL_PACK_GLSL}
+            uniform highp sampler2D uVPL;
+            uniform int uCones;
+            uniform int uK;
+            uniform int uM;
+
+            void main() {
+                int x = int(gl_FragCoord.x);
+                bool wantBeam = x < 2;
+                vec4 acc = vec4(0.0);
+                for (int i = 0; i < 1024; i++) {
+                    if (i >= uCones) break;
+                    for (int k = 0; k < ${GI_MAX_VPL_PER_CONE + GI_MAX_BEAM_PTS}; k++) {
+                        if (k >= uK + uM) break;
+                        vec4 a = texelFetch(uVPL, ivec2(2 * k, i), 0);
+                        if (a.w == -1.0) continue;
+                        bool beam = a.w < -1.5;
+                        if (beam != wantBeam) continue;
+                        vec3 f = texelFetch(uVPL, ivec2(2 * k + 1, i), 0).rgb;
+                        float w = dot(f, vec3(0.2126, 0.7152, 0.0722));
+                        if (x == 0 || x == 2) acc += vec4(f, w);
+                        else if (x == 4) acc.xyz += unpackNormal(a.w) * w;
+                        else acc += vec4(a.xyz, dot(a.xyz, a.xyz)) * w;
+                    }
+                }
+                gl_FragColor = acc;
             }
         `,
         depthTest: false,

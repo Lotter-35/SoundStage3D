@@ -154,6 +154,8 @@ export class SpotBatch {
             depthBuffer: false, stencilBuffer: false,
             minFilter: THREE.LinearMipmapLinearFilter, magFilter: THREE.LinearFilter, generateMipmaps: true,
         });
+        // Filtrage anisotrope : le rendu Analytique moyenne le motif le long du trajet du rayon (textureGrad)
+        this.gateAtlas.texture.anisotropy = 16;
         this.volumeMaterial.uniforms.uGateAtlas.value = this.gateAtlas.texture;
         this._gateMaterial = createGateAtlasMaterial(this.paramsTexture, this.goboTexture);
         this._materials.push(this._gateMaterial);

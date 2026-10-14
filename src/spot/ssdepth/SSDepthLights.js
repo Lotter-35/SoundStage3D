@@ -191,7 +191,7 @@ export class SSDepthLights {
             const apexDist = r[31];
             const range = f.beamRange || 140;
             const beamEnd = r[49] > 0 ? Math.min(r[49], range) : range;
-            const fadeB = beamEnd < range ? beamEnd * 0.75 : range * 0.7;
+            const fadeB = beamEnd < range ? beamEnd * 0.35 : range * 0.7;
             const splashW = r[18];
             const hasOcc = r[32] >= 0 ? 1 : 0;
             // Image de la fenêtre : disque (cas courant), atlas (gobos, couteaux, demi-couleurs, frost compris :

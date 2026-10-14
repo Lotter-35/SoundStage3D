@@ -137,13 +137,32 @@ export class SpotShadowAtlas {
         const maxRows = Math.max(1, Math.floor(maxTex / (2 * S)));
         rows = Math.min(rows, maxRows, Math.ceil(SHADOW_MAX_SLOTS / SHADOW_BLOCKS_PER_ROW));
         if (this.atlas && rows <= this._rows) return;
-        if (this.atlas) this.atlas.dispose();
+        const old = this.atlas;
         this._rows = rows;
         this.atlas = new THREE.WebGLRenderTarget(SHADOW_BLOCKS_PER_ROW * 3 * S, rows * 2 * S, {
             format: THREE.RedFormat, type: THREE.HalfFloatType, depthBuffer: false, stencilBuffer: false,
             minFilter: THREE.NearestFilter, magFilter: THREE.NearestFilter, generateMipmaps: false,
         });
         this.uniforms.uShadowAtlas.value = this.atlas.texture;
+        if (old && old.width === this.atlas.width) {
+            // Atlas agrandi (lyres ajoutées) : anciennes cubemaps recopiées en bas (mêmes emplacements) — sinon
+            // toutes les ombres disparaissent le temps de les recuire (faisceaux à travers les murs)
+            const r = this.renderer;
+            const prev = r.getRenderTarget();
+            const a = this.atlas;
+            a.viewport.set(0, 0, old.width, old.height);
+            a.scissor.set(0, 0, old.width, old.height);
+            a.scissorTest = true;
+            r.setRenderTarget(a);
+            this._copyMat.uniforms.tSrc.value = old.texture;
+            this._copyQuad.render(r);
+            a.scissorTest = false;
+            a.viewport.set(0, 0, a.width, a.height);
+            r.setRenderTarget(prev);
+            old.dispose();
+            return;
+        }
+        if (old) old.dispose();
         // Contenu perdu : tout est recuit
         for (const s of this._slots.values()) { s.dirty = true; s.valid = false; }
         this._writeInfo();

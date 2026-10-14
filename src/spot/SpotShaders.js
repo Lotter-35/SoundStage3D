@@ -49,7 +49,7 @@ export const SPOT_TEXELS = 13;
  * pas et pour chaque facette du prisme. Le flou de mise au point passe par les niveaux de mipmap.
  */
 export const GATE_ATLAS_SIDE = 8;        // tuiles par côté (64 lyres)
-export const GATE_ATLAS_TILE = 128;      // pixels par tuile
+export const GATE_ATLAS_TILE = 256;      // pixels par tuile (≈ 160 sur le diamètre de l'iris : gobo net au sol)
 export const GATE_ATLAS_R = 1.6;         // la tuile couvre g ∈ [−R, R] (iris + flou maximal)
 /*
  * T0 : couleur A (rgb)            , flux (intensité × dimmer × obturateur)
@@ -89,6 +89,27 @@ uniform highp sampler2DArray uGobos;
 
 vec4 spotParam(int row, int texel) {
     return texelFetch(uSpotParams, ivec2(texel, row), 0);
+}
+
+// Demi-largeur du bord de l'iris : frost entier, flou de mise au point à l'échelle de l'ouverture (sinon un iris
+// fermé a un bord flou plus large que lui-même : la tache au sol, saturée, déborde du faisceau). Iris ouvert : inchangé
+float irisEdge(float iris, float frostBlur, float blur) {
+    return 0.012 + frostBlur + max(blur - frostBlur, 0.0) * iris;
+}
+
+// Flou de mise au point (unités de fenêtre) à zl m de la lentille, mise au point à exp(logFocus) m : cercle de
+// confusion d'une lentille mince ∝ |1/z − 1/f| — réglée au loin, l'image reste nette jusqu'à l'infini
+// (l'ancienne loi en |ln z − ln f| refloutait tout au-delà de la mise au point)
+float focusBlur(float zl, float logFocus) {
+    return min(0.14, abs(1.0 / (zl + 0.5) - exp(-logFocus)) * 0.3);
+}
+
+// Fondu de la fin du faisceau (diffusion) entre a et b (m depuis la lentille). Longueur visible choisie (a < b/2 :
+// début du fondu à 35 % de la longueur) : fondu en (1 − s)³ — un faisceau saturé (blanc) s'éteint
+// progressivement au lieu de paraître coupé net. Portée entière (a = 70 %) : fondu d'origine
+float beamFade(float zl, float a, float b) {
+    float f = 1.0 - smoothstep(a, b, zl);
+    return a < 0.5 * b ? f * f * f : f;
 }
 
 const float GOBO_SPACING = 2.35;   // écart entre 2 gobos sur la roue (unités de fenêtre)
@@ -180,9 +201,10 @@ float bladeCut(vec2 g, float ins, vec4 b, float edge) {
 vec3 gateImage(Gate G, vec2 g, float blur) {
     float r = length(g);
     float edge = 0.012 + blur;
-    float iris = G.T2.y;
+    float iris = min(G.T2.y, 1.0);
     // Diaphragme (iris) puis fenêtre (gate)
-    float mask = 1.0 - smoothstep(min(iris, 1.0) - edge, min(iris, 1.0) + edge, r);
+    float ie = irisEdge(iris, G.T2.z * 0.42, blur);
+    float mask = 1.0 - smoothstep(iris - ie, iris + ie, r);
     if (mask <= 0.0) return vec3(0.0);
 
     float lod = log2(max(1.0, edge * 110.0));
@@ -399,7 +421,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 if (pPlain) {
                     // Faisceau ouvert (ni gobo, ni couteau, ni demi-couleur) : iris au bord flou, formule exacte
                     if (r2 < pPlainR2) return G.T0.rgb * (1.0 - 0.2 * r2);
-                    float e = 0.012 + blur, ir = min(G.T2.y, 1.0);
+                    float ir = min(G.T2.y, 1.0), e = irisEdge(ir, pFrostBlur, blur);
                     return G.T0.rgb * ((1.0 - smoothstep(ir - e, ir + e, sqrt(r2))) * (1.0 - 0.2 * min(r2, 1.0)));
                 }
                 if (pTile >= 0.0) {
@@ -408,7 +430,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
                     vec2 cell = vec2(mod(pTile, ${GATE_ATLAS_SIDE.toFixed(1)}), floor(pTile / ${GATE_ATLAS_SIDE.toFixed(1)}));
                     float texelG = ${(2 * GATE_ATLAS_R / GATE_ATLAS_TILE).toFixed(6)};
-                    float lod = clamp(log2(max(1.0, (blur - pFrostBlur) / texelG)), 0.0, 3.0);
+                    float lod = clamp(log2(max(1.0, (blur - pFrostBlur) / texelG)), 0.0, 4.0);
                     return textureLod(uGateAtlas, (cell + uv) / ${GATE_ATLAS_SIDE.toFixed(1)}, lod).rgb;
                 }
                 return gateImage(G, g, blur);
@@ -549,7 +571,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     vec3 P = ro + rd * t;
                     vec3 lp = P - C;
                     float sp = dot(lp, W);
-                    float blur = frostBlur + min(0.14, abs(log(sp + 0.5) - logFocus) * 0.035);
+                    float blur = frostBlur + focusBlur(sp, logFocus);
                     vec3 E = barLight(sp, dot(lp, R), dot(lp, U), blur);
                     if (E.r + E.g + E.b < 1e-6) continue;
                     if (hasOcc) {
@@ -576,7 +598,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     if (!blocked) {
                         vec3 lp = sceneP - C;
                         float sp = dot(lp, W);
-                        float blur = frostBlur + min(0.14, abs(log(sp + 0.5) - logFocus) * 0.035);
+                        float blur = frostBlur + focusBlur(sp, logFocus);
                         vec3 n = normalize(nrm);
                         if (dot(n, rd) > 0.0) n = -n;
                         float ndl = max(0.0, dot(n, -normalize(lp + W * zOff)));
@@ -725,7 +747,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                 // Longueur visible du faisceau (réglage de la lyre) : la diffusion s'arrête là (fondu sur le dernier
                 // quart) ; la tache de lumière au sol, elle, reste calculée sur toute la portée
                 float beamEnd = T12.y > 0.0 ? min(T12.y, L) : L;
-                float fadeStartB = beamEnd < L ? beamEnd * 0.75 : fadeStart;
+                float fadeStartB = beamEnd < L ? beamEnd * 0.35 : fadeStart;
                 if (beamEnd < L) {
                     float zEnd = apexDist + beamEnd;
                     if (abs(dv) > 1e-6) {
@@ -786,7 +808,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     if (pPlain && pCount == 0 && r2 < pPlainR2) {
                         gate = G.T0.rgb * (1.0 - 0.2 * r2);
                     } else {
-                        float blur = frostBlur + min(0.14, abs(log(zl + 0.5) - logFocus) * 0.035);
+                        float blur = frostBlur + focusBlur(zl, logFocus);
                         gate = prismImage(G, g, zl / zA, blur);
                         // Rayon qui traverse le faisceau de biais : 2e lecture au milieu du trajet (demi-couleurs, gobos, prisme)
                         vec3 P2 = ro + rd * (0.5 * (tin + tout));
@@ -804,7 +826,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                         blocked = segBlocked(vLens.xyz, sd, 1.0 - 0.03 / max(length(sd), 0.05), T8);
                     }
                     if (!blocked) {
-                        float fade = 1.0 - smoothstep(fadeStartB, beamEnd, zl);
+                        float fade = beamFade(zl, fadeStartB, beamEnd);
                         float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                         sum = gate * (irr0 * I * fade * hazeFromNoise(hazeNoise(P, true)) * phase(cosT));
                     }
@@ -836,7 +858,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                         // Cœur d'un faisceau ouvert sans prisme : résultat exact sans calcul
                         gate = G.T0.rgb * (1.0 - 0.2 * r2);
                     } else {
-                        float blur = frostBlur + min(0.14, abs(log(zl + 0.5) - logFocus) * 0.035);
+                        float blur = frostBlur + focusBlur(zl, logFocus);
                         gate = prismImage(G, g, zl / zA, blur);
                         // Entre les facettes (ou hors de l'iris) : ni fumée ni ombre à calculer
                         if (gate.r + gate.g + gate.b < 1e-4) continue;
@@ -857,7 +879,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                         if (lastBlocked) continue;
                     }
                     float E = irr0 / (zA * zA);
-                    float fade = 1.0 - smoothstep(fadeStartB, beamEnd, zl);
+                    float fade = beamFade(zl, fadeStartB, beamEnd);
                     float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                     // Dans le faisceau : bruit relu un échantillon sur deux (volutes de ~13 m : même valeur)
                     // Loin de la caméra (> 25 m) : une seule échelle de fumée (le détail fin ne se voit plus)
@@ -882,7 +904,7 @@ export function createVolumeMaterial(paramsTexture, goboTexture, noiseTexture, {
                     vec3 rad = lp - W * zA;
                     vec2 g = vec2(dot(rad, R), dot(rad, U)) / (zA * tanHalf);
                     float zl = max(zA - apexDist, 0.0);
-                    float blur = frostBlur + min(0.14, abs(log((zl + 0.5) / focusDist)) * 0.035);
+                    float blur = frostBlur + focusBlur(zl, logFocus);
                     vec3 n = normalize(nrm);
                     if (dot(n, rd) > 0.0) n = -n;
                     float ndl = max(0.0, dot(n, -normalize(lp)));

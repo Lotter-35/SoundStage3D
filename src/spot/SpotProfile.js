@@ -230,10 +230,11 @@ const CH = {
         dec: (v, out) => { out.zoom = 2 + (v / 255) * 46; },
         enc: p => round(((p.zoom - 2) / 46) * 255),
     },
+    // Canal gardé (adresses des canaux suivants inchangées) mais ignoré : mise au point fixe, nette au loin
     focus: {
-        name: 'Focus',
-        dec: (v, out) => { out.focus = (v / 255) * 100; },
-        enc: p => round((p.focus / 100) * 255),
+        name: 'Focus (ignoré)',
+        dec: () => {},
+        enc: () => 0,
     },
     control: {
         name: 'Contrôle / Reset',

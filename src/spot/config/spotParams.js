@@ -75,7 +75,7 @@ export const SPOT_FOLDERS = [
     { id: 'gobo',    title: '🌀 Gobos & Animation' },
     { id: 'prism',   title: '🔷 Prisme' },
     { id: 'beam',    title: '🌫️ Faisceau (Frost / Iris)' },
-    { id: 'optics',  title: '🔍 Optique (Zoom / Focus)' },
+    { id: 'optics',  title: '🔍 Optique (Zoom)' },
     { id: 'blades',  title: '🔪 Couteaux (Framing)', parent: 'optics' },
     { id: 'render',  title: '✨ Rendu' },
 ];
@@ -135,7 +135,6 @@ export const SPOT_PARAMS_SCHEMA = {
 
     // ── 🔍 Optique ──
     zoom:         num(14, 2, 48, 0.1, 'Zoom (° d’ouverture)', 'optics'),
-    focus:        num(50, 0, 100, 0.5, 'Focus (net loin ↔ près)', 'optics'),
 
     // ── 🔪 Couteaux ──
     blade1:       num(0, 0, 100, 0.5, 'Couteau 1 – insertion (%)', 'blades'),

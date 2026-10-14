@@ -16,8 +16,10 @@
 
 import * as THREE from 'three';
 
-/** Lyres ombrées au plus (largeur de la texture d'informations) */
-export const SHADOW_MAX_SLOTS = 64;
+/** Lyres ombrées au plus (largeur de la texture d'informations). Au-delà, une lyre n'a pas de cubemap : son
+ *  faisceau et sa tache traversent les murs (64 était atteint par une grille de 64 lyres + 1). L'atlas ne
+ *  grandit qu'avec les lyres présentes (lignes de 8 blocs), dans la limite de la taille de texture du GPU. */
+export const SHADOW_MAX_SLOTS = 256;
 /** Blocs de 3 × 2 faces par ligne de l'atlas */
 export const SHADOW_BLOCKS_PER_ROW = 8;
 /** Distance écrite là où aucun objet du décor n'est vu (m) */

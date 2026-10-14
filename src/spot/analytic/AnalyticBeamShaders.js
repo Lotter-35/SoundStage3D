@@ -18,8 +18,10 @@
  *   - prisme + frost fort (≥ 60 %) : les facettes se fondent dans le flou → UN cône (l'enveloppe) et 4 points
  *     le long du rayon, l'image des facettes lue d'un coup à chaque point (1 lecture d'atlas par facette) ;
  *     ombre, diffusion et fondu une fois par point. Sans frost fort, le prisme net garde un cône par facette ;
- *   - image de la fenêtre lue dans l'atlas (gobos, couteaux, frost) au niveau de flou correspondant à l'écart
- *     entre les points dans la fenêtre : un rayon qui traverse le motif en voit la moyenne, sans copies ;
+ *   - image de la fenêtre lue dans l'atlas (gobos, couteaux, frost) avec un filtrage ANISOTROPE (matériel) :
+ *     chaque point moyenne le motif le long du trajet du rayon dans la fenêtre (jusqu'au point suivant), sans
+ *     le flouter en travers → les traits d'un gobo net restent nets sur toute la largeur du faisceau, sans
+ *     copies. Motif net (frost < 60 %) : 4 à 8 points selon la longueur du trajet dans le motif ;
  *   - ombre statique (cubemap de la lyre, sinon boîtes d'obstacles) : 2 lectures par facette (une par moitié
  *     du segment), réutilisées par les points de cette moitié ;
  *   - fumée uniforme, volutes lues une fois au milieu du segment.
@@ -156,6 +158,7 @@ export function createAnalyticBeamMaterial(uniforms) {
             }
             bool aPlain;
             float aTile, aFrostBlur, aIris, aOutR2, aPlainR2, aLogFocus;
+            vec2 aStep;   // trajet du rayon dans la fenêtre entre deux points (flou le long de ce trajet seulement)
 
             // Image de la fenêtre en g (unités de fenêtre), flou blur (frost compris)
             vec3 gateAt(vec2 g, float blur) {
@@ -163,7 +166,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                 if (r2 >= aOutR2) return vec3(0.0);
                 if (aPlain) {
                     if (r2 < aPlainR2) return G.T0.rgb * (1.0 - 0.2 * r2);
-                    float e = 0.012 + blur;
+                    float e = irisEdge(aIris, aFrostBlur, blur);
                     return G.T0.rgb * ((1.0 - smoothstep(aIris - e, aIris + e, sqrt(r2))) * (1.0 - 0.2 * min(r2, 1.0)));
                 }
                 if (aTile >= 0.0) {
@@ -171,10 +174,16 @@ export function createAnalyticBeamMaterial(uniforms) {
                     if (any(lessThan(uv, vec2(0.0))) || any(greaterThan(uv, vec2(1.0)))) return vec3(0.0);
                     vec2 cell = vec2(mod(aTile, ${GATE_ATLAS_SIDE.toFixed(1)}), floor(aTile / ${GATE_ATLAS_SIDE.toFixed(1)}));
                     float texelG = ${(2 * GATE_ATLAS_R / GATE_ATLAS_TILE).toFixed(6)};
-                    float lod = clamp(log2(max(1.0, (blur - aFrostBlur) / texelG)), 0.0, 5.0);
-                    return textureLod(uGateAtlas, (cell + uv) / ${GATE_ATLAS_SIDE.toFixed(1)}, lod).rgb;
+                    // Empreinte : flou de mise au point en rond, étirée le long du trajet du rayon (jusqu'à 16 fois
+                    // par le filtrage anisotrope, au-delà le matériel monte d'un niveau de mipmap)
+                    float iso = clamp(blur - aFrostBlur, texelG, texelG * 64.0);
+                    float sl = length(aStep);
+                    vec2 ax = sl > iso ? aStep : vec2(iso, 0.0);
+                    vec2 ay = sl > iso ? vec2(-aStep.y, aStep.x) * (iso / sl) : vec2(0.0, iso);
+                    const float K = ${(0.5 / GATE_ATLAS_R / GATE_ATLAS_SIDE).toFixed(6)};
+                    return textureGrad(uGateAtlas, (cell + uv) / ${GATE_ATLAS_SIDE.toFixed(1)}, ax * K, ay * K).rgb;
                 }
-                return gateImage(G, g, blur);
+                return gateImage(G, g, blur + 0.5 * length(aStep));
             }
 
             // Intersection rayon ↔ cône oblique (apex A, axe W, centres des sections A + WV·z, tan k) bornée par
@@ -237,7 +246,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                 vec3 apexC = lens - W * apexDist;          // apex du faisceau central (repère de la fenêtre)
                 float sEnd = T11.w > 0.0 ? min(T11.w, L) : L;
                 float beamEnd = T12.y > 0.0 ? min(T12.y, sEnd) : sEnd;
-                float fadeStart = beamEnd < L ? beamEnd * 0.75 : L * 0.7;
+                float fadeStart = beamEnd < L ? beamEnd * 0.35 : L * 0.7;
                 float zS = apexDist + T11.z, zE = apexDist + beamEnd;
 
                 // Réglages optiques
@@ -246,9 +255,13 @@ export function createAnalyticBeamMaterial(uniforms) {
                 aTile = T12.x - 1.0;
                 aFrostBlur = T2.z * 0.42;
                 aIris = min(T2.y, 1.0);
-                float outR = aIris + 0.012 + aFrostBlur + 0.14;
+                // Bord flou maximal ; faisceau ouvert : celui de irisEdge (mise au point à l'échelle de l'iris). Le cône
+                // du rayon doit serrer le disque réel : avec 2 points sur une corde trop large, ils tombent hors de
+                // l'iris et un iris fermé paraît plus étroit que sa tache au sol
+                float edgeMax = 0.012 + aFrostBlur + (aPlain ? 0.14 * aIris : 0.14);
+                float outR = aIris + edgeMax;
                 aOutR2 = outR * outR;
-                float plainR = aIris - (0.012 + aFrostBlur + 0.14);
+                float plainR = aIris - edgeMax;
                 aPlainR2 = plainR > 0.0 ? plainR * plainR : -1.0;
                 aLogFocus = log(T2.w);
                 float tanO = tanHalf * (outR + 0.01);
@@ -260,10 +273,11 @@ export function createAnalyticBeamMaterial(uniforms) {
                 bool hasCube = SH.w > 0.5;
                 bool hasOcc = !hasCube && T8.x >= 0.0;
                 gSH = SH; gT8 = T8; gLens = lens; gSlot = shSlot; gHasCube = hasCube; gHasOcc = hasOcc;
-                // Faisceau ouvert, ou motif noyé dans un frost fort : profil lisse, 2 points suffisent ; motif net : 4 ;
-                // lyre dans laquelle est la caméra : 12 points réguliers, ombre à chaque point
+                // Faisceau ouvert, ou motif noyé dans un frost fort : profil lisse, 2 points suffisent ; motif net : 4 à 8
+                // (selon le trajet dans le motif, plus bas) ; lyre dans laquelle est la caméra : 12 points, ombre à chacun
                 bool inside = abs(float(row) - uInsideRow) < 0.5;
-                int NQ = inside ? NQ_INSIDE : (aPlain || aFrostBlur >= 0.25) ? 2 : 4;
+                bool sharpPat = !aPlain && aFrostBlur < 0.25;
+                int NQ = inside ? NQ_INSIDE : sharpPat ? 4 : 2;
 
                 // Prisme : faisceau central (poids T9.z, 1 sans prisme) + facettes (décalage v en unités de fenêtre)
                 int pCount = int(T9.x + 0.5);
@@ -290,18 +304,16 @@ export function createAnalyticBeamMaterial(uniforms) {
                         float zIn = max(zc0 + dz * tin, 1e-3), zOut = max(zc0 + dz * tout, 1e-3);
                         bool imp = abs(dz) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
                         float uIn = 1.0 / zIn, uOut = 1.0 / zOut;
-                        // Flou d'intégration : écart entre 2 points dans la fenêtre du faisceau central
+                        // Trajet du rayon dans la fenêtre du faisceau central : flou le long de ce trajet
                         vec3 Pa = ro + rd * tin, Pb = ro + rd * tout;
                         vec3 la = Pa - apexC, lb = Pb - apexC;
                         float za = max(dot(la, W), 1e-3), zb = max(dot(lb, W), 1e-3);
                         vec2 ga = vec2(dot(la - W * za, R), dot(la - W * za, U)) / (za * tanHalf);
                         vec2 gb = vec2(dot(lb - W * zb, R), dot(lb - W * zb, U)) / (zb * tanHalf);
-                        float sweep = length(gb - ga);
-                        float extraBlur = sweep < 8.0 ? sweep * 0.12 : 0.96;
                         vec3 acc = vec3(0.0);
                         bool has0 = false, has1 = false, lit0 = true, lit1 = true;
                         int NE = inside ? NQ_INSIDE : 4;
-                        if (inside) extraBlur *= 0.33;
+                        aStep = (gb - ga) / float(NE);
                         for (int s = 0; s < NQ_INSIDE; s++) {
                             if (s >= NE) break;
                             float x = inside ? (float(s) + 0.5) / float(NE) : GX[s];
@@ -314,7 +326,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                             float zl = max(dot(P - lens, W), 0.0);
                             float k = zl / zA;
                             vec2 g0 = vec2(dot(radv, R), dot(radv, U)) / (zA * tanHalf);
-                            float blur = aFrostBlur + min(0.14, abs(log(zl + 0.5) - aLogFocus) * 0.035) + extraBlur;
+                            float blur = aFrostBlur + focusBlur(zl, aLogFocus);
                             // Image de toutes les facettes en ce point (faisceau central + facettes décalées)
                             vec3 gate = mainW > 0.0 ? gateAt(g0, blur) * mainW : vec3(0.0);
                             vec2 fv = T10.xy;
@@ -337,7 +349,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                                 lit = lit1;
                             }
                             if (!lit) continue;
-                            float fade = 1.0 - smoothstep(fadeStart, beamEnd, zl);
+                            float fade = beamFade(zl, fadeStart, beamEnd);
                             float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                             float e = imp ? 1.0 : 1.0 / (zA * zA);
                             acc += gate * (wq * e * fade * phase(cosT));
@@ -374,23 +386,23 @@ export function createAnalyticBeamMaterial(uniforms) {
                     float zIn = max(zc0 + dz * tin, 1e-3), zOut = max(zc0 + dz * tout, 1e-3);
                     bool imp = abs(dz) > 0.05 && max(zIn, zOut) > 1.3 * min(zIn, zOut);
                     float uIn = 1.0 / zIn, uOut = 1.0 / zOut;
-                    // Flou d'intégration : écart entre 2 points dans la fenêtre (pas de copies nettes du motif)
+                    // Trajet du rayon dans la fenêtre : nombre de points (motif net) et flou le long du trajet
                     vec3 Pa = ro + rd * tin, Pb = ro + rd * tout;
                     vec3 la = Pa - apexC, lb = Pb - apexC;
                     float za = max(dot(la, W), 1e-3), zb = max(dot(lb, W), 1e-3);
                     vec2 ga = vec2(dot(la - W * za, R), dot(la - W * za, U)) / (za * tanHalf) - off * (max(dot(Pa - lens, W), 0.0) / za);
                     vec2 gb = vec2(dot(lb - W * zb, R), dot(lb - W * zb, U)) / (zb * tanHalf) - off * (max(dot(Pb - lens, W), 0.0) / zb);
-                    float sweep = length(gb - ga);
-                    float extraBlur = sweep < 8.0 ? sweep * 0.12 : 0.96;
-                    if (aPlain) extraBlur = 0.0;
+                    int N = NQ;
+                    if (sharpPat && !inside) N = int(clamp(ceil(length(gb - ga) * 4.0), 4.0, 8.0));
+                    bool reg = N > 4;   // points réguliers (milieux des N tranches)
+                    aStep = aPlain ? vec2(0.0) : (gb - ga) / float(N);
 
                     vec3 acc = vec3(0.0);
                     bool has0 = false, has1 = false, lit0 = true, lit1 = true;
-                    if (inside) extraBlur *= 0.33;
                     for (int s = 0; s < NQ_INSIDE; s++) {
-                        if (s >= NQ) break;
-                        float x = inside ? (float(s) + 0.5) / float(NQ) : NQ == 2 ? (s == 0 ? 0.2113249 : 0.7886751) : GX[s];
-                        float wq = inside ? 1.0 / float(NQ) : NQ == 2 ? 0.5 : GW[s];
+                        if (s >= N) break;
+                        float x = reg ? (float(s) + 0.5) / float(N) : N == 2 ? (s == 0 ? 0.2113249 : 0.7886751) : GX[s];
+                        float wq = reg ? 1.0 / float(N) : N == 2 ? 0.5 : GW[s];
                         float t = imp ? (1.0 / mix(uIn, uOut, x) - zc0) / dz : mix(tin, tout, x);
                         vec3 P = ro + rd * t;
                         vec3 lp = P - apexC;
@@ -398,7 +410,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                         vec3 radv = lp - W * zA;
                         float zl = max(dot(P - lens, W), 0.0);
                         vec2 g = vec2(dot(radv, R), dot(radv, U)) / (zA * tanHalf) - off * (zl / zA);
-                        float blur = aFrostBlur + min(0.14, abs(log(zl + 0.5) - aLogFocus) * 0.035) + extraBlur;
+                        float blur = aFrostBlur + focusBlur(zl, aLogFocus);
                         vec3 gate = gateAt(g, blur);
                         work += 1.0;
                         if (gate.r + gate.g + gate.b < 1e-5) continue;
@@ -407,7 +419,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                         if (inside) {
                             lit = litAt(P);
                             if (hasCube || hasOcc) work += 1.0;
-                        } else if (s < NQ / 2) {
+                        } else if (s < N / 2) {
                             if (!has0) { lit0 = litAt(P); has0 = true; if (hasCube || hasOcc) work += 1.0; }
                             lit = lit0;
                         } else {
@@ -415,7 +427,7 @@ export function createAnalyticBeamMaterial(uniforms) {
                             lit = lit1;
                         }
                         if (!lit) continue;
-                        float fade = 1.0 - smoothstep(fadeStart, beamEnd, zl);
+                        float fade = beamFade(zl, fadeStart, beamEnd);
                         float cosT = dot(lp, -rd) / max(1e-4, length(lp));
                         float e = imp ? 1.0 : 1.0 / (zA * zA);
                         acc += gate * (wq * e * fade * phase(cosT));

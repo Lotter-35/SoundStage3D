@@ -30,6 +30,7 @@ import { flushHousings } from './LaserPodHousing.js?v=3';
 import { DazzleEffect } from './effects/DazzleEffect.js';
 import { registerPlayerCollider } from './LaserSceneIntersector.js?v=9';
 import { setLaserDisplayRange } from './LaserShaders.js';
+import { setLaser2Haze, setLaser2Range, LASER2_HAZE_DEFAULT } from '../laser2/Laser2Shaders.js';
 import { nextBusyState, BUSY_RES_FACTOR, getDynamicResolutionFactor } from '../render/resolutionScale.js';
 
 // Layer 1 : Lasers uniquement (Bloom Laser + Aberration Chromatique Laser)
@@ -496,6 +497,7 @@ export const globalLaserPostParams = {
     fogEnabled:             false,
     fogDensity:             0.005,
     fogColor:               '#111122',
+    laserHaze:              LASER2_HAZE_DEFAULT, // fumée des lasers ILDA (m⁻¹) : visibilité, auréole, portée
     playerCollisionEnabled: true, // Interception laser par le corps 3D des joueurs (désactivable)
     laserRange:             300,  // Distance d'affichage des faisceaux (m, depuis l'émetteur) — réglage local
 };
@@ -608,6 +610,8 @@ export class LaserManager {
 
         // Anticrénelage, distance des lasers, échelle de rendu, netteté : réglés par le menu ⚙️ Options
         setLaserDisplayRange(globalLaserPostParams.laserRange);
+        setLaser2Range(globalLaserPostParams.laserRange);
+        setLaser2Haze(globalLaserPostParams.laserHaze);
 
         // Préalloué pour éviter new THREE.Color() à chaque frame dans render()
         this._origClearColor = new THREE.Color();
@@ -1475,6 +1479,10 @@ export class LaserManager {
                 break;
             case 'laserRange':
                 setLaserDisplayRange(value);
+                setLaser2Range(value);
+                break;
+            case 'laserHaze':
+                setLaser2Haze(value);
                 break;
             case 'playerCollisionEnabled':
                 globalLaserPostParams.playerCollisionEnabled = Boolean(value);

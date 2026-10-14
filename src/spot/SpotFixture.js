@@ -24,6 +24,8 @@ export const SPOT_BEAM_RANGE = 140;
 const FLUX_SCALE = 75;
 /** Zoom minimal réel : 0° = faisceau quasi parallèle (le flux reste réparti sur la section de la lentille) */
 const MIN_ZOOM_DEG = 0.25;
+/** Mise au point fixe (m), nette au loin : plus de réglage Focus (le canal DMX est ignoré) */
+const FOCUS_DIST = 60;
 const DEG = Math.PI / 180;
 const MAX_FACETS = 9;
 
@@ -93,7 +95,7 @@ export class SpotFixture {
         this.flux = 0;
         this.tanHalf = 0.12;
         this.tanLight = 0.2;
-        this.focusDist = 10;
+        this.focusDist = FOCUS_DIST;
         this.frost = 0;
         // Ombre statique : cubemap centrée sur le pivot de la tête (fixe en pan / tilt), emplacement dans l'atlas
         this.shadowOrigin = new THREE.Vector3();
@@ -228,7 +230,7 @@ export class SpotFixture {
         const tanCone = tanHalf * (m.iris + margin);
         this.tanHalf = tanHalf;
         this.frost = m.frost;
-        this.focusDist = 60 * Math.pow(3 / 60, m.focus);
+        this.focusDist = FOCUS_DIST;
         this.flux = m.intensity * p.beamIntensity * FLUX_SCALE * (1 - 0.3 * m.frost);
         this.lightFlux = m.intensity * p.lightOutput * (1 - 0.2 * m.frost);
 

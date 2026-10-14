@@ -17,6 +17,8 @@
 import * as THREE from 'three';
 import { Pass, FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
 import { createLightPoolMaterial } from './LightPoolShaders.js';
+import { SceneAlbedo } from './SceneAlbedo.js';
+import { SS_MAX_LIGHTS } from '../ssdepth/SSDepthLights.js';
 import { gpuPassTimer } from '../../render/GpuPassTimer.js';
 import { costDebug } from '../../render/costDebug.js';
 
@@ -30,8 +32,9 @@ export class LightPoolPass extends Pass {
      * @param {THREE.PerspectiveCamera} camera
      * @param {object} shadowUniforms uniformes partagés des ombres statiques
      * @param {object} [giUniforms] uniformes partagés de la grille de GI
+     * @param {THREE.Scene} [scene] scène : albédo réel des matériaux (sinon : classement par position)
      */
-    constructor(lights, batch, camera, shadowUniforms, giUniforms) {
+    constructor(lights, batch, camera, shadowUniforms, giUniforms, scene = null) {
         super();
         this.lights = lights;
         this.batch = batch;
@@ -63,6 +66,8 @@ export class LightPoolPass extends Pass {
             if (!['tLow', 'uLowScale', 'uSharp'].includes(k)) this.refineMaterial.uniforms[k] = this.material.uniforms[k];
         }
         this._refineQuad = new FullScreenQuad(this.refineMaterial);
+        /** Couleur des matériaux de la scène (un personnage orange reste orange sous une lyre blanche) */
+        this.albedo = scene ? new SceneAlbedo(scene, camera) : null;
         this.costProducer = true;   // vue « coût des lyres »
         this._out = { kind: 'pool', texture: null, scale: new THREE.Vector2(1, 1), div: 1, sharpness: 1.5 };
         this._hasOut = false;
@@ -92,6 +97,7 @@ export class LightPoolPass extends Pass {
         const w = Math.max(1, Math.ceil(width / div)), h = Math.max(1, Math.ceil(height / div));
         this.target.setSize(w, h);
         this.refineTarget.setSize(Math.max(1, Math.round(width)), Math.max(1, Math.round(height)));
+        if (this.albedo) this.albedo.setSize(width, height);
         this._out.scale.set(width / (div * w), height / (div * h));
         this._out.div = div;
     }
@@ -123,6 +129,11 @@ export class LightPoolPass extends Pass {
         u.uPoolsOn.value = pools ? 1 : 0;
         u.uGIGain.value = this.giGain;
         u.uDebugCost.value = costDebug.on ? 1 : 0;
+        if (this.albedo) {
+            this.albedo.render(renderer, this.lights._geo, Math.min(this.lights.count, SS_MAX_LIGHTS));
+            u.tAlbedo.value = this.albedo.texture;
+        }
+        u.uAlbedoOn.value = this.albedo ? 1 : 0;
 
         const timer = gpuPassTimer.enabled ? gpuPassTimer : null;
         const oldAutoClear = renderer.autoClear;
@@ -158,5 +169,6 @@ export class LightPoolPass extends Pass {
         this.refineTarget.dispose();
         this.refineMaterial.dispose();
         this._refineQuad.dispose();
+        if (this.albedo) this.albedo.dispose();
     }
 }
