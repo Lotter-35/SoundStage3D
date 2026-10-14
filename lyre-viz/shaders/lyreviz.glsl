@@ -746,7 +746,76 @@ vec3 ggx_spec(vec3 n, vec3 v, vec3 l, float rough, vec3 f0) {
 }
 @end
 
+// Sol en beton texture (Concrete031, ambientCG) : voir src/floor_texture.h.
+// La texture contient 4 x 4 dalles separees par des joints. Chaque dalle du sol prend une dalle de la
+// texture au hasard, tournee d'un quart de tour et retournee au hasard (128 variantes) : les joints
+// restent alignes et aucune repetition ne se voit de loin, pour une seule lecture par texture.
+// Necessite floor_tex, floor_smp et les uniformes floor_p, floor_q declares avant l'inclusion.
+@block floor_material
+// Meme calcul que floor_hash() dans src/floor_texture.h.
+uint floor_hash(ivec2 c) {
+    uint h = uint(c.x) * 0x8da6b343u ^ uint(c.y) * 0xd8163841u;
+    h ^= h >> 13u;
+    h *= 0x5bd1e995u;
+    h ^= h >> 15u;
+    return h;
+}
+
+// Bruit de valeur lisse (0..1) : cuvettes ou l'eau s'accumule.
+float floor_noise(vec2 p) {
+    vec2 i = floor(p);
+    vec2 f = p - i;
+    f = f * f * (3.0 - 2.0 * f);
+    ivec2 c = ivec2(i);
+    float a = float(floor_hash(c) & 65535u);
+    float b = float(floor_hash(c + ivec2(1, 0)) & 65535u);
+    float d = float(floor_hash(c + ivec2(0, 1)) & 65535u);
+    float e = float(floor_hash(c + ivec2(1, 1)) & 65535u);
+    return mix(mix(a, b, f.x), mix(d, e, f.x), f.y) * (1.0 / 65535.0);
+}
+
+// Materiau du sol au point P. fw, gx, gy : coordonnees en dalles (P.xz * floor_p.x) et leurs derivees
+// a l'ecran (calculees hors de tout branchement). Modifie N, albedo, rough. Une seule lecture de texture
+// (voir src/floor_texture.h) : le filtrage anisotrope multiplie le cout de chaque lecture.
+void floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo, inout float rough) {
+    vec2 cell = floor(fw);
+    vec2 q = fw - cell - 0.5;
+    uint h = floor_hash(ivec2(cell));
+    uint rot = h & 3u;
+    uint idx = (h >> 2u) & 15u;
+    float s = (rot & 2u) != 0u ? -1.0 : 1.0;
+    mat2 M = (rot & 1u) != 0u ? mat2(0.0, s, -s, 0.0) : mat2(s, 0.0, 0.0, s);
+    if ((h & 64u) != 0u) {
+        M = mat2(-1.0, 0.0, 0.0, 1.0) * M;
+    }
+    vec2 uv = (vec2(float(idx & 3u), float(idx >> 2u)) + M * q + 0.5) * 0.25;
+    // derivees continues (celles du sol, tournees) : pas de couture de mipmap aux joints
+    vec4 t = textureGrad(sampler2D(floor_tex, floor_smp), uv, (M * gx) * 0.25, (M * gy) * 0.25);
+
+    // normale (format DirectX : y vers les v croissants = +Z du monde), ramenee dans le repere du sol ;
+    // moyennee dans les mipmaps, elle raccourcit : z reconstruit plus grand = relief adouci au loin
+    vec2 nt = t.yz * 2.0 - 1.0;
+    vec2 nxz = transpose(M) * nt;
+    N = normalize(vec3(nxz.x, sqrt(max(1.0 - dot(nt, nt), 0.0)), nxz.y));
+    rough = max(t.w, 0.04);   // recentree sur le beton uni et elargie au loin (Toksvig), voir floor_texture.cpp
+    albedo = floor_q.rgb * (t.x * t.x);
+
+    // eau : sol humide (plus sombre, plus lisse), puis flaques dans les cuvettes et les joints (plus sombres)
+    float wet = floor_p.y;
+    if (wet > 0.0) {
+        float damp = clamp(wet * 2.5, 0.0, 1.0);
+        float hgt = floor_noise(fw * 0.12) * 0.55 + floor_noise(fw * 0.43 + 17.0) * 0.2 + clamp(t.x * floor_q.w, 0.0, 2.0) * 0.125;
+        float pud = smoothstep(0.0, 0.05, wet * 1.1 - 0.05 - hgt);
+        albedo *= mix(1.0, 0.55, damp) * mix(1.0, 0.85, pud);
+        rough = mix(rough, rough * 0.55, damp);
+        rough = mix(rough, 0.06, pud);
+        N = normalize(mix(N, vec3(0.0, 1.0, 0.0), pud));
+    }
+}
+@end
+
 @block scene_fs_body
+#extension GL_EXT_control_flow_attributes : require
 @include_block common
 layout(binding=2) uniform scene_fs_params {
     vec4 cam_pos;     // w : nombre de lumieres
@@ -758,10 +827,14 @@ layout(binding=2) uniform scene_fs_params {
     vec4 probe_min;   // w : indirect actif (0/1)
     vec4 probe_cell;
     vec4 probe_dims;
+    vec4 floor_p;     // sol texture : x : dalles par metre (4 / repetition), y : eau (0..1), w : actif
+    vec4 floor_q;     // rgb : couleur lineaire = R^2 * floor_q.rgb, w : 1 / R moyen
 };
 layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
 layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
 layout(binding=5) uniform texture2DArray gobo_tex;
+layout(binding=30) uniform texture2D floor_tex;
+layout(binding=4) uniform sampler floor_smp;
 layout(binding=15) uniform texture2D probe_a;
 layout(binding=16) uniform texture2D probe_b;
 layout(binding=17) uniform texture2D probe_c;
@@ -775,6 +848,7 @@ layout(binding=29) uniform texture2D pimg_tex;
 @include_block probe_sampling_full
 #define pimg_inv res.zw
 @include_block pattern_image
+@include_block floor_material
 
 in vec3 v_world;
 in vec3 v_normal;
@@ -801,7 +875,15 @@ void main() {
     float viewZ = dot(P - cam_pos.xyz, cam_fwd.xyz);
     vec3 albedo = v_albedo.rgb;
     float rough = clamp(v_albedo.a, 0.04, 1.0);
-    float metal = v_emissive.a;
+    float metal = max(v_emissive.a, 0.0);   // -1 : sol en beton texture (non metallique)
+    // sol texture : derivees calculees ici, hors de tout branchement
+    vec2 fw = P.xz * floor_p.x;
+    vec2 fgx = dFdx(fw);
+    vec2 fgy = dFdy(fw);
+    // vrai branchement : sinon le compilateur HLSL execute le materiau du sol sur tous les pixels
+    [[dont_flatten]] if (v_emissive.a < -0.5 && floor_p.w > 0.5) {
+        floor_material(fw, fgx, fgy, N, albedo, rough);
+    }
     vec3 diffColor = albedo * (1.0 - metal);
     vec3 f0 = mix(vec3(0.04), albedo, metal);
     float sigma = shade.x;

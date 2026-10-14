@@ -3,7 +3,7 @@
 Projet de test, séparé du simulateur web. Il sert à mesurer si un moteur natif C++ tient beaucoup de lyres (200 et plus) dans une fumée volumétrique réaliste. Les références visuelles sont Depence R4 et les vraies salles de concert.
 
 - Rendu natif sur chaque système : **Metal** sur Mac, **Direct3D 11** sur Windows, OpenGL 4.3 sur Linux.
-- Bibliothèques : [sokol](https://github.com/floooh/sokol) (fenêtre et accès à la carte graphique) et [Dear ImGui](https://github.com/ocornut/imgui) (panneau de contrôle).
+- Bibliothèques : [sokol](https://github.com/floooh/sokol) (fenêtre et accès à la carte graphique), [Dear ImGui](https://github.com/ocornut/imgui) (panneau de contrôle) et [stb_image](https://github.com/nothings/stb) (lecture des images de texture).
 - Elles sont copiées dans `external/` : rien à installer à part le compilateur.
 
 ## Compiler
@@ -57,6 +57,10 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `voldiv`, `temporal`, `history` | Résolution de la fumée, accumulation dans le temps. |
   | `gi`, `volumetrics`, `surfaces`, `specular`, `prepass`, `bloom`, `scale` | Options de l'onglet Rendu. |
   | `density`, `haze`, `smoke`, `detail` | Fumée : densité, brume, amas, volutes. |
+  | `floor` | Sol en béton texturé (1) ou béton uni (0). |
+  | `floortile` | Taille de répétition de la texture du sol, en mètres (8 par défaut). |
+  | `wet` | Eau au sol : 0 sec, 0,4 humide, 1 inondé. |
+  | `flooraniso` | Filtrage anisotrope de la texture du sol (1 à 16, 4 par défaut). |
 
 ### Banc d'essai
 
@@ -104,6 +108,7 @@ python tools\compare_bench.py bench\avant bench\apres --diff bench\ecarts
 ### Scène
 
 - Un hangar de 100 × 44 × 34 m, avec poteaux et poutres de toit.
+- Un sol en béton texturé (voir « Sol en béton » plus bas), avec un réglage d'eau au sol.
 - 4 lignes de trusses à 18 m de haut.
 - Une scène avec pont, mur LED éteint, stacks, régie et mannequins.
 - Des cubes de couleur dans la salle pour vérifier que chaque surface renvoie sa vraie couleur.
@@ -144,7 +149,7 @@ Chaque lyre a les canaux d'une vraie lyre :
 ### Lumière
 
 - **Éclairage direct.** Chaque surface reçoit l'image projetée (gobo × prisme × iris × frost) multipliée par sa couleur : un cube orange éclairé en blanc renvoie de l'orange.
-- **Reflets brillants.** Le sol en béton lisse reflète les taches de lumière.
+- **Reflets brillants.** Le sol en béton lisse reflète les taches de lumière. Le relief et la rugosité de la texture du sol modulent ces reflets ; l'eau au sol les rend plus nets.
 - **Rebonds de lumière.**
   - Chaque tache de lumière (sur le sol, les murs, le décor) renvoie sa couleur dans la pièce.
   - La lumière diffusée par la fumée éclaire aussi la salle.
@@ -193,6 +198,37 @@ C'est ce qui rend les gobos, les prismes et le frost presque gratuits dans la fu
 - La table existe en plusieurs niveaux de flou, pour la mise au point et le frost.
 - L'ancien calcul par échantillons reste disponible : décocher « calcul analytique » dans l'onglet Rendu.
 
+### Sol en béton
+
+Texture [Concrete031](https://ambientcg.com/view?id=Concrete031) d'ambientCG, en 2K : couleur, normales (format DirectX) et rugosité, dans `assets/Concrete031/`.
+
+- **Placement.** Le sol est un cube sans coordonnées de texture : la texture est posée en coordonnées monde (plan XZ). Elle contient 4 × 4 dalles séparées par des joints ; elle se répète tous les 8 m (dalles de 2 m ; réglable par `--set floortile=...`).
+- **Aucune répétition visible.** Chaque dalle du sol prend une dalle de la texture au hasard, tournée d'un quart de tour et retournée au hasard (128 variantes). Les joints restent alignés, et cela ne coûte aucune lecture de plus.
+- **Une seule lecture de texture par pixel.**
+  - Au chargement, `src/floor_texture.cpp` range tout dans une texture RGBA8 : racine de la luminance, normale x et y, rugosité.
+  - La teinte du béton varie de moins de 3 % : la couleur est la luminance multipliée par la teinte moyenne.
+  - Les mipmaps sont calculées au chargement, en lumière linéaire.
+- **Pas de moiré ni de scintillement en 4K.**
+  - Filtrage anisotrope (×4 : même image qu'en ×16, trois fois moins cher).
+  - Dans les mipmaps, la normale moyenne n'est pas ramenée à 1. Là où les normales divergent, la rugosité augmente d'autant (méthode de Toksvig) : au loin, le relief ne scintille pas et le reflet garde sa largeur réelle.
+- **Luminosité.** La texture est mise à l'échelle pour garder la luminance moyenne du béton uni (albédo 0,20). Sa rugosité est recentrée sur celle du béton uni (0,32).
+- **Éclairage.**
+  - La normale et la rugosité de la texture servent aux taches des lyres, aux gobos et aux reflets (`ggx_spec`), ainsi qu'à la lumière indirecte reçue.
+  - La passe des lyres douces lit la même normale, la même rugosité et la même couleur (sorties normale et matière de la passe des surfaces).
+  - Les rebonds de lumière (sondes) prennent la couleur du sol sous chaque tache : même mélange des dalles, calculé sur le CPU.
+- **Eau au sol** (onglet Rendu, `--set wet=...`).
+  - Jusqu'à 0,4 environ : le béton s'assombrit et devient plus lisse.
+  - Au-delà : des flaques se forment dans les cuvettes (bruit à grande échelle) et dans les joints, puis s'étendent jusqu'à couvrir le sol. Dans une flaque, le sol est lisse et plat.
+  - Les reflets des taches et des lentilles deviennent plus nets. Les faisceaux et les murs ne se reflètent pas encore (voir les limites).
+- **Non utilisée : l'occlusion ambiante.** Il faudrait une deuxième texture, donc doubler le coût du filtrage anisotrope.
+- **Coût mesuré** (GTX 1080, 4K, passe des surfaces) :
+  - par défaut : +0,2 ms ;
+  - zoom 45° + frost 0,6 : +0,2 à +0,3 ms ;
+  - gobo + prisme 8 sur toutes les lyres : +0,6 à +0,7 ms (les lectures du sol y concurrencent celles des gobos).
+- La case « Sol en béton texturé » de l'onglet Rendu revient au béton uni.
+
+**Source et licence.** Concrete031 par [ambientCG](https://ambientcg.com/view?id=Concrete031), licence [CC0 1.0](https://creativecommons.org/publicdomain/zero/1.0/) (domaine public). Les fichiers `Color.jpg`, `NormalDX.jpg` et `Roughness.jpg` sont ceux du paquet 2K-JPG, renommés et non modifiés.
+
 ### Qualité adaptative
 
 - Si une image dépasse la cadence visée (120 img/s par défaut), le facteur de qualité baisse un peu :
@@ -219,9 +255,12 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 | `src/renderer.cpp` | Ressources de la carte graphique et enchaînement des passes. |
 | `src/ui.cpp` | Panneau de contrôle. |
 | `src/gpu_profiler.cpp` | Temps GPU par passe, limiteur de latence et capture d'image (Direct3D 11). |
+| `src/floor_texture.cpp` | Chargement de la texture du sol (stb_image), mipmaps, couleur du sol pour les rebonds. |
+| `assets/Concrete031/` | Texture du sol (ambientCG, CC0). |
 | `shaders/lyreviz.glsl` | Tous les shaders (passes ci-dessus). |
 | `tools/compare_bench.py` | Compare deux résultats du banc d'essai (temps et images). |
 | `tools/perf_ab.ps1`, `tools/perf_report.py` | Compare deux versions en les lançant en alternance (voir `PERFORMANCE.md`). |
+| `tools/set_ab.ps1` | Compare deux jeux de réglages avec le même exécutable : coût d'une option seule. |
 | `PERFORMANCE.md` | Comment mesurer : procédure, valeurs de référence, pièges. À suivre pour toute nouvelle fonctionnalité. |
 
 ## Limites actuelles et prochaines étapes
@@ -239,6 +278,7 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
   - Le dernier cas (toutes les lyres avec gobo et prisme 8, faisceaux larges qui se superposent partout) reste au-dessus de 8,3 ms.
   - Ce qui coûte encore : le dessin des cônes (environ 25 millions de pixels de fumée à additionner), l'éclairage des surfaces par ces faisceaux, et les tables.
 - **Ombres :** pas encore d'ombres (les trusses et les objets ne cachent pas la lumière). Prévu en option, activable.
-- **Reflet des faisceaux :** les faisceaux ne se reflètent pas encore dans le sol brillant (seules les taches le font). Prévu.
+- **Reflet des faisceaux :** les faisceaux ne se reflètent pas encore dans le sol brillant (seules les taches le font). Prévu. Avec de l'eau au sol, ce serait le reflet le plus visible.
+- **Eau au sol :** sans reflet des faisceaux ni des murs, le sol mouillé est surtout plus sombre et plus lisse ; les flaques reflètent les lentilles et les taches.
 - **Gobos personnels :** pas encore de chargement de vos propres images de gobo.
 - **Art-Net / DMX :** pas de pilotage par une vraie console. Non prévu pour l'instant.

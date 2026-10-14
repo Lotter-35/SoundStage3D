@@ -21,6 +21,8 @@ param(
     [string[]]$Set = @('adaptive=0'),
     [string]$Name = 'ab'
 )
+# lance avec powershell -File, "a=1","b=2" arrive en une seule chaine "a=1,b=2" : on la decoupe
+$Set = @($Set | ForEach-Object { $_ -split ',' } | Where-Object { $_ })
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root
 if (Get-Process LyreViz -ErrorAction SilentlyContinue) {

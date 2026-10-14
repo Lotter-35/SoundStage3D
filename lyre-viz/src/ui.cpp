@@ -265,6 +265,12 @@ void render_ui() {
     ImGui::SliderFloat("Rebonds dans la fumee", &r.gi_fog, 0, 4);
     ImGui::Checkbox("Bloom (halo)", &r.bloom);
     ImGui::SliderFloat("Force du bloom", &r.bloom_strength, 0, 0.3f);
+    ImGui::Checkbox("Sol en beton texture", &r.floor_texture);
+    if (!app.floor.ok) {
+        ImGui::SameLine();
+        ImGui::TextDisabled("(texture absente)");
+    }
+    ImGui::SliderFloat("Eau au sol", &r.floor_wet, 0, 1, r.floor_wet <= 0.001f ? "sec" : "%.2f");
     ImGui::Checkbox("Afficher les lyres", &r.show_fixtures);
     ImGui::SliderFloat("Eclat des lentilles", &r.lens_glow, 0, 4);
     ImGui::SeparatorText("Image");

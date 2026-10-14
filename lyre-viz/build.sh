@@ -15,7 +15,7 @@ if [ "$MODE" = "debug" ]; then
 else
     OPT="-O2 -DNDEBUG"
 fi
-FLAGS="-std=c++17 $OPT -Isrc -Iexternal/sokol -Iexternal/imgui"
+FLAGS="-std=c++17 $OPT -Isrc -Iexternal/sokol -Iexternal/imgui -Iexternal/stb"
 
 case "$OS" in
     Darwin)
@@ -49,7 +49,7 @@ else
 fi
 OBJ=build/$MODE_DIR
 mkdir -p "$OBJ"
-SRCS="src/main.cpp src/scene.cpp src/fixtures.cpp src/gobos.cpp src/fog.cpp src/renderer.cpp src/ui.cpp src/gpu_profiler.cpp
+SRCS="src/main.cpp src/scene.cpp src/fixtures.cpp src/gobos.cpp src/fog.cpp src/renderer.cpp src/ui.cpp src/gpu_profiler.cpp src/floor_texture.cpp
       external/imgui/imgui.cpp external/imgui/imgui_draw.cpp external/imgui/imgui_tables.cpp external/imgui/imgui_widgets.cpp"
 
 echo "Compilation ($OS, $MODE, $CXX)..."

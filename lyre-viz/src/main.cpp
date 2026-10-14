@@ -242,6 +242,8 @@ void after_frame(int w, int h) {
 
 }  // namespace bench
 
+static const char* g_exe_path = "";   // pour trouver assets/ a cote de l'executable
+
 static float ground_height(vec3 p) {
     // la scene (cote -X) est surelevee
     if (p.x < -34.0f && std::fabs(p.z) < 16.0f) return 1.6f;
@@ -269,8 +271,9 @@ static void init() {
     app.scene.build();
     app.rig.build(app.scene);
     app.gobos.generate();
+    if (!app.floor.load(g_exe_path, 0.32f)) std::printf("Sol : texture non chargee (%s), beton uni\n", app.floor.error.c_str());
     app.fog.init(app.scene.bounds_min, app.scene.bounds_max);
-    app.renderer.init(app.scene, app.gobos, app.fog);
+    app.renderer.init(app.scene, app.gobos, app.fog, app.floor, app.rs.floor_aniso);
     gpuprof::init();
     gpuprof::enable_stats(g_stats);
     app.cam.update_basis();
@@ -471,6 +474,10 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "adaptive") r.adaptive = v != 0;
     else if (k == "fps") r.target_fps = v;
     else if (k == "scale") r.render_scale = v;
+    else if (k == "floor") r.floor_texture = v != 0;
+    else if (k == "floortile") r.floor_tile = v;
+    else if (k == "wet") r.floor_wet = v;
+    else if (k == "flooraniso") r.floor_aniso = (int)v;
     // fumee
     else if (k == "density") app.fog_settings.density = v;
     else if (k == "haze") app.fog_settings.haze = v;
@@ -481,6 +488,7 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
 }
 
 sapp_desc sokol_main(int argc, char* argv[]) {
+    if (argc > 0) g_exe_path = argv[0];
     for (int i = 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) g_quit_after_frames = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--novsync")) g_novsync = true;

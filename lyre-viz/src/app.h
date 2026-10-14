@@ -1,6 +1,7 @@
 // Etat global de l'application.
 #pragma once
 #include "fixtures.h"
+#include "floor_texture.h"
 #include "fog.h"
 #include "gobos.h"
 #include "renderer.h"
@@ -16,6 +17,7 @@ struct App {
     Scene scene;
     Rig rig;
     GoboAtlas gobos;
+    FloorTexture floor;
     FogSim fog;
     FogSettings fog_settings;
     RenderSettings rs;

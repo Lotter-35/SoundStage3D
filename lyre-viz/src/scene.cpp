@@ -89,7 +89,8 @@ void Scene::build() {
     const vec3 wall = {0.16f, 0.165f, 0.17f};
     const vec3 roof = {0.07f, 0.07f, 0.075f};
 
-    add_collider_box(*this, {0, -0.5f, 0}, {HX + 1, 0.5f, HZ + 1}, concrete, 0.32f);      // sol (beton lisse)
+    // sol (beton lisse) ; metal = -1 : le shader y pose la texture de beton (si elle est active)
+    add_collider_box(*this, {0, -0.5f, 0}, {HX + 1, 0.5f, HZ + 1}, concrete, 0.32f, -1.0f);
     add_collider_box(*this, {0, H + 0.5f, 0}, {HX + 1, 0.5f, HZ + 1}, roof, 0.9f);        // toit
     add_collider_box(*this, {-HX - 0.5f, H * 0.5f, 0}, {0.5f, H * 0.5f, HZ + 1}, wall, 0.8f);
     add_collider_box(*this, {HX + 0.5f, H * 0.5f, 0}, {0.5f, H * 0.5f, HZ + 1}, wall, 0.8f);

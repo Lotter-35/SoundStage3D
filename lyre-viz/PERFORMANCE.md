@@ -16,7 +16,11 @@ Une image doit donc tenir en **8,3 ms**. Toute nouvelle fonctionnalité doit êt
    - PSNR et part de pixels changés (`compare_bench.py`), sur une scène immobile (`--static`).
    - Puis regarder des **agrandissements** : brume, bords des faisceaux, gobos au sol, près des lentilles.
    - Une moyenne chiffrée peut cacher un défaut visible (la brume en taches est passée inaperçue dans les chiffres).
-5. **Une nouvelle fonctionnalité doit être activable** (case dans l'onglet Rendu, réglage `--set`). On peut alors mesurer son coût seul : `-Set "adaptive=0","nouvelle=0"` contre `"adaptive=0","nouvelle=1"` avec le même exécutable.
+5. **Une nouvelle fonctionnalité doit être activable** (case dans l'onglet Rendu, réglage `--set`). On peut alors mesurer son coût seul avec le même exécutable :
+   ```bat
+   powershell -ExecutionPolicy Bypass -File tools\set_ab.ps1 -SetA "adaptive=0","nouvelle=0" -SetB "adaptive=0","nouvelle=1" -Name essai
+   ```
+   - Avec `powershell -File`, une liste `"a=1","b=2"` arrive en une seule chaîne `a=1,b=2`. Les deux scripts la redécoupent sur les virgules. Avant cette correction, seul le premier réglage était appliqué, sans message d'erreur.
 6. **Aucune autre instance de LyreViz (ni jeu, ni vidéo) pendant les mesures.**
    - Elles partagent la carte graphique et faussent tout.
    - `perf_ab.ps1` prévient si une instance est ouverte.
@@ -88,7 +92,7 @@ powershell -ExecutionPolicy Bypass -File tools\perf_ab.ps1 -ExeA bench\ref\avant
 - **Durée d'une image** = moyenne, pas médiane : les images alternent souvent entre très courtes et très longues, et la médiane trompe.
 - **Changer une seule chose à la fois** et la mesurer. Plusieurs « optimisations » essayées se sont révélées plus lentes une fois mesurées en alternance (voir plus bas).
 
-## Valeurs de référence (14 octobre 2026, GTX 1080, 3840 × 2160)
+## Valeurs de référence (14 octobre 2026, avec le sol en béton texturé, GTX 1080, 3840 × 2160)
 
 Banc complet (`bench\reference`) :
 
@@ -99,12 +103,14 @@ Banc complet (`bench\reference`) :
 
 | Cas (200 lyres) | GPU | Images/s réelles |
 |---|---|---|
-| Défaut / public, scène, sous les trusses | 5,6 à 6,0 ms | 136 à 148 |
-| Gobo + prisme 8 + zoom 25° | 10,1 à 14,1 ms | 68 à 94 |
-| Zoom 45° + frost 0,6 | 7,2 à 7,7 ms | 97 à 116 |
-| Sans fumée volumétrique | 2,8 ms | 194 |
+| Défaut / public, scène, sous les trusses | 5,8 à 6,3 ms | 131 à 142 |
+| Gobo + prisme 8 + zoom 25° | 10,2 à 14,7 ms | 66 à 93 |
+| Zoom 45° + frost 0,6 | 7,4 à 8,1 ms | 97 à 119 |
+| Sans fumée volumétrique | 3,2 ms | 194 |
 
-- **Budget restant dans le cas par défaut : environ 2 ms** avant de descendre sous 120 images/s.
+- Mesuré pendant que le PC servait à autre chose (navigation, vidéo) : à remesurer au calme si un écart paraît anormal.
+- Avant le sol texturé (`bench\reference_avant_sol`) : 5,6 à 6,0 ms ; 10,1 à 14,1 ms ; 7,2 à 7,7 ms ; 2,8 ms.
+- **Budget restant dans le cas par défaut : environ 2 ms** (8,3 − 6,3 ms ; 2,4 ms avant le sol texturé) avant de descendre sous 120 images/s.
 - Une nouvelle fonctionnalité active par défaut doit tenir dans ce budget, ou se payer ailleurs.
 - Le cas gobo + prisme 8 sur toutes les lyres est déjà au-dessus du budget : ne pas l'alourdir.
 - Pour remettre ces valeurs à jour : `LyreViz.exe --bench --fullscreen --benchdir bench\reference`, rien d'autre d'ouvert.
@@ -116,7 +122,7 @@ Répartition du cas par défaut, vue public (GPU, médiane) :
 | Calcul : tri + sondes | 0,31 ms |
 | Calcul : tables fumée | 0,86 ms |
 | Pré-passe de profondeur | 0,12 ms |
-| Surfaces | 1,36 ms |
+| Surfaces (sol texturé compris) | 1,55 ms |
 | Fumée (faisceaux + lumière indirecte) | 1,7 ms |
 | Accumulation | 0,17 ms |
 | Composition | 0,39 ms |
@@ -126,6 +132,25 @@ Répartition du cas par défaut, vue public (GPU, médiane) :
 Coûts mesurés de fonctionnalités, à titre d'exemple :
 
 - **Faisceaux au diamètre de la lentille** (au lieu d'un point) : +0,7 ms dans le cas par défaut. Les faisceaux sont plus larges près des lyres et couvrent plus de pixels.
+- **Sol en béton texturé** (passe des surfaces, médianes, même exécutable, `floor=0` contre `floor=1`, en mouvement) :
+  - par défaut : +0,2 ms (vue sous les trusses : +0,05 ms) ;
+  - zoom 45° + frost 0,6 : +0,2 à +0,3 ms ;
+  - gobo + prisme 8 : +0,6 à +0,7 ms (vue sous les trusses : +0,2 ms).
+  - Le coût vient du filtrage anisotrope, pas du calcul. Il grandit avec le nombre de lectures de gobos de la boucle des lyres, qui partagent les unités de texture.
+
+### Sol texturé : ce qui a été mesuré
+
+| Version | Surfaces en plus (défaut / gobo + prisme / frost) |
+|---|---|
+| 2 textures RGBA8 (couleur + occlusion, normale + rugosité), anisotrope ×16 | +0,9 / +1,0 / +1,0 ms |
+| 2 textures, anisotrope ×4 | +0,5 / +0,6 / +0,45 ms |
+| 2 textures, trilinéaire (×1) | +0,1 / 0 / +0,1 ms, mais sol flou au loin |
+| **1 texture (luminance, normale, rugosité), anisotrope ×4 : gardée** | +0,3 / +0,57 / +0,22 ms (mesure rapide) |
+| 1 texture, anisotrope ×8 | +0,33 / +0,48 à 0,93 / +0,33 ms |
+| 1 texture, anisotrope ×2 | +0,13 / +0,38 / +0,12 ms, mais 8 % de détail en moins de près |
+
+- Image : ×4, ×8 et ×16 sont identiques à l'œil. Écart moyen ×4 contre ×8 : 0,07/255 (au plus 7/255).
+- Le matériau du sol est dans un vrai branchement (`[[dont_flatten]]`). Sans cela, le compilateur HLSL peut aplatir le test et lire la texture sur tous les pixels de tous les objets.
 
 ## Ce qui coûte cher (à garder en tête)
 
@@ -152,3 +177,4 @@ Coûts mesurés de fonctionnalités, à titre d'exemple :
 | Test de profondeur sur les cônes de fumée | −0,3 à −0,6 ms dans les cas lourds, +0,5 ms par défaut |
 | Tuiles de 16 px pour le tri des faisceaux (avant les cônes) | aucun gain |
 | Qualité adaptative descendant à 20 % | image trop dégradée : plancher remis à 80 % |
+| Sol texturé en 2 textures (occlusion ambiante comprise) | 2 fois plus de lectures anisotropes : +0,9 ms en ×16 ; occlusion abandonnée |

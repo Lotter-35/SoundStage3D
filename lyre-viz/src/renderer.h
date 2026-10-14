@@ -1,6 +1,7 @@
 // Moteur de rendu : ressources GPU et enchainement des passes (voir shaders/lyreviz.glsl).
 #pragma once
 #include "fixtures.h"
+#include "floor_texture.h"
 #include "fog.h"
 #include "gobos.h"
 #include "mathx.h"
@@ -47,6 +48,10 @@ struct RenderSettings {
     float beam_range = 110.0f;    // portee des faisceaux (m)
     float lens_glow = 1.0f;       // eclat des lentilles
     bool show_fixtures = true;
+    bool floor_texture = true;    // sol en beton texture (Concrete031) : couleur, relief, rugosite, occlusion
+    float floor_tile = 8.0f;      // taille de repetition de la texture du sol (m) : 4 x 4 dalles de 2 m
+    float floor_wet = 0.0f;       // eau au sol : 0 sec, 0,4 humide, 1 inonde (flaques)
+    int floor_aniso = 4;          // filtrage anisotrope du sol (1 a 16, fixe au lancement) : 4 = meme image que 16, 3 x moins cher
 };
 
 struct RenderStats {
@@ -65,7 +70,7 @@ struct RenderStats {
 
 class Renderer {
   public:
-    void init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fog);
+    void init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fog, const FloorTexture& floor, int floor_aniso);
     void shutdown();
     // Prepare et soumet toutes les passes. 'ui' est appele dans la passe finale (ImGui).
     void render(const Camera& cam, const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const FogSim& fog,
@@ -86,7 +91,7 @@ class Renderer {
     void destroy_target(Target& t);
     void resize(int iw, int ih, int vw, int vh);
     void build_lights(const Rig& rig, const RenderSettings& rs, const GoboAtlas& gobos);
-    void build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, float sigma_ext, float sigma_scat);
+    void build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const RenderSettings& rs, float sigma_ext, float sigma_scat);
     void build_fixture_instances(const Rig& rig, const RenderSettings& rs);
     void build_beam_tables(const struct Camera& cam, float pixel_angle);
     void assign_beam_tiers(const struct Camera& cam, float pixel_angle, bool tiers, bool soft, int vol_div);
@@ -149,6 +154,12 @@ class Renderer {
     sg_image gobo_img = {}, fog_img = {}, detail_img = {};
     sg_view gobo_view = {}, fog_view = {}, detail_view = {};
     sg_sampler gobo_smp = {}, point_smp = {}, lin_clamp = {}, lin_repeat = {};
+    // sol texture : luminance, normale, rugosite (avec mipmaps, filtrage anisotrope)
+    const FloorTexture* floor_tex = nullptr;
+    sg_image floor_img = {};
+    sg_view floor_view = {};
+    sg_sampler floor_smp = {};
+    float floor_scale = 1.0f;   // echelle de couleur : luminance moyenne du sol = celle du beton uni
 
     // cibles de rendu
     Target scene_color, scene_depth_lin, depth, vol_cur, vol_hist[2], combined;

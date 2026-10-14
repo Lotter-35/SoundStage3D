@@ -174,7 +174,7 @@ float max_facet_offset(int prism) {
 // --------------------------------------------------------------------------------------------
 //  Initialisation
 // --------------------------------------------------------------------------------------------
-void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fog) {
+void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fog, const FloorTexture& floor, int floor_aniso) {
     const sg_backend backend = sg_query_backend();
 
     // maillages
@@ -324,6 +324,36 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         d.label = "fog-detail";
         detail_img = sg_make_image(&d);
         detail_view = texture_view(detail_img);
+    }
+    {
+        // sol texture (sans fichiers : une image unie, le sol garde le beton uni)
+        floor_tex = floor.ok ? &floor : nullptr;
+        static const uint8_t flat[4] = {115, 128, 128, 82};
+        sg_image_desc d = {};
+        d.pixel_format = SG_PIXELFORMAT_RGBA8;
+        if (floor.ok) {
+            d.width = d.height = floor.size;
+            d.num_mipmaps = floor.num_mips;
+            for (int m = 0; m < floor.num_mips; m++) {
+                d.data.mip_levels[m].ptr = floor.mips[m].data();
+                d.data.mip_levels[m].size = floor.mips[m].size();
+            }
+        } else {
+            d.width = d.height = 1;
+            d.data.mip_levels[0].ptr = flat;
+            d.data.mip_levels[0].size = 4;
+        }
+        d.label = "floor";
+        floor_img = sg_make_image(&d);
+        floor_view = texture_view(floor_img);
+        // luminance moyenne = celle du beton uni (instance du sol, scene.cpp) : 0,2007
+        floor_scale = floor.ok ? 0.2007f / std::max(floor.mean_lum, 1e-3f) : 1.0f;
+        sg_sampler_desc s = {};
+        s.min_filter = s.mag_filter = s.mipmap_filter = SG_FILTER_LINEAR;
+        s.wrap_u = s.wrap_v = SG_WRAP_REPEAT;
+        s.max_anisotropy = (uint32_t)std::clamp(floor_aniso, 1, 16);   // sol vu en rasant : net au loin, sans moire
+        s.label = "floor-smp";
+        floor_smp = sg_make_sampler(&s);
     }
     {
         sg_sampler_desc s = {};
@@ -556,7 +586,13 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
         float spread = o.prism != PRISM_NONE ? 0.11f * o.prism_spread : 0.0f;
         const float tenv = Tf + spread * max_facet_offset(o.prism) + 0.01f;
         // le faisceau sort de toute la lentille : sommet du cone place derriere elle
-        const float d0 = std::min(std::max(rig.lens_diameter * 0.5f, 0.005f) / std::max(Tf * clampf(o.iris, 0.05f, 1.0f), 1e-3f), 15.0f);
+        const float lens_r = std::max(rig.lens_diameter * 0.5f, 0.005f);
+        float d0 = std::min(lens_r / std::max(Tf * clampf(o.iris, 0.05f, 1.0f), 1e-3f), 15.0f);
+        // prisme : toutes les facettes partent de ce meme sommet, decalees de spread par metre. Avec un
+        // faisceau serre, le sommet est loin derriere (10 m a 1,5 deg) et les facettes arrivaient a la
+        // lentille deja ecartees d'un metre : copies a cote de la lyre. On rapproche le sommet pour que
+        // l'enveloppe des facettes tienne dans la lentille : tous les rayons sortent de la lyre.
+        if (spread > 0.0f) d0 = std::min(d0, lens_r / std::max(tenv - 0.01f, 1e-3f));
         const vec3 apex = f.lens_pos - f.dir * d0;
         const float range = std::min(rs.beam_range + d0, cone_exit_distance(apex, f.dir, tenv, hall_min, hall_max) + 0.05f);
         sb_light_t& l = L[num_lights++];
@@ -811,8 +847,13 @@ void Renderer::build_beam_tables(const Camera& cam, float pixel_angle) {
     stats.table_rows = (int)btab_jobs.size();
 }
 
-void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, float sigma_ext, float sigma_scat) {
+void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const RenderSettings& rs, float sigma_ext, float sigma_scat) {
     (void)rig;
+    // sol texture : couleur lue sous la tache (meme melange des dalles que le shader), assombrie par l'eau
+    const bool tex_floor = floor_tex && rs.floor_texture;
+    const float damp = saturate(rs.floor_wet * 2.5f);
+    const float wet_factor = lerpf(1.0f, 0.55f, damp) * lerpf(1.0f, 0.85f, smoothstepf(0.15f, 1.0f, rs.floor_wet));
+    const float tile = std::max(rs.floor_tile, 0.25f);
     num_vpls = 0;
     sb_vpl_t* V = (sb_vpl_t*)vpl_data.data();
     const sb_light_t* L = (const sb_light_t*)light_data.data();
@@ -860,7 +901,9 @@ void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& g
             if (!scene.raycast(pos, d, 200.0f, h)) continue;
             if (k == 0) hit_center = h.t;
             sb_vpl_t& v = V[num_vpls++];
-            vec3 refl = flux * h.albedo * (std::exp(-sigma_ext * h.t) / (float)n);
+            vec3 alb = h.albedo;
+            if (tex_floor && h.normal.y > 0.5f && h.pos.y < 0.05f) alb = floor_tex->albedo_at(h.pos.x, h.pos.z, tile) * (floor_scale * wet_factor);
+            vec3 refl = flux * alb * (std::exp(-sigma_ext * h.t) / (float)n);
             set4(v.pos_radius, h.pos + h.normal * 0.1f, std::max(0.6f, h.t * Tf));
             set4(v.normal_type, h.normal, 0.0f);
             set4(v.flux, refl, 0.0f);
@@ -937,7 +980,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     assign_beam_tiers(cam, vol_pixel_angle, rs.volumetrics && rs.beam_tiers, rs.soft_lights && rs.surface_lights, div);
     const bool soft_pass = num_soft > 0;
     if (analytic) build_beam_tables(cam, vol_pixel_angle);
-    if (rs.gi) build_vpls(scene, rig, gobos, sigma_ext, sigma_scat);
+    if (rs.gi) build_vpls(scene, rig, gobos, rs, sigma_ext, sigma_scat);
     build_fixture_instances(rig, rs);
 
     gpuprof::frame_begin();
@@ -1129,6 +1172,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(fsp.probe_min, probe_min, rs.gi ? 1.0f : 0.0f);
         set4(fsp.probe_cell, probe_cell, 0);
         set4(fsp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
+        set4(fsp.floor_p, 4.0f / std::max(rs.floor_tile, 0.25f), saturate(rs.floor_wet), 0, (floor_tex && rs.floor_texture) ? 1.0f : 0.0f);
+        if (floor_tex) set4(fsp.floor_q, floor_tex->tint * floor_scale, 1.0f / std::max(std::sqrt(floor_tex->mean_lum), 0.01f));
         if (!rs.surface_lights) fsp.cam_pos[3] = 0;   // pas d'eclairage direct
         sg_apply_uniforms(UB_scene_vs_params, SG_RANGE_REF(vsp));
         sg_apply_uniforms(UB_scene_fs_params, SG_RANGE_REF(fsp));
@@ -1147,8 +1192,10 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             b.views[VIEW_gobo_tex] = gobo_view;
             b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
             b.views[VIEW_pimg_tex] = pimg_tex;
+            b.views[VIEW_floor_tex] = floor_view;
             b.samplers[SMP_gobo_smp] = gobo_smp;
             b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+            b.samplers[SMP_floor_smp] = floor_smp;
             sg_apply_bindings(&b);
             sg_draw(0, nidx, count);
         };
