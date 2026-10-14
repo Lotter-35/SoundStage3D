@@ -13,7 +13,7 @@ SHDC=tools/bin/sokol-shdc-$P
 if [ ! -x "$SHDC" ]; then
     mkdir -p tools/bin
     echo "Telechargement de sokol-shdc ($P)..."
-    curl -fL -o "$SHDC" "https://raw.githubusercontent.com/floooh/sokol-tools-bin/master/bin/$P/sokol-shdc"
+    curl -fL -o "$SHDC" "https://raw.githubusercontent.com/floooh/sokol-tools-bin/b975d56/bin/$P/sokol-shdc"
     chmod +x "$SHDC"
 fi
 "$SHDC" -i shaders/lyreviz.glsl -o src/shaders/lyreviz.glsl.h -l glsl430:hlsl5:metal_macos --ifdef

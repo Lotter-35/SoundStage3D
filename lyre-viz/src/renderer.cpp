@@ -1,4 +1,6 @@
 #include "renderer.h"
+#include "gpu_profiler.h"
+#include "sokol_time.h"
 #include "sokol_app.h"
 #include "sokol_glue.h"
 #include "shaders/lyreviz.glsl.h"
@@ -54,6 +56,24 @@ void make_cylinder(std::vector<Vertex>& v, std::vector<uint16_t>& idx, int seg) 
             idx.push_back((uint16_t)(center + 1 + i));
             idx.push_back((uint16_t)(center + 2 + i));
         }
+    }
+}
+
+// Cone d'un faisceau : sommet en 0, cercle de rayon 1 en z = 1, ferme par un disque.
+// Polygone a 24 cotes (le vertex shader l'agrandit pour qu'il contienne le vrai cone).
+void make_beam_cone(std::vector<float>& v, std::vector<uint16_t>& idx) {
+    const int N = 24;
+    v = {0, 0, 0};
+    for (int i = 0; i < N; i++) {
+        float a = 2 * PI * i / N;
+        v.insert(v.end(), {std::cos(a), std::sin(a), 1.0f});
+    }
+    v.insert(v.end(), {0, 0, 1});
+    const uint16_t cap = (uint16_t)(N + 1);
+    for (int i = 0; i < N; i++) {
+        uint16_t r0 = (uint16_t)(1 + i), r1 = (uint16_t)(1 + (i + 1) % N);
+        idx.insert(idx.end(), {0, r0, r1});      // cote
+        idx.insert(idx.end(), {cap, r1, r0});    // fond
     }
 }
 
@@ -119,6 +139,27 @@ sg_pipeline make_compute_pipeline(const sg_shader_desc* sd, const char* label) {
     return sg_make_pipeline(&p);
 }
 
+// Distance le long de l'axe a partir de laquelle tout le cone (sommet a, axe f, demi-angle de
+// tangente t) est sorti de la boite [mn, mx] (le hangar). Au-dela, le cone est entierement derriere
+// le sol, un mur ou le toit : il ne peut ni etre vu, ni eclairer une surface visible. Couper le
+// faisceau la ne change donc pas l'image, mais evite de trier et de tester un cone 5 fois trop long.
+float cone_exit_distance(vec3 a, vec3 f, float t, vec3 mn, vec3 mx) {
+    float h = 1e30f;
+    for (int axis = 0; axis < 3; axis++) {
+        for (int side = 0; side < 2; side++) {
+            // plan : s * x[axis] = c, interieur : s * x[axis] < c
+            const float s = side ? 1.0f : -1.0f;
+            const float c = side ? mx[axis] : -mn[axis];
+            const float nf = s * f[axis];
+            // point du disque le plus en arriere : n.f - t * |n x f|
+            const float rate = nf - t * std::sqrt(std::max(0.0f, 1.0f - nf * nf));
+            if (rate <= 1e-6f) continue;   // le cone ne sort jamais en entier par ce plan
+            h = std::min(h, std::max(0.0f, (c - s * a[axis]) / rate));
+        }
+    }
+    return h;
+}
+
 float max_facet_offset(int prism) {
     switch (prism) {
         case PRISM_9_GRID: return 1.15f;
@@ -149,6 +190,14 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     cyl_vb = make_buffer(v.data(), v.size() * sizeof(Vertex), false, "cyl-vb");
     cyl_ib = make_buffer(idx.data(), idx.size() * sizeof(uint16_t), true, "cyl-ib");
     cyl_indices = (int)idx.size();
+    {
+        std::vector<float> cv;
+        std::vector<uint16_t> ci;
+        make_beam_cone(cv, ci);
+        cone_vb = make_buffer(cv.data(), cv.size() * sizeof(float), false, "cone-vb");
+        cone_ib = make_buffer(ci.data(), ci.size() * sizeof(uint16_t), true, "cone-ib");
+        cone_indices = (int)ci.size();
+    }
 
     num_static_cubes = (int)scene.cubes.size();
     num_static_cyls = (int)scene.cylinders.size();
@@ -168,19 +217,70 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     // donnees des lumieres
     light_buf = make_storage(MAX_LIGHTS * sizeof(sb_light_t), true, "lights");
     cluster_buf = make_storage((size_t)CL_X * CL_Y * CL_Z * 256 * sizeof(uint32_t), false, "clusters");
-    tile_buf = make_storage((size_t)TILE_X * TILE_Y * 256 * sizeof(uint32_t), false, "tiles");
     vpl_buf = make_storage(MAX_VPLS * sizeof(sb_vpl_t), true, "vpls");
-    probe_buf = make_storage((size_t)PR_X * PR_Y * PR_Z * sizeof(sb_probe_t), false, "probes");
     light_view = storage_view(light_buf);
     cluster_view = storage_view(cluster_buf);
-    tile_view = storage_view(tile_buf);
     vpl_view = storage_view(vpl_buf);
-    probe_view = storage_view(probe_buf);
+    for (int i = 0; i < 3; i++) {
+        sg_image_desc d = {};
+        d.width = PR_X;
+        d.height = PR_Y * PR_Z;
+        d.pixel_format = SG_PIXELFORMAT_RGBA16F;
+        d.usage.storage_image = true;
+        d.label = "probes";
+        probe_img[i] = sg_make_image(&d);
+        sg_view_desc vd = {};
+        vd.storage_image.image = probe_img[i];
+        probe_store[i] = sg_make_view(&vd);
+        probe_tex[i] = texture_view(probe_img[i]);
+    }
     light_data.resize(MAX_LIGHTS * sizeof(sb_light_t));
+    btab_buf = make_storage(MAX_LIGHTS * sizeof(sb_btab_t), true, "beam-tables");
+    btab_view = storage_view(btab_buf);
+    btab_data.resize(MAX_LIGHTS * sizeof(sb_btab_t));
+    btab_job_buf = make_storage(MAX_BTAB_JOBS * sizeof(uint32_t), true, "beam-table-jobs");
+    beam_list_buf = make_storage(MAX_LIGHTS * sizeof(uint32_t), true, "beam-list");
+    pimg_desc_buf = make_storage(MAX_LIGHTS * 4 * sizeof(float), true, "pattern-image-desc");
+    pimg_list_buf = make_storage(MAX_LIGHTS * sizeof(uint32_t), true, "pattern-image-list");
+    pimg_desc_view = storage_view(pimg_desc_buf);
+    pimg_list_view = storage_view(pimg_list_buf);
+    pimg_desc.assign(MAX_LIGHTS * 4, 0.0f);
+    {
+        sg_image_desc d = {};
+        d.width = PIMG_ATLAS_W;
+        d.height = PIMG_ATLAS_H;
+        d.pixel_format = SG_PIXELFORMAT_R32F;
+        d.usage.storage_image = true;
+        d.label = "pattern-images";
+        pimg_img = sg_make_image(&d);
+        sg_view_desc vd = {};
+        vd.storage_image.image = pimg_img;
+        pimg_store = sg_make_view(&vd);
+        pimg_tex = texture_view(pimg_img);
+    }
+    beam_list_view = storage_view(beam_list_buf);
+    beam_order.reserve(MAX_LIGHTS);
+    btab_job_view = storage_view(btab_job_buf);
+    btab_jobs.reserve(MAX_BTAB_JOBS);
+    {
+        sg_image_desc d = {};
+        d.width = BTAB_W;
+        d.height = BTAB_H;
+        d.pixel_format = SG_PIXELFORMAT_R32F;
+        d.usage.storage_image = true;
+        d.label = "beam-table-atlas";
+        btab_img = sg_make_image(&d);
+        sg_view_desc vd = {};
+        vd.storage_image.image = btab_img;
+        btab_store = sg_make_view(&vd);
+        btab_tex = texture_view(btab_img);
+    }
     vpl_data.resize(MAX_VPLS * sizeof(sb_vpl_t));
     gobo_transmission = gobos.transmission;
 
     // grille de sondes (lumiere indirecte) dans le hangar
+    hall_min = scene.bounds_min;
+    hall_max = scene.bounds_max;
     probe_min = scene.bounds_min + vec3(0.5f, 0.3f, 0.5f);
     vec3 pmax = scene.bounds_max - vec3(0.5f, 0.5f, 0.5f);
     probe_cell = {(pmax.x - probe_min.x) / (PR_X - 1), (pmax.y - probe_min.y) / (PR_Y - 1), (pmax.z - probe_min.z) / (PR_Z - 1)};
@@ -250,11 +350,13 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
 
     // pipelines
     pip_cull_clusters = make_compute_pipeline(cull_clusters_shader_desc(backend), "cull-clusters");
-    pip_cull_tiles = make_compute_pipeline(cull_tiles_shader_desc(backend), "cull-tiles");
     pip_probes = make_compute_pipeline(probes_shader_desc(backend), "probes");
-    {
+    pip_beam_tables = make_compute_pipeline(beam_tables_shader_desc(backend), "beam-tables");
+    pip_pattern_images = make_compute_pipeline(pattern_images_shader_desc(backend), "pattern-images");
+    for (int pass = 0; pass < 2; pass++) {
+        // pass 0 : pre-passe de profondeur ; pass 1 : surfaces eclairees
         sg_pipeline_desc p = {};
-        p.shader = sg_make_shader(scene_shader_desc(backend));
+        p.shader = sg_make_shader(pass == 0 ? depth_only_shader_desc(backend) : scene_shader_desc(backend));
         p.layout.buffers[0].stride = sizeof(Vertex);
         p.layout.buffers[1].stride = sizeof(Instance);
         p.layout.buffers[1].step_func = SG_VERTEXSTEP_PER_INSTANCE;
@@ -268,16 +370,77 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         p.index_type = SG_INDEXTYPE_UINT16;
         p.cull_mode = SG_CULLMODE_NONE;
         p.depth.pixel_format = SG_PIXELFORMAT_DEPTH;
-        p.depth.compare = SG_COMPAREFUNC_GREATER;   // Z inverse
-        p.depth.write_enabled = true;
+        p.sample_count = 1;
+        if (pass == 0) {
+            p.depth.compare = SG_COMPAREFUNC_GREATER;   // Z inverse
+            p.depth.write_enabled = true;
+            p.color_count = 0;
+            p.label = "depth-prepass";
+            pip_depth = sg_make_pipeline(&p);
+        } else {
+            p.color_count = 2;
+            p.colors[0].pixel_format = SG_PIXELFORMAT_RGBA16F;
+            p.colors[1].pixel_format = SG_PIXELFORMAT_R32F;
+            p.label = "scene";
+            p.depth.compare = SG_COMPAREFUNC_GREATER;
+            p.depth.write_enabled = true;
+            pip_scene = sg_make_pipeline(&p);
+            // apres la pre-passe : meme profondeur exactement (meme vertex shader), pas d'ecriture
+            p.depth.compare = SG_COMPAREFUNC_GREATER_EQUAL;
+            p.depth.write_enabled = false;
+            p.label = "scene-after-prepass";
+            pip_scene_eq = sg_make_pipeline(&p);
+            // variantes qui ecrivent aussi normale et matiere (passe des lyres douces)
+            p.shader = sg_make_shader(scene_gb_shader_desc(backend));
+            p.color_count = 4;
+            p.colors[2].pixel_format = SG_PIXELFORMAT_RGBA16F;
+            p.colors[3].pixel_format = SG_PIXELFORMAT_RGBA8;
+            p.label = "scene-gb-after-prepass";
+            pip_scene_eq_gb = sg_make_pipeline(&p);
+            p.depth.compare = SG_COMPAREFUNC_GREATER;
+            p.depth.write_enabled = true;
+            p.label = "scene-gb";
+            pip_scene_gb = sg_make_pipeline(&p);
+        }
+    }
+    pip_vol_ambient = make_fullscreen_pipeline(vol_ambient_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "vol-ambient");
+    {
+        sg_pipeline_desc p = {};
+        p.shader = sg_make_shader(soft_light_shader_desc(backend));
         p.color_count = 2;
         p.colors[0].pixel_format = SG_PIXELFORMAT_RGBA16F;
-        p.colors[1].pixel_format = SG_PIXELFORMAT_R32F;
+        p.colors[1].pixel_format = SG_PIXELFORMAT_RGBA16F;
+        p.depth.pixel_format = SG_PIXELFORMAT_NONE;
         p.sample_count = 1;
-        p.label = "scene";
-        pip_scene = sg_make_pipeline(&p);
+        p.label = "soft-light";
+        pip_soft = sg_make_pipeline(&p);
     }
-    pip_volume = make_fullscreen_pipeline(volume_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "volume");
+    pip_vol_merge = make_fullscreen_pipeline(vol_merge_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, true, "vol-merge");
+    {
+        // faisceaux : cones en instances, faces arriere seulement, additionnes
+        sg_pipeline_desc p = {};
+        p.shader = sg_make_shader(beams_shader_desc(backend));
+        p.layout.attrs[ATTR_beams_cone_pos].format = SG_VERTEXFORMAT_FLOAT3;
+        p.index_type = SG_INDEXTYPE_UINT16;
+        // les triangles du cone tournent dans le sens des aiguilles d'une montre vus de l'exterieur :
+        // on garde les faces les plus eloignees (elles existent aussi quand la camera est dans le cone)
+        p.cull_mode = SG_CULLMODE_BACK;
+        p.face_winding = SG_FACEWINDING_CCW;
+        p.depth.pixel_format = SG_PIXELFORMAT_NONE;
+        // somme en demi-flottants : meme image qu'en 32 bits (mesure), melange deux fois plus rapide
+        p.colors[0].pixel_format = SG_PIXELFORMAT_RGBA16F;
+        p.colors[0].blend.enabled = true;
+        p.colors[0].blend.src_factor_rgb = SG_BLENDFACTOR_ONE;
+        p.colors[0].blend.dst_factor_rgb = SG_BLENDFACTOR_ONE;
+        p.colors[0].blend.src_factor_alpha = SG_BLENDFACTOR_ZERO;
+        p.colors[0].blend.dst_factor_alpha = SG_BLENDFACTOR_ONE;
+        p.sample_count = 1;
+        p.label = "beams";
+        pip_beams = sg_make_pipeline(&p);
+        p.shader = sg_make_shader(beams_an_shader_desc(backend));
+        p.label = "beams-analytic";
+        pip_beams_an = sg_make_pipeline(&p);
+    }
     pip_temporal = make_fullscreen_pipeline(temporal_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "temporal");
     pip_composite = make_fullscreen_pipeline(composite_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "composite");
     pip_bloom_down = make_fullscreen_pipeline(bloom_down_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "bloom-down");
@@ -331,6 +494,16 @@ void Renderer::resize(int w, int h, int volw, int volh) {
         make_target(scene_depth_lin, w, h, SG_PIXELFORMAT_R32F, "scene-depth-lin");
         make_target(depth, w, h, SG_PIXELFORMAT_DEPTH, "depth");
         make_target(combined, w, h, SG_PIXELFORMAT_RGBA16F, "combined");
+        destroy_target(scene_normal);
+        destroy_target(scene_albedo);
+        destroy_target(soft_diffuse);
+        destroy_target(soft_spec);
+        make_target(scene_normal, w, h, SG_PIXELFORMAT_RGBA16F, "scene-normal");
+        make_target(scene_albedo, w, h, SG_PIXELFORMAT_RGBA8, "scene-albedo");
+        soft_w = std::max(4, w / 4);
+        soft_h = std::max(4, h / 4);
+        make_target(soft_diffuse, soft_w, soft_h, SG_PIXELFORMAT_RGBA16F, "soft-diffuse");
+        make_target(soft_spec, soft_w, soft_h, SG_PIXELFORMAT_RGBA16F, "soft-spec");
         num_bloom = 0;
         int bw = w, bh = h;
         for (int i = 0; i < BLOOM_LEVELS; i++) {
@@ -346,6 +519,12 @@ void Renderer::resize(int w, int h, int volw, int volh) {
     destroy_target(vol_cur);
     destroy_target(vol_hist[0]);
     destroy_target(vol_hist[1]);
+    for (int i = 0; i < 2; i++) {
+        destroy_target(vol_tier[i]);
+        tier_w[i] = std::max(4, volw >> (i + 1));
+        tier_h[i] = std::max(4, volh >> (i + 1));
+        make_target(vol_tier[i], tier_w[i], tier_h[i], SG_PIXELFORMAT_RGBA16F, "vol-tier");
+    }
     make_target(vol_cur, volw, volh, SG_PIXELFORMAT_RGBA16F, "vol-cur");
     make_target(vol_hist[0], volw, volh, SG_PIXELFORMAT_RGBA16F, "vol-hist0");
     make_target(vol_hist[1], volw, volh, SG_PIXELFORMAT_RGBA16F, "vol-hist1");
@@ -375,16 +554,261 @@ void Renderer::build_lights(const Rig& rig, const RenderSettings& rs, const Gobo
         float Tf = T * (1.0f + frost * 1.2f);
         float gain = clampf((ref_tan / T) * (ref_tan / T), 0.02f, 40.0f) / ((1.0f + frost * 1.2f) * (1.0f + frost * 1.2f));
         float spread = o.prism != PRISM_NONE ? 0.11f * o.prism_spread : 0.0f;
+        const float tenv = Tf + spread * max_facet_offset(o.prism) + 0.01f;
+        // le faisceau sort de toute la lentille : sommet du cone place derriere elle
+        const float d0 = std::min(std::max(rig.lens_diameter * 0.5f, 0.005f) / std::max(Tf * clampf(o.iris, 0.05f, 1.0f), 1e-3f), 15.0f);
+        const vec3 apex = f.lens_pos - f.dir * d0;
+        const float range = std::min(rs.beam_range + d0, cone_exit_distance(apex, f.dir, tenv, hall_min, hall_max) + 0.05f);
         sb_light_t& l = L[num_lights++];
-        set4(l.pos_range, f.lens_pos, rs.beam_range);
-        set4(l.dir_tanenv, f.dir, Tf + spread * max_facet_offset(o.prism) + 0.01f);
+        set4(l.pos_range, apex, range);
+        set4(l.dir_tanenv, f.dir, tenv);
         set4(l.up_tanbeam, f.up, Tf);
         set4(l.color_gobo, f.emit * (base_power * gain), (float)std::clamp(o.gobo, 0, NUM_GOBOS - 1));
         set4(l.prism, (float)o.prism, spread, f.prism_rot, f.gobo_rot + o.gobo_angle * DEG);
-        set4(l.optics, frost, std::max(o.focus, 0.5f), clampf(o.iris, 0.05f, 1.0f), 0.12f);
+        set4(l.optics, frost, std::max(o.focus, 0.5f) + d0, clampf(o.iris, 0.05f, 1.0f), d0);
     }
     if (num_lights == 0) std::memset(L, 0, sizeof(sb_light_t));
     stats.lights = num_lights;
+    // Images projetees en cache : pour les lyres a prisme, l'image entiere (toutes les facettes) est
+    // calculee une fois par image, puis lue en 2 fois par les surfaces et les tables de la fumee,
+    // au lieu d'additionner 3 a 9 facettes a chaque lecture.
+    // L'image ne depend que des reglages de la lyre (pas de sa position) : les lyres reglees pareil
+    // (programmees ensemble, cas courant) partagent la meme image, calculee une seule fois.
+    pimg_list.clear();
+    const int per_row = PIMG_ATLAS_W / PIMG_W, max_img = per_row * (PIMG_ATLAS_H / PIMG_H);
+    struct Key {
+        float v[10];
+    };
+    std::vector<Key> keys;
+    for (int i = 0; i < num_lights; i++) {
+        float* d = &pimg_desc[i * 4];
+        d[0] = d[1] = d[2] = d[3] = 0;
+        const int prism = (int)(L[i].prism[0] + 0.5f);
+        if (prism == PRISM_NONE) continue;
+        const Key key = {{L[i].up_tanbeam[3], L[i].dir_tanenv[3], L[i].color_gobo[3], L[i].prism[0], L[i].prism[1], L[i].prism[2],
+                          L[i].prism[3], L[i].optics[0], L[i].optics[2], 0}};
+        int slot = -1;
+        for (size_t k = 0; k < keys.size() && slot < 0; k++)
+            if (std::memcmp(&keys[k], &key, sizeof(Key)) == 0) slot = (int)k;
+        if (slot >= 0) {
+            std::memcpy(d, &pimg_desc[pimg_list[slot] * 4], 4 * sizeof(float));
+            continue;
+        }
+        if ((int)pimg_list.size() >= max_img) continue;
+        slot = (int)pimg_list.size();
+        keys.push_back(key);
+        const float tenv = L[i].dir_tanenv[3], T = L[i].up_tanbeam[3];
+        // flou de la couche 0 : celui du frost, ou plus si l'image est moins fine que le gobo
+        const float lod0 = std::max(L[i].optics[0] * 5.0f, std::log2(std::max(tenv / std::max(T, 1e-5f), 1.0f)));
+        d[0] = (float)((slot % per_row) * PIMG_W);
+        d[1] = (float)((slot / per_row) * PIMG_H);
+        d[2] = lod0;
+        d[3] = 1.0f;
+        pimg_list.push_back((uint32_t)i);
+    }
+    stats.pattern_images = (int)pimg_list.size();
+}
+
+// Qualite adaptative (comme la resolution dynamique des jeux) : si une image prend plus que la
+// cadence visee, le facteur de qualite baisse un peu (plus de faisceaux en 1/2 et 1/4, tables plus
+// legeres, plus de lyres douces a 1/4 sur les surfaces) ; il remonte doucement quand il y a de la
+// marge. Dans une scene legere il reste a 1 : aucune difference.
+void Renderer::update_quality(const RenderSettings& rs) {
+    if (!rs.adaptive) {
+        quality = 1.0f;
+        stats.quality = quality;
+        return;
+    }
+    // temps GPU de la derniere image mesuree (Direct3D 11), sinon duree de la derniere image
+    float ms = 0;
+    if (gpuprof::available()) {
+        if (gpuprof::last_id() == quality_last_id) return;
+        quality_last_id = gpuprof::last_id();
+        // toutes les passes sauf la derniere : celle-ci dessine dans l'image de l'ecran et peut
+        // attendre que l'ecran la libere (presentation a 120 Hz) ; ce n'est pas du calcul
+        const std::vector<gpuprof::Section>& secs = gpuprof::last();
+        for (size_t i = 0; i + 1 < secs.size(); i++) ms += secs[i].ms;
+        ms += 0.3f;
+    } else {
+        static uint64_t lap = 0;
+        ms = (float)stm_ms(stm_laptime(&lap));
+    }
+    // moyenne glissante : un pic isole (autre programme sur la carte) ne fait pas baisser la qualite
+    quality_ms = quality_ms > 0 ? quality_ms * 0.85f + ms * 0.15f : ms;
+    const float target = 1000.0f / std::max(rs.target_fps, 10.0f) * 0.92f;   // marge pour le reste de l'image
+    if (quality_ms > target) quality *= std::max(0.94f, std::pow(target / quality_ms, 0.25f));
+    else if (quality_ms < target * 0.93f) quality *= 1.005f;
+    quality = clampf(quality, 0.8f, 1.0f);   // plancher eleve : la qualite adaptative lisse les pics, sans degrader l'image
+    stats.quality = quality;
+}
+
+// Niveau de resolution de chaque faisceau dans la fumee. Un faisceau dont l'image a l'ecran ne
+// contient pas de detail plus fin que quelques pixels (frost, bord doux, gobo flou) est calcule a
+// 1/2 ou 1/4 de la resolution de la fumee : 4 ou 16 fois moins de calcul, sans difference visible.
+void Renderer::assign_beam_tiers(const Camera& cam, float pixel_angle, bool tiers, bool soft, int vol_div) {
+    sb_light_t* L = (sb_light_t*)light_data.data();
+    num_soft = 0;
+    beam_tier.assign(num_lights, 0);
+    beam_px.assign(num_lights, 1e9f);
+    for (int i = 0; i < num_lights; i++) {
+        const sb_light_t& l = L[i];
+        const vec3 lp = {l.pos_range[0], l.pos_range[1], l.pos_range[2]};
+        const vec3 f = {l.dir_tanenv[0], l.dir_tanenv[1], l.dir_tanenv[2]};
+        const float h = l.pos_range[3], tenv = l.dir_tanenv[3], T = l.up_tanbeam[3];
+        // largeur a l'ecran au milieu du faisceau (et dedans : tout l'ecran)
+        const vec3 c = lp + f * (0.5f * h);
+        const float dc = length(c - cam.pos);
+        const float rad = 0.5f * h * tenv;
+        const bool inside = dc <= rad * 1.2f || dot(normalize(cam.pos - lp), f) > 1.0f / std::sqrt(1.0f + tenv * tenv);
+        const float width_px = inside ? 1e6f : 2.0f * rad / dc / pixel_angle;
+        beam_px[i] = width_px;
+        // plus petit detail de l'image, en fraction de la largeur d'une facette
+        const float frost = l.optics[0];
+        const float edge = 0.05f + 0.85f * frost;
+        const float detail = std::max(std::exp2(frost * 5.0f) / 64.0f, edge * 0.5f);
+        const float detail_px = width_px * (T / std::max(tenv, 1e-4f)) * detail;
+        // seuils abaisses par la qualite adaptative : plus de faisceaux calcules a basse resolution
+        if (tiers) beam_tier[i] = detail_px >= 12.0f * quality ? 2 : (detail_px >= 6.0f * quality ? 1 : 0);
+        // surfaces : la tache n'a pas de detail de moins de 16 pixels (plein ecran) -> passe a 1/4
+        if (soft && (frost >= 0.35f * quality || quality <= 0.4f) && detail_px * (float)vol_div >= 16.0f * quality) {
+            L[i].color_gobo[3] += 32.0f;   // SOFT_FLAG du shader
+            num_soft++;
+        }
+    }
+    stats.soft_lights = num_soft;
+    beam_order.clear();
+    for (int t = 0; t < 3; t++) {
+        tier_first[t] = (int)beam_order.size();
+        for (int i = 0; i < num_lights; i++)
+            if (beam_tier[i] == t) beam_order.push_back((uint32_t)i);
+        tier_num[t] = (int)beam_order.size() - tier_first[t];
+        stats.tier_count[t] = tier_num[t];
+    }
+}
+
+// Tables des faisceaux : repere epipolaire de chaque lyre (relatif a la camera), etendue angulaire,
+// resolution, et rangement de toutes les couches dans l'atlas (rangees de hauteur decroissante).
+void Renderer::build_beam_tables(const Camera& cam, float pixel_angle) {
+    const vec3 cam_pos = cam.pos;
+    sb_btab_t* B = (sb_btab_t*)btab_data.data();
+    const sb_light_t* L = (const sb_light_t*)light_data.data();
+    struct Rect {
+        int light, layer, w, h, x, y;
+    };
+    std::vector<Rect> rects;
+    // la resolution baisse si l'atlas est plein ; elle remonte doucement ensuite
+    float scale = std::min(std::sqrt(quality), btab_scale * 1.05f);
+    for (int attempt = 0; attempt < 12; attempt++) {
+        rects.clear();
+        double area = 0;
+        for (int i = 0; i < num_lights; i++) {
+            const sb_light_t& l = L[i];
+            const vec3 lp = {l.pos_range[0], l.pos_range[1], l.pos_range[2]};
+            const vec3 f = {l.dir_tanenv[0], l.dir_tanenv[1], l.dir_tanenv[2]};
+            const float tenv = l.dir_tanenv[3], T = l.up_tanbeam[3];
+            vec3 a = cam_pos - lp;
+            float dist = length(a);
+            a = dist > 1e-3f ? a / dist : f * -1.0f;
+            vec3 fp = f - a * dot(f, a);
+            if (length(fp) < 1e-5f) fp = std::fabs(a.y) < 0.9f ? cross(a, vec3(0, 1, 0)) : cross(a, vec3(1, 0, 0));
+            const vec3 e1 = normalize(fp), e2 = cross(a, e1);
+            const float psi_f = std::acos(clampf(dot(a, f), -1.0f, 1.0f));
+            const float alpha = std::atan(tenv) * 1.02f;
+            const bool full = psi_f <= alpha || psi_f >= PI - alpha;
+            const float psimin = psi_f <= alpha ? 0.0f : std::max(0.0f, psi_f - alpha);
+            const float psimax = std::min(PI, psi_f + alpha);
+            float phimax = PI;
+            if (!full) phimax = std::min(PI * 0.5f, std::asin(std::min(1.0f, std::sin(alpha) / std::max(std::sin(psi_f), 1e-6f))) * 1.02f);
+            // un texel de gobo (au flou de la couche 0) vu de la lyre ; pour une lyre a prisme, la table
+            // lit l'image projetee en cache : son texel est le detail le plus fin qui existe
+            float lod_base = l.optics[0] * 5.0f;
+            float texel = 2.0f * std::atan(T) / 256.0f * std::exp2(lod_base);
+            if (pimg_desc[i * 4 + 3] > 0.5f) {
+                lod_base = pimg_desc[i * 4 + 2];
+                texel = 2.0f * std::atan(tenv) / (float)PIMG_SIZE;
+            }
+            const float arc = full ? 2.0f * PI * std::sin(std::min(psimax, PI * 0.5f)) : 2.0f * phimax * std::sin(psi_f);
+            // Taille du faisceau a l'ecran (pixels de la fumee) : inutile d'avoir plus de lignes que de
+            // pixels en travers du faisceau, ni plus de colonnes que de pixels sur sa longueur.
+            float scr_w = 0, scr_l = 0;
+            {
+                const float h = l.pos_range[3];
+                vec3 d0 = normalize(lp - cam_pos);
+                bool inside = full;
+                for (int s = 1; s <= 4; s++) {
+                    const float ax = h * s / 4.0f;
+                    const vec3 c = lp + f * ax;
+                    const float dc = length(c - cam_pos);
+                    const float rad = ax * tenv;
+                    if (dc <= rad * 1.2f) inside = true;
+                    else scr_w = std::max(scr_w, 2.0f * rad / dc);
+                    scr_l = std::max(scr_l, std::acos(clampf(dot(d0, (c - cam_pos) / std::max(dc, 1e-4f)), -1.0f, 1.0f)));
+                }
+                if (inside) scr_w = scr_l = 1e9f;
+                // pixel du niveau de resolution du faisceau
+                const float pa = pixel_angle * (float)(1 << (i < (int)beam_tier.size() ? beam_tier[i] : 0));
+                scr_w /= pa;
+                scr_l /= pa;
+            }
+            const int C0 = std::clamp((int)std::ceil(std::min((psimax - psimin) / texel, scr_l + 16.0f) * scale) + 1, 8, 512);
+            const int R0 = std::clamp((int)std::ceil(std::min(arc / texel, scr_w + 16.0f) * scale) + 1, 8, 1024);
+            sb_btab_t& b = B[i];
+            set4(b.a_psimin, a, psimin);
+            set4(b.e1_psimax, e1, psimax);
+            set4(b.e2_phimin, e2, full ? -PI : -phimax);
+            int nl = 0;
+            for (int k = 0; k < BTAB_LAYERS; k++) {
+                if (k > 0 && lod_base + (k - 1) * BTAB_LOD_STEP >= 7.5f) break;   // le flou va jusqu'a 7.5
+                const float div = std::exp2(0.5f * BTAB_LOD_STEP * k);   // resolution / 2 par couche : le bord de l'iris reste net
+                const int w = std::max(4, (int)std::ceil(C0 / div)), h = std::max(4, (int)std::ceil(R0 / div));
+                rects.push_back({i, k, w, h, 0, 0});
+                area += (double)w * h;
+                nl++;
+            }
+            set4(b.info, full ? PI : phimax, lod_base, (float)nl, texel);
+        }
+        if (area > 0.9 * BTAB_W * BTAB_H) {
+            scale *= (float)std::sqrt(0.9 * BTAB_W * BTAB_H / area) * 0.98f;
+            continue;
+        }
+        // rangement : rangees de hauteur decroissante
+        std::vector<int> order(rects.size());
+        for (size_t k = 0; k < order.size(); k++) order[k] = (int)k;
+        std::sort(order.begin(), order.end(), [&](int x, int y) { return rects[x].h > rects[y].h; });
+        int x = 0, y = 0, shelf = 0;
+        bool ok = true;
+        for (int idx : order) {
+            Rect& r = rects[idx];
+            if (x + r.w > BTAB_W) {
+                y += shelf;
+                x = 0;
+                shelf = 0;
+            }
+            if (shelf == 0) shelf = r.h;
+            if (y + r.h > BTAB_H) {
+                ok = false;
+                break;
+            }
+            r.x = x;
+            r.y = y;
+            x += r.w;
+        }
+        if (ok) break;
+        scale *= 0.9f;
+    }
+    btab_scale = scale;
+    btab_jobs.clear();
+    stats.table_cells = 0;
+    for (const Rect& r : rects) stats.table_cells += (double)r.w * r.h;
+    stats.table_scale = scale;
+    for (const Rect& r : rects) {
+        float* lay = r.layer == 0 ? B[r.light].lay0 : r.layer == 1 ? B[r.light].lay1 : r.layer == 2 ? B[r.light].lay2
+                   : r.layer == 3 ? B[r.light].lay3 : B[r.light].lay4;
+        set4(lay, (float)r.x, (float)r.y, (float)r.h, (float)r.w);
+        for (int row = 0; row < r.h && (int)btab_jobs.size() < MAX_BTAB_JOBS; row++)
+            btab_jobs.push_back((uint32_t)r.light << 16 | (uint32_t)r.layer << 12 | (uint32_t)row);
+    }
+    stats.table_rows = (int)btab_jobs.size();
 }
 
 void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, float sigma_ext, float sigma_scat) {
@@ -394,13 +818,13 @@ void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& g
     const sb_light_t* L = (const sb_light_t*)light_data.data();
     for (int i = 0; i < num_lights && num_vpls < MAX_VPLS - 16; i++) {
         const sb_light_t& l = L[i];
-        vec3 pos = {l.pos_range[0], l.pos_range[1], l.pos_range[2]};
         vec3 dir = {l.dir_tanenv[0], l.dir_tanenv[1], l.dir_tanenv[2]};
+        vec3 pos = vec3(l.pos_range[0], l.pos_range[1], l.pos_range[2]) + dir * l.optics[3];   // centre de la lentille
         vec3 up = {l.up_tanbeam[0], l.up_tanbeam[1], l.up_tanbeam[2]};
         vec3 rt = cross(dir, up);
         vec3 col = {l.color_gobo[0], l.color_gobo[1], l.color_gobo[2]};
         float Tf = l.up_tanbeam[3];
-        int gobo = (int)l.color_gobo[3];
+        int gobo = (int)l.color_gobo[3] % 32;   // sans le marqueur "lyre douce"
         int prism = (int)(l.prism[0] + 0.5f);
         float spread = l.prism[1];
         float iris = l.optics[2];
@@ -476,7 +900,7 @@ void Renderer::build_fixture_instances(const Rig& rig, const RenderSettings& rs)
         float T = std::tan(clampf(f.out.zoom, 1.5f, 60.0f) * 0.5f * DEG);
         float gain = clampf((ref_tan / T) * (ref_tan / T), 0.02f, 40.0f);
         vec3 emissive = f.emit * (rs.lens_glow * (60.0f + 3.0f * gain) * rig.power);
-        dyn_cyls.push_back(make_instance(f.lens_pos, f.up * 0.13f, ta * 0.13f, f.dir * 0.012f, {0.02f, 0.02f, 0.02f}, 0.1f, emissive));
+        dyn_cyls.push_back(make_instance(f.lens_pos, f.up * (rig.lens_diameter * 0.5f), ta * (rig.lens_diameter * 0.5f), f.dir * 0.012f, {0.02f, 0.02f, 0.02f}, 0.1f, emissive));
     }
 }
 
@@ -486,6 +910,7 @@ void Renderer::build_fixture_instances(const Rig& rig, const RenderSettings& rs)
 void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const FogSim& fog,
                       const FogSettings& fs, const RenderSettings& rs, int width, int height, float time, void (*ui)()) {
     frame++;
+    update_quality(rs);
     const int w = std::max(16, (int)(width * clampf(rs.render_scale, 0.25f, 1.0f)));
     const int h = std::max(16, (int)(height * clampf(rs.render_scale, 0.25f, 1.0f)));
     const int div = std::clamp(rs.vol_div, 1, 4);
@@ -507,26 +932,56 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
 
     // donnees CPU -> GPU
     build_lights(rig, rs, gobos);
+    const bool analytic = rs.volumetrics && rs.analytic_beams && num_lights > 0;
+    const float vol_pixel_angle = 2.0f * std::tan(cam.fovy * 0.5f) / (float)std::max(8, h / div);
+    assign_beam_tiers(cam, vol_pixel_angle, rs.volumetrics && rs.beam_tiers, rs.soft_lights && rs.surface_lights, div);
+    const bool soft_pass = num_soft > 0;
+    if (analytic) build_beam_tables(cam, vol_pixel_angle);
     if (rs.gi) build_vpls(scene, rig, gobos, sigma_ext, sigma_scat);
     build_fixture_instances(rig, rs);
 
+    gpuprof::frame_begin();
+    gpuprof::mark("envois CPU -> GPU");
     sg_write_buffer_desc wb = {};
     wb.src.data = {light_data.data(), (size_t)std::max(1, num_lights) * sizeof(sb_light_t)};
     wb.dst.buffer = light_buf;
     sg_write_buffer_transient(&wb);
+    wb.src.data = {pimg_desc.data(), (size_t)std::max(1, num_lights) * 4 * sizeof(float)};
+    wb.dst.buffer = pimg_desc_buf;
+    sg_write_buffer_transient(&wb);
+    if (!pimg_list.empty()) {
+        wb.src.data = {pimg_list.data(), pimg_list.size() * sizeof(uint32_t)};
+        wb.dst.buffer = pimg_list_buf;
+        sg_write_buffer_transient(&wb);
+    }
+    if (rs.volumetrics && num_lights > 0) {
+        wb.src.data = {beam_order.data(), beam_order.size() * sizeof(uint32_t)};
+        wb.dst.buffer = beam_list_buf;
+        sg_write_buffer_transient(&wb);
+    }
+    if (analytic) {
+        wb.src.data = {btab_data.data(), (size_t)num_lights * sizeof(sb_btab_t)};
+        wb.dst.buffer = btab_buf;
+        sg_write_buffer_transient(&wb);
+        if (!btab_jobs.empty()) {
+            wb.src.data = {btab_jobs.data(), btab_jobs.size() * sizeof(uint32_t)};
+            wb.dst.buffer = btab_job_buf;
+            sg_write_buffer_transient(&wb);
+        }
+    }
     if (rs.gi) {
         wb.src.data = {vpl_data.data(), (size_t)std::max(1, num_vpls) * sizeof(sb_vpl_t)};
         wb.dst.buffer = vpl_buf;
         sg_write_buffer_transient(&wb);
     }
-    const int ndc = std::min((int)dyn_cubes.size(), MAX_DYN), ndy = std::min((int)dyn_cyls.size(), MAX_DYN);
-    if (ndc > 0) {
-        wb.src.data = {dyn_cubes.data(), (size_t)ndc * sizeof(Instance)};
+    const int ndc_up = std::min((int)dyn_cubes.size(), MAX_DYN), ndy_up = std::min((int)dyn_cyls.size(), MAX_DYN);
+    if (ndc_up > 0) {
+        wb.src.data = {dyn_cubes.data(), (size_t)ndc_up * sizeof(Instance)};
         wb.dst.buffer = dyn_cube_buf;
         sg_write_buffer_transient(&wb);
     }
-    if (ndy > 0) {
-        wb.src.data = {dyn_cyls.data(), (size_t)ndy * sizeof(Instance)};
+    if (ndy_up > 0) {
+        wb.src.data = {dyn_cyls.data(), (size_t)ndy_up * sizeof(Instance)};
         wb.dst.buffer = dyn_cyl_buf;
         sg_write_buffer_transient(&wb);
     }
@@ -544,13 +999,27 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     set4(cp.cam_up, cam.up, tanY);
     set4(cp.cam_fwd, cam.fwd, 0);
     set4(cp.grid, (float)CL_X, (float)CL_Y, (float)CL_Z, near_cluster);
-    set4(cp.grid2, far_cluster, (float)TILE_X, (float)TILE_Y, rs.beam_range);
+    set4(cp.grid2, far_cluster, 0, 0, 0);
+    gpuprof::mark(pimg_list.empty() ? "calcul : tri + sondes" : "calcul : images projetees");
     {
         sg_pass pass = {};
         pass.compute = true;
         pass.label = "compute";
         sg_begin_pass(&pass);
         sg_bindings b = {};
+        if (!pimg_list.empty()) {
+            sg_apply_pipeline(pip_pattern_images);
+            b.views[VIEW_lights_cs] = light_view;
+            b.views[VIEW_pimg_desc_cs] = pimg_desc_view;
+            b.views[VIEW_pimg_list_cs] = pimg_list_view;
+            b.views[VIEW_gobo_tex_ci] = gobo_view;
+            b.views[VIEW_pimg_w] = pimg_store;
+            b.samplers[SMP_gobo_smp_ci] = gobo_smp;
+            sg_apply_bindings(&b);
+            sg_dispatch(PIMG_W / 8, PIMG_H / 8, (int)pimg_list.size());
+            b = {};
+        }
+        if (!pimg_list.empty()) gpuprof::mark("calcul : tri + sondes");
         b.views[VIEW_lights_cs] = light_view;
         if (rs.surface_lights) {
             sg_apply_pipeline(pip_cull_clusters);
@@ -558,15 +1027,6 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             sg_apply_bindings(&b);
             sg_apply_uniforms(UB_cull_params, SG_RANGE_REF(cp));
             sg_dispatch((CL_X * CL_Y * CL_Z + 63) / 64, 1, 1);
-        }
-        if (rs.volumetrics) {
-            sg_apply_pipeline(pip_cull_tiles);
-            b = {};
-            b.views[VIEW_lights_cs] = light_view;
-            b.views[VIEW_tiles_rw] = tile_view;
-            sg_apply_bindings(&b);
-            sg_apply_uniforms(UB_cull_params, SG_RANGE_REF(cp));
-            sg_dispatch((TILE_X * TILE_Y + 63) / 64, 1, 1);
         }
         if (rs.gi) {
             probe_params_t pp = {};
@@ -576,37 +1036,95 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             sg_apply_pipeline(pip_probes);
             b = {};
             b.views[VIEW_vpls_ssbo] = vpl_view;
-            b.views[VIEW_probes_rw] = probe_view;
+            b.views[VIEW_probe_a_w] = probe_store[0];
+            b.views[VIEW_probe_b_w] = probe_store[1];
+            b.views[VIEW_probe_c_w] = probe_store[2];
             sg_apply_bindings(&b);
             sg_apply_uniforms(UB_probe_params, SG_RANGE_REF(pp));
             sg_dispatch((PR_X * PR_Y * PR_Z + 63) / 64, 1, 1);
+        }
+        if (analytic && !btab_jobs.empty()) {
+            gpuprof::mark("calcul : tables fumee");
+            sg_apply_pipeline(pip_beam_tables);
+            const int njobs = (int)btab_jobs.size();
+            const int gx = std::min(njobs, 16384), gy = (njobs + gx - 1) / gx;
+            table_params_t tp = {};
+            set4(tp.info, (float)njobs, (float)gx, 0, 0);
+            b = {};
+            b.views[VIEW_lights_cs] = light_view;
+            b.views[VIEW_btabs_cs] = btab_view;
+            b.views[VIEW_btab_jobs] = btab_job_view;
+            b.views[VIEW_pimg_desc_tb] = pimg_desc_view;
+            b.views[VIEW_pimg_tex_tb] = pimg_tex;
+            b.samplers[SMP_lin_clamp_tb] = lin_clamp;
+            b.views[VIEW_gobo_tex_cs] = gobo_view;
+            b.views[VIEW_table_w] = btab_store;
+            b.samplers[SMP_gobo_smp_cs] = gobo_smp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_table_params, SG_RANGE_REF(tp));
+            sg_dispatch(gx, gy, 1);
         }
         sg_end_pass();
     }
 
     // ---- 4 : geometrie --------------------------------------------------------------------
+    const int ndc = std::min((int)dyn_cubes.size(), MAX_DYN), ndy = std::min((int)dyn_cyls.size(), MAX_DYN);
+    scene_vs_params_t vsp;
+    std::memcpy(vsp.view_proj, view_proj.m, sizeof(vsp.view_proj));
+    if (rs.depth_prepass) {
+        gpuprof::mark("pre-passe profondeur");
+        sg_pass pass = {};
+        pass.attachments.depth_stencil = depth.att;
+        pass.action.depth.load_action = SG_LOADACTION_CLEAR;
+        pass.action.depth.store_action = SG_STOREACTION_STORE;
+        pass.action.depth.clear_value = 0.0f;
+        pass.label = "depth-prepass";
+        sg_begin_pass(&pass);
+        sg_apply_pipeline(pip_depth);
+        sg_apply_uniforms(UB_scene_vs_params, SG_RANGE_REF(vsp));
+        auto draw = [&](sg_buffer vb, sg_buffer ib, int nidx, sg_buffer inst, int count) {
+            if (count <= 0 || !inst.id) return;
+            sg_bindings b = {};
+            b.vertex_buffers[0] = vb;
+            b.vertex_buffers[1] = inst;
+            b.index_buffer = ib;
+            sg_apply_bindings(&b);
+            sg_draw(0, nidx, count);
+        };
+        draw(cube_vb, cube_ib, cube_indices, static_cubes, num_static_cubes);
+        draw(cyl_vb, cyl_ib, cyl_indices, static_cyls, num_static_cyls);
+        draw(cube_vb, cube_ib, cube_indices, dyn_cube_buf, ndc);
+        draw(cyl_vb, cyl_ib, cyl_indices, dyn_cyl_buf, ndy);
+        sg_end_pass();
+    }
+    gpuprof::mark("scene (surfaces)");
     {
         sg_pass pass = {};
         pass.attachments.colors[0] = scene_color.att;
         pass.attachments.colors[1] = scene_depth_lin.att;
+        if (soft_pass) {
+            pass.attachments.colors[2] = scene_normal.att;
+            pass.attachments.colors[3] = scene_albedo.att;
+            pass.action.colors[2].load_action = SG_LOADACTION_DONTCARE;
+            pass.action.colors[3].load_action = SG_LOADACTION_DONTCARE;
+        }
         pass.attachments.depth_stencil = depth.att;
         pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
         pass.action.colors[0].clear_value = {0, 0, 0, 1};
         pass.action.colors[1].load_action = SG_LOADACTION_CLEAR;
         pass.action.colors[1].clear_value = {1000.0f, 0, 0, 1};
-        pass.action.depth.load_action = SG_LOADACTION_CLEAR;
+        pass.action.depth.load_action = rs.depth_prepass ? SG_LOADACTION_LOAD : SG_LOADACTION_CLEAR;
         pass.action.depth.clear_value = 0.0f;
         pass.label = "scene";
         sg_begin_pass(&pass);
-        sg_apply_pipeline(pip_scene);
-        scene_vs_params_t vsp;
-        std::memcpy(vsp.view_proj, view_proj.m, sizeof(vsp.view_proj));
+        if (soft_pass) sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq_gb : pip_scene_gb);
+        else sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq : pip_scene);
         scene_fs_params_t fsp = {};
         set4(fsp.cam_pos, cam.pos, (float)num_lights);
         set4(fsp.cam_fwd, cam.fwd, 2.0f * tanY / (float)h);
         std::memcpy(fsp.grid, cp.grid, sizeof(fsp.grid));
         std::memcpy(fsp.grid2, cp.grid2, sizeof(fsp.grid2));
-        set4(fsp.res, (float)w, (float)h, 0, 0);
+        set4(fsp.res, (float)w, (float)h, 1.0f / PIMG_ATLAS_W, 1.0f / PIMG_ATLAS_H);
         set4(fsp.shade, sigma_ext, rs.gi_strength, rs.specular ? 1.0f : 0.0f, rs.ambient);
         set4(fsp.probe_min, probe_min, rs.gi ? 1.0f : 0.0f);
         set4(fsp.probe_cell, probe_cell, 0);
@@ -623,9 +1141,14 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             b.index_buffer = ib;
             b.views[VIEW_lights_ssbo] = light_view;
             b.views[VIEW_clusters_ro] = cluster_view;
-            b.views[VIEW_probes_ro] = probe_view;
+            b.views[VIEW_probe_a] = probe_tex[0];
+            b.views[VIEW_probe_b] = probe_tex[1];
+            b.views[VIEW_probe_c] = probe_tex[2];
             b.views[VIEW_gobo_tex] = gobo_view;
+            b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
+            b.views[VIEW_pimg_tex] = pimg_tex;
             b.samplers[SMP_gobo_smp] = gobo_smp;
+            b.samplers[SMP_lin_clamp_smp] = lin_clamp;
             sg_apply_bindings(&b);
             sg_draw(0, nidx, count);
         };
@@ -638,15 +1161,48 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     dyn_cubes.clear();
     dyn_cyls.clear();
 
+    // ---- 4b : lyres douces sur les surfaces (1/4 de la resolution) -------------------------
+    if (soft_pass) {
+        gpuprof::mark("lyres douces (1/4)");
+        sg_pass pass = {};
+        pass.attachments.colors[0] = soft_diffuse.att;
+        pass.attachments.colors[1] = soft_spec.att;
+        pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
+        pass.action.colors[1].load_action = SG_LOADACTION_DONTCARE;
+        pass.label = "soft-lights";
+        sg_begin_pass(&pass);
+        sg_apply_pipeline(pip_soft);
+        soft_params_t sp = {};
+        set4(sp.cam_pos, cam.pos, sigma_ext);
+        set4(sp.cam_right, cam.right, tanX);
+        set4(sp.cam_up, cam.up, tanY);
+        set4(sp.cam_fwd, cam.fwd, 2.0f * tanY / (float)h);
+        std::memcpy(sp.grid, cp.grid, sizeof(sp.grid));
+        std::memcpy(sp.grid2, cp.grid2, sizeof(sp.grid2));
+        set4(sp.res, (float)w, (float)h, (float)soft_w, (float)soft_h);
+        set4(sp.shade, 1.0f / PIMG_ATLAS_W, 1.0f / PIMG_ATLAS_H, rs.specular ? 1.0f : 0.0f, 0);
+        sg_bindings b = {};
+        b.views[VIEW_lights_ssbo] = light_view;
+        b.views[VIEW_clusters_ro] = cluster_view;
+        b.views[VIEW_gobo_tex] = gobo_view;
+        b.views[VIEW_depth_tex] = scene_depth_lin.tex;
+        b.views[VIEW_normal_tex] = scene_normal.tex;
+        b.views[VIEW_albedo_tex] = scene_albedo.tex;
+        b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
+        b.views[VIEW_pimg_tex] = pimg_tex;
+        b.samplers[SMP_gobo_smp] = gobo_smp;
+        b.samplers[SMP_point_smp] = point_smp;
+        b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+        sg_apply_bindings(&b);
+        sg_apply_uniforms(UB_soft_params, SG_RANGE_REF(sp));
+        sg_draw(0, 3, 1);
+        sg_end_pass();
+    }
+
     // ---- 5-6 : fumee ------------------------------------------------------------------------
     const int cur = hist_index, prev = hist_index ^ 1;
     if (rs.volumetrics) {
-        sg_pass pass = {};
-        pass.attachments.colors[0] = vol_cur.att;
-        pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
-        pass.label = "volume";
-        sg_begin_pass(&pass);
-        sg_apply_pipeline(pip_volume);
+        gpuprof::mark("fumee : faisceaux");
         vol_params_t vp = {};
         const float wa = fs.wind_angle * DEG;
         const float drift = fs.animate ? time : 0.0f;
@@ -661,28 +1217,109 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
              -std::sin(wa) * fs.wind_speed * drift / std::max(fs.detail_scale, 0.5f), rs.gi_fog * rs.gi_strength);
         set4(vp.fog_box_min, fog.origin, sigma_ext);
         set4(vp.fog_box_inv, 1.0f / fog.size.x, 1.0f / fog.size.y, 1.0f / fog.size.z, 0);
-        set4(vp.tiles, (float)TILE_X, (float)TILE_Y, (float)std::clamp(rs.vol_samples, 1, 32), 2.0f * tanY / (float)vh);
+        set4(vp.tiles, 1.0f / BTAB_W, 1.0f / BTAB_H, (float)std::clamp(rs.vol_samples, 1, 32) * (analytic ? std::max(quality, 0.5f) : 1.0f),
+             2.0f * tanY / (float)vh);
         set4(vp.probe_min, probe_min, rs.gi ? 1.0f : 0.0f);
         set4(vp.probe_cell, probe_cell, 0);
         set4(vp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
         sg_bindings b = {};
-        b.views[VIEW_lights_ssbo] = light_view;
-        b.views[VIEW_tiles_ro] = tile_view;
-        b.views[VIEW_probes_ro] = probe_view;
-        b.views[VIEW_gobo_tex] = gobo_view;
-        b.views[VIEW_depth_tex] = scene_depth_lin.tex;
-        b.views[VIEW_fog_tex] = fog_view;
-        b.views[VIEW_detail_tex] = detail_view;
-        b.samplers[SMP_gobo_smp] = gobo_smp;
-        b.samplers[SMP_point_smp] = point_smp;
-        b.samplers[SMP_lin_clamp_smp] = lin_clamp;
-        b.samplers[SMP_lin_repeat_smp] = lin_repeat;
-        sg_apply_bindings(&b);
-        sg_apply_uniforms(UB_vol_params, SG_RANGE_REF(vp));
-        sg_draw(0, 3, 1);
+
+        // faisceaux d'un niveau de resolution (cones en instances)
+        double frags = 0;
+        auto draw_beams = [&](int tier, int tw, int th) {
+            if (tier_num[tier] <= 0) return;
+            sg_apply_pipeline(analytic ? pip_beams_an : pip_beams);
+            beam_vs_params_t bvp = {};
+            std::memcpy(bvp.view_proj, view_proj.m, sizeof(bvp.view_proj));
+            set4(bvp.info, (float)tier_first[tier], 0, 0, 0);
+            vol_params_t tvp = vp;
+            set4(tvp.res, (float)tw, (float)th, (float)w, (float)h);
+            tvp.tiles[3] = 2.0f * tanY / (float)th;
+            sg_bindings bb = {};
+            bb.vertex_buffers[0] = cone_vb;
+            bb.index_buffer = cone_ib;
+            bb.views[VIEW_lights_vs] = light_view;
+            bb.views[VIEW_beam_list_vs] = beam_list_view;
+            bb.views[VIEW_lights_ssbo] = light_view;
+            if (analytic) {
+                bb.views[VIEW_btabs_ro] = btab_view;
+                bb.views[VIEW_table_tex] = btab_tex;
+            } else {
+                bb.views[VIEW_gobo_tex] = gobo_view;
+                bb.samplers[SMP_gobo_smp] = gobo_smp;
+            }
+            bb.views[VIEW_depth_tex] = scene_depth_lin.tex;
+            bb.views[VIEW_fog_tex] = fog_view;
+            bb.views[VIEW_detail_tex] = detail_view;
+            bb.samplers[SMP_point_smp] = point_smp;
+            bb.samplers[SMP_lin_clamp_smp] = lin_clamp;
+            bb.samplers[SMP_lin_repeat_smp] = lin_repeat;
+            sg_apply_bindings(&bb);
+            sg_apply_uniforms(UB_beam_vs_params, SG_RANGE_REF(bvp));
+            sg_apply_uniforms(UB_vol_params, SG_RANGE_REF(tvp));
+            sg_draw(0, cone_indices, tier_num[tier]);
+        };
+        gpuprof::stats_begin();
+        if (tier_num[1] > 0 || tier_num[2] > 0) gpuprof::mark("fumee : faisceaux 1/2 et 1/4");
+        const bool tier_used[3] = {true, tier_num[1] > 0, tier_num[2] > 0};
+        for (int t = 1; t <= 2; t++) {
+            sg_pass tp = {};
+            tp.attachments.colors[0] = vol_tier[t - 1].att;
+            tp.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+            tp.action.colors[0].clear_value = {0, 0, 0, 0};
+            tp.label = "volume-tier";
+            if (!tier_used[t]) continue;
+            sg_begin_pass(&tp);
+            draw_beams(t, tier_w[t - 1], tier_h[t - 1]);
+            sg_end_pass();
+        }
+
+        if (tier_used[1] || tier_used[2]) gpuprof::mark("fumee : faisceaux pleine res.");
+        sg_pass pass = {};
+        pass.attachments.colors[0] = vol_cur.att;
+        pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+        pass.action.colors[0].clear_value = {0, 0, 0, 1};
+        pass.label = "volume";
+        sg_begin_pass(&pass);
+        if (rs.gi) {
+            // fond : lumiere indirecte diffusee par la fumee (a la resolution de la fumee : plus bas,
+            // les volutes de la brume deviennent des taches)
+            sg_apply_pipeline(pip_vol_ambient);
+            b = {};
+            b.views[VIEW_probe_a] = probe_tex[0];
+            b.views[VIEW_depth_tex] = scene_depth_lin.tex;
+            b.views[VIEW_fog_tex] = fog_view;
+            b.views[VIEW_detail_tex] = detail_view;
+            b.samplers[SMP_point_smp] = point_smp;
+            b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+            b.samplers[SMP_lin_repeat_smp] = lin_repeat;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_vol_params, SG_RANGE_REF(vp));
+            sg_draw(0, 3, 1);
+        }
+        draw_beams(0, vw, vh);
+        gpuprof::stats_end();
+        (void)frags;
+        if (tier_used[1] || tier_used[2]) {
+            // ajout des faisceaux calcules a plus basse resolution
+            sg_apply_pipeline(pip_vol_merge);
+            merge_params_t mp = {};
+            set4(mp.res, (float)vw, (float)vh, (float)w, (float)h);
+            set4(mp.t1, (float)tier_w[0], (float)tier_h[0], tier_used[1] ? 1.0f : 0.0f, 0);
+            set4(mp.t2, (float)tier_w[1], (float)tier_h[1], tier_used[2] ? 1.0f : 0.0f, 0);
+            b = {};
+            b.views[VIEW_depth_tex] = scene_depth_lin.tex;
+            b.views[VIEW_vol_t1_tex] = vol_tier[0].tex;
+            b.views[VIEW_vol_t2_tex] = vol_tier[1].tex;
+            b.samplers[SMP_point_smp] = point_smp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_merge_params, SG_RANGE_REF(mp));
+            sg_draw(0, 3, 1);
+        }
         sg_end_pass();
 
         // accumulation
+        gpuprof::mark("fumee : accumulation");
         pass = {};
         pass.attachments.colors[0] = vol_hist[cur].att;
         pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
@@ -712,6 +1349,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     }
 
     // ---- 7 : composition --------------------------------------------------------------------
+    gpuprof::mark("composition");
     {
         sg_pass pass = {};
         pass.attachments.colors[0] = combined.att;
@@ -724,11 +1362,15 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(cpp.cam_up, cam.up, tanY);
         set4(cpp.cam_fwd, cam.fwd, rs.volumetrics ? sigma_ext : 0.0f);
         set4(cpp.res, (float)w, (float)h, (float)vw, (float)vh);
-        set4(cpp.opts, rs.volumetrics ? 1.0f : 0.0f, 0, 0, 0);
+        set4(cpp.opts, rs.volumetrics ? 1.0f : 0.0f, soft_pass ? 1.0f : 0.0f, (float)soft_w, (float)soft_h);
         sg_bindings b = {};
         b.views[VIEW_depth_tex] = scene_depth_lin.tex;
         b.views[VIEW_vol_hist_tex] = vol_hist[cur].tex;
         b.views[VIEW_scene_tex] = scene_color.tex;
+        b.views[VIEW_normal_tex] = scene_normal.tex;
+        b.views[VIEW_albedo_tex] = scene_albedo.tex;
+        b.views[VIEW_soft_diffuse_tex] = soft_diffuse.tex;
+        b.views[VIEW_soft_spec_tex] = soft_spec.tex;
         b.samplers[SMP_point_smp] = point_smp;
         sg_apply_bindings(&b);
         sg_apply_uniforms(UB_composite_params, SG_RANGE_REF(cpp));
@@ -740,6 +1382,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
 
     // ---- 8 : bloom --------------------------------------------------------------------------
     if (rs.bloom && num_bloom > 0) {
+        gpuprof::mark("bloom");
         for (int i = 0; i < num_bloom; i++) {
             sg_pass pass = {};
             pass.attachments.colors[0] = bloom[i].att;
@@ -778,6 +1421,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     }
 
     // ---- 9 : ecran ------------------------------------------------------------------------------
+    gpuprof::mark("image finale + interface");
     {
         sg_pass pass = {};
         pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
@@ -798,5 +1442,6 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         if (ui) ui();
         sg_end_pass();
     }
+    gpuprof::frame_end();
     sg_commit();
 }

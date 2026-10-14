@@ -1,5 +1,6 @@
 // Panneau de controle (Dear ImGui).
 #include "app.h"
+#include "gpu_profiler.h"
 #include "imgui.h"
 #include "sokol_gfx.h"
 #include <cstdio>
@@ -128,6 +129,7 @@ void rig_global_ui() {
     ImGui::SeparatorText("Toutes les lyres");
     ImGui::SliderFloat("Grand master", &rig.master, 0, 1);
     ImGui::SliderFloat("Puissance", &rig.power, 0.05f, 4.0f, "x %.2f");
+    ImGui::SliderFloat("Diametre de la lentille", &rig.lens_diameter, 0.02f, 0.5f, "%.2f m");
     ImGui::SliderFloat("Vitesse pan", &rig.pan_speed, 30, 600, "%.0f deg/s");
     ImGui::SliderFloat("Vitesse tilt", &rig.tilt_speed, 30, 600, "%.0f deg/s");
     ImGui::SliderFloat("Acceleration", &rig.accel, 100, 4000, "%.0f deg/s2");
@@ -222,12 +224,38 @@ void render_ui() {
     const char* backends[] = {"OpenGL", "OpenGL ES", "Direct3D 11", "Metal (iOS)", "Metal (macOS)", "Metal (sim)", "WebGPU", "Vulkan", "aucun"};
     int b = (int)sg_query_backend();
     ImGui::Text("API graphique : %s", (b >= 0 && b < 9) ? backends[b] : "?");
+    if (gpuprof::available()) {
+        ImGui::SeparatorText("Temps GPU par passe");
+        // valeurs lissees pour qu'elles restent lisibles
+        static float smooth[32] = {};
+        static float smooth_total = 0;
+        const std::vector<gpuprof::Section>& secs = gpuprof::last();
+        for (size_t i = 0; i < secs.size() && i < 32; i++) {
+            smooth[i] = smooth[i] * 0.9f + secs[i].ms * 0.1f;
+            ImGui::Text("%-26s %6.2f ms", secs[i].name, smooth[i]);
+        }
+        smooth_total = smooth_total * 0.9f + gpuprof::last_total_ms() * 0.1f;
+        ImGui::Text("%-26s %6.2f ms", "total GPU", smooth_total);
+    } else {
+        ImGui::TextDisabled("Temps GPU par passe : Direct3D 11 seulement.");
+    }
 
     ImGui::SeparatorText("Qualite");
+    ImGui::Checkbox("Qualite adaptative (tient la cadence)", &r.adaptive);
+    ImGui::SameLine();
+    ImGui::TextDisabled("%.0f %%", s.quality * 100.0f);
+    ImGui::SliderFloat("Cadence visee", &r.target_fps, 30, 240, "%.0f img/s");
     ImGui::SliderFloat("Resolution interne", &r.render_scale, 0.25f, 1.0f, "x %.2f");
     ImGui::Checkbox("Taches de lumiere sur les surfaces", &r.surface_lights);
     ImGui::Checkbox("Reflets brillants", &r.specular);
+    ImGui::Checkbox("Lyres tres douces (frost) eclairees a 1/4 de la resolution", &r.soft_lights);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d)", s.soft_lights);
+    ImGui::Checkbox("Pre-passe de profondeur (plus rapide, meme image)", &r.depth_prepass);
     ImGui::Checkbox("Faisceaux dans la fumee", &r.volumetrics);
+    ImGui::Checkbox("Fumee : calcul analytique (sans bruit, rapide)", &r.analytic_beams);
+    ImGui::Checkbox("Fumee : faisceaux doux a plus basse resolution", &r.beam_tiers);
+    ImGui::Text("Faisceaux par resolution : %d (1) / %d (1/2) / %d (1/4)", s.tier_count[0], s.tier_count[1], s.tier_count[2]);
     ImGui::SliderInt("Fumee : diviseur de resolution", &r.vol_div, 1, 4);
     ImGui::SliderInt("Fumee : echantillons par faisceau", &r.vol_samples, 2, 32);
     ImGui::Checkbox("Accumulation temporelle", &r.temporal);

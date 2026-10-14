@@ -93,6 +93,7 @@ struct Rig {
     vec3 aim_points[4] = {{-20, 0, 0}, {0, 0, 0}, {20, 0, 0}, {-40, 1.6f, 0}};
     float master = 1.0f;
     float power = 1.0f;           // puissance des lyres (multiplicateur)
+    float lens_diameter = 0.26f;  // diametre de la lentille (m) : le faisceau en sort sur toute sa largeur
     float pan_speed = 250;        // deg/s max
     float tilt_speed = 200;
     float accel = 900;            // deg/s^2

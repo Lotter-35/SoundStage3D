@@ -9,6 +9,7 @@
 struct Timings {
     float frame_ms = 0, fps = 0;
     float rig_ms = 0, fog_ms = 0, render_cpu_ms = 0, ui_ms = 0;
+    float cpu_ms = 0;   // tout le travail CPU d'une image (attente du GPU comprise)
 };
 
 struct App {

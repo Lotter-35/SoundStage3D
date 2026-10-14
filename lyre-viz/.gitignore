@@ -5,3 +5,4 @@ LyreViz.exe
 *.ilk
 lyreviz-ui.ini
 tools/bin/
+bench/
