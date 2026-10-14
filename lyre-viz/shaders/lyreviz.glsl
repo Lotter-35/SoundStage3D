@@ -775,9 +775,10 @@ float floor_noise(vec2 p) {
 }
 
 // Materiau du sol au point P. fw, gx, gy : coordonnees en dalles (P.xz * floor_p.x) et leurs derivees
-// a l'ecran (calculees hors de tout branchement). Modifie N, albedo, rough. Une seule lecture de texture
-// (voir src/floor_texture.h) : le filtrage anisotrope multiplie le cout de chaque lecture.
-void floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo, inout float rough) {
+// a l'ecran (calculees hors de tout branchement). Modifie N, albedo, rough ; renvoie la quantite d'eau
+// en surface (0 : pas d'eau, 1 : flaque). Une seule lecture de texture (voir src/floor_texture.h) :
+// le filtrage anisotrope multiplie le cout de chaque lecture.
+float floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo, inout float rough) {
     vec2 cell = floor(fw);
     vec2 q = fw - cell - 0.5;
     uint h = floor_hash(ivec2(cell));
@@ -800,17 +801,32 @@ void floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo, 
     rough = max(t.w, 0.04);   // recentree sur le beton uni et elargie au loin (Toksvig), voir floor_texture.cpp
     albedo = floor_q.rgb * (t.x * t.x);
 
-    // eau : sol humide (plus sombre, plus lisse), puis flaques dans les cuvettes et les joints (plus sombres)
+    // Eau au sol (curseur floor_p.y), d'apres Lagarde, « Water drop 3b - Physically based wet surfaces » :
+    //  0 .. 0,5 : le beton s'imbibe. L'eau remplit les pores : plus sombre selon la porosite (jusqu'a x 0,2),
+    //             un peu plus brillant ; relief et texture restent visibles. Pas de flaque.
+    //  0,5 .. 1 : le niveau d'eau monte : film d'eau puis flaques, d'abord dans les creux (cuvettes de
+    //             quelques metres + joints et pores, plus sombres), jusqu'a couvrir le sol. Sous l'eau,
+    //             la normale s'aplatit et la surface devient lisse (proprietes de l'eau).
     float wet = floor_p.y;
+    float water = 0.0;
     if (wet > 0.0) {
-        float damp = clamp(wet * 2.5, 0.0, 1.0);
-        float hgt = floor_noise(fw * 0.12) * 0.55 + floor_noise(fw * 0.43 + 17.0) * 0.2 + clamp(t.x * floor_q.w, 0.0, 2.0) * 0.125;
-        float pud = smoothstep(0.0, 0.05, wet * 1.1 - 0.05 - hgt);
-        albedo *= mix(1.0, 0.55, damp) * mix(1.0, 0.85, pud);
-        rough = mix(rough, rough * 0.55, damp);
-        rough = mix(rough, 0.06, pud);
-        N = normalize(mix(N, vec3(0.0, 1.0, 0.0), pud));
+        float lum = clamp(t.x * floor_q.w, 0.0, 2.0);          // 1 en moyenne, < 1 dans les creux
+        float porosity = clamp(0.85 - 0.3 * lum, 0.4, 0.9);    // les creux boivent plus
+        float factor = mix(1.0, 0.2, porosity);
+        float wetLevel = smoothstep(0.0, 0.5, wet);
+        albedo *= mix(1.0, factor, wetLevel);
+        rough *= mix(1.0, factor, 0.6 * wetLevel);
+        float level = wet * 2.0 - 1.0;
+        if (level > 0.0) {
+            vec2 pm = fw / floor_p.x;                          // metres
+            float hgt = floor_noise(pm * 0.3) * 0.62 + floor_noise(pm * 1.1 + 17.0) * 0.25 + lum * 0.065;
+            water = smoothstep(0.0, 0.06, level * 1.02 - hgt);
+            rough = mix(rough, 0.05, water);
+            albedo *= mix(1.0, 0.8, water);
+            N = normalize(mix(N, vec3(0.0, 1.0, 0.0), water));
+        }
     }
+    return water;
 }
 @end
 
@@ -900,7 +916,9 @@ void main() {
     cz = clamp(cz, 0, int(grid.z) - 1);
     int ci = (cz * int(grid.y) + cy) * int(grid.x) + cx;
     int base = ci * CL_STRIDE;
-    int count = (cam_pos.w > 0.5) ? int(clusters[base].v & 65535u) : 0;   // lyres nettes seulement
+    // lyres nettes seulement (les douces sont dans leur passe a 1/4) ; passe miroir (probe_cell.w) : toutes
+    uint head = clusters[base].v;
+    int count = (cam_pos.w > 0.5) ? int(probe_cell.w > 0.5 ? (head >> 16) : (head & 65535u)) : 0;
 
     vec3 diffuse = vec3(0.0);
     vec3 spec = vec3(0.0);
@@ -1594,7 +1612,62 @@ void main() {
 // -------------------------------------------------------------------------------------
 //  7. Composition : scene vue a travers la fumee + lumiere diffusee (agrandie avec la profondeur)
 // -------------------------------------------------------------------------------------
+// -------------------------------------------------------------------------------------
+//  6b. Reflet du sol mouille : composition de l'image miroir (surfaces attenuees par la fumee +
+//      faisceaux), a demi-resolution. Les niveaux plus flous sont faits par la reduction du bloom.
+// -------------------------------------------------------------------------------------
+@fs fs_refl_compose
+@include_block common
+layout(binding=5) uniform refl_params {
+    vec4 cam_right;    // camera miroir ; w : tan x
+    vec4 cam_up;       // w : tan y
+    vec4 cam_fwd;      // w : extinction moyenne de la fumee
+    vec4 res;          // xy : taille du miroir, zw : taille de sa fumee
+};
+layout(binding=6) uniform texture2D depth_tex;
+layout(binding=11) uniform texture2D scene_tex;
+layout(binding=10) uniform texture2D vol_hist_tex;
+layout(binding=1) uniform sampler point_smp;
+layout(binding=2) uniform sampler lin_clamp_smp;
+out vec4 frag_color;
+void main() {
+    ivec2 p = ivec2(gl_FragCoord.xy);
+    vec2 uv = gl_FragCoord.xy / res.xy;
+    vec3 scene = texelFetch(sampler2D(scene_tex, point_smp), p, 0).rgb;
+    float viewZ = texelFetch(sampler2D(depth_tex, point_smp), p, 0).r;
+    vec2 ndc = ndc_from_uv(uv);
+    vec3 dir = normalize(cam_fwd.xyz + cam_right.xyz * (ndc.x * cam_right.w) + cam_up.xyz * (ndc.y * cam_up.w));
+    float t = viewZ / max(dot(dir, cam_fwd.xyz), 1e-3);
+    vec3 c = scene * exp(-cam_fwd.w * t) + textureLod(sampler2D(vol_hist_tex, lin_clamp_smp), uv, 0.0).rgb;
+    frag_color = vec4(c, 1.0);
+}
+@end
+
+// Trainees verticales du reflet (beton humide) : flou vertical continu (31 points rapproches) de l'image
+// miroir reduite. Un flou en quelques points espaces recopiait chaque lentille en une echelle de points.
+@fs fs_refl_streak
+layout(binding=6) uniform streak_params {
+    vec4 texel;        // xy : 1 / taille, z : demi-longueur de la trainee (pixels)
+};
+layout(binding=12) uniform texture2D src_tex;
+layout(binding=2) uniform sampler lin_clamp_smp;
+out vec4 frag_color;
+void main() {
+    vec2 uv = gl_FragCoord.xy * texel.xy;
+    vec3 acc = vec3(0.0);
+    float wsum = 0.0;
+    for (int k = -15; k <= 15; k++) {
+        float o = float(k) / 15.0;
+        float w = exp(-3.0 * o * o);
+        acc += textureLod(sampler2D(src_tex, lin_clamp_smp), uv + vec2(0.0, o * texel.z * texel.y), 0.0).rgb * w;
+        wsum += w;
+    }
+    frag_color = vec4(acc / wsum, 1.0);
+}
+@end
+
 @fs fs_composite
+#extension GL_EXT_control_flow_attributes : require
 @include_block common
 layout(binding=5) uniform composite_params {
     vec4 cam_right;    // w : tan x
@@ -1602,6 +1675,9 @@ layout(binding=5) uniform composite_params {
     vec4 cam_fwd;      // w : extinction moyenne
     vec4 res;          // xy : rendu plein, zw : fumee
     vec4 opts;         // x : fumee active, y : lyres douces actives, zw : taille de la passe des lyres douces
+    vec4 cam_pos;      // xyz : camera, w : reflet du sol calcule (passe miroir)
+    vec4 floor_p;      // comme scene_fs_params (sol texture ; y : eau)
+    vec4 floor_q;
 };
 layout(binding=6) uniform texture2D depth_tex;
 layout(binding=10) uniform texture2D vol_hist_tex;
@@ -1610,11 +1686,41 @@ layout(binding=24) uniform texture2D normal_tex;
 layout(binding=25) uniform texture2D albedo_tex;
 layout(binding=26) uniform texture2D soft_diffuse_tex;
 layout(binding=27) uniform texture2D soft_spec_tex;
+layout(binding=30) uniform texture2D floor_tex;
+layout(binding=28) uniform texture2D refl0_tex;
+layout(binding=31) uniform texture2D refl1_tex;
+layout(binding=9) uniform texture2D refl2_tex;
 layout(binding=1) uniform sampler point_smp;
+layout(binding=2) uniform sampler lin_clamp_smp;
+layout(binding=4) uniform sampler floor_smp;
 @image_sample_type soft_diffuse_tex unfilterable_float
 @image_sample_type soft_spec_tex unfilterable_float
 
 out vec4 frag_color;
+
+@include_block floor_material
+
+// Reflet du sol mouille (passe miroir, voir Renderer::render) : la scene vue d'une camera miroir sous
+// le sol, a la meme position a l'ecran.
+//  - flaque : miroir net (refl0, un peu adouci par refl1 selon la rugosite) ;
+//  - beton humide : reflet ETIRE VERTICALEMENT (refl2 : flou vertical continu de la passe miroir),
+//    comme une route mouillee la nuit : chaque lentille devient une trainee, les faisceaux des traits.
+// Pas de decalage par le relief : une normale differente a chaque pixel allait chercher le reflet au
+// hasard (paillettes).
+vec3 floor_reflection(vec3 P, vec3 dir, vec2 fw, vec2 gx, vec2 gy, vec2 uv) {
+    vec3 N = vec3(0.0, 1.0, 0.0);
+    vec3 alb = vec3(0.0);
+    float rough = 0.32;
+    float water = floor_material(fw, gx, gy, N, alb, rough);
+    float wetLevel = smoothstep(0.0, 0.5, floor_p.y);
+    float amount = max(water, wetLevel * 0.85);
+    float cosv = max(-dir.y, 0.02);                     // sol horizontal
+    float F = 0.02 + 0.98 * pow(1.0 - cosv, 5.0);       // eau
+    vec3 sharp = mix(textureLod(sampler2D(refl0_tex, lin_clamp_smp), uv, 0.0).rgb,
+                     textureLod(sampler2D(refl1_tex, lin_clamp_smp), uv, 0.0).rgb, clamp((rough - 0.05) / 0.08, 0.0, 1.0));
+    vec3 streak = textureLod(sampler2D(refl2_tex, lin_clamp_smp), uv, 0.0).rgb;
+    return mix(streak, sharp, water) * (F * amount);
+}
 
 void main() {
     ivec2 p = ivec2(gl_FragCoord.xy);
@@ -1625,6 +1731,14 @@ void main() {
     vec3 dir = normalize(cam_fwd.xyz + cam_right.xyz * (ndc.x * cam_right.w) + cam_up.xyz * (ndc.y * cam_up.w));
     float t = viewZ / max(dot(dir, cam_fwd.xyz), 1e-3);
     vec3 color = scene;
+    // reflet du sol mouille (seulement avec de l'eau au sol)
+    vec3 Pw = cam_pos.xyz + dir * t;
+    vec2 fw = Pw.xz * floor_p.x;
+    vec2 fgx = dFdx(fw);
+    vec2 fgy = dFdy(fw);
+    [[dont_flatten]] if (cam_pos.w > 0.5 && abs(Pw.y) < 0.03 && viewZ < 900.0) {
+        color += floor_reflection(Pw, dir, fw, fgx, fgy, uv);
+    }
     if (opts.y > 0.5) {
         // lyres douces : 4 points de la passe a 1/4, ponderes par la profondeur et la normale
         vec3 N = texelFetch(sampler2D(normal_tex, point_smp), p, 0).xyz;
@@ -1790,6 +1904,8 @@ void main() {
 @program beam_tables cs_beam_tables
 @program pattern_images cs_pattern_images
 @program temporal vs_fullscreen fs_temporal
+@program refl_compose vs_fullscreen fs_refl_compose
+@program refl_streak vs_fullscreen fs_refl_streak
 @program composite vs_fullscreen fs_composite
 @program bloom_down vs_fullscreen fs_bloom_down
 @program bloom_up vs_fullscreen fs_bloom_up

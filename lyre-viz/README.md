@@ -216,10 +216,14 @@ Texture [Concrete031](https://ambientcg.com/view?id=Concrete031) d'ambientCG, en
   - La normale et la rugosité de la texture servent aux taches des lyres, aux gobos et aux reflets (`ggx_spec`), ainsi qu'à la lumière indirecte reçue.
   - La passe des lyres douces lit la même normale, la même rugosité et la même couleur (sorties normale et matière de la passe des surfaces).
   - Les rebonds de lumière (sondes) prennent la couleur du sol sous chaque tache : même mélange des dalles, calculé sur le CPU.
-- **Eau au sol** (onglet Rendu, `--set wet=...`).
-  - Jusqu'à 0,4 environ : le béton s'assombrit et devient plus lisse.
-  - Au-delà : des flaques se forment dans les cuvettes (bruit à grande échelle) et dans les joints, puis s'étendent jusqu'à couvrir le sol. Dans une flaque, le sol est lisse et plat.
-  - Les reflets des taches et des lentilles deviennent plus nets. Les faisceaux et les murs ne se reflètent pas encore (voir les limites).
+- **Eau au sol** (onglet Rendu, `--set wet=...`), d'après Lagarde, « Water drop 3b – Physically based wet surfaces ».
+  - **0 à 0,5 : le béton s'imbibe, sans flaque.** L'eau remplit les pores : il fonce selon sa porosité (les creux et les joints davantage) et devient plus brillant. La texture reste visible.
+  - **0,5 à 1 : le niveau d'eau monte.** Film d'eau puis flaques, d'abord dans les cuvettes (2 à 3 m) et les joints, jusqu'à couvrir le sol. Dans l'eau, le sol est plat et lisse.
+  - **Reflet** (méthode des sols plats des jeux : reflet planaire).
+    - Une caméra miroir sous le sol redessine la scène à demi-résolution : surfaces éclairées par toutes les lyres, lentilles, faisceaux dans la fumée (avec leurs propres tables analytiques, deux fois moins fines). Le reflet contient donc aussi ce qui est au-dessus de la caméra, hors de l'écran.
+    - Béton humide : reflet étiré verticalement (flou vertical continu), comme une route mouillée la nuit. Flaques : miroir net.
+    - Fresnel de l'eau : fort en rasant, faible en regardant vers le bas.
+    - Seule la partie de l'écran où le sol est visible est calculée, et seulement les lyres dont le cône est visible dans le reflet. Rien n'est calculé quand le sol est sec ou hors de l'écran.
 - **Non utilisée : l'occlusion ambiante.** Il faudrait une deuxième texture, donc doubler le coût du filtrage anisotrope.
 - **Coût mesuré** (GTX 1080, 4K, passe des surfaces) :
   - par défaut : +0,2 ms ;
@@ -279,6 +283,6 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
   - Ce qui coûte encore : le dessin des cônes (environ 25 millions de pixels de fumée à additionner), l'éclairage des surfaces par ces faisceaux, et les tables.
 - **Ombres :** pas encore d'ombres (les trusses et les objets ne cachent pas la lumière). Prévu en option, activable.
 - **Reflet des faisceaux :** les faisceaux ne se reflètent pas encore dans le sol brillant (seules les taches le font). Prévu. Avec de l'eau au sol, ce serait le reflet le plus visible.
-- **Eau au sol :** sans reflet des faisceaux ni des murs, le sol mouillé est surtout plus sombre et plus lisse ; les flaques reflètent les lentilles et les taches.
+- **Eau au sol :** le reflet coûte environ 1,5 ms (4 ms avec gobo + prisme 8 sur toutes les lyres) : avec de l'eau, le cas par défaut passe un peu sous 120 img/s sans la qualité adaptative. Pas encore de pluie ni d'ondulations dans les flaques.
 - **Gobos personnels :** pas encore de chargement de vos propres images de gobo.
 - **Art-Net / DMX :** pas de pilotage par une vraie console. Non prévu pour l'instant.

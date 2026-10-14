@@ -138,6 +138,25 @@ Coûts mesurés de fonctionnalités, à titre d'exemple :
   - gobo + prisme 8 : +0,6 à +0,7 ms (vue sous les trusses : +0,2 ms).
   - Le coût vient du filtrage anisotrope, pas du calcul. Il grandit avec le nombre de lectures de gobos de la boucle des lyres, qui partagent les unités de texture.
 
+### Sol mouillé : reflet miroir (14 octobre 2026)
+
+Cas 15 et 16 du banc complet (`floor_wet = 0,8`), qualité fixe, en mouvement, 2 lancements :
+
+| Cas | GPU | Tables | Surfaces | Faisceaux | Composition et flou |
+|---|---|---|---|---|---|
+| Sol mouillé / public (défaut) | 8,6 ms (sec : 7,0) | 0,18 ms | 0,39 ms | 0,27 ms | 0,13 ms |
+| Sol mouillé + gobo + prisme 8 / scène | 20,3 ms (sec : 16,3) | 1,15 ms | 0,72 ms | 1,64 ms | 0,13 ms |
+
+S'y ajoutent les cases de lumière de la caméra miroir (environ 0,2 ms) et la composition (+0,2 ms).
+
+| Essai | Résultat |
+|---|---|
+| Reflet en espace écran (rayon suivi dans l'image) | rien à refléter en regardant vers le bas, marches dans les reflets : remplacé |
+| Faisceaux du miroir par échantillons (sans tables) | 12 ms avec gobo + prisme 8 (9 facettes par point) : remplacé par des tables propres au miroir |
+| Tables du miroir en pleine finesse, pour toutes les lyres | 4,9 ms (la caméra miroir voit les faisceaux plonger vers elle) : demi-finesse et seulement les cônes visibles, 1,15 ms |
+| Traînée du béton humide en 7 lectures espacées | chaque lentille recopiée en échelle de points : flou vertical continu (31 points) dans une passe à quart de résolution |
+| Reflet décalé par le relief du béton | paillettes (lecture au hasard du reflet) : retiré, le flou suffit |
+
 ### Sol texturé : ce qui a été mesuré
 
 | Version | Surfaces en plus (défaut / gobo + prisme / frost) |

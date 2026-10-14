@@ -100,6 +100,9 @@ void build_cases() {
     cases.push_back({"sans taches sur surfaces", 0, 0, [](RenderSettings& r) { r.surface_lights = false; }});
     cases.push_back({"sans reflets", 0, 0, [](RenderSettings& r) { r.specular = false; }});
     cases.push_back({"sans bloom", 0, 0, [](RenderSettings& r) { r.bloom = false; }});
+    // sol mouille (eau 0,8 : flaques) avec le reflet miroir
+    cases.push_back({"sol mouille / public", 0, SC_DEFAULT, [](RenderSettings& r) { r.floor_wet = 0.8f; }});
+    cases.push_back({"sol mouille + gobo + prisme 8 / scene", 1, SC_GOBO_PRISM, [](RenderSettings& r) { r.floor_wet = 0.8f; }});
 }
 
 void start_case() {

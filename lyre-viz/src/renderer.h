@@ -42,7 +42,7 @@ struct RenderSettings {
     float gi_strength = 1.0f;
     float gi_fog = 1.0f;          // lumiere indirecte dans la fumee
     bool bloom = true;
-    float bloom_strength = 0.05f;
+    float bloom_strength = 0.02f;
     float exposure = 1.2f;
     float ambient = 0.0015f;      // lumiere minimale (salle noire = 0)
     float beam_range = 110.0f;    // portee des faisceaux (m)
@@ -66,6 +66,7 @@ struct RenderStats {
     int table_rows = 0;           // fumee analytique : lignes de tables calculees
     double table_cells = 0;       // cases de tables
     float table_scale = 1;        // reduction de resolution (atlas plein)
+    int mirror_beams = 0;         // reflet du sol mouille : faisceaux visibles dans le reflet
 };
 
 class Renderer {
@@ -93,7 +94,8 @@ class Renderer {
     void build_lights(const Rig& rig, const RenderSettings& rs, const GoboAtlas& gobos);
     void build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const RenderSettings& rs, float sigma_ext, float sigma_scat);
     void build_fixture_instances(const Rig& rig, const RenderSettings& rs);
-    void build_beam_tables(const struct Camera& cam, float pixel_angle);
+    // mirror : tables de la camera miroir (reflet du sol mouille), dans leurs propres tampons
+    void build_beam_tables(const struct Camera& cam, float pixel_angle, bool mirror = false);
     void assign_beam_tiers(const struct Camera& cam, float pixel_angle, bool tiers, bool soft, int vol_div);
     void update_quality(const RenderSettings& rs);
     float quality = 1.0f;          // facteur de qualite adaptative (0.2 .. 1)
@@ -114,6 +116,8 @@ class Renderer {
     static constexpr int MAX_VPLS = 4096;
     sg_buffer light_buf = {}, cluster_buf = {}, vpl_buf = {};
     sg_view light_view = {}, cluster_view = {}, vpl_view = {};
+    sg_buffer cluster_buf_m = {};   // cases de lumiere de la camera miroir (reflet du sol mouille)
+    sg_view cluster_view_m = {};
     // sondes : 3 textures (12 coefficients), ecrites par le calcul, lues avec filtrage
     sg_image probe_img[3] = {};
     sg_view probe_store[3] = {}, probe_tex[3] = {};
@@ -134,6 +138,11 @@ class Renderer {
     int tier_first[3] = {}, tier_num[3] = {};
     sg_buffer beam_list_buf = {};
     sg_view beam_list_view = {};
+    // reflet du sol mouille : lyres dont le cone est visible dans le reflet (tables et dessin)
+    std::vector<uint8_t> mirror_vis;
+    std::vector<uint32_t> beam_order_m;
+    sg_buffer beam_list_buf_m = {};
+    sg_view beam_list_view_m = {};
     // images projetees en cache (lyres a prisme) : une case de PIMG_W x PIMG_H par lyre
     static constexpr int PIMG_ATLAS_W = 8064, PIMG_ATLAS_H = 3072, PIMG_SIZE = 256, PIMG_W = 384, PIMG_H = 256;
     sg_image pimg_img = {};
@@ -145,6 +154,12 @@ class Renderer {
     sg_buffer btab_job_buf = {};
     sg_view btab_job_view = {};
     std::vector<uint32_t> btab_jobs;   // une entree par ligne de table a calculer
+    // tables de la camera miroir : memes calculs, ecrites dans le meme atlas apres la passe principale
+    sg_buffer btab_buf_m = {}, btab_job_buf_m = {};
+    sg_view btab_view_m = {}, btab_job_view_m = {};
+    std::vector<uint8_t> btab_data_m;
+    std::vector<uint32_t> btab_jobs_m;
+    float btab_scale_m = 1.0f;
     static constexpr int MAX_BTAB_JOBS = 1 << 18;
     float btab_scale = 1.0f;
     std::vector<float> gobo_transmission;
@@ -166,6 +181,9 @@ class Renderer {
     Target vol_tier[2];                 // fumee a 1/2 et 1/4 de sa resolution (faisceaux doux)
     Target scene_normal, scene_albedo;  // pour la passe des lyres douces
     Target soft_diffuse, soft_spec;     // lyres douces, a 1/4 de la resolution
+    // reflet du sol mouille : la scene vue d'une camera miroir sous le sol, a demi-resolution
+    Target refl_color, refl_depth_lin, refl_depth, refl_vol, refl_final, refl_blur[1], refl_streak;
+    int refl_w = 0, refl_h = 0, refl_vw = 0, refl_vh = 0;
     int soft_w = 0, soft_h = 0;
     int num_soft = 0;
     int tier_w[2] = {}, tier_h[2] = {};
@@ -185,6 +203,7 @@ class Renderer {
     sg_pipeline pip_beam_tables = {}, pip_beams_an = {}, pip_vol_merge = {}, pip_pattern_images = {};
     sg_pipeline pip_scene = {}, pip_vol_ambient = {}, pip_beams = {}, pip_temporal = {}, pip_composite = {};
     sg_pipeline pip_bloom_down = {}, pip_bloom_up = {}, pip_final = {};
+    sg_pipeline pip_beams_m = {}, pip_beams_an_m = {}, pip_refl_compose = {}, pip_refl_streak = {};   // passe miroir
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;

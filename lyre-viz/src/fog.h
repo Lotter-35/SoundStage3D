@@ -22,7 +22,7 @@ struct FogSettings {
     float turbulence = 0.6f;    // m/s
     float rise = 0.08f;         // m/s (chaleur : la fumee monte)
     float height_falloff = 0.03f;  // la brume est plus dense en bas (par metre)
-    float detail_strength = 0.65f; // volutes fines 0..1
+    float detail_strength = 0.2f;  // volutes fines 0..1
     float detail_scale = 7.0f;     // taille des volutes (m)
     float anisotropy = 0.55f;   // diffusion vers l'avant (g de Henyey-Greenstein)
     float scattering = 0.9f;    // part diffusee (albedo du milieu)

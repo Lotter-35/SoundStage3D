@@ -6,6 +6,7 @@
 #include "shaders/lyreviz.glsl.h"
 #include <algorithm>
 #include <cstring>
+#include <cstdlib>
 
 namespace {
 
@@ -220,6 +221,8 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     vpl_buf = make_storage(MAX_VPLS * sizeof(sb_vpl_t), true, "vpls");
     light_view = storage_view(light_buf);
     cluster_view = storage_view(cluster_buf);
+    cluster_buf_m = make_storage((size_t)CL_X * CL_Y * CL_Z * 256 * sizeof(uint32_t), false, "clusters-mirror");
+    cluster_view_m = storage_view(cluster_buf_m);
     vpl_view = storage_view(vpl_buf);
     for (int i = 0; i < 3; i++) {
         sg_image_desc d = {};
@@ -259,9 +262,18 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         pimg_tex = texture_view(pimg_img);
     }
     beam_list_view = storage_view(beam_list_buf);
+    beam_list_buf_m = make_storage(MAX_LIGHTS * sizeof(uint32_t), true, "beam-list-mirror");
+    beam_list_view_m = storage_view(beam_list_buf_m);
+    beam_order_m.reserve(MAX_LIGHTS);
     beam_order.reserve(MAX_LIGHTS);
     btab_job_view = storage_view(btab_job_buf);
     btab_jobs.reserve(MAX_BTAB_JOBS);
+    btab_buf_m = make_storage(MAX_LIGHTS * sizeof(sb_btab_t), true, "beam-tables-mirror");
+    btab_view_m = storage_view(btab_buf_m);
+    btab_data_m.resize(MAX_LIGHTS * sizeof(sb_btab_t));
+    btab_job_buf_m = make_storage(MAX_BTAB_JOBS * sizeof(uint32_t), true, "beam-table-jobs-mirror");
+    btab_job_view_m = storage_view(btab_job_buf_m);
+    btab_jobs_m.reserve(MAX_BTAB_JOBS);
     {
         sg_image_desc d = {};
         d.width = BTAB_W;
@@ -470,7 +482,17 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         p.shader = sg_make_shader(beams_an_shader_desc(backend));
         p.label = "beams-analytic";
         pip_beams_an = sg_make_pipeline(&p);
+        // camera miroir : l'image est retournee, les faces eloignees sont les faces avant
+        p.shader = sg_make_shader(beams_shader_desc(backend));
+        p.cull_mode = SG_CULLMODE_FRONT;
+        p.label = "beams-mirror";
+        pip_beams_m = sg_make_pipeline(&p);
+        p.shader = sg_make_shader(beams_an_shader_desc(backend));
+        p.label = "beams-analytic-mirror";
+        pip_beams_an_m = sg_make_pipeline(&p);
     }
+    pip_refl_compose = make_fullscreen_pipeline(refl_compose_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "refl-compose");
+    pip_refl_streak = make_fullscreen_pipeline(refl_streak_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "refl-streak");
     pip_temporal = make_fullscreen_pipeline(temporal_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "temporal");
     pip_composite = make_fullscreen_pipeline(composite_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "composite");
     pip_bloom_down = make_fullscreen_pipeline(bloom_down_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "bloom-down");
@@ -534,6 +556,19 @@ void Renderer::resize(int w, int h, int volw, int volh) {
         soft_h = std::max(4, h / 4);
         make_target(soft_diffuse, soft_w, soft_h, SG_PIXELFORMAT_RGBA16F, "soft-diffuse");
         make_target(soft_spec, soft_w, soft_h, SG_PIXELFORMAT_RGBA16F, "soft-spec");
+        // reflet du sol mouille (camera miroir), a demi-resolution ; sa fumee a 1/4
+        for (Target* t : {&refl_color, &refl_depth_lin, &refl_depth, &refl_vol, &refl_final, &refl_blur[0], &refl_streak}) destroy_target(*t);
+        refl_w = std::max(8, w / 2);
+        refl_h = std::max(8, h / 2);
+        refl_vw = std::max(4, refl_w / 2);
+        refl_vh = std::max(4, refl_h / 2);
+        make_target(refl_color, refl_w, refl_h, SG_PIXELFORMAT_RGBA16F, "refl-color");
+        make_target(refl_depth_lin, refl_w, refl_h, SG_PIXELFORMAT_R32F, "refl-depth-lin");
+        make_target(refl_depth, refl_w, refl_h, SG_PIXELFORMAT_DEPTH, "refl-depth");
+        make_target(refl_vol, refl_vw, refl_vh, SG_PIXELFORMAT_RGBA16F, "refl-vol");
+        make_target(refl_final, refl_w, refl_h, SG_PIXELFORMAT_RGBA16F, "refl-final");
+        make_target(refl_blur[0], refl_w / 2, refl_h / 2, SG_PIXELFORMAT_RGBA16F, "refl-blur1");
+        make_target(refl_streak, refl_w / 2, refl_h / 2, SG_PIXELFORMAT_RGBA16F, "refl-streak");
         num_bloom = 0;
         int bw = w, bh = h;
         for (int i = 0; i < BLOOM_LEVELS; i++) {
@@ -724,20 +759,25 @@ void Renderer::assign_beam_tiers(const Camera& cam, float pixel_angle, bool tier
 
 // Tables des faisceaux : repere epipolaire de chaque lyre (relatif a la camera), etendue angulaire,
 // resolution, et rangement de toutes les couches dans l'atlas (rangees de hauteur decroissante).
-void Renderer::build_beam_tables(const Camera& cam, float pixel_angle) {
+void Renderer::build_beam_tables(const Camera& cam, float pixel_angle, bool mirror) {
     const vec3 cam_pos = cam.pos;
-    sb_btab_t* B = (sb_btab_t*)btab_data.data();
+    std::vector<uint32_t>& jobs = mirror ? btab_jobs_m : btab_jobs;
+    float& bscale = mirror ? btab_scale_m : btab_scale;
+    sb_btab_t* B = (sb_btab_t*)(mirror ? btab_data_m : btab_data).data();
     const sb_light_t* L = (const sb_light_t*)light_data.data();
     struct Rect {
         int light, layer, w, h, x, y;
     };
     std::vector<Rect> rects;
     // la resolution baisse si l'atlas est plein ; elle remonte doucement ensuite
-    float scale = std::min(std::sqrt(quality), btab_scale * 1.05f);
+    float scale = std::min(std::sqrt(quality), bscale * 1.05f);
+    // reflet : image a demi-resolution, souvent floue (beton humide) : tables deux fois moins fines
+    const float res_mul = mirror ? 0.5f : 1.0f;
     for (int attempt = 0; attempt < 12; attempt++) {
         rects.clear();
         double area = 0;
         for (int i = 0; i < num_lights; i++) {
+            if (mirror && !mirror_vis[i]) continue;   // cone hors du reflet : ni table, ni dessin
             const sb_light_t& l = L[i];
             const vec3 lp = {l.pos_range[0], l.pos_range[1], l.pos_range[2]};
             const vec3 f = {l.dir_tanenv[0], l.dir_tanenv[1], l.dir_tanenv[2]};
@@ -782,12 +822,12 @@ void Renderer::build_beam_tables(const Camera& cam, float pixel_angle) {
                 }
                 if (inside) scr_w = scr_l = 1e9f;
                 // pixel du niveau de resolution du faisceau
-                const float pa = pixel_angle * (float)(1 << (i < (int)beam_tier.size() ? beam_tier[i] : 0));
+                const float pa = pixel_angle * (float)(1 << (!mirror && i < (int)beam_tier.size() ? beam_tier[i] : 0));
                 scr_w /= pa;
                 scr_l /= pa;
             }
-            const int C0 = std::clamp((int)std::ceil(std::min((psimax - psimin) / texel, scr_l + 16.0f) * scale) + 1, 8, 512);
-            const int R0 = std::clamp((int)std::ceil(std::min(arc / texel, scr_w + 16.0f) * scale) + 1, 8, 1024);
+            const int C0 = std::clamp((int)std::ceil(std::min((psimax - psimin) / texel, scr_l + 16.0f) * scale * res_mul) + 1, 8, 512);
+            const int R0 = std::clamp((int)std::ceil(std::min(arc / texel, scr_w + 16.0f) * scale * res_mul) + 1, 8, 1024);
             sb_btab_t& b = B[i];
             set4(b.a_psimin, a, psimin);
             set4(b.e1_psimax, e1, psimax);
@@ -832,27 +872,29 @@ void Renderer::build_beam_tables(const Camera& cam, float pixel_angle) {
         if (ok) break;
         scale *= 0.9f;
     }
-    btab_scale = scale;
-    btab_jobs.clear();
-    stats.table_cells = 0;
-    for (const Rect& r : rects) stats.table_cells += (double)r.w * r.h;
-    stats.table_scale = scale;
+    bscale = scale;
+    jobs.clear();
+    if (!mirror) {
+        stats.table_cells = 0;
+        for (const Rect& r : rects) stats.table_cells += (double)r.w * r.h;
+        stats.table_scale = scale;
+    }
     for (const Rect& r : rects) {
         float* lay = r.layer == 0 ? B[r.light].lay0 : r.layer == 1 ? B[r.light].lay1 : r.layer == 2 ? B[r.light].lay2
                    : r.layer == 3 ? B[r.light].lay3 : B[r.light].lay4;
         set4(lay, (float)r.x, (float)r.y, (float)r.h, (float)r.w);
-        for (int row = 0; row < r.h && (int)btab_jobs.size() < MAX_BTAB_JOBS; row++)
-            btab_jobs.push_back((uint32_t)r.light << 16 | (uint32_t)r.layer << 12 | (uint32_t)row);
+        for (int row = 0; row < r.h && (int)jobs.size() < MAX_BTAB_JOBS; row++)
+            jobs.push_back((uint32_t)r.light << 16 | (uint32_t)r.layer << 12 | (uint32_t)row);
     }
-    stats.table_rows = (int)btab_jobs.size();
+    if (!mirror) stats.table_rows = (int)jobs.size();
 }
 
 void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const RenderSettings& rs, float sigma_ext, float sigma_scat) {
     (void)rig;
     // sol texture : couleur lue sous la tache (meme melange des dalles que le shader), assombrie par l'eau
     const bool tex_floor = floor_tex && rs.floor_texture;
-    const float damp = saturate(rs.floor_wet * 2.5f);
-    const float wet_factor = lerpf(1.0f, 0.55f, damp) * lerpf(1.0f, 0.85f, smoothstepf(0.15f, 1.0f, rs.floor_wet));
+    // memes etapes que floor_material (shader) : imbibe (facteur moyen 0,56), puis eau en surface
+    const float wet_factor = lerpf(1.0f, 0.56f, smoothstepf(0.0f, 0.5f, rs.floor_wet)) * lerpf(1.0f, 0.8f, smoothstepf(0.5f, 1.0f, rs.floor_wet));
     const float tile = std::max(rs.floor_tile, 0.25f);
     num_vpls = 0;
     sb_vpl_t* V = (sb_vpl_t*)vpl_data.data();
@@ -947,6 +989,33 @@ void Renderer::build_fixture_instances(const Rig& rig, const RenderSettings& rs)
     }
 }
 
+// Rectangle de l'ecran (ndc, x0 y0 x1 y1) ou le sol (y = 0) du hangar est visible ; faux s'il ne l'est pas.
+static bool floor_screen_rect(const Camera& cam, float tanX, float tanY, vec3 mn, vec3 mx, float r[4]) {
+    vec3 poly[4] = {{mn.x, 0, mn.z}, {mx.x, 0, mn.z}, {mx.x, 0, mx.z}, {mn.x, 0, mx.z}};
+    vec3 clip[8];
+    int n = 0;
+    const float near_z = 0.06f;
+    for (int i = 0; i < 4; i++) {
+        const vec3 a = poly[i], b = poly[(i + 1) & 3];
+        const float da = dot(a - cam.pos, cam.fwd) - near_z, db = dot(b - cam.pos, cam.fwd) - near_z;
+        if (da >= 0) clip[n++] = a;
+        if ((da >= 0) != (db >= 0)) clip[n++] = a + (b - a) * (da / (da - db));
+    }
+    if (n == 0) return false;
+    r[0] = r[1] = 1e9f;
+    r[2] = r[3] = -1e9f;
+    for (int i = 0; i < n; i++) {
+        const vec3 rel = clip[i] - cam.pos;
+        const float z = std::max(dot(rel, cam.fwd), 1e-4f);
+        const float x = dot(rel, cam.right) / (z * tanX), y = dot(rel, cam.up) / (z * tanY);
+        r[0] = std::min(r[0], x); r[1] = std::min(r[1], y);
+        r[2] = std::max(r[2], x); r[3] = std::max(r[3], y);
+    }
+    r[0] = std::max(r[0], -1.0f); r[1] = std::max(r[1], -1.0f);
+    r[2] = std::min(r[2], 1.0f); r[3] = std::min(r[3], 1.0f);
+    return r[2] > r[0] && r[3] > r[1];
+}
+
 // --------------------------------------------------------------------------------------------
 //  Rendu d'une image
 // --------------------------------------------------------------------------------------------
@@ -973,6 +1042,21 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     const float sigma_ext = fs.density * (fs.haze * 0.7f + smoke_mean);
     const float sigma_scat = sigma_ext * fs.scattering;
 
+    // sol texture (passe des surfaces et reflets des flaques dans la composition)
+    float floor_p[4] = {4.0f / std::max(rs.floor_tile, 0.25f), saturate(rs.floor_wet), 0, (floor_tex && rs.floor_texture) ? 1.0f : 0.0f};
+    float floor_q[4] = {};
+    if (floor_tex) set4(floor_q, floor_tex->tint * floor_scale, 1.0f / std::max(std::sqrt(floor_tex->mean_lum), 0.01f));
+    // reflet du sol mouille : camera miroir sous le sol, seulement si de l'eau et du sol sont visibles
+    float floor_rect[4] = {};
+    bool mirror = floor_p[3] > 0.5f && floor_p[1] > 0.0f &&
+                  floor_screen_rect(cam, tanX, tanY, hall_min, hall_max, floor_rect);
+    Camera mcam = cam;
+    mcam.pos.y = -cam.pos.y;
+    mcam.fwd.y = -cam.fwd.y;
+    mcam.right.y = -cam.right.y;
+    mcam.up.y = -cam.up.y;
+    const mat4 view_proj_m = proj * look_basis(mcam.pos, mcam.right, mcam.up, mcam.fwd);
+
     // donnees CPU -> GPU
     build_lights(rig, rs, gobos);
     const bool analytic = rs.volumetrics && rs.analytic_beams && num_lights > 0;
@@ -980,6 +1064,32 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     assign_beam_tiers(cam, vol_pixel_angle, rs.volumetrics && rs.beam_tiers, rs.soft_lights && rs.surface_lights, div);
     const bool soft_pass = num_soft > 0;
     if (analytic) build_beam_tables(cam, vol_pixel_angle);
+    const bool mirror_an = mirror && analytic;
+    // cones visibles dans le reflet : test du cone (sommet, axe, longueur, rayon au bout) contre les
+    // 4 plans de la camera miroir restreints au rectangle du sol a l'ecran, et le plan proche
+    beam_order_m.clear();
+    if (mirror) {
+        mirror_vis.assign(num_lights, 0);
+        const vec3 F = mcam.fwd, Rt = mcam.right, Up = mcam.up;
+        const vec3 planes[5] = {normalize(Rt - F * (floor_rect[0] * tanX)), normalize(F * (floor_rect[2] * tanX) - Rt),
+                                normalize(Up - F * (floor_rect[1] * tanY)), normalize(F * (floor_rect[3] * tanY) - Up), F};
+        const sb_light_t* L = (const sb_light_t*)light_data.data();
+        for (int i = 0; i < num_lights; i++) {
+            const vec3 A = vec3(L[i].pos_range[0], L[i].pos_range[1], L[i].pos_range[2]) - mcam.pos;
+            const vec3 d = {L[i].dir_tanenv[0], L[i].dir_tanenv[1], L[i].dir_tanenv[2]};
+            const float hl = L[i].pos_range[3], Rend = hl * L[i].dir_tanenv[3];
+            bool vis = true;
+            for (const vec3& n : planes) {
+                const float nd = dot(n, d);
+                const float far_pt = dot(n, A + d * hl) + Rend * std::sqrt(std::max(0.0f, 1.0f - nd * nd));
+                if (std::max(dot(n, A), far_pt) < 0.0f) { vis = false; break; }
+            }
+            mirror_vis[i] = vis;
+            if (vis) beam_order_m.push_back((uint32_t)i);
+        }
+        stats.mirror_beams = (int)beam_order_m.size();
+    }
+    if (mirror_an && !beam_order_m.empty()) build_beam_tables(mcam, 2.0f * tanY / (float)refl_vh, true);
     if (rs.gi) build_vpls(scene, rig, gobos, rs, sigma_ext, sigma_scat);
     build_fixture_instances(rig, rs);
 
@@ -1009,6 +1119,21 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         if (!btab_jobs.empty()) {
             wb.src.data = {btab_jobs.data(), btab_jobs.size() * sizeof(uint32_t)};
             wb.dst.buffer = btab_job_buf;
+            sg_write_buffer_transient(&wb);
+        }
+    }
+    if (!beam_order_m.empty()) {
+        wb.src.data = {beam_order_m.data(), beam_order_m.size() * sizeof(uint32_t)};
+        wb.dst.buffer = beam_list_buf_m;
+        sg_write_buffer_transient(&wb);
+    }
+    if (mirror_an && !beam_order_m.empty()) {
+        wb.src.data = {btab_data_m.data(), (size_t)num_lights * sizeof(sb_btab_t)};
+        wb.dst.buffer = btab_buf_m;
+        sg_write_buffer_transient(&wb);
+        if (!btab_jobs_m.empty()) {
+            wb.src.data = {btab_jobs_m.data(), btab_jobs_m.size() * sizeof(uint32_t)};
+            wb.dst.buffer = btab_job_buf_m;
             sg_write_buffer_transient(&wb);
         }
     }
@@ -1070,6 +1195,17 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             sg_apply_bindings(&b);
             sg_apply_uniforms(UB_cull_params, SG_RANGE_REF(cp));
             sg_dispatch((CL_X * CL_Y * CL_Z + 63) / 64, 1, 1);
+            if (mirror) {
+                cull_params_t cpm = cp;
+                set4(cpm.cam_pos, mcam.pos, (float)num_lights);
+                set4(cpm.cam_right, mcam.right, tanX);
+                set4(cpm.cam_up, mcam.up, tanY);
+                set4(cpm.cam_fwd, mcam.fwd, 0);
+                b.views[VIEW_clusters_rw] = cluster_view_m;
+                sg_apply_bindings(&b);
+                sg_apply_uniforms(UB_cull_params, SG_RANGE_REF(cpm));
+                sg_dispatch((CL_X * CL_Y * CL_Z + 63) / 64, 1, 1);
+            }
         }
         if (rs.gi) {
             probe_params_t pp = {};
@@ -1172,8 +1308,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(fsp.probe_min, probe_min, rs.gi ? 1.0f : 0.0f);
         set4(fsp.probe_cell, probe_cell, 0);
         set4(fsp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
-        set4(fsp.floor_p, 4.0f / std::max(rs.floor_tile, 0.25f), saturate(rs.floor_wet), 0, (floor_tex && rs.floor_texture) ? 1.0f : 0.0f);
-        if (floor_tex) set4(fsp.floor_q, floor_tex->tint * floor_scale, 1.0f / std::max(std::sqrt(floor_tex->mean_lum), 0.01f));
+        std::memcpy(fsp.floor_p, floor_p, sizeof(fsp.floor_p));
+        std::memcpy(fsp.floor_q, floor_q, sizeof(fsp.floor_q));
         if (!rs.surface_lights) fsp.cam_pos[3] = 0;   // pas d'eclairage direct
         sg_apply_uniforms(UB_scene_vs_params, SG_RANGE_REF(vsp));
         sg_apply_uniforms(UB_scene_fs_params, SG_RANGE_REF(fsp));
@@ -1395,6 +1531,228 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         hist_valid = false;
     }
 
+    // ---- 6b : reflet du sol mouille (camera miroir, demi-resolution) --------------------------
+    if (mirror) {
+        // seulement la partie de l'ecran ou le sol est visible
+        const int sx0 = std::max(0, (int)((floor_rect[0] * 0.5f + 0.5f) * refl_w) - 2);
+        const int sx1 = std::min(refl_w, (int)((floor_rect[2] * 0.5f + 0.5f) * refl_w) + 3);
+        const int sy0 = std::max(0, (int)((0.5f - floor_rect[3] * 0.5f) * refl_h) - 2);   // origine en haut
+        const int sy1 = std::min(refl_h, (int)((0.5f - floor_rect[1] * 0.5f) * refl_h) + 3);
+        auto scissor = [&](int sw, int sh) {
+            const float kx = (float)sw / refl_w, ky = (float)sh / refl_h;
+            sg_apply_scissor_rect((int)(sx0 * kx), (int)(sy0 * ky), std::max(1, (int)std::ceil((sx1 - sx0) * kx) + 1),
+                                  std::max(1, (int)std::ceil((sy1 - sy0) * ky) + 1), true);
+        };
+        if (mirror_an && !beam_order_m.empty() && !btab_jobs_m.empty()) {
+            gpuprof::mark("reflet : tables");
+            sg_pass pass = {};
+            pass.compute = true;
+            pass.label = "mirror-tables";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_beam_tables);
+            const int njobs = (int)btab_jobs_m.size();
+            const int gx = std::min(njobs, 16384), gy = (njobs + gx - 1) / gx;
+            table_params_t tp = {};
+            set4(tp.info, (float)njobs, (float)gx, 0, 0);
+            sg_bindings b = {};
+            b.views[VIEW_lights_cs] = light_view;
+            b.views[VIEW_btabs_cs] = btab_view_m;
+            b.views[VIEW_btab_jobs] = btab_job_view_m;
+            b.views[VIEW_pimg_desc_tb] = pimg_desc_view;
+            b.views[VIEW_pimg_tex_tb] = pimg_tex;
+            b.samplers[SMP_lin_clamp_tb] = lin_clamp;
+            b.views[VIEW_gobo_tex_cs] = gobo_view;
+            b.views[VIEW_table_w] = btab_store;
+            b.samplers[SMP_gobo_smp_cs] = gobo_smp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_table_params, SG_RANGE_REF(tp));
+            sg_dispatch(gx, gy, 1);
+            sg_end_pass();
+        }
+        gpuprof::mark("reflet : surfaces");
+        {
+            sg_pass pass = {};
+            pass.attachments.colors[0] = refl_color.att;
+            pass.attachments.colors[1] = refl_depth_lin.att;
+            pass.attachments.depth_stencil = refl_depth.att;
+            pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+            pass.action.colors[0].clear_value = {0, 0, 0, 1};
+            pass.action.colors[1].load_action = SG_LOADACTION_CLEAR;
+            pass.action.colors[1].clear_value = {1000.0f, 0, 0, 1};
+            pass.action.depth.load_action = SG_LOADACTION_CLEAR;
+            pass.action.depth.clear_value = 0.0f;
+            pass.label = "mirror-scene";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_scene);
+            scissor(refl_w, refl_h);
+            scene_vs_params_t mvsp;
+            std::memcpy(mvsp.view_proj, view_proj_m.m, sizeof(mvsp.view_proj));
+            scene_fs_params_t fsp = {};
+            set4(fsp.cam_pos, mcam.pos, rs.surface_lights ? (float)num_lights : 0.0f);
+            set4(fsp.cam_fwd, mcam.fwd, 2.0f * tanY / (float)refl_h);
+            std::memcpy(fsp.grid, cp.grid, sizeof(fsp.grid));
+            std::memcpy(fsp.grid2, cp.grid2, sizeof(fsp.grid2));
+            set4(fsp.res, (float)refl_w, (float)refl_h, 1.0f / PIMG_ATLAS_W, 1.0f / PIMG_ATLAS_H);
+            set4(fsp.shade, sigma_ext, rs.gi_strength, rs.specular ? 1.0f : 0.0f, rs.ambient);
+            set4(fsp.probe_min, probe_min, rs.gi ? 1.0f : 0.0f);
+            set4(fsp.probe_cell, probe_cell, 1.0f);   // toutes les lyres (pas de passe des lyres douces ici)
+            set4(fsp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
+            sg_apply_uniforms(UB_scene_vs_params, SG_RANGE_REF(mvsp));
+            sg_apply_uniforms(UB_scene_fs_params, SG_RANGE_REF(fsp));
+            auto draw = [&](sg_buffer vb, sg_buffer ib, int nidx, sg_buffer inst, int count, int first) {
+                if (count - first <= 0 || !inst.id) return;
+                sg_bindings b = {};
+                b.vertex_buffers[0] = vb;
+                b.vertex_buffers[1] = inst;
+                b.vertex_buffer_offsets[1] = first * (int)sizeof(Instance);
+                b.index_buffer = ib;
+                b.views[VIEW_lights_ssbo] = light_view;
+                b.views[VIEW_clusters_ro] = cluster_view_m;
+                b.views[VIEW_probe_a] = probe_tex[0];
+                b.views[VIEW_probe_b] = probe_tex[1];
+                b.views[VIEW_probe_c] = probe_tex[2];
+                b.views[VIEW_gobo_tex] = gobo_view;
+                b.views[VIEW_pimg_desc_ro] = pimg_desc_view;
+                b.views[VIEW_pimg_tex] = pimg_tex;
+                b.views[VIEW_floor_tex] = floor_view;
+                b.samplers[SMP_gobo_smp] = gobo_smp;
+                b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+                b.samplers[SMP_floor_smp] = floor_smp;
+                sg_apply_bindings(&b);
+                sg_draw(0, nidx, count - first);
+            };
+            // le premier cube est le sol (scene.cpp) : la camera miroir est dessous, on le saute
+            draw(cube_vb, cube_ib, cube_indices, static_cubes, num_static_cubes, 1);
+            draw(cyl_vb, cyl_ib, cyl_indices, static_cyls, num_static_cyls, 0);
+            draw(cube_vb, cube_ib, cube_indices, dyn_cube_buf, ndc, 0);
+            draw(cyl_vb, cyl_ib, cyl_indices, dyn_cyl_buf, ndy, 0);
+            sg_end_pass();
+        }
+        gpuprof::mark("reflet : faisceaux");
+        {
+            sg_pass pass = {};
+            pass.attachments.colors[0] = refl_vol.att;
+            pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+            pass.action.colors[0].clear_value = {0, 0, 0, 1};
+            pass.label = "mirror-beams";
+            sg_begin_pass(&pass);
+            if (rs.volumetrics && !beam_order_m.empty()) {
+                // calcul analytique avec les tables de la camera miroir (sinon par echantillons)
+                sg_apply_pipeline(mirror_an ? pip_beams_an_m : pip_beams_m);
+                scissor(refl_vw, refl_vh);
+                const float wa = fs.wind_angle * DEG;
+                const float drift = fs.animate ? time : 0.0f;
+                vol_params_t vp = {};
+                set4(vp.cam_pos, mcam.pos, time);
+                set4(vp.cam_right, mcam.right, tanX);
+                set4(vp.cam_up, mcam.up, tanY);
+                set4(vp.cam_fwd, mcam.fwd, (float)(frame % 1024));
+                set4(vp.res, (float)refl_vw, (float)refl_vh, (float)refl_w, (float)refl_h);
+                set4(vp.fog0, fs.density, fs.haze, fs.smoke, clampf(fs.anisotropy, -0.95f, 0.95f));
+                set4(vp.fog1, fs.detail_strength, 1.0f / std::max(fs.detail_scale, 0.5f), fs.height_falloff, fs.scattering);
+                set4(vp.fog2, -std::cos(wa) * fs.wind_speed * drift / std::max(fs.detail_scale, 0.5f), -0.02f * drift,
+                     -std::sin(wa) * fs.wind_speed * drift / std::max(fs.detail_scale, 0.5f), rs.gi_fog * rs.gi_strength);
+                set4(vp.fog_box_min, fog.origin, sigma_ext);
+                set4(vp.fog_box_inv, 1.0f / fog.size.x, 1.0f / fog.size.y, 1.0f / fog.size.z, 0);
+                set4(vp.tiles, 1.0f / BTAB_W, 1.0f / BTAB_H, (float)std::clamp(rs.vol_samples, 1, 32) * (mirror_an ? std::max(quality, 0.5f) : 1.0f),
+                     2.0f * tanY / (float)refl_vh);
+                set4(vp.probe_min, probe_min, 0.0f);
+                set4(vp.probe_cell, probe_cell, 0);
+                set4(vp.probe_dims, (float)PR_X, (float)PR_Y, (float)PR_Z, 0);
+                beam_vs_params_t bvp = {};
+                std::memcpy(bvp.view_proj, view_proj_m.m, sizeof(bvp.view_proj));
+                set4(bvp.info, 0, 0, 0, 0);
+                sg_bindings bb = {};
+                bb.vertex_buffers[0] = cone_vb;
+                bb.index_buffer = cone_ib;
+                bb.views[VIEW_lights_vs] = light_view;
+                bb.views[VIEW_beam_list_vs] = beam_list_view_m;
+                bb.views[VIEW_lights_ssbo] = light_view;
+                if (mirror_an) {
+                    bb.views[VIEW_btabs_ro] = btab_view_m;
+                    bb.views[VIEW_table_tex] = btab_tex;
+                } else {
+                    bb.views[VIEW_gobo_tex] = gobo_view;
+                    bb.samplers[SMP_gobo_smp] = gobo_smp;
+                }
+                bb.views[VIEW_depth_tex] = refl_depth_lin.tex;
+                bb.views[VIEW_fog_tex] = fog_view;
+                bb.views[VIEW_detail_tex] = detail_view;
+                bb.samplers[SMP_point_smp] = point_smp;
+                bb.samplers[SMP_lin_clamp_smp] = lin_clamp;
+                bb.samplers[SMP_lin_repeat_smp] = lin_repeat;
+                sg_apply_bindings(&bb);
+                sg_apply_uniforms(UB_beam_vs_params, SG_RANGE_REF(bvp));
+                sg_apply_uniforms(UB_vol_params, SG_RANGE_REF(vp));
+                sg_draw(0, cone_indices, (int)beam_order_m.size());
+            }
+            sg_end_pass();
+        }
+        gpuprof::mark("reflet : composition et flou");
+        {
+            sg_pass pass = {};
+            pass.attachments.colors[0] = refl_final.att;
+            pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+            pass.action.colors[0].clear_value = {0, 0, 0, 1};
+            pass.label = "mirror-compose";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_refl_compose);
+            scissor(refl_w, refl_h);
+            refl_params_t rp = {};
+            set4(rp.cam_right, mcam.right, tanX);
+            set4(rp.cam_up, mcam.up, tanY);
+            set4(rp.cam_fwd, mcam.fwd, rs.volumetrics ? sigma_ext : 0.0f);
+            set4(rp.res, (float)refl_w, (float)refl_h, (float)refl_vw, (float)refl_vh);
+            sg_bindings b = {};
+            b.views[VIEW_depth_tex] = refl_depth_lin.tex;
+            b.views[VIEW_scene_tex] = refl_color.tex;
+            b.views[VIEW_vol_hist_tex] = refl_vol.tex;
+            b.samplers[SMP_point_smp] = point_smp;
+            b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_refl_params, SG_RANGE_REF(rp));
+            sg_draw(0, 3, 1);
+            sg_end_pass();
+        }
+        // niveau flou (reduction du bloom, sans anti-luciole), puis trainees verticales (beton humide)
+        {
+            sg_pass pass = {};
+            pass.attachments.colors[0] = refl_blur[0].att;
+            pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
+            pass.label = "mirror-blur";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_bloom_down);
+            bloom_params_t bp = {};
+            set4(bp.texel, 1.0f / refl_w, 1.0f / refl_h, 0.0f, 1.0f);
+            sg_bindings b = {};
+            b.views[VIEW_src_tex] = refl_final.tex;
+            b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_bloom_params, SG_RANGE_REF(bp));
+            sg_draw(0, 3, 1);
+            sg_end_pass();
+        }
+        {
+            sg_pass pass = {};
+            pass.attachments.colors[0] = refl_streak.att;
+            pass.action.colors[0].load_action = SG_LOADACTION_DONTCARE;
+            pass.label = "mirror-streak";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_refl_streak);
+            // trainees longues sur le beton juste humide, plus courtes quand l'eau lisse la surface
+            const float len = (float)(refl_h / 2) * lerpf(0.12f, 0.05f, smoothstepf(0.25f, 0.6f, rs.floor_wet));
+            streak_params_t sp = {};
+            set4(sp.texel, 2.0f / refl_w, 2.0f / refl_h, len, 0.0f);
+            sg_bindings b = {};
+            b.views[VIEW_src_tex] = refl_blur[0].tex;
+            b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_streak_params, SG_RANGE_REF(sp));
+            sg_draw(0, 3, 1);
+            sg_end_pass();
+        }
+    }
+
     // ---- 7 : composition --------------------------------------------------------------------
     gpuprof::mark("composition");
     {
@@ -1410,6 +1768,9 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(cpp.cam_fwd, cam.fwd, rs.volumetrics ? sigma_ext : 0.0f);
         set4(cpp.res, (float)w, (float)h, (float)vw, (float)vh);
         set4(cpp.opts, rs.volumetrics ? 1.0f : 0.0f, soft_pass ? 1.0f : 0.0f, (float)soft_w, (float)soft_h);
+        set4(cpp.cam_pos, cam.pos, mirror ? 1.0f : 0.0f);
+        std::memcpy(cpp.floor_p, floor_p, sizeof(cpp.floor_p));   // memes valeurs que la passe des surfaces
+        std::memcpy(cpp.floor_q, floor_q, sizeof(cpp.floor_q));
         sg_bindings b = {};
         b.views[VIEW_depth_tex] = scene_depth_lin.tex;
         b.views[VIEW_vol_hist_tex] = vol_hist[cur].tex;
@@ -1418,7 +1779,13 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         b.views[VIEW_albedo_tex] = scene_albedo.tex;
         b.views[VIEW_soft_diffuse_tex] = soft_diffuse.tex;
         b.views[VIEW_soft_spec_tex] = soft_spec.tex;
+        b.views[VIEW_floor_tex] = floor_view;
+        b.views[VIEW_refl0_tex] = refl_final.tex;
+        b.views[VIEW_refl1_tex] = refl_blur[0].tex;
+        b.views[VIEW_refl2_tex] = refl_streak.tex;
         b.samplers[SMP_point_smp] = point_smp;
+        b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+        b.samplers[SMP_floor_smp] = floor_smp;
         sg_apply_bindings(&b);
         sg_apply_uniforms(UB_composite_params, SG_RANGE_REF(cpp));
         sg_draw(0, 3, 1);
