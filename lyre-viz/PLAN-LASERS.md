@@ -1,6 +1,6 @@
 # Lasers dans LyreViz : plan
 
-**État (15 octobre 2026) : étapes 1 et 2 faites** (banc `--bench-lasers` et prototype mesuré, puis moteur et onglet Lasers ; voir « Étape 1 : résultats » et « Étape 2 : résultats » à la fin). Méthode retenue sur les chiffres : **tuiles en calcul**. Prochaine étape : 3 (fumée).
+**État (15 octobre 2026) : étapes 1, 2 et 3 faites** (banc `--bench-lasers` et prototype mesuré, moteur et onglet Lasers, fumée ; voir « Étape 1 : résultats », « Étape 2 : résultats » et « Étape 3 : résultats » à la fin). Méthode retenue sur les chiffres : **tuiles en calcul**. Lecture ILDA faite (étape 3 bis, avancée à la demande de l'utilisateur). Prochaine étape : les intersections (étape 5 : collisions avec les obstacles et les joueurs, nappe coupée au passage d'un joueur).
 
 Objectif : des boîtiers laser aussi réalistes que Depence R3 / R4 (vidéo de référence : « Royallaser | Depence R3 Showcase », Syncronorm).
 
@@ -372,15 +372,16 @@ Vidéo : « Royallaser | Depence R3 Showcase » (Syncronorm), https://youtu.be/M
 2. **Moteur et panneau.** *(fait le 15 octobre 2026)*
    - Boîtiers, placement des 200, réglages de base (ouverture, traits, intensité, couleur, dégradé), formes, mouvements automatiques, effets décalés ;
    - vues `--demo`, bancs.
-3. **Fumée.**
+3. **Fumée.** *(faite le 15 octobre 2026)*
    - Lien avec la fumée de la pièce, visibilité minimale, diffusion avant ;
    - nouvelle texture de volutes fines animées, niveaux de détail.
    - C'est l'étape la plus longue côté réglage visuel (gros plan de la photo verte, comparaisons à la vidéo).
 4. **Blanc.** Réponse du capteur, sorties (point chaud, halo, étoile), bords lumineux, divergence.
-5. **Intersections.** Portées par trait, ombres dans les nappes, impacts sur les surfaces, personnage.
+3 bis. **Lecture ILDA** (étape 8 avancée, demande de l'utilisateur du 15 octobre 2026 : « le but final, un laser qui lit de l'ILDA, le plus optimisé possible ») : voir la section « Étape 3 bis » à la fin.
+5. **Intersections.** Portées par trait, ombres dans les nappes, impacts sur les surfaces, personnage. **Rappel de l'utilisateur (15 octobre 2026)** : gérer la collision avec tous les obstacles (joueur, décor, etc.), et **la nappe laser doit se couper au passage d'un joueur** (trou d'ombre à bord net, section 7).
 6. **Éblouissement.**
 7. **Persistance et lumière dans la pièce.** Flou de mouvement, lumières virtuelles dans les sondes, puis reflet dans le sol mouillé.
-8. **Plus tard.** ILDA / DMX, inertie complète des galvos (cahier laser2).
+8. **Plus tard.** DMX, inertie complète des galvos (cahier laser2) ; l'ILDA est avancé en 3 bis.
 
 ## 12. Sources
 
@@ -434,3 +435,52 @@ Détail des mesures : `PERFORMANCE.md`, « Étape 2 : moteur et panneau ». Hist
   - la puissance reste en W par boîtier (pas encore par couleur) et les bords lumineux viennent avec le blanc (étape 4) ;
   - le flou de mouvement des balayages rapides reste à l'étape 7 ;
   - les vues d'essai de la section 8 (nappe en gros plan avec volutes, sortie vue de face, trait dans l'œil, personne dans une nappe) viendront avec les étapes 3, 4, 6 ; `--demo-laser` montre pour l'instant les formes, les dégradés et la démonstration.
+
+## Étape 3 : résultats (15 octobre 2026)
+
+Détail des mesures : `PERFORMANCE.md`, « Étape 3 : fumée » ; historique : modifications 14 à 19. Images : `bench/lasers_images/etape3_*.png`.
+
+- **Fumée de la pièce** : diffusion en P = air + densité × albédo × (brume × décroissance en hauteur + amas simulés), préparée sur le CPU dans le 2e canal de la texture des amas des lyres (RG8) ; une lecture et 2 opérations par couple. Un laser qui traverse un amas s'y illumine.
+- **Visibilité minimale** : la diffusion de l'air (`laserair`, étape 1) s'ajoute à la fumée.
+- **Diffusion vers l'avant** : deux lobes de Henyey-Greenstein (g 0,88 pour 42 %, g 0,35), même brillance de côté qu'un lobe g 0,55, 7 fois plus dans l'axe. Draine non essayé : deux lobes suffisent pour l'effet « face au laser ».
+- **Volutes fines** : texture 3D périodique 64³ en BC5 (2 instants d'une boucle d'évolution, 1 octet par texel), générée au lancement (version A du plan : bruit déformé deux fois, contraste par seuil) ; 1re octave de 1,6 m, 2e octave de 0,44 m de près ; mip selon la taille du pixel étirée par 1 / |n·v|, effacement au loin ; plus fortes dans les amas que dans la brume.
+- **Vue d'essai** `--demo-laser 3` : un éventail vert vu de près dans une fumée épaisse, à comparer à la photo 5.
+- **Variantes du shader** (0 à 3) choisies à chaque image : tout coupé, le code et la vitesse d'avant l'étape 3.
+- **Coût** (lasers seuls) : niveau 1 (fumée de la pièce + 2 lobes) +8 à +14 % ; volutes +25 à +35 % de plus. Tout actif, en mouvement : L1 7,1 à 10,2 ms, L2 12 ms, L3 7 ms, L7 20,6 ms (budget ~4,6 ms) ; mix M1 9,2 à 11 ms au total.
+- **Réglages par défaut** : tout actif (choix laissé à Claude par l'utilisateur, « on modifiera après »). `--set volutes=0` revient au niveau 1, `laserfog=0 laserphase=0 volutes=0` à l'image d'avant.
+- **Écarts au plan, sans changer les décisions** :
+  - 64³ en BC5 avec 2 instants, au lieu de 128³ (1 octet) avec 4 instants : en RGBA8, la passe était 60 à 90 % plus lente (mémoire et attente des lectures) ; 128³ en BC5 ne gagne presque rien en image ;
+  - les lasers ne lisent pas la texture de détail « coton » des lyres (les volutes la remplacent ; une 2e lecture 3D coûtait 20 à 25 %) ;
+  - version B (mini-simulation de fluide) non faite : la version A ressemble déjà à la photo 5 de près ; à revoir si le gros plan ne suffit pas ;
+  - L5 garde son cadrage (pour comparer avec l'historique) : la comparaison à la photo 5 se fait avec `--demo-laser 3` ;
+  - pas de comparaison à la vidéo Depence R3 (Claude ne peut pas lire une vidéo) ; seulement aux photos.
+- **Pistes** : volutes encore chères dans les cas lourds ; un cas de banc « L1 sans volutes » permettrait de mesurer leur coût dans le même lancement.
+
+## Étape 3 bis : lecture ILDA (demande de l'utilisateur, 15 octobre 2026)
+
+L'utilisateur veut, comme le laser 2 du simulateur web (`src/laser2/`, `docs/laser2-cahier-des-charges.md`), des lasers qui lisent des fichiers ILDA, de la façon la plus optimisée possible : un laser fait en général des traits (faisceau fixe) ou une nappe lisse (balayage).
+
+Ce que fait le laser 2 web (relevé du 15 octobre 2026) :
+- lecture des formats 0, 1, 2, 4, 5 (bit 6 : point masqué, conservé), bibliothèque du serveur (`server/storage/ilda`, 56 fichiers), ILDA en direct par IDN ; cadence réglable (30 images/s par défaut) ;
+- scanner « laser parfait » (sans inertie depuis le commit `40e1d87`) : transformations, angle maximal, équilibrage des couleurs ;
+- **réduction de chaque image en deux primitives** : *faisceau* (le point reste à moins d'une tolérance du précédent : énergie concentrée, position moyenne) et *nappe* (segment entre deux points allumés, énergie des points répartie sur l'angle balayé) ; nappes colinéaires fusionnées (écart, retour, espacement, niveau, teinte), budget de primitives par laser et global avec tolérance adaptative.
+
+Correspondance avec LyreViz : une nappe ILDA est un segment d'éventail en nappe lisse ; un faisceau, un trait seul. Plan proposé (accepté par l'utilisateur) :
+1. lecteur ILDA en C++ (formats 0, 1, 2, 4, 5), lecture directe de `server/storage/ilda` ; lecture en boucle, aller-retour, image fixe ;
+2. scanner « laser parfait » comme le web (inertie des galvos actuelle en option) ;
+3. réduction en traits seuls et nappes, reprise du web, budget de 8 192 segments ; des faisceaux régulièrement espacés sur une ligne regroupés en un seul segment à n traits ;
+4. variante du shader « nappes et traits seuls », sans le code des traits séparés (attendu ~−20 % sur les nappes, mesure de l'étape 1) ;
+5. le programmeur actuel reste ; ses figures pourront aussi passer par des images de points ;
+6. bancs avec de vrais fichiers ILDA (nappes, tunnels, texte, faisceaux) et un cas « L1 en mode ligne » ; chaque étape mesurée.
+
+### Étape 3 bis : résultats (15 octobre 2026)
+
+Détail des mesures : `PERFORMANCE.md`, « Fichiers ILDA » ; historique : modification 20. Images : `bench/lasers_images/ilda_*.png`.
+
+- **Fait** : lecteur ILDA en C++ (`src/ilda.cpp`, formats 0, 1, 2, 4, 5), bibliothèque `server/storage/ilda` lue directement (56 fichiers, 8 banques), complément des traits et réduction en faisceaux et nappes repris du web, en cache par image du fichier ; source « Fichier ILDA » dans l'onglet Lasers (fichier, lecture, cadence, couleurs) avec tous les réglages de position, de taille et les effets ; vue `--demo-laser 4` ; bancs I1 à I4 (une banque par cas, 200 lasers) ; **mode ligne** (0 trait = nappe continue) et cas « L1 en mode ligne ».
+- **Plafond des segments porté à 16 384** : à 8 192, les figures ILDA chargées de 200 lasers étaient tronquées sans bruit (I3 voulait 12 660 nappes) ; compteur des segments perdus dans le tri par grosses tuiles (`--stats`) : 0 sur tous les cas.
+- **Écarts au plan** :
+  - point 3 (« des faisceaux régulièrement espacés regroupés en un segment à n traits ») : non fait ; les traits seuls sont déjà le chemin le moins cher (bande à l'écran), le regroupement ferait passer par le calcul des traits séparés ;
+  - point 4 (variante du shader « nappes et traits seuls ») : faite, mesurée, **retirée** : aucun gain (images identiques, temps à ±2 %) ; le −20 % de l'étape 1 ne se retrouve pas avec le code de la fumée de l'étape 3 ;
+  - pas d'ILDA en direct (IDN) ni de choix par DMX : à faire avec le DMX.
+- **Coût** : faisceaux (I2) 1,9 ms ; nappes, figures, tunnels sur 200 lasers 31 à 49 ms : la surface couverte (jusqu'à 1 milliard de couples pixel × segment), pas la lecture du fichier (moteur CPU 1,2 à 2,3 ms). À alléger avec L7 (mêmes pistes).

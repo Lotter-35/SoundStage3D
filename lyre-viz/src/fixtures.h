@@ -101,6 +101,7 @@ struct Rig {
     double time = 0;
 
     void build(const Scene& scene);
+    void program_default();   // programmation de depart (sans deplacer les tetes : elles y vont)
     void update(float dt);
 
     // Programmeur : applique une valeur aux lyres selectionnees.

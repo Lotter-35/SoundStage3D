@@ -2376,6 +2376,20 @@ layout(binding=0) uniform laser_cs_params {
     vec4 tiles;       // x, y : tuiles de 16 pixels, z : grosses tuiles (128 pixels) en x, w : compteurs actifs
     vec4 hall_min;    // interieur du hangar : rien n'est visible au-dela de ses parois
     vec4 hall_max;
+    // fumee de la piece : boite de la grille simulee (laser_fog_tex, la texture des amas des lyres)
+    vec4 fog_box_min;
+    vec4 fog_box_inv;
+    vec4 lfog;        // x : diffusion uniforme (air + fumee moyenne), y : 1 = fumee de la piece (laser_fog_tex),
+                      // z : force des volutes en fumee uniforme
+    vec4 lroom;       // x : air, y : densite x albedo x room_max, z, w : force des volutes (part fixe, part des amas)
+    vec4 lroom2;      // x : pente de la part des amas
+    vec4 lvol;        // volutes fines : xyz decalage (vent), w : 1 / taille (0 : coupees)
+    vec4 lvolw;       // poids des 2 instants (canaux r, g), divises par l'ecart type (contraste constant pendant le melange)
+    vec4 lvol2;       // x : -0,5 x somme des poids, y : log2(texels par metre), z : niveau ou les volutes s'effacent
+    vec4 lvol3;       // 2e octave (de pres) : xyz decalage, w : 1 / taille (0 : coupee)
+    vec4 lvol4;       // x : log2(texels par metre) de la 2e octave, y : niveau ou elle s'efface, z : son poids
+    vec4 lphase0;     // lobe doux : 1 + g^2, 2 g, poids x (1 - g^2) / 4 pi
+    vec4 lphase1;     // lobe tres avant : idem (poids 0 : un seul lobe, comme les lyres)
 };
 @end
 
@@ -2393,18 +2407,112 @@ float laser_sig2(float s, float t) {
     return beam.x + beam.y * s * s + px * px;
 }
 
-// Diffusion vers l'avant (Henyey-Greenstein) ; b : cos(rayon, trait), l'angle de diffusion est son oppose.
+// Diffusion par metre au point X : air (visibilite minimale, traits visibles meme sans fumee) + fumee de la
+// piece (amas simules, brume plus dense en bas : la meme que pour les lyres, sans le detail des lyres). Un laser
+// qui traverse un amas s'y illumine davantage. La densite (brume x decroissance en hauteur + amas) est preparee sur
+// le CPU dans le 2e canal de la texture des amas des lyres (64 x 24 x 32, RG8) : une lecture et 2 operations par
+// couple (pixel, segment). Une 2e texture envoyee a chaque image faisait attendre la carte sous Direct3D 11 (+1 a
+// +1,3 ms par image en moyenne) ; la calculer dans le shader (exponentielle, division) coutait +3 a +10 %.
+// lfog.y = 0 : fumee uniforme (moyenne de la piece).
+// Volutes fines (PLAN-LASERS.md, 4.1) : la fumee de la piece est modulee par une texture 3D periodique de volutes
+// (src/volutes.cpp), lue au point X ; 'foot' est la taille d'un pixel en X (m), etiree quand la nappe est vue en
+// biais. Une lecture donne les 2 instants de la boucle d'evolution (canaux r, g, BC5), melanges par un produit scalaire.
+// Niveau de detail : mip choisi selon la taille du pixel (aucun scintillement) ; au-dela de lvol2.z, plus rien a
+// lire (la texture y est presque uniforme : effacement progressif, pas de saut). Moyenne 1 : la brillance moyenne ne
+// change pas, seule sa repartition change. Force : plus forte dans les amas des machines a fumee que dans la
+// brume du hazer.
+//
+// 2e octave, de pres seulement : la meme texture 3,6 fois plus petite (0,44 m), axes tournes (aucune repetition
+// alignee), plus rapide, a l'autre instant de l'evolution (canaux inverses) : detail de quelques millimetres.
+//
+// Les lectures sont independantes (les volutes ne dependent pas de la force lue dans la piece) et partent ensemble,
+// tot ; leur resultat ne sert qu'a la fin du calcul du segment (la passe a peu de groupes actifs pour masquer leur
+// attente). Resultat : (diffusion, force des volutes, 1re octave aux deux instants), et f2 : 2e octave.
+// lf : log2 de la taille du pixel en X. Volutes coupees : lvol2.z et lvol4.y tres negatifs (rien a lire).
+//
+// Quatre variantes du shader (LASER_FOG, choisie a chaque image) : la passe est limitee par le calcul et les
+// registres, et ce code, meme coupe par un reglage, la ralentissait de 6 a 15 %.
+//   0 : fumee uniforme, un lobe (le code d'avant l'etape 3) ;
+//   1 : fumee de la piece, deux lobes ;
+//   2 : fumee de la piece, deux lobes, volutes fines (1re octave) ;
+//   3 : idem avec la 2e octave, seulement si un segment passe assez pres de la camera pour qu'elle soit lue (le
+//       CPU calcule la distance de la camera au triangle de chaque segment).
+#ifndef LASER_FOG
+#define LASER_FOG 0
+#endif
+#if LASER_FOG >= 1
+vec4 laser_fetch(vec3 X, float lf, out vec2 f2) {
+    vec4 f = vec4(lfog.xz, 0.5, 0.5);
+    f2 = vec2(0.5);
+    if (lfog.y > 0.0) {
+        // r : amas / 2, g : densite de la piece / room_max (preparee sur le CPU, FogSim::update)
+        vec2 fr = textureLod(sampler3D(laser_fog_tex, laser_lin_clamp), X * fog_box_inv.xyz - fog_box_min.xyz, 0.0).rg;
+        f.x = lroom.x + lroom.y * fr.y;
+        f.y = lroom.z + min(fr.x * lroom2.x, lroom.w);
+    }
+#if LASER_FOG >= 2
+    float lod = lf + lvol2.y;
+    if (lod < lvol2.z) {
+        f.zw = textureLod(sampler3D(laser_vol_tex, laser_vol_smp), X * lvol.w + lvol.xyz, max(lod, 0.0)).rg;
+#if LASER_FOG >= 3
+        // 2e octave : axes permutes et cisailles (3 operations au lieu d'une rotation)
+        float lod2 = lf + lvol4.x;
+        if (lod2 < lvol4.y) {
+            f2 = textureLod(sampler3D(laser_vol_tex, laser_vol_smp), (X.zxy + X.yzx * 0.37) * lvol3.w + lvol3.xyz, max(lod2, 0.0)).gr;
+        }
+#endif
+    }
+#endif
+    return f;
+}
+// Diffusion au point lu (f, f2 : laser_fetch) : effacement des volutes au loin, sans saut. Somme des deux octaves
+// ramenee a l'ecart type d'une seule (1 / sqrt(1 + k2^2), approche lineairement : lvol4.w).
+float laser_sigma_of(vec4 f, vec2 f2, float lf) {
+#if LASER_FOG >= 2
+    float fade = clamp(lvol2.z - (lf + lvol2.y), 0.0, 1.0) * f.y;
+#if LASER_FOG >= 3
+    float k2 = clamp(lvol4.y - (lf + lvol4.x), 0.0, 1.0) * lvol4.z;
+    float z = (dot(f.zw, lvolw.xy) + lvol2.x + k2 * (dot(f2, lvolw.xy) + lvol2.x)) * (1.0 - lvol4.w * k2);
+#else
+    float z = dot(f.zw, lvolw.xy) + lvol2.x;
+#endif
+    return f.x * max(1.0 + fade * z, 0.0);
+#else
+    return f.x;
+#endif
+}
+#endif
+float laser_sigma(vec3 X, float foot) {
+#if LASER_FOG >= 1
+    vec2 f2;
+    float lf = log2(foot);
+    vec4 f = laser_fetch(X, lf, f2);
+    return laser_sigma_of(f, f2, lf);
+#else
+    return lfog.x;
+#endif
+}
+
+// Diffusion vers l'avant ; b : cos(rayon, trait), l'angle de diffusion est son oppose. Deux lobes de
+// Henyey-Greenstein (PLAN-LASERS.md, section 4) : les gouttelettes de fumee renvoient une grande part de la lumiere
+// dans un cone etroit autour du faisceau (lobe tres avant, g ~ 0,9), le reste plus largement (lobe doux). Un laser
+// vu dans son axe, ou presque, est beaucoup plus brillant ; vu de cote, comme avec un seul lobe.
 float laser_phase(float b) {
-    float g = beam.w;
-    float hd = inversesqrt(1.0 + g * g + 2.0 * g * b);
-    return (1.0 - g * g) * 0.07957747 * hd * hd * hd;
+#if LASER_FOG >= 1
+    float h0 = inversesqrt(lphase0.x + lphase0.y * b);
+    float h1 = inversesqrt(lphase1.x + lphase1.y * b);
+    return lphase0.z * h0 * h0 * h0 + lphase1.z * h1 * h1 * h1;
+#else
+    float hd = inversesqrt(lphase0.x + lphase0.y * b);
+    return lphase0.z * hd * hd * hd;
+#endif
 }
 
 // Un trait seul, le long du 1er axe du repere (longueur R), dans le rayon q + t dv (q : camera - source,
 // t <= tMax) : noyau gaussien a la distance des deux droites, divise par le sinus de leur angle (formule des
 // photon beams, Jarosz 2011), diffusion vers l'avant et attenuation. Le 1 / sin est plafonne par la longueur
 // du trait (trait vu dans son axe).
-float laser_trait(vec3 q, vec3 dv, float R, float tMax) {
+float laser_trait(vec3 q, vec3 dv, vec3 vw, float R, float tMax) {
     float b = dv.x, d = dot(dv, q), ee = q.x;
     float s2 = max(1.0 - b * b, 1e-7);
     // points les plus proches du rayon (t dans [0, tMax]) et du trait (s dans [0, R])
@@ -2419,7 +2527,8 @@ float laser_trait(vec3 q, vec3 dv, float R, float tMax) {
     }
     float isig = inversesqrt(sig2);
     float inv_sin = min(inversesqrt(s2), 0.4 * max(R, 1.0) * isig);
-    return exp(-0.5 * u2 * isig * isig) * isig * 0.39894228 * inv_sin * laser_phase(b) * exp(-cam_fwd.w * (t + s));
+    return exp(-0.5 * u2 * isig * isig) * isig * 0.39894228 * inv_sin * laser_phase(b) * exp(-cam_fwd.w * (t + s))
+         * laser_sigma(cam_pos.xyz + vw * t, res.w * t);
 }
 
 // Segment d'eventail de 2 traits ou plus (L0..L4 : sb_laser) dans le rayon de direction v (t <= tMax). Les
@@ -2465,6 +2574,13 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 v, fl
     if (ia * ia * sig2 > 0.16 * m * m) {
         iaa = 0.4 * m * inversesqrt(sig2);
     }
+    // fumee au point P : les deux lectures (piece, volutes) partent ici ensemble, leur resultat ne sert qu'a la fin
+    // (le temps du calcul de la nappe) ; le pixel couvre res.w tP / |n.v| dans la nappe
+#if LASER_FOG >= 1
+    float lfoot = log2(res.w * tP * iaa);
+    vec2 fog2;
+    vec4 fog = laser_fetch(cam_pos.xyz + v * tP, lfoot, fog2);
+#endif
     // 1 / sin plafonne par la longueur du trait jusqu'a P (trait vu dans son axe) ; tout au carre
     float sin2 = max(1.0 - bP * bP, 6.25 * sig2 * irP * irP);
     float k = L4.w * irP * iaa;
@@ -2542,7 +2658,12 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 v, fl
 #else
     vec3 col = L4.rgb;
 #endif
-    return col * (S * laser_phase(bP) * exp(-cam_fwd.w * (tP + rP)) * L4.w * irP * iaa);
+    return col * (S * laser_phase(bP) * exp(-cam_fwd.w * (tP + rP)) * L4.w * irP * iaa
+#if LASER_FOG >= 1
+               * laser_sigma_of(fog, fog2, lfoot));
+#else
+               * lfog.x);
+#endif
 }
 @end
 
@@ -2737,6 +2858,7 @@ void main() {
 @include_block common
 @include_block laser_uniforms_cs
 layout(binding=11) readonly buffer laser_scr_ro { sb_vec4 scr[]; };
+layout(binding=12) buffer laser_stats_rw { sb_index stats_w[]; };
 layout(binding=13) buffer laser_ccount_rw { sb_index ccount_w[]; };
 layout(binding=14) buffer laser_clist_rw { sb_index clist_w[]; };
 @include_block laser_tiles
@@ -2760,6 +2882,8 @@ void main() {
             uint k = atomicAdd(s_n, 1u);
             if (k < LASER_CAP) {
                 s_list[k] = i;
+            } else {
+                atomicAdd(stats_w[3].v, 1u);   // debordement (segments perdus pour cette grosse tuile)
             }
         }
     }
@@ -2787,7 +2911,11 @@ layout(binding=12) buffer laser_stats_rw { sb_index stats_w[]; };
 layout(binding=13) readonly buffer laser_ccount_ro { sb_index ccount[]; };
 layout(binding=14) readonly buffer laser_clist_ro { sb_index clist[]; };
 layout(binding=6) uniform texture2D laser_depth_cs;
+layout(binding=7) uniform texture3D laser_fog_tex;    // amas de fumee simules (la texture des lyres : fog_tex)
+layout(binding=8) uniform texture3D laser_vol_tex;    // volutes fines (2 instants, BC5)
 layout(binding=1) uniform sampler laser_smp_cs;
+layout(binding=2) uniform sampler laser_lin_clamp;
+layout(binding=3) uniform sampler laser_vol_smp;      // repetee, mipmaps lineaires
 layout(binding=15, rgba16f) uniform writeonly image2D laser_w;
 @include_block laser_eval
 @include_block laser_ray
@@ -2860,10 +2988,10 @@ void main() {
                 // trait seul : rien a calculer hors de sa bande a l'ecran
                 vec4 ln = s_line[j];
                 if (abs(dot(fpA, ln.xy) + ln.z) <= ln.w) {
-                    accA += L4.rgb * laser_trait(L3.xyz, vec3(dot(va, L0.xyz), dot(va, L1.xyz), dot(va, L2.xyz)), L2.w, tMaxA);
+                    accA += L4.rgb * laser_trait(L3.xyz, vec3(dot(va, L0.xyz), dot(va, L1.xyz), dot(va, L2.xyz)), va, L2.w, tMaxA);
                 }
                 if (abs(dot(fpB, ln.xy) + ln.z) <= ln.w) {
-                    accB += L4.rgb * laser_trait(L3.xyz, vec3(dot(vb, L0.xyz), dot(vb, L1.xyz), dot(vb, L2.xyz)), L2.w, tMaxB);
+                    accB += L4.rgb * laser_trait(L3.xyz, vec3(dot(vb, L0.xyz), dot(vb, L1.xyz), dot(vb, L2.xyz)), vb, L2.w, tMaxB);
                 }
             } else {
                 accA += laser_eval(L0, L1, L2, L3, L4, L5, va, tMaxA);
@@ -2887,15 +3015,49 @@ void main() {
 }
 @end
 
-// Deux variantes : sans degrade (aucune figure n'en a : rien a lire ni a melanger), et avec.
+// Variantes : sans degrade (aucune figure n'en a : rien a lire ni a melanger) et avec ; fumee uniforme (0), de la
+// piece (1), avec volutes (2, 3) : voir LASER_FOG.
 @cs cs_laser_shade
 @image_sample_type laser_depth_cs unfilterable_float
 @sampler_type laser_smp_cs nonfiltering
 @include_block laser_shade_body
 @end
 
+@cs cs_laser_shade_f1
+#define LASER_FOG 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f2
+#define LASER_FOG 2
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f3
+#define LASER_FOG 3
+@include_block laser_shade_body
+@end
+
 @cs cs_laser_shade_grad
 #define LASER_GRADIENT 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f1
+#define LASER_GRADIENT 1
+#define LASER_FOG 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f2
+#define LASER_GRADIENT 1
+#define LASER_FOG 2
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f3
+#define LASER_GRADIENT 1
+#define LASER_FOG 3
 @include_block laser_shade_body
 @end
 
@@ -2928,4 +3090,10 @@ void main() {
 @program laser_setup cs_laser_setup
 @program laser_bin cs_laser_bin
 @program laser_shade cs_laser_shade
+@program laser_shade_f1 cs_laser_shade_f1
+@program laser_shade_f2 cs_laser_shade_f2
+@program laser_shade_f3 cs_laser_shade_f3
 @program laser_shade_grad cs_laser_shade_grad
+@program laser_shade_grad_f1 cs_laser_shade_grad_f1
+@program laser_shade_grad_f2 cs_laser_shade_grad_f2
+@program laser_shade_grad_f3 cs_laser_shade_grad_f3

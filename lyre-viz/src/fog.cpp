@@ -41,7 +41,7 @@ void FogSim::init(vec3 bmin, vec3 bmax) {
     size = bmax - bmin;
     d.assign(NX * NY * NZ, 0.0f);
     tmp.assign(NX * NY * NZ, 0.0f);
-    upload.assign(NX * NY * NZ, 0);
+    upload.assign(NX * NY * NZ * 2, 0);
 
     machines.clear();
     machines.push_back({{-34.5f, 1.8f, -12}, normalize(vec3(1, 0.15f, 0.2f))});
@@ -74,7 +74,7 @@ void FogSim::init(vec3 bmin, vec3 bmax) {
 
 void FogSim::clear() {
     std::fill(d.begin(), d.end(), 0.0f);
-    std::fill(upload.begin(), upload.end(), 0);
+    std::fill(upload.begin(), upload.end(), 0);   // la densite de la piece sera recalculee a la prochaine mise a jour
 }
 
 void FogSim::prefill() {
@@ -179,9 +179,21 @@ void FogSim::update(float dt, const FogSettings& s) {
         if (n == 3) accum = 0;
     }
     double sum = 0;
-    for (size_t i = 0; i < d.size(); i++) {
-        upload[i] = (uint8_t)std::min(255.0f, d[i] * 127.5f + 0.5f);
-        sum += d[i];
+    // densite de la piece : brume x exp(-decroissance x hauteur) + poids des amas x amas (au plus 2)
+    room_max = std::max(s.haze + 2.0f * s.smoke, 1e-4f);
+    const float cy = size.y / NY, inv = 255.0f / room_max;
+    for (int y = 0; y < NY; y++) {
+        const float hz = s.haze * std::exp(-std::max(origin.y + (y + 0.5f) * cy, 0.0f) * s.height_falloff);
+        for (int z = 0; z < NZ; z++) {
+            const size_t o = (size_t)z * NX * NY + (size_t)y * NX;
+            for (int x = 0; x < NX; x++) {
+                const float dv = d[o + x];
+                const uint8_t q = (uint8_t)std::min(255.0f, dv * 127.5f + 0.5f);
+                upload[(o + x) * 2] = q;
+                upload[(o + x) * 2 + 1] = (uint8_t)std::min(255.0f, (hz + (float)q * (1.0f / 127.5f) * s.smoke) * inv + 0.5f);
+                sum += dv;
+            }
+        }
     }
     mean_smoke = (float)(sum / (double)d.size());
 }

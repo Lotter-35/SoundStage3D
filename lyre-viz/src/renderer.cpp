@@ -1,6 +1,7 @@
 #include "renderer.h"
 #include "gpu_profiler.h"
 #include "lasers.h"
+#include "volutes.h"
 #include "sokol_time.h"
 #include "sokol_app.h"
 #include "sokol_glue.h"
@@ -82,6 +83,35 @@ void make_beam_cone(std::vector<float>& v, std::vector<uint16_t>& idx) {
 // Puissance d'un laser dans la fumee : couleur x W x LASER_FLUX_PER_W (meme unite que les lyres).
 // Provisoire : la puissance en watts par couleur et le blanchiment viendront a l'etape 4 du plan.
 constexpr float LASER_FLUX_PER_W = 20.0f;
+
+// Point du triangle (a, b, c) le plus proche de p (Ericson, Real-Time Collision Detection, 5.1.5).
+vec3 closest_on_triangle(vec3 p, vec3 a, vec3 b, vec3 c) {
+    const vec3 ab = b - a, ac = c - a, ap = p - a;
+    const float d1 = dot(ab, ap), d2 = dot(ac, ap);
+    if (d1 <= 0 && d2 <= 0) return a;
+    const vec3 bp = p - b;
+    const float d3 = dot(ab, bp), d4 = dot(ac, bp);
+    if (d3 >= 0 && d4 <= d3) return b;
+    const float vc = d1 * d4 - d3 * d2;
+    if (vc <= 0 && d1 >= 0 && d3 <= 0) return a + ab * (d1 / (d1 - d3));
+    const vec3 cp = p - c;
+    const float d5 = dot(ab, cp), d6 = dot(ac, cp);
+    if (d6 >= 0 && d5 <= d6) return c;
+    const float vb = d5 * d2 - d1 * d6;
+    if (vb <= 0 && d2 >= 0 && d6 <= 0) return a + ac * (d2 / (d2 - d6));
+    const float va = d3 * d6 - d5 * d4;
+    if (va <= 0 && (d4 - d3) >= 0 && (d5 - d6) >= 0) return b + (c - b) * ((d4 - d3) / ((d4 - d3) + (d5 - d6)));
+    const float den = 1.0f / (va + vb + vc);
+    return a + ab * (vb * den) + ac * (vc * den);
+}
+
+// Force des volutes fines (amplitude de la modulation, en ecarts types) : 'hz' brume, 'smoke' amas (memes unites).
+// Faibles dans la brume du hazer (fumee fine et reguliere), fortes dans les amas des machines a fumee.
+float volutes_force(const RenderSettings& rs, float hz, float smoke) {
+    if (!rs.laser_volutes) return 0.0f;
+    const float part = smoke / std::max(hz + smoke, 1e-4f);
+    return rs.laser_vol_strength * (0.35f + 0.65f * part);
+}
 
 sg_buffer make_buffer(const void* data, size_t size, bool index, const char* label) {
     sg_buffer_desc d = {};
@@ -336,7 +366,7 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         d.width = FogSim::NX;
         d.height = FogSim::NY;
         d.num_slices = FogSim::NZ;
-        d.pixel_format = SG_PIXELFORMAT_R8;
+        d.pixel_format = SG_PIXELFORMAT_RG8;   // r : amas (lyres), g : densite de la piece (lasers)
         d.usage.write_transient = true;
         d.label = "fog";
         fog_img = sg_make_image(&d);
@@ -352,6 +382,30 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         d.label = "fog-detail";
         detail_img = sg_make_image(&d);
         detail_view = texture_view(detail_img);
+    }
+    {
+        // lasers : volutes fines (texture 3D periodique, 4 instants de l'evolution par canal), generees ici
+        Volutes vol;
+        vol.build();
+        volutes_build_ms = vol.build_ms;
+        volutes_sd = vol.level_sd;
+        sg_image_desc d = {};
+        d.type = SG_IMAGETYPE_3D;
+        d.width = d.height = d.num_slices = VOLUTES_N;
+        d.num_mipmaps = (int)vol.mips.size();
+        d.pixel_format = SG_PIXELFORMAT_BC5_RG;
+        for (size_t m = 0; m < vol.mips.size(); m++) {
+            d.data.mip_levels[m].ptr = vol.mips[m].data();
+            d.data.mip_levels[m].size = vol.mips[m].size();
+        }
+        d.label = "laser-volutes";
+        volutes_img = sg_make_image(&d);
+        volutes_view = texture_view(volutes_img);
+        sg_sampler_desc s = {};
+        s.min_filter = s.mag_filter = s.mipmap_filter = SG_FILTER_LINEAR;
+        s.wrap_u = s.wrap_v = s.wrap_w = SG_WRAP_REPEAT;
+        s.label = "volutes-smp";
+        volutes_smp = sg_make_sampler(&s);
     }
     {
         // sol texture (sans fichiers : une image unie, le sol garde le beton uni)
@@ -566,8 +620,14 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     laser_data.reserve((size_t)MAX_LASER_SEGS * 24);
     pip_laser_setup = make_compute_pipeline(laser_setup_shader_desc(backend), "laser-setup");
     pip_laser_bin = make_compute_pipeline(laser_bin_shader_desc(backend), "laser-bin");
-    pip_laser_shade = make_compute_pipeline(laser_shade_shader_desc(backend), "laser-shade");
-    pip_laser_shade_grad = make_compute_pipeline(laser_shade_grad_shader_desc(backend), "laser-shade-gradient");
+    pip_laser_shade[0][0] = make_compute_pipeline(laser_shade_shader_desc(backend), "laser-shade");
+    pip_laser_shade[0][1] = make_compute_pipeline(laser_shade_f1_shader_desc(backend), "laser-shade-fog1");
+    pip_laser_shade[0][2] = make_compute_pipeline(laser_shade_f2_shader_desc(backend), "laser-shade-fog2");
+    pip_laser_shade[0][3] = make_compute_pipeline(laser_shade_f3_shader_desc(backend), "laser-shade-fog3");
+    pip_laser_shade[1][0] = make_compute_pipeline(laser_shade_grad_shader_desc(backend), "laser-shade-gradient");
+    pip_laser_shade[1][1] = make_compute_pipeline(laser_shade_grad_f1_shader_desc(backend), "laser-shade-gradient-fog1");
+    pip_laser_shade[1][2] = make_compute_pipeline(laser_shade_grad_f2_shader_desc(backend), "laser-shade-gradient-fog2");
+    pip_laser_shade[1][3] = make_compute_pipeline(laser_shade_grad_f3_shader_desc(backend), "laser-shade-gradient-fog3");
 }
 
 void Renderer::make_target(Target& t, int w, int h, sg_pixel_format fmt, const char* label) {
@@ -1461,8 +1521,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     bool laser_grad = false;   // une figure au moins a un degrade : variante du shader qui les lit
     if (rs.lasers && lasers) {
         nlas = std::min((int)lasers->segs.size(), MAX_LASER_SEGS);
-        // puissance d'un trait x diffusion (air + fumee, uniforme dans ce prototype)
-        const float k = rs.laser_gain * LASER_FLUX_PER_W * (sigma_scat + rs.laser_air);
+        // puissance d'un trait ; la diffusion (air + fumee de la piece) est lue au point de la nappe (laser_sigma)
+        const float k = rs.laser_gain * LASER_FLUX_PER_W;
         laser_data.resize((size_t)std::max(nlas, 1) * 24);
         for (int i = 0; i < nlas; i++) {
             const LaserSegment& g = lasers->segs[i];
@@ -1498,8 +1558,68 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(lp.tiles, (float)stats.laser_tiles_x, (float)stats.laser_tiles_y, (float)laser_ctx, gpuprof::stats_enabled() ? 1.0f : 0.0f);
         set4(lp.hall_min, hall_min, 0.0f);
         set4(lp.hall_max, hall_max, 0.0f);
+        // fumee de la piece : coordonnee de texture = X * inv - min * inv (une operation par axe dans le shader)
+        set4(lp.fog_box_min, fog.origin.x / fog.size.x, fog.origin.y / fog.size.y, fog.origin.z / fog.size.z, 0.0f);
+        set4(lp.fog_box_inv, 1.0f / fog.size.x, 1.0f / fog.size.y, 1.0f / fog.size.z, 0.0f);
+        set4(lp.lfog, rs.laser_air + sigma_scat, rs.laser_room_fog ? 1.0f : 0.0f, volutes_force(rs, fs.haze * 0.7f, smoke_mean), 0.0f);
+        // fumee de la piece (texture des amas, canal g : densite / room_max, voir FogSim::update) : air + densite x
+        // albedo x densite ; force des volutes : rampe sur les amas (canal r = amas / 2), au plus fort quand ils valent
+        // la brume moyenne
+        {
+            const float vs = rs.laser_volutes ? rs.laser_vol_strength : 0.0f;
+            set4(lp.lroom, rs.laser_air, fs.density * fs.scattering * fog.room_max, vs * 0.35f, vs * 0.65f);
+            set4(lp.lroom2, 0.65f * vs * 2.0f * fs.smoke / std::max(fs.haze * 0.7f, 0.01f), 0.0f, 0.0f, 0.0f);
+        }
+        // volutes : vent (meme derive que le detail des lyres) et boucle d'evolution (2 instants melanges en aller-retour ;
+        // divises par l'ecart type du melange : le contraste ne baisse pas entre les deux)
+        if (rs.laser_volutes && volutes_img.id) {
+            const float wa = fs.wind_angle * DEG;
+            const float tt = fs.animate ? time : 0.0f;
+            const float sz = std::max(rs.laser_vol_size, 0.05f);
+            const vec3 drift = vec3(std::cos(wa) * fs.wind_speed, fs.rise * 0.25f, std::sin(wa) * fs.wind_speed) * tt;
+            set4(lp.lvol, drift * (-1.0f / sz), 1.0f / sz);
+            const float f = 1.0f - std::fabs(1.0f - 2.0f * fractf(tt / std::max(rs.laser_vol_period, 0.5f)));
+            const float kn = 1.0f / (VOLUTES_SD * std::sqrt((1.0f - f) * (1.0f - f) + f * f));
+            set4(lp.lvolw, (1.0f - f) * kn, f * kn, 0.0f, 0.0f);
+            // texels par metre : VOLUTES_N / taille ; niveau 0 tant qu'un pixel couvre moins d'un texel
+            set4(lp.lvol2, -0.5f * kn, std::log2((float)VOLUTES_N / sz), 6.0f, 0.0f);
+            // 2e octave : 3,6 fois plus petite, 1,6 fois plus rapide ; lue tant qu'un pixel couvre moins de 2^lim texels
+            if (rs.laser_vol_fine) {
+                const float sz2 = sz / 3.6f, w2 = std::max(rs.laser_vol_fine_weight, 1e-3f);
+                set4(lp.lvol3, drift * (-1.6f / sz2), 1.0f / sz2);
+                set4(lp.lvol4, std::log2((float)VOLUTES_N / sz2), rs.laser_vol_fine_lod, rs.laser_vol_fine_weight,
+                     (1.0f - 1.0f / std::sqrt(1.0f + w2 * w2)) / w2);
+            } else {
+                set4(lp.lvol4, 0.0f, -1000.0f, 0.0f, 0.0f);
+            }
+        } else {
+            set4(lp.lvol2, 0.0f, 0.0f, -1000.0f, 0.0f);
+            set4(lp.lvol4, 0.0f, -1000.0f, 0.0f, 0.0f);
+        }
+        // diffusion vers l'avant : lobe doux (g de la fumee si un seul lobe) + lobe tres avant (poids w)
+        const float w = rs.laser_fwd_lobe ? saturate(rs.laser_fwd_weight) : 0.0f;
+        const float g0 = clampf(rs.laser_fwd_lobe ? rs.laser_g_soft : fs.anisotropy, -0.95f, 0.95f);
+        const float g1 = clampf(rs.laser_g_fwd, -0.98f, 0.98f);
+        set4(lp.lphase0, 1.0f + g0 * g0, 2.0f * g0, (1.0f - w) * (1.0f - g0 * g0) * 0.07957747f, 0.0f);
+        set4(lp.lphase1, 1.0f + g1 * g1, 2.0f * g1, w * (1.0f - g1 * g1) * 0.07957747f, 0.0f);
     }
-
+    // variante du shader : fumee uniforme et un lobe (0), fumee de la piece et deux lobes (1), avec les volutes (2), et
+    // leur 2e octave (3) seulement si un segment passe assez pres de la camera pour qu'elle y soit lue
+    int fogv = 0;
+    if (laser_tiles) {
+        fogv = (rs.laser_volutes && volutes_img.id) ? 2 : (rs.laser_room_fog || rs.laser_fwd_lobe) ? 1 : 0;
+        if (fogv == 2 && rs.laser_vol_fine) {
+            // lue si log2(taille du pixel) + lvol4.x < lvol4.y ; un pixel a la distance d couvre au moins d x angle
+            const float dmax = std::exp2(lp.lvol4[1] - lp.lvol4[0]) / lp.res[3];
+            for (int i = 0; i < nlas && fogv == 2; i++) {
+                const LaserSegment& g = lasers->segs[i];
+                const float ch = std::cos(g.half_angle), sh = std::sin(g.half_angle), Rf = g.range / std::max(ch, 1e-3f);
+                const vec3 a = g.src, b = g.src + (g.ec * ch - g.es * sh) * Rf, c = g.src + (g.ec * ch + g.es * sh) * Rf;
+                if (length(closest_on_triangle(cam.pos, a, b, c) - cam.pos) < dmax) fogv = 3;
+            }
+        }
+    }
+    stats.laser_fog_variant = fogv;
     gpuprof::frame_begin();
     gpuprof::mark("envois CPU -> GPU");
     sg_write_buffer_desc wb = {};
@@ -1576,7 +1696,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         wb.dst.buffer = dyn_cyl_buf;
         sg_write_buffer_transient(&wb);
     }
-    if (rs.volumetrics) {
+    if (rs.volumetrics || fogv >= 1) {   // amas de fumee : faisceaux des lyres et lasers
         sg_write_image_desc wi = {};
         wi.src.data = {fog.upload.data(), fog.upload.size()};
         wi.dst.image = fog_img;
@@ -2014,13 +2134,14 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         sg_apply_pipeline(pip_laser_bin);
         b = {};
         b.views[VIEW_laser_scr_ro] = laser_scr_view;
+        b.views[VIEW_laser_stats_rw] = laser_stats_view;
         b.views[VIEW_laser_ccount_rw] = laser_ccount_view;
         b.views[VIEW_laser_clist_rw] = laser_clist_view;
         sg_apply_bindings(&b);
         sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lcp));
         sg_dispatch(laser_ctx, laser_cty, 1);
         gpuprof::mark("lasers : fumee");
-        sg_apply_pipeline(laser_grad ? pip_laser_shade_grad : pip_laser_shade);
+        sg_apply_pipeline(pip_laser_shade[laser_grad ? 1 : 0][fogv]);
         b = {};
         b.views[VIEW_lasers_cs] = laser_view;
         b.views[VIEW_laser_scr_ro] = laser_scr_view;
@@ -2028,8 +2149,14 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         b.views[VIEW_laser_ccount_ro] = laser_ccount_view;
         b.views[VIEW_laser_clist_ro] = laser_clist_view;
         b.views[VIEW_laser_depth_cs] = scene_depth_lin.tex;
+        if (fogv >= 1) b.views[VIEW_laser_fog_tex] = fog_view;
+        if (fogv >= 2) {
+            b.views[VIEW_laser_vol_tex] = volutes_view;
+            b.samplers[SMP_laser_vol_smp] = volutes_smp;
+        }
         b.views[VIEW_laser_w] = laser_store;
         b.samplers[SMP_laser_smp_cs] = point_smp;
+        b.samplers[SMP_laser_lin_clamp] = lin_clamp;
         sg_apply_bindings(&b);
         sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lcp));
         sg_dispatch(stats.laser_tiles_x, stats.laser_tiles_y, 1);
@@ -2040,6 +2167,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                 stats.laser_tile_pairs = (double)c[0];
                 stats.laser_tile_max = (int)c[1];
                 stats.laser_tiles_hit = (int)c[2];
+                stats.laser_bin_overflow = (int)c[3];
             }
         }
     }

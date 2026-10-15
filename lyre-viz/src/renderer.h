@@ -60,6 +60,20 @@ struct RenderSettings {
     float laser_gain = 1.0f;      // intensite des faisceaux dans la fumee (multiplicateur)
     float laser_width_px = 0.6f;  // largeur minimale d'un trait (sigma de la gaussienne, en pixels)
     float laser_air = 0.0005f;    // diffusion de l'air (par m) : traits visibles meme sans fumee
+    bool laser_room_fog = true;   // fumee de la piece (amas, brume) lue au point de chaque nappe ; sinon uniforme
+    // diffusion vers l'avant des lasers : deux lobes (tres avant + doux), sinon un seul comme les lyres (g de la fumee)
+    bool laser_fwd_lobe = true;
+    float laser_fwd_weight = 0.42f;   // part du lobe tres avant
+    float laser_g_fwd = 0.88f;        // g du lobe tres avant
+    float laser_g_soft = 0.35f;       // g du lobe doux (vu de cote : meme brillance qu'un lobe g = 0,55)
+    // volutes fines dans les nappes (texture 3D periodique, src/volutes.cpp)
+    bool laser_volutes = true;
+    float laser_vol_strength = 0.6f;  // contraste (ecarts types de la modulation, dans les amas)
+    float laser_vol_size = 1.6f;      // taille d'un motif (m) : 64 texels de 2,5 cm
+    float laser_vol_period = 16.0f;   // duree de la boucle d'evolution (s)
+    bool laser_vol_fine = true;       // 2e octave (0,44 m, texels de 7 mm), de pres seulement
+    float laser_vol_fine_lod = -1.0f; // ... lue tant qu'un pixel couvre moins de 2^x de ses texels (-1 : pixel < 3,5 mm, a moins de ~7 m)
+    float laser_vol_fine_weight = 0.6f;   // son poids
     // (laterale, prisme, axiale, active) pour les shaders : voir beam_pattern_rgb
     void chroma_params(float out[4]) const {
         const float k = chroma ? chroma_strength : 0.0f;
@@ -92,6 +106,8 @@ struct RenderStats {
     double laser_tile_pairs = 0;  // tuiles de 16 px : couples (tuile, segment)
     int laser_tile_max = 0;       // segments au plus dans une tuile
     int laser_tiles_hit = 0;      // tuiles touchees par au moins un segment
+    int laser_bin_overflow = 0;   // segments perdus par les grosses tuiles pleines (plus de LASER_CAP)
+    int laser_fog_variant = 0;    // variante de la fumee des lasers (0 a 3, voir LASER_FOG dans le shader)
 };
 
 struct LaserRig;
@@ -261,7 +277,8 @@ class Renderer {
     sg_pipeline pip_beams_m = {}, pip_beams_an_m = {}, pip_refl_compose = {}, pip_refl_mask = {}, pip_refl_block = {};   // passe miroir
 
     // lasers : segments d'eventail (voir shaders, section 10)
-    static constexpr int MAX_LASER_SEGS = 8192, LASER_CAP = 4096;   // LASER_CAP : comme le shader
+    // segments au plus (16 384 : 200 lasers qui jouent des fichiers ILDA charges en depassaient 8 192) ; LASER_CAP : comme le shader
+    static constexpr int MAX_LASER_SEGS = 16384, LASER_CAP = 4096;
     sg_buffer laser_buf = {}, laser_scr_buf = {}, laser_stats_buf = {};
     sg_view laser_view = {}, laser_scr_view = {}, laser_stats_view = {};
     sg_buffer laser_ccount_buf = {}, laser_clist_buf = {};   // grosses tuiles (128 px) : nombre et liste
@@ -270,8 +287,16 @@ class Renderer {
     sg_image laser_img = {};                                 // tuiles en calcul : lasers du pixel (RGBA16F)
     sg_view laser_store = {}, laser_tex = {};
     std::vector<float> laser_data;                           // sb_laser_t[] (20 flottants)
-    sg_pipeline pip_laser_setup = {}, pip_laser_bin = {}, pip_laser_shade = {};
-    sg_pipeline pip_laser_shade_grad = {};   // variante avec degrades (couleur au bord 1)
+    sg_image volutes_img = {};                               // volutes fines (128^3 RGBA8, mipmaps)
+    sg_view volutes_view = {};
+    sg_sampler volutes_smp = {};
+  public:
+    double volutes_build_ms = 0;                             // generation au lancement
+    std::vector<float> volutes_sd;                           // ecart type de chaque niveau de mip
+  private:
+    sg_pipeline pip_laser_setup = {}, pip_laser_bin = {};
+    // [sans, avec degrades (couleur au bord 1)][fumee uniforme, de la piece, avec volutes, et leur 2e octave]
+    sg_pipeline pip_laser_shade[2][4] = {};
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;

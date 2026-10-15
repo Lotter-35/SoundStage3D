@@ -1,8 +1,10 @@
 // Panneau de controle (Dear ImGui).
+#include "ambiances.h"
 #include "app.h"
 #include "gpu_profiler.h"
 #include "imgui.h"
 #include "sokol_gfx.h"
+#include <algorithm>
 #include <cstdio>
 
 namespace {
@@ -21,6 +23,135 @@ const Swatch SWATCHES[] = {
     {"Chaud (CTO)", {1, 0.78f, 0.55f}},
 };
 
+// ---------------------------------------------------------------------------------------------
+//  Selection a l'ecran (debug) : reperes autour des appareils selectionnes, rectangle, pas a pas
+// ---------------------------------------------------------------------------------------------
+
+// Position a l'ecran (coordonnees de l'interface) d'un point de la scene, et pixels par metre a sa distance.
+// Faux s'il est derriere la camera.
+bool to_screen(vec3 p, ImVec2& out, float& px_per_m) {
+    const Camera& c = app.cam;
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    const vec3 d = p - c.pos;
+    const float z = dot(d, c.fwd);
+    if (z < 0.2f || ds.y <= 0) return false;
+    const float tanY = std::tan(c.fovy * 0.5f), tanX = tanY * ds.x / ds.y;
+    out = ImVec2((0.5f + 0.5f * dot(d, c.right) / (z * tanX)) * ds.x, (0.5f - 0.5f * dot(d, c.up) / (z * tanY)) * ds.y);
+    px_per_m = 0.5f * ds.y / (z * tanY);
+    return true;
+}
+
+vec3 fixture_pos(const Fixture& f) { return f.head_center; }
+vec3 fixture_pos(const LaserFixture& f) { return f.mount.pos; }
+
+// Selectionne seulement l'appareil suivant (dir = 1) ou precedent (-1) ; s'il n'y en a pas exactement un de
+// selectionne, part du premier (ou du dernier).
+template <typename T> void step_selection(std::vector<T>& v, int dir) {
+    const int n = (int)v.size();
+    if (n == 0) return;
+    int cur = -1, count = 0;
+    for (int i = 0; i < n; i++)
+        if (v[i].selected) {
+            if (count == 0) cur = i;
+            count++;
+        }
+    const int next = count == 1 ? (cur + dir + n) % n : (dir > 0 ? 0 : n - 1);
+    for (T& f : v) f.selected = false;
+    v[next].selected = true;
+}
+
+template <typename T> void step_ui(std::vector<T>& v, const char* what, const std::vector<std::string>& groups) {
+    ImGui::PushID(what);
+    if (ImGui::Button("< Precedent")) step_selection(v, -1);
+    ImGui::SameLine();
+    if (ImGui::Button("Suivant >")) step_selection(v, 1);
+    int one = -1, count = 0;
+    for (int i = 0; i < (int)v.size(); i++)
+        if (v[i].selected) { one = i; count++; }
+    ImGui::SameLine();
+    if (count == 1) {
+        const int g = v[one].mount.group;
+        ImGui::Text("%s %d / %d (%s)", what, one + 1, (int)v.size(), g >= 0 && g < (int)groups.size() ? groups[g].c_str() : "?");
+    } else {
+        ImGui::TextDisabled("(un seul a la fois)");
+    }
+    ImGui::TextDisabled("Dans la scene : clic = un seul, glisser = rectangle (Ctrl ajoute, Maj retire), Ctrl + clic = ajoute ou retire.");
+    ImGui::PopID();
+}
+
+// Rectangle (ou clic) : appareils dont le centre tombe dedans (le plus proche du clic pour un clic).
+template <typename T> void pick(std::vector<T>& v, int mode) {
+    const float x0 = std::min(app.sel_x0, app.sel_x1), x1 = std::max(app.sel_x0, app.sel_x1);
+    const float y0 = std::min(app.sel_y0, app.sel_y1), y1 = std::max(app.sel_y0, app.sel_y1);
+    const bool click = x1 - x0 < 5 && y1 - y0 < 5;
+    int best = -1;
+    float best_d = 1e30f;
+    std::vector<char> hit(v.size(), 0);
+    for (int i = 0; i < (int)v.size(); i++) {
+        ImVec2 p;
+        float k;
+        if (!to_screen(fixture_pos(v[i]), p, k)) continue;
+        if (click) {
+            const float r = std::max(14.0f, 0.4f * k);
+            const float dx = p.x - app.sel_x1, dy = p.y - app.sel_y1, d = dx * dx + dy * dy;
+            if (d < r * r && d < best_d) { best_d = d; best = i; }
+        } else {
+            hit[i] = p.x >= x0 && p.x <= x1 && p.y >= y0 && p.y <= y1;
+        }
+    }
+    if (click && best >= 0) {
+        hit[best] = 1;
+        if (mode == 1) {   // Ctrl + clic : ajoute ou retire celui-la
+            v[best].selected = !v[best].selected;
+            return;
+        }
+    }
+    for (int i = 0; i < (int)v.size(); i++) {
+        if (mode == 0) v[i].selected = hit[i] != 0;
+        else if (hit[i]) v[i].selected = mode == 1;
+    }
+}
+
+// Reperes : cadre autour de chaque appareil selectionne (lyres en jaune, lasers en vert d'eau), avec son numero
+// s'il y en a peu ; petit point sur les autres quand leur onglet est ouvert.
+template <typename T> void overlay(const std::vector<T>& v, float size_m, ImU32 col) {
+    ImDrawList* dl = ImGui::GetBackgroundDrawList();
+    int count = 0;
+    for (const T& f : v) count += f.selected ? 1 : 0;
+    for (int i = 0; i < (int)v.size(); i++) {
+        const T& f = v[i];
+        ImVec2 p;
+        float k;
+        if (!to_screen(fixture_pos(f), p, k)) continue;
+        if (f.selected) {
+            const float h = clampf(size_m * k, 5.0f, 80.0f);
+            dl->AddRect(ImVec2(p.x - h - 1, p.y - h - 1), ImVec2(p.x + h + 1, p.y + h + 1), IM_COL32(0, 0, 0, 200), 0, 0, 3.0f);
+            dl->AddRect(ImVec2(p.x - h, p.y - h), ImVec2(p.x + h, p.y + h), col, 0, 0, 1.5f);
+            if (count <= 24) {
+                char t[16];
+                std::snprintf(t, sizeof(t), "%d", i + 1);
+                dl->AddText(ImVec2(p.x + h + 3, p.y - h - 2), IM_COL32(0, 0, 0, 255), t);
+                dl->AddText(ImVec2(p.x + h + 2, p.y - h - 3), col, t);
+            }
+        } else {
+            dl->AddCircleFilled(p, 2.0f, (col & 0x00FFFFFFu) | 0x70000000u);
+        }
+    }
+}
+
+void selection_overlay() {
+    // seulement les appareils de l'onglet ouvert (Lyres ou Lasers), rien ailleurs
+    if (app.sel_kind == 0) overlay(app.rig.fixtures, 0.45f, IM_COL32(255, 210, 0, 255));
+    if (app.sel_kind == 1) overlay(app.lasers.fixtures, 0.3f, IM_COL32(0, 255, 170, 255));
+    if (app.sel_drag) {
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
+        const ImVec2 a(std::min(app.sel_x0, app.sel_x1), std::min(app.sel_y0, app.sel_y1));
+        const ImVec2 b(std::max(app.sel_x0, app.sel_x1), std::max(app.sel_y0, app.sel_y1));
+        dl->AddRectFilled(a, b, IM_COL32(120, 200, 255, 40));
+        dl->AddRect(a, b, IM_COL32(120, 200, 255, 220), 0, 0, 1.5f);
+    }
+}
+
 void selection_ui() {
     Rig& rig = app.rig;
     ImGui::Text("Selection : %d / %d lyres", rig.selected_count(), (int)rig.fixtures.size());
@@ -33,6 +164,7 @@ void selection_ui() {
     if (ImGui::Button("1 sur 2 (paires)")) rig.select_odd_even(false);
     ImGui::SameLine();
     if (ImGui::Button("Impaires")) rig.select_odd_even(true);
+    step_ui(rig.fixtures, "Lyre", app.scene.group_names);
     ImGui::TextDisabled("Groupes (Ctrl + clic pour ajouter) :");
     for (int g = 0; g < (int)app.scene.group_names.size(); g++) {
         if (g > 0 && g % 4 != 0) ImGui::SameLine();
@@ -236,6 +368,7 @@ void laser_selection_ui() {
     if (ImGui::Button("1 sur 2 (paires)##l")) lr.select_odd_even(false);
     ImGui::SameLine();
     if (ImGui::Button("Impaires##l")) lr.select_odd_even(true);
+    step_ui(lr.fixtures, "Laser", lr.group_names);
     ImGui::TextDisabled("Groupes (Ctrl + clic pour ajouter) :");
     for (int g = 0; g < (int)lr.group_names.size(); g++) {
         if (g > 0 && g % 4 != 0) ImGui::SameLine();
@@ -298,9 +431,50 @@ void laser_programmer_ui() {
         if (ImGui::SliderFloat("Defilement##l", &p.gradient_speed, -2, 2, "%.2f cycle/s")) LAPPLY(gradient_speed, p.gradient_speed);
 
     ImGui::SeparatorText("Figure##l");
+    static const char* SOURCES[] = {"Programmeur (formes)", "Fichier ILDA"};
+    if (ImGui::Combo("Source##l", &p.source, SOURCES, 2)) LAPPLY(source, p.source);
+    if (p.source == 1) {
+        // fichier ILDA : bibliotheque server/storage/ilda (une banque par sous-dossier)
+        IldaLibrary& lib = lr.ilda;
+        if (lib.clips.empty()) {
+            ImGui::TextColored(ImVec4(1, 0.7f, 0.3f, 1), "Aucun fichier ILDA (server/storage/ilda introuvable ; option --ilda dossier).");
+        } else {
+            const char* cur = p.ilda_clip >= 0 && p.ilda_clip < (int)lib.labels.size() ? lib.labels[p.ilda_clip].c_str() : "(aucun)";
+            if (ImGui::BeginCombo("Fichier##l", cur)) {
+                std::string bank = "\x01";
+                for (int i = 0; i < (int)lib.clips.size(); i++) {
+                    if (lib.clips[i].bank != bank) {
+                        bank = lib.clips[i].bank;
+                        ImGui::SeparatorText(bank.empty() ? "(racine)" : bank.c_str());
+                    }
+                    char id[160];
+                    std::snprintf(id, sizeof(id), "%s##ilda%d", lib.clips[i].name.c_str(), i);
+                    if (ImGui::Selectable(id, i == p.ilda_clip)) LAPPLY(ilda_clip, i);
+                }
+                ImGui::EndCombo();
+            }
+            if (ImGui::Button("< Fichier precedent##l")) LAPPLY(ilda_clip, std::max(0, p.ilda_clip - 1));
+            ImGui::SameLine();
+            if (ImGui::Button("Fichier suivant >##l")) LAPPLY(ilda_clip, std::min((int)lib.clips.size() - 1, p.ilda_clip + 1));
+        }
+        static const char* PLAY[] = {"Boucle", "Aller-retour", "Image fixe"};
+        if (ImGui::Combo("Lecture##l", &p.ilda_play, PLAY, 3)) LAPPLY(ilda_play, p.ilda_play);
+        if (p.ilda_play == 2) {
+            if (ImGui::SliderInt("Image##l", &p.ilda_frame, 0, 500)) LAPPLY(ilda_frame, p.ilda_frame);
+        } else if (ImGui::SliderFloat("Cadence##l", &p.ilda_fps, 1, 60, "%.0f images/s")) {
+            LAPPLY(ilda_fps, p.ilda_fps);
+        }
+        if (ImGui::Checkbox("Couleurs du fichier (sinon : couleur du laser)##l", &p.ilda_colors)) LAPPLY(ilda_colors, p.ilda_colors);
+        if (ImGui::SliderFloat("Taille##l", &p.opening, 0, lr.max_angle, "%.1f deg")) LAPPLY(opening, p.opening);
+        ImGui::TextDisabled("(%d points, %d faisceaux, %d nappes pour tous les lasers ILDA ; tolerance %d)", lr.ilda_points, lr.ilda_beams,
+                            lr.ilda_sheets, lr.ilda_bias);
+    } else {
     if (ImGui::Combo("Forme##l", &p.shape, LASER_SHAPE_NAMES, LS_COUNT)) LAPPLY(shape, p.shape);
     if (ImGui::SliderFloat("Ouverture##l", &p.opening, 0, lr.max_angle, p.opening <= 0.05f ? "un point" : "%.1f deg")) LAPPLY(opening, p.opening);
-    if (ImGui::SliderInt("Traits##l", &p.traits, 1, 2000, "%d", ImGuiSliderFlags_Logarithmic)) LAPPLY(traits, p.traits);
+    if (ImGui::SliderInt("Traits##l", &p.traits, 0, 2000, p.traits <= 0 ? "nappe continue (ligne)" : "%d", ImGuiSliderFlags_Logarithmic))
+        LAPPLY(traits, p.traits);
+    ImGui::SameLine();
+    if (ImGui::Button("Ligne##l")) LAPPLY(traits, 0);
     if (p.shape == LS_DOUBLE_FAN && ImGui::SliderFloat("Ecart des deux eventails##l", &p.shape_param, 0, 40, "%.1f deg")) LAPPLY(shape_param, p.shape_param);
     if (p.shape == LS_WAVE) {
         if (ImGui::SliderFloat("Amplitude de la vague##l", &p.shape_param, 0, 20, "%.1f deg")) LAPPLY(shape_param, p.shape_param);
@@ -309,6 +483,7 @@ void laser_programmer_ui() {
     if (p.shape == LS_GRID) {
         int rows = (int)std::lround(p.shape_param);
         if (ImGui::SliderInt("Rangees##l", &rows, 2, 16)) LAPPLY(shape_param, (float)rows);
+    }
     }
     static const char* DIFF_NAMES[] = {"aucun", "x3", "x5", "x9"};
     int di = p.diffraction >= 9 ? 3 : (p.diffraction >= 5 ? 2 : (p.diffraction >= 3 ? 1 : 0));
@@ -396,6 +571,24 @@ void laser_global_ui() {
     ImGui::SliderFloat("Intensite dans la fumee", &r.laser_gain, 0.01f, 100, "x %.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("Largeur minimale d'un trait", &r.laser_width_px, 0.3f, 2.0f, "%.2f pixel");
     ImGui::SliderFloat("Diffusion de l'air", &r.laser_air, 0, 0.005f, "%.4f /m");
+    ImGui::Checkbox("Fumee de la piece (amas, brume ; sinon uniforme)##l", &r.laser_room_fog);
+    ImGui::Checkbox("Diffusion tres avant (2 lobes)##l", &r.laser_fwd_lobe);
+    if (r.laser_fwd_lobe) {
+        ImGui::SliderFloat("Part du lobe tres avant##l", &r.laser_fwd_weight, 0, 1, "%.2f");
+        ImGui::SliderFloat("g du lobe tres avant##l", &r.laser_g_fwd, 0.5f, 0.98f, "%.2f");
+        ImGui::SliderFloat("g du lobe doux##l", &r.laser_g_soft, -0.3f, 0.9f, "%.2f");
+    }
+    ImGui::Checkbox("Volutes fines dans les nappes##l", &r.laser_volutes);
+    if (r.laser_volutes) {
+        ImGui::SliderFloat("Contraste des volutes##l", &r.laser_vol_strength, 0, 1.5f, "%.2f");
+        ImGui::SliderFloat("Taille des volutes##l", &r.laser_vol_size, 0.3f, 6, "%.2f m");
+        ImGui::SliderFloat("Evolution (boucle)##l", &r.laser_vol_period, 2, 60, "%.0f s");
+        ImGui::Checkbox("2e octave de pres##l", &r.laser_vol_fine);
+        if (r.laser_vol_fine) {
+            ImGui::SliderFloat("2e octave : portee (niveau)##l", &r.laser_vol_fine_lod, -2, 4, "%.1f");
+            ImGui::SliderFloat("2e octave : poids##l", &r.laser_vol_fine_weight, 0, 1.5f, "%.2f");
+        }
+    }
 }
 
 void render_ui() {
@@ -466,15 +659,58 @@ void render_ui() {
     ImGui::Checkbox("Lasers dans la fumee (reglages : onglet Lasers)", &r.lasers);
     ImGui::SameLine();
     ImGui::TextDisabled("(%d segments, %d traits)", s.laser_segments, app.lasers.total_traits);
+    ImGui::Checkbox("Lasers : fumee de la piece (amas, brume ; sinon uniforme)", &r.laser_room_fog);
+    ImGui::Checkbox("Lasers : diffusion tres avant (2 lobes ; sinon comme les lyres)", &r.laser_fwd_lobe);
+    ImGui::Checkbox("Lasers : volutes fines dans les nappes", &r.laser_volutes);
+    ImGui::Checkbox("Lasers : volutes, 2e octave de pres (detail de quelques mm)", &r.laser_vol_fine);
     ImGui::SeparatorText("Image");
     ImGui::SliderFloat("Exposition", &r.exposure, 0.05f, 8, "%.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("Lumiere ambiante", &r.ambient, 0, 0.05f, "%.4f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("Portee des faisceaux", &r.beam_range, 10, 160, "%.0f m");
 }
 
+// Grille des ambiances : un bouton par ambiance (bande de sa couleur en bas, cadre blanc sur celle en cours).
+void ambiances_ui() {
+    ImGui::TextWrapped("Cliquez une ambiance, ou fleches du clavier pour passer de l'une a l'autre (tant que cet onglet "
+                       "est ouvert ; la camera se deplace alors avec Z Q S D).");
+    const float sp = ImGui::GetStyle().ItemSpacing.x;
+    const float w = (ImGui::GetContentRegionAvail().x - sp * (AMBIANCE_COLS - 1)) / AMBIANCE_COLS;
+    const float h = 3.2f * ImGui::GetTextLineHeightWithSpacing();
+    ImDrawList* dl = ImGui::GetWindowDrawList();
+    for (int i = 0; i < NUM_AMBIANCES; i++) {
+        if (i % AMBIANCE_COLS != 0) ImGui::SameLine();
+        const AmbianceInfo& a = AMBIANCES[i];
+        const vec3 t = a.tint;
+        const bool cur = i == app.ambiance;
+        const float k = cur ? 0.5f : 0.18f;
+        ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f + t.x * k, 0.08f + t.y * k, 0.09f + t.z * k, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f + t.x * 0.4f, 0.1f + t.y * 0.4f, 0.11f + t.z * 0.4f, 1));
+        ImGui::PushStyleColor(ImGuiCol_ButtonActive, ImVec4(0.15f + t.x * 0.6f, 0.15f + t.y * 0.6f, 0.15f + t.z * 0.6f, 1));
+        char label[64];
+        std::snprintf(label, sizeof(label), "%d\n%s##amb%d", i + 1, a.name, i);
+        if (ImGui::Button(label, ImVec2(w, h))) apply_ambiance(i);
+        ImGui::PopStyleColor(3);
+        if (ImGui::IsItemHovered()) ImGui::SetTooltip("%s", a.desc);
+        const ImVec2 mn = ImGui::GetItemRectMin(), mx = ImGui::GetItemRectMax();
+        dl->AddRectFilled(ImVec2(mn.x + 5, mx.y - 7), ImVec2(mx.x - 5, mx.y - 4), ImGui::ColorConvertFloat4ToU32(ImVec4(t.x, t.y, t.z, 1)), 2);
+        if (cur) dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 230), ImGui::GetStyle().FrameRounding, 0, 2.0f);
+    }
+    ImGui::Spacing();
+    const AmbianceInfo& a = AMBIANCES[app.ambiance];
+    ImGui::SeparatorText("En cours");
+    ImGui::Text("%d. %s", app.ambiance + 1, a.name);
+    ImGui::TextWrapped("%s", a.desc);
+    ImGui::TextDisabled("%d faisceaux de lyres, %d lasers allumes (%d traits)", app.renderer.stats.lights, app.lasers.lit,
+                        app.lasers.total_traits);
+    ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+    ImGui::TextWrapped("Les onglets Lyres, Effets, Lasers et Fumee montrent sa programmation : on peut la retoucher.");
+    ImGui::PopStyleColor();
+}
+
 void help_ui() {
     ImGui::TextWrapped("Camera : clic droit maintenu pour regarder, W A S D (Z Q S D en AZERTY) ou fleches pour avancer, "
                        "Espace / E pour monter, C / A(Q) pour descendre, Maj pour aller vite, molette pour la vitesse.");
+    ImGui::TextWrapped("Onglet Ambiances ouvert : les fleches passent d'une ambiance a l'autre (la camera garde Z Q S D).");
     ImGui::TextWrapped("F : mode personnage (vue a la 3e personne, Espace pour sauter). H : cacher le panneau. P : pause.");
     ImGui::SliderFloat("Vitesse camera", &app.move_speed, 0.5f, 80, "%.1f m/s");
     ImGui::SliderFloat("Champ de vision", &app.cam.fovy, 20 * DEG, 100 * DEG, "%.2f rad");
@@ -492,7 +728,13 @@ void draw_ui() {
     ImGui::SameLine();
     ImGui::TextDisabled("| H : cacher | F : personnage | clic droit : regarder");
     if (ImGui::BeginTabBar("tabs")) {
+        if (ImGui::BeginTabItem("Ambiances")) {
+            app.ambiance_tab = true;
+            ambiances_ui();
+            ImGui::EndTabItem();
+        }
         if (ImGui::BeginTabItem("Lyres")) {
+            app.sel_kind = 0;
             selection_ui();
             programmer_ui();
             aim_ui();
@@ -504,6 +746,7 @@ void draw_ui() {
             ImGui::EndTabItem();
         }
         if (ImGui::BeginTabItem("Lasers")) {
+            app.sel_kind = 1;
             laser_selection_ui();
             laser_programmer_ui();
             ImGui::SeparatorText("Effets des lasers");
@@ -526,4 +769,10 @@ void draw_ui() {
         ImGui::EndTabBar();
     }
     ImGui::End();
+    selection_overlay();
+}
+
+void select_in_rect(int mode) {
+    if (app.sel_kind == 0) pick(app.rig.fixtures, mode);
+    else if (app.sel_kind == 1) pick(app.lasers.fixtures, mode);
 }

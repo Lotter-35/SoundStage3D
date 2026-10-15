@@ -5,7 +5,7 @@
 const char* LASER_PATTERN_NAMES[LP_COUNT] = {"eteints", "eventails 1000 traits (L1)", "cones 32 segments (L2)",
                                              "rideaux autour de la camera (L3)", "8 traits separes (L4)",
                                              "nappes fixes, gros plan (L5)", "vers le sol et les obstacles (L6)",
-                                             "programmeur"};
+                                             "programmeur", "eventails en nappes continues (L1 ligne)"};
 const char* LASER_SHAPE_NAMES[LS_COUNT] = {"Eventail", "Double eventail", "Cone", "Tunnel", "Vague", "Grille de points"};
 const char* LASER_GRADIENT_NAMES[LG_COUNT] = {"Uni", "2 couleurs", "3 couleurs", "Defilant", "Arc-en-ciel", "Aleatoire par trait"};
 const char* LASER_EFFECT_NAMES[LFX_COUNT] = {"Vague pan", "Vague tilt", "Cercle (pan/tilt)", "Huit", "Balayage aleatoire",
@@ -57,7 +57,7 @@ struct Builder {
 
     // Un segment : portee = le plus loin que l'eventail va avant de sortir du hangar (5 directions).
     void seg(vec3 S, vec3 ec, vec3 es, float ha, int n, vec3 f0, vec3 f1) {
-        if (segs.size() >= 8192) return;
+        if (segs.size() >= LASER_MAX_SEGS) return;
         const float c1 = std::cos(0.5f * ha), s1 = std::sin(0.5f * ha), c2 = std::cos(ha), s2 = std::sin(ha);
         float R = exit_distance(S, ec, mn, mx);
         if (ha > 0.0f) {
@@ -78,7 +78,7 @@ struct Builder {
         s.flux1 = f1;
         s.pad1 = 0;
         segs.push_back(s);
-        traits += std::max(n, 1);
+        if (n < LASER_SHEET_TRAITS) traits += std::max(n, 1);
     }
 
     // Eventail de n traits (milieu ec, plan (ec, es), demi-ouverture ha), puissance P, couleur prof(t) entre
@@ -87,10 +87,10 @@ struct Builder {
     void fan(vec3 S, vec3 ec, vec3 es, float ha, int n, float P, const Profile& prof, int K = 1, float t0 = 0, float t1 = 1,
              bool flat = false) {
         ha = clampf(ha, 0.0f, 60.0f * DEG);
-        n = std::max(n, 1);
+        n = n <= 0 ? LASER_SHEET_TRAITS : n;   // 0 : nappe continue (mode ligne)
         if (n == 1 || ha <= 0.0f) {
             const vec3 c = prof(0.5f * (t0 + t1)) * P;
-            seg(S, ec, es, 0.0f, n, c, c);
+            seg(S, ec, es, 0.0f, 1, c, c);
             return;
         }
         const float da = 2.0f * ha / (float)(n - 1);
@@ -163,6 +163,36 @@ struct Builder {
         cone(S, axis, any_perp(axis), half_cone, nseg, n_total, spin, P, [&](float) { return flux * (1.0f / P); }, false);
     }
 };
+
+// Primitives d'une image ILDA (coordonnees du fichier de -1 a 1) dans le champ du scanner : rotation 'roll',
+// angles = coordonnees x demi-ouverture (bornes au champ du scanner), direction = d + tan(ax) rr + tan(ay) uu.
+// Faisceau : un trait seul ; nappe : un segment d'eventail en nappe continue entre ses deux directions. Energie :
+// part du temps de l'image (deja dans les primitives) x puissance du boitier.
+void emit_ilda(Builder& b, const IldaPrims& pr, vec3 S, vec3 d, vec3 rr, vec3 uu, float roll, float ha, float hmax, float P,
+               const LaserParams& o) {
+    const float c = std::cos(roll), s = std::sin(roll);
+    auto dir = [&](float x, float y) {
+        const float ax = clampf((x * c - y * s) * ha, -hmax, hmax), ay = clampf((x * s + y * c) * ha, -hmax, hmax);
+        return normalize(d + rr * std::tan(ax) + uu * std::tan(ay));
+    };
+    auto flux = [&](const float* q) { return (o.ilda_colors ? vec3(q[0], q[1], q[2]) : o.color * q[3]) * P; };
+    for (size_t i = 0; i + 6 <= pr.beams.size(); i += 6) {
+        const float* q = &pr.beams[i];
+        const vec3 D = dir(q[0], q[1]), f = flux(q + 2);
+        b.seg(S, D, any_perp(D), 0.0f, 1, f, f);
+    }
+    for (size_t i = 0; i + 8 <= pr.sheets.size(); i += 8) {
+        const float* q = &pr.sheets[i];
+        const vec3 D0 = dir(q[0], q[1]), D1 = dir(q[2], q[3]), f = flux(q + 4);
+        const float cd = clampf(dot(D0, D1), -1.0f, 1.0f);
+        const float half = 0.5f * std::acos(cd);
+        if (half < 1e-6f) {
+            b.seg(S, D0, any_perp(D0), 0.0f, 1, f, f);
+            continue;
+        }
+        b.seg(S, normalize(D0 + D1), normalize(D1 - D0), half, LASER_SHEET_TRAITS, f, f);
+    }
+}
 
 const vec3 GROUP_COLORS[7] = {{0, 1, 0}, {1, 0, 0}, {0.1f, 0.35f, 1}, {0, 1, 0}, {1, 0.75f, 0}, {1, 0, 0.8f}, {0, 0.9f, 1}};
 
@@ -258,7 +288,8 @@ void LaserRig::add_effect(int type) {
     effects.push_back(e);
 }
 
-// Au lancement : le pont et le nez de scene en eventails verts qui balaient lentement ; le reste eteint.
+// Au lancement : tous les lasers eteints (ambiance 1 : les lyres seules). Le pont et le nez de scene sont
+// prets en eventails qui balaient lentement : il suffit de monter leur dimmer.
 void LaserRig::program_default() {
     effects.clear();
     for (LaserFixture& f : fixtures) {
@@ -267,7 +298,6 @@ void LaserRig::program_default() {
         f.base.color = GROUP_COLORS[f.mount.group];
         f.selected = false;
         if (f.mount.group == 4 || f.mount.group == 6) {
-            f.base.dimmer = 1;
             f.base.traits = 300;
             f.base.opening = 50;
             f.selected = true;
@@ -277,6 +307,26 @@ void LaserRig::program_default() {
     effects.back().size = 8;
     effects.back().speed = 0.12f;
     select_all(false);
+}
+
+// Tous les boitiers jouent les fichiers d'une banque ILDA (un par boitier, decales d'une image a l'autre).
+void LaserRig::program_ilda(const std::string& bank) {
+    effects.clear();
+    ilda_bias = 0;
+    const std::vector<int> files = ilda.bank(bank);
+    for (size_t i = 0; i < fixtures.size(); i++) {
+        LaserParams& p = fixtures[i].base;
+        p = LaserParams();
+        fixtures[i].selected = false;
+        if (files.empty()) {
+            p.dimmer = 0;
+            continue;
+        }
+        p.source = 1;
+        p.ilda_clip = files[i % files.size()];
+        p.opening = 40;
+        p.color = GROUP_COLORS[fixtures[i].mount.group];
+    }
 }
 
 // Toutes les formes, degrades et effets sur les 200 boitiers (vue --demo-laser 0, cas L7 du banc).
@@ -345,6 +395,7 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
     Builder b{segs, hall_min, hall_max};
     lit = 0;
     total_traits = 0;
+    ilda_points = ilda_beams = ilda_sheets = 0;
     time += dt;
     const int N = (int)mounts.size();
     const float TAU = 2 * PI;
@@ -362,6 +413,7 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
             const vec3 S = m.pos + m.n * 0.12f;
             switch (pattern) {
                 case LP_FANS:
+                case LP_FANS_LINE:
                 case LP_BEAMS: {
                     // balayage (tilt et pan en sinus) et rotation continue du plan de l'eventail
                     vec3 ec;
@@ -376,6 +428,7 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
                     }
                     const float roll = 0.6f * t + ph;
                     if (pattern == LP_FANS) b.fan_roll(S, ec, roll, 30.0f * DEG, 1000, flux);
+                    else if (pattern == LP_FANS_LINE) b.fan_roll(S, ec, roll, 30.0f * DEG, 0, flux);
                     else b.fan_roll(S, ec, roll, 25.0f * DEG, 8, flux);
                     break;
                 }
@@ -535,6 +588,21 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
         const vec3 r1 = normalize(f.right - d0 * dot(d0, f.right)), u1 = cross(r1, d0);
         const float roll = (f.roll + f.roll_acc) * DEG;
         const float ha = 0.5f * f.opening * DEG;
+        // fichier ILDA : primitives de l'image affichee (reduction en cache, niveau de tolerance le plus fin qui tient
+        // dans ILDA_MAX_PRIMS, releve si les segments depassent le budget)
+        const IldaPrims* ilda_pr = nullptr;
+        if (o.source == 1) {
+            IldaClip* clip = ilda.get(o.ilda_clip);
+            if (!clip) continue;
+            const int fi = ilda_frame_index((int)clip->frames.size(), o.ilda_fps, time, o.ilda_play, o.ilda_frame);
+            int level = std::clamp(ilda_bias, 0, ILDA_LEVELS - 1);
+            const float div = divergence_mrad * 1e-3f;
+            while (level < ILDA_LEVELS - 1 && ilda.prims(*clip, fi, level, div).over) level++;
+            ilda_pr = &ilda.prims(*clip, fi, level, div);
+            ilda_points += clip->frames[fi].size();
+            ilda_beams += (int)ilda_pr->beams.size() / 6;
+            ilda_sheets += (int)ilda_pr->sheets.size() / 8;
+        }
         // reseau de diffraction : copies decalees de la figure (puissance repartie)
         static const int OFF3[3][2] = {{-1, 0}, {0, 0}, {1, 0}};
         static const int OFF5[5][2] = {{0, 0}, {-1, 0}, {1, 0}, {0, -1}, {0, 1}};
@@ -550,7 +618,11 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
             const vec3 w = rr * std::cos(roll) + uu * std::sin(roll);   // etalement de l'eventail
             const vec3 nf = cross(d, w);                                 // normale du plan de l'eventail
             const float Pc = P / (float)ncopy;
-            const int n = std::max(o.traits, 1);
+            const int n = o.traits <= 0 ? LASER_SHEET_TRAITS : o.traits;
+            if (ilda_pr) {
+                emit_ilda(b, *ilda_pr, S, d, rr, uu, roll, ha, 0.5f * max_angle * DEG, Pc, o);
+                continue;
+            }
             switch (o.shape) {
                 case LS_DOUBLE_FAN: {
                     const float g = 0.5f * o.shape_param * DEG;
@@ -598,4 +670,9 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
         }
     }
     total_traits = b.traits;
+    // budget global (LASER_MAX_SEGS) : primitives ILDA regroupees plus largement quand il est presque atteint
+    if (ilda_beams + ilda_sheets > 0) {
+        if (segs.size() >= (size_t)LASER_MAX_SEGS * 95 / 100 && ilda_bias < ILDA_LEVELS - 1) ilda_bias++;
+        else if (segs.size() < (size_t)LASER_MAX_SEGS * 35 / 100 && ilda_bias > 0) ilda_bias--;
+    }
 }

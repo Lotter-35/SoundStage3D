@@ -21,19 +21,30 @@ void Rig::build(const Scene& scene) {
         Fixture f;
         f.mount = m;
         f.side = normalize(cross(m.n, m.f));
+        fixtures.push_back(f);
+    }
+    program_default();
+    for (Fixture& f : fixtures) {
+        f.pan = f.base.pan;
+        f.tilt = f.base.tilt;
+    }
+}
+
+// Programmation de depart (ambiance 1) : trusses blancs et bleus, vague lente sur les trusses blancs.
+void Rig::program_default() {
+    effects.clear();
+    for (Fixture& f : fixtures) {
         FixtureParams& p = f.base;
+        p = FixtureParams();
         p.zoom = 4;
         p.focus = 18;
-        switch (m.group) {
+        switch (f.mount.group) {
             case 0: case 3: p.tilt = 28; p.color = {1, 1, 1}; break;
             case 1: case 2: p.tilt = 12; p.color = {0.05f, 0.25f, 1.0f}; break;
             case 4: p.tilt = 38; p.color = {1, 1, 1}; break;         // pont de scene vers le public
             case 5: p.tilt = 15; p.color = {0.05f, 0.25f, 1.0f}; break;
             default: p.tilt = 25; p.color = {1, 1, 1}; break;
         }
-        f.pan = p.pan;
-        f.tilt = p.tilt;
-        fixtures.push_back(f);
     }
     // Effet de depart : vague lente sur les trusses blancs
     select_all(false);

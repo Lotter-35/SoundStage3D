@@ -2,6 +2,7 @@
 //  LyreViz - banc d'essai de visualisation de lyres (moving heads) en C++
 //  sokol (Metal / Direct3D 11 / OpenGL) + Dear ImGui
 // =====================================================================================
+#include "ambiances.h"
 #include "app.h"
 #include "gpu_profiler.h"
 #include "sokol_app.h"
@@ -48,6 +49,7 @@ static int g_demo_laser = -1;     // --demo-laser [variante] : vues d'essai des 
 static bool g_cam_set = false;    // --cam x,y,z,cap,site : camera au lancement (cap et site en degres)
 static float g_cam[5];
 static void setup_demo_laser();
+static int g_ambiance = -1;       // --ambiance N : demarre sur l'ambiance N (1 a 20)
 static std::string g_shot_path;
 static bool g_stats = false;      // --stats : compte les couples (pixel, faisceau) de la fumee et des lasers
 
@@ -102,6 +104,7 @@ struct Case {
     int lasers = LP_OFF;     // motif
     int laser_count = 200;   // boitiers allumes
     int lyres = 200;         // lyres allumees (une sur deux pour 100)
+    const char* ilda = nullptr;   // banque ILDA jouee par tous les boitiers (programmeur)
     float fog = 1.0f;        // multiplicateur de la densite de la fumee
 };
 std::vector<Case> cases;
@@ -156,6 +159,17 @@ void build_laser_cases() {
     L("sans lasers (scene seule) / public", V_PUBLIC, LP_OFF);
     // programmeur : formes, degrades, diffraction et effets sur les 200 boitiers (lasers seuls)
     L("L7 programmeur : formes, degrades, effets / public", V_PUBLIC, LP_PROGRAM);
+    // fichiers ILDA (PLAN-LASERS.md, etape 3 bis) : chaque boitier joue un fichier de la banque, en boucle
+    auto I = [&](const char* name, const char* bank) {
+        L(name, V_PUBLIC, LP_PROGRAM);
+        cases.back().ilda = bank;
+    };
+    I("I1 ILDA nappes (banque Nappes) / public", "Nappes");
+    I("I2 ILDA faisceaux (banque Faisceaux) / public", "Faisceaux");
+    I("I3 ILDA geometrie (banque Geometrie) / public", "G\xc3\xa9om\xc3\xa9trie");
+    I("I4 ILDA tunnels (banque Tunnels) / public", "Tunnels");
+    // L1 en mode ligne : les memes eventails en nappes continues (au lieu de 1 000 traits)
+    L("L1 en mode ligne (nappes continues) / public", V_PUBLIC, LP_FANS_LINE);
 }
 
 void build_cases() {
@@ -188,7 +202,10 @@ void start_case() {
             if (c.lyres <= 0 || (i & 1)) app.rig.fixtures[i].base.dimmer = 0;
     app.lasers.pattern = c.lasers;
     app.lasers.count = c.laser_count;
-    if (c.lasers == LP_PROGRAM) app.lasers.program_showcase();
+    if (c.lasers == LP_PROGRAM) {
+        if (c.ilda) app.lasers.program_ilda(c.ilda);
+        else app.lasers.program_showcase();
+    }
     app.lasers.time = 0;
     app.lasers.update(0.0f, 0.0f, app.scene.bounds_min, app.scene.bounds_max);   // galvos en place
     app.fog_settings = fog_defaults;
@@ -319,9 +336,12 @@ void after_frame(int w, int h) {
     const double frame_ms = mean(cpu_frames);
     const double gpu_ms = mean(totals);
     if (index == 0) {
-        if (laser_bench)
+        if (laser_bench) {
             log("LyreViz banc d'essai lasers : %d x %d, %d emplacements de lasers\n", w, h, (int)app.lasers.mounts.size());
-        else log("LyreViz banc d'essai : %d x %d, %d lyres\n", w, h, (int)app.rig.fixtures.size());
+            log("Volutes fines : generees en %.0f ms ; ecart type par niveau de mip :", app.renderer.volutes_build_ms);
+            for (float s : app.renderer.volutes_sd) log(" %.4f", s);
+            log("\n");
+        } else log("LyreViz banc d'essai : %d x %d, %d lyres\n", w, h, (int)app.rig.fixtures.size());
     }
     log("\n[%02d] %s\n  image : %.2f ms (%.1f img/s)   GPU : %.2f ms (mediane %.2f)\n", index + 1, c.name.c_str(), frame_ms,
         1000.0 / frame_ms, gpu_ms, median(totals));
@@ -336,13 +356,16 @@ void after_frame(int w, int h) {
         median(beam_frags) / 1e6, app.renderer.stats.tier_count[0], app.renderer.stats.tier_count[1], app.renderer.stats.tier_count[2],
         app.renderer.stats.table_rows, app.renderer.stats.table_cells / 1e6, app.renderer.stats.table_scale);
     if (laser_bench) {
-        log("  Lasers : %d boitiers, %d segments, %d traits ; moteur CPU %.3f ms\n", app.lasers.lit, app.renderer.stats.laser_segments,
-            app.lasers.total_traits, mean(cpu_laser));
+        log("  Lasers : %d boitiers, %d segments, %d traits ; moteur CPU %.3f ms ; fumee : variante %d\n", app.lasers.lit,
+            app.renderer.stats.laser_segments, app.lasers.total_traits, mean(cpu_laser), app.renderer.stats.laser_fog_variant);
+        if (app.lasers.ilda_points > 0)
+            log("  ILDA : %d points, %d faisceaux, %d nappes (niveau de tolerance %d)\n", app.lasers.ilda_points, app.lasers.ilda_beams,
+                app.lasers.ilda_sheets, app.lasers.ilda_bias);
         if (g_stats && app.renderer.stats.laser_segments > 0)
             log("  Lasers (compteurs) : %.0f tuiles de 16 px touchees sur %d, %.1f segments par tuile touchee (%.0f au plus) ; "
-                "%.1f millions de couples (pixel, segment)\n",
+                "%.1f millions de couples (pixel, segment) ; %d segments perdus (grosses tuiles pleines)\n",
                 median(laser_tiles_hit), app.renderer.stats.laser_tiles_x * app.renderer.stats.laser_tiles_y, median(laser_tile_avg),
-                median(laser_tile_max), median(laser_pairs) / 1e6);
+                median(laser_tile_max), median(laser_pairs) / 1e6, app.renderer.stats.laser_bin_overflow);
     }
     index++;
     if (index >= (int)cases.size()) {
@@ -360,6 +383,7 @@ void after_frame(int w, int h) {
 }  // namespace bench
 
 static const char* g_exe_path = "";   // pour trouver assets/ a cote de l'executable
+static const char* g_ilda_dir = "";   // --ilda dossier : bibliotheque ILDA (sinon server/storage/ilda, cherche en remontant)
 
 static float ground_height(vec3 p) {
     // la scene (cote -X) est surelevee
@@ -382,6 +406,7 @@ static void init() {
     desc.environment = sglue_environment();
     desc.logger.func = slog_func;
     desc.uniform_buffer_size = 4 * 1024 * 1024;
+    desc.shader_pool_size = 64;   // 32 par defaut : depasse avec les variantes des lasers (les dernieres n'etaient pas creees)
     sg_setup(&desc);
     stm_setup();
 
@@ -398,13 +423,20 @@ static void init() {
     app.scene.build();
     app.rig.build(app.scene);
     app.lasers.build(app.scene);
+    app.lasers.ilda.scan(g_exe_path, g_ilda_dir);
+    std::printf("ILDA : %d fichiers dans %s\n", (int)app.lasers.ilda.clips.size(), app.lasers.ilda.root.c_str());
     app.gobos.generate();
     if (!app.floor.load(g_exe_path, 0.32f)) std::printf("Sol : texture non chargee (%s), beton uni\n", app.floor.error.c_str());
     app.fog.init(app.scene.bounds_min, app.scene.bounds_max);
     app.renderer.init(app.scene, app.gobos, app.fog, app.floor, app.rs.floor_aniso);
+    std::printf("Volutes fines des lasers : generees en %.0f ms ; ecart type par niveau :", app.renderer.volutes_build_ms);
+    for (float s : app.renderer.volutes_sd) std::printf(" %.4f", s);
+    std::printf("\n");
     gpuprof::init();
     gpuprof::enable_stats(g_stats);
     app.cam.update_basis();
+    ambiance_capture_defaults();
+    if (g_ambiance >= 0) apply_ambiance(g_ambiance);
     if (g_demo >= 0) setup_demo();
     if (g_demo_laser >= 0) setup_demo_laser();
     if (g_cam_set) {
@@ -445,10 +477,12 @@ static void update_camera(float dt) {
     if (!ui_kb) {
         vec3 f = app.character ? normalize(vec3(c.fwd.x, 0, c.fwd.z)) : c.fwd;
         vec3 r = c.right;
-        if (app.keys[SAPP_KEYCODE_W] || app.keys[SAPP_KEYCODE_UP]) move += f;
-        if (app.keys[SAPP_KEYCODE_S] || app.keys[SAPP_KEYCODE_DOWN]) move -= f;
-        if (app.keys[SAPP_KEYCODE_D] || app.keys[SAPP_KEYCODE_RIGHT]) move += r;
-        if (app.keys[SAPP_KEYCODE_A] || app.keys[SAPP_KEYCODE_LEFT]) move -= r;
+        // onglet Ambiances ouvert : les fleches changent d'ambiance (voir event)
+        const bool arrows = !app.ambiance_tab;
+        if (app.keys[SAPP_KEYCODE_W] || (arrows && app.keys[SAPP_KEYCODE_UP])) move += f;
+        if (app.keys[SAPP_KEYCODE_S] || (arrows && app.keys[SAPP_KEYCODE_DOWN])) move -= f;
+        if (app.keys[SAPP_KEYCODE_D] || (arrows && app.keys[SAPP_KEYCODE_RIGHT])) move += r;
+        if (app.keys[SAPP_KEYCODE_A] || (arrows && app.keys[SAPP_KEYCODE_LEFT])) move -= r;
         if (!app.character) {
             if (app.keys[SAPP_KEYCODE_SPACE] || app.keys[SAPP_KEYCODE_E]) move += vec3(0, 1, 0);
             if (app.keys[SAPP_KEYCODE_C] || app.keys[SAPP_KEYCODE_Q]) move -= vec3(0, 1, 0);
@@ -492,6 +526,8 @@ static void frame() {
     fd.dpi_scale = sapp_dpi_scale();
     simgui_new_frame(&fd);
     const uint64_t tu = stm_now();
+    app.ambiance_tab = false;   // remis a vrai par l'onglet Ambiances s'il est affiche
+    app.sel_kind = -1;          // idem : onglets Lyres, Effets (0) ou Lasers (1)
     if (app.show_ui) draw_ui();
     app.timings.ui_ms = (float)stm_ms(stm_since(tu));
 
@@ -555,7 +591,16 @@ static void event(const sapp_event* ev) {
                 if (app.character) app.player = {app.cam.pos.x, ground_height(app.cam.pos), app.cam.pos.z};
             }
             if (ev->key_code == SAPP_KEYCODE_P) app.paused = !app.paused;
-            if (ev->key_code == SAPP_KEYCODE_ESCAPE) { app.looking = false; sapp_lock_mouse(false); app.pick_aim = -1; }
+            if (app.ambiance_tab && !ev->key_repeat) {
+                // grille des ambiances : gauche / droite d'une case, haut / bas d'une rangee (en boucle)
+                int d = 0;
+                if (ev->key_code == SAPP_KEYCODE_LEFT) d = -1;
+                if (ev->key_code == SAPP_KEYCODE_RIGHT) d = 1;
+                if (ev->key_code == SAPP_KEYCODE_UP) d = -AMBIANCE_COLS;
+                if (ev->key_code == SAPP_KEYCODE_DOWN) d = AMBIANCE_COLS;
+                if (d != 0) apply_ambiance((app.ambiance + d + NUM_AMBIANCES) % NUM_AMBIANCES);
+            }
+            if (ev->key_code == SAPP_KEYCODE_ESCAPE) { app.looking = false; sapp_lock_mouse(false); app.pick_aim = -1; app.sel_drag = false; }
             break;
         case SAPP_EVENTTYPE_KEY_UP:
             if ((int)ev->key_code >= 0 && (int)ev->key_code < 512) app.keys[ev->key_code] = false;
@@ -566,14 +611,33 @@ static void event(const sapp_event* ev) {
                 sapp_lock_mouse(true);
             }
             if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT && !io.WantCaptureMouse && app.pick_aim >= 0) pick_aim_point(ev->mouse_x, ev->mouse_y);
+            else if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT && !io.WantCaptureMouse && app.sel_kind >= 0 && !app.looking) {
+                // selection a l'ecran (coordonnees de l'interface)
+                const float k = io.DisplaySize.x / std::max(sapp_widthf(), 1.0f);
+                app.sel_drag = true;
+                app.sel_x0 = app.sel_x1 = ev->mouse_x * k;
+                app.sel_y0 = app.sel_y1 = ev->mouse_y * k;
+            }
             break;
         case SAPP_EVENTTYPE_MOUSE_UP:
             if (ev->mouse_button == SAPP_MOUSEBUTTON_RIGHT && app.looking) {
                 app.looking = false;
                 sapp_lock_mouse(false);
             }
+            if (ev->mouse_button == SAPP_MOUSEBUTTON_LEFT && app.sel_drag) {
+                const float k = io.DisplaySize.x / std::max(sapp_widthf(), 1.0f);
+                app.sel_x1 = ev->mouse_x * k;
+                app.sel_y1 = ev->mouse_y * k;
+                app.sel_drag = false;
+                select_in_rect((ev->modifiers & SAPP_MODIFIER_CTRL) ? 1 : ((ev->modifiers & SAPP_MODIFIER_SHIFT) ? 2 : 0));
+            }
             break;
         case SAPP_EVENTTYPE_MOUSE_MOVE:
+            if (app.sel_drag) {
+                const float k = io.DisplaySize.x / std::max(sapp_widthf(), 1.0f);
+                app.sel_x1 = ev->mouse_x * k;
+                app.sel_y1 = ev->mouse_y * k;
+            }
             if (app.looking) {
                 app.cam.yaw += ev->mouse_dx * 0.0025f;
                 app.cam.pitch = clampf(app.cam.pitch - ev->mouse_dy * 0.0025f, -1.5f, 1.5f);
@@ -709,7 +773,10 @@ static void setup_demo() {
 //   0 formes : 7 lasers du pont de scene, une forme chacun (eventail, double eventail, cone, tunnel, vague,
 //     grille de points, eventail en reseau de diffraction x9), vus depuis le public ;
 //   1 degrades : 6 eventails du pont (uni, 2 couleurs, 3 couleurs, defilant, arc-en-ciel, aleatoire par trait) ;
-//   2 programmation de demonstration sur les 200 lasers (cas L7 du banc), vue du public.
+//   2 programmation de demonstration sur les 200 lasers (cas L7 du banc), vue du public ;
+//   3 un eventail vert vu de pres, en biais, fumee epaisse : volutes (comparer a la photo 5 des references) ;
+//   4 fichiers ILDA : 7 lasers du pont de scene, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, coeur,
+//     eventail multicolore), vus depuis le public.
 static void setup_demo_laser() {
     for (Fixture& f : app.rig.fixtures) f.base.dimmer = 0;
     app.rig.effects.clear();
@@ -720,6 +787,64 @@ static void setup_demo_laser() {
         app.cam.pos = {30, 1.8f, 0};
         app.cam.yaw = PI;
         app.cam.pitch = 0.08f;
+    } else if (g_demo_laser == 4) {
+        // 7 lasers du pont de scene, un fichier ILDA chacun (une banque par laser), vus depuis le public
+        lr.effects.clear();
+        for (LaserFixture& f : lr.fixtures) {
+            f.base = LaserParams();
+            f.base.dimmer = 0;
+        }
+        std::vector<int> pont;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++)
+            if (lr.fixtures[i].mount.group == 4) pont.push_back(i);
+        static const char* const FILES[7][2] = {{"Nappes", "Nappe tournante"}, {"Faisceaux", "Radar"},
+                                                {"G\xc3\xa9om\xc3\xa9trie", "Cube 3D"}, {"Tunnels", "Tunnel carr\xc3\xa9"},
+                                                {"Texte", "SOUNDSTAGE"}, {"Animations", "C\xc5\x93ur battant"},
+                                                {"Exemples", "\xc3\x89ventail multicolore"}};
+        for (int k = 0; k < 7; k++) {
+            int clip = -1;
+            for (int c = 0; c < (int)lr.ilda.clips.size(); c++)
+                if (lr.ilda.clips[c].bank == FILES[k][0] && lr.ilda.clips[c].name == FILES[k][1]) clip = c;
+            LaserParams& p = lr.fixtures[pont[1 + 2 * k]].base;
+            p.dimmer = clip >= 0 ? 1.0f : 0.0f;
+            p.source = 1;
+            p.ilda_clip = clip;
+            p.opening = 30;
+            p.tilt = -6;
+        }
+        app.cam.pos = {-8, 6.0f, 0};
+        app.cam.yaw = PI;
+        app.cam.pitch = 0.05f;
+    } else if (g_demo_laser == 3) {
+        // un eventail vert du pont de scene vu de pres, en biais et par en dessous, dans une fumee epaisse : volutes
+        // (comparer a docs/references-lasers/5-depence-nappe-gros-plan-volutes.png)
+        lr.effects.clear();
+        for (LaserFixture& f : lr.fixtures) {
+            f.base = LaserParams();
+            f.base.dimmer = 0;
+        }
+        int pick = -1;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++)
+            if (lr.fixtures[i].mount.group == 4 && pick < 0) pick = i + 7;
+        LaserParams& p = lr.fixtures[pick].base;
+        p.dimmer = 1;
+        p.color = {0, 1, 0};
+        p.opening = 40;
+        p.traits = 1000;
+        p.tilt = -8;
+        app.fog_settings.density *= 3.0f;
+        lr.power_w = 8.0f;
+        lr.update(0.0f, 0.0f, app.scene.bounds_min, app.scene.bounds_max);
+        if (!lr.segs.empty()) {
+            const LaserSegment& g = lr.segs[0];
+            vec3 n = cross(g.ec, g.es);
+            if (n.y > 0) n = -n;   // vers le bas
+            const vec3 target = g.src + g.ec * 3.2f;
+            app.cam.pos = g.src + g.ec * 1.6f + n * 0.7f + g.es * 0.6f;
+            const vec3 d = normalize(target - app.cam.pos);
+            app.cam.yaw = std::atan2(d.z, d.x);
+            app.cam.pitch = std::asin(d.y);
+        }
     } else {
         lr.effects.clear();
         for (LaserFixture& f : lr.fixtures) {
@@ -800,6 +925,18 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "lasergain") r.laser_gain = v;
     else if (k == "laserwidth") r.laser_width_px = v;
     else if (k == "laserair") r.laser_air = v;
+    else if (k == "laserfog") r.laser_room_fog = v != 0;
+    else if (k == "laserphase") r.laser_fwd_lobe = v != 0;
+    else if (k == "laserfwd") r.laser_fwd_weight = v;
+    else if (k == "laserg") r.laser_g_fwd = v;
+    else if (k == "laserg2") r.laser_g_soft = v;
+    else if (k == "volutes") r.laser_volutes = v != 0;
+    else if (k == "volforce") r.laser_vol_strength = v;
+    else if (k == "voltaille") r.laser_vol_size = v;
+    else if (k == "volperiode") r.laser_vol_period = v;
+    else if (k == "volfine") r.laser_vol_fine = v != 0;
+    else if (k == "volfinelod") r.laser_vol_fine_lod = v;
+    else if (k == "volfinepoids") r.laser_vol_fine_weight = v;
     else if (k == "laserpattern") app.lasers.pattern = (int)v;
     else if (k == "lasercount") app.lasers.count = (int)v;
     else if (k == "laserpower") app.lasers.power_w = v;
@@ -849,7 +986,9 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             g_demo_laser = 0;
             if (i + 1 < argc && argv[i + 1][0] >= '0' && argv[i + 1][0] <= '9') g_demo_laser = std::atoi(argv[++i]);
         }
+        else if (!std::strcmp(argv[i], "--ambiance") && i + 1 < argc) g_ambiance = std::atoi(argv[++i]) - 1;
         else if (!std::strcmp(argv[i], "--shot") && i + 1 < argc) g_shot_path = argv[++i];
+        else if (!std::strcmp(argv[i], "--ilda") && i + 1 < argc) g_ilda_dir = argv[++i];
         else if (!std::strcmp(argv[i], "--benchdir") && i + 1 < argc) bench::dir = argv[++i];
         else if (!std::strcmp(argv[i], "--set") && i + 1 < argc) {
             if (!set_render_option(app.rs, argv[++i])) std::printf("Option inconnue : %s\n", argv[i]);

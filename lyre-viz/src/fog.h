@@ -35,7 +35,11 @@ struct FogSim {
 
     vec3 origin, size;           // boite couverte (= hangar)
     std::vector<float> d, tmp;   // densite simulee
-    std::vector<uint8_t> upload; // densite quantifiee pour le GPU (NX*NY*NZ)
+    // densite quantifiee pour le GPU (NX*NY*NZ, RG8) : r = amas / 2 (lyres, fog_density) ; g = densite de la piece
+    // (brume x decroissance en hauteur + amas) / room_max, pour les lasers (meme texture : une 2e texture envoyee a
+    // chaque image faisait attendre la carte sous Direct3D 11)
+    std::vector<uint8_t> upload;
+    float room_max = 1;
     std::vector<uint8_t> detail; // bruit de detail (DETAIL^3)
     std::vector<SmokeMachine> machines;
     float sim_time = 0;

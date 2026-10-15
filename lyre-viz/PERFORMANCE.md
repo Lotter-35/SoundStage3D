@@ -413,7 +413,7 @@ Banc complet en mouvement, banc rapide, 2 lancements (`bench\lasers_opt_complet_
 | M1 / public, scène, sous les trusses | 3,9 / 2,7 / 2,8 → **4,0 / 2,7 / 3,0 ms** (dans le bruit) | 10,3 / 8,2 / 8,3 → **10,2 / 8,1 / 8,1 ms** |
 
 - Banc des lyres inchangé (0,0 %, +0,9 %, −0,4 %, images identiques).
-- Ce sont les valeurs de référence actuelles des lasers.
+- C'étaient les valeurs de référence des lasers jusqu'à l'étape 3 (fumée uniforme) ; voir « Étape 3 : fumée » pour les valeurs actuelles.
 
 **Budget.** La scène sans lasers prend 3,4 à 3,8 ms : il reste ~4,6 ms pour les lasers seuls. L4 (1,2 ms) tient largement ; L3 (5,2 ms) est proche ; L1 (5,2 à 7,6 ms selon la vue) et L2 (8,5 ms) le dépassent encore. Le mix M1 est à 8,1 – 10,2 ms (cible 8,3 ms).
 
@@ -467,6 +467,91 @@ Moteur des lasers (programmeur, formes, dégradés, diffraction, effets, galvos)
 - Banc des lyres (lasers éteints, `bench\e2_lyres_*`) : images identiques (PSNR 75 à 114 dB, aucun pixel au-dessus de 4/255), temps dans le bruit (−4,9 à +7,3 % selon le cas, passes identiques). Historique 13.
 - Les valeurs de référence des lasers restent celles du tableau précédent (« Optimisation des tuiles »), plus L7.
 
+### Étape 3 : fumée (15 octobre 2026)
+
+Fumée de la pièce, diffusion vers l'avant à deux lobes, volutes fines (README, « Lasers dans la fumée »). Mesures contre la version d'avant l'étape 3 (`bench\ref\avant_etape3.exe`), banc laser rapide, ou même exécutable avec l'option coupée puis active (`set_ab.ps1`). Passe des lasers en ms ; L1, L2 : vue public. Les temps de cette session variaient beaucoup d'un lancement à l'autre (jusqu'à ±15 %) : seuls les écarts répétés à chaque lancement sont retenus.
+
+**Ce qu'a appris cette étape : la passe des lasers est limitée par le calcul et les registres, et par l'attente des lectures de texture.**
+
+- Le code ajouté coûte même coupé par un réglage : tout coupé, la passe restait 6 à 15 % plus lente qu'avant. Les mesures « coupé contre actif » avec le même exécutable sous-estimaient donc le coût (2 lobes : « 0 » ainsi, +13 % en réalité). D'où des **variantes du shader** (0 à 3), comme pour les dégradés ; tout coupé, la variante 0 est le code d'avant (images identiques, PSNR > 82 dB, temps dans le bruit).
+- Écrire les deux lobes en `vec2` faisait prendre 6 registres de plus au compilateur HLSL (DXBC : 24 → 30) ; en scalaires, aucun.
+- Une lecture de texture dont le résultat sert dans la même itération coûte surtout son attente (peu de groupes actifs pour la masquer) : lancer les lectures tôt dans le calcul du segment, et ne pas faire dépendre une lecture d'une autre.
+- **Envoyer une texture à chaque image sous Direct3D 11** (`sg_write_image_transient` : `UpdateSubresource`) peut faire attendre la carte : +1 à +2,7 ms par image en moyenne (pics dans « scene (surfaces) », la médiane ne bouge pas), même avec 3 textures en rotation. La texture des amas des lyres, elle, ne le fait pas : la densité des lasers a été mise dans son 2e canal (RG8).
+- La réserve de shaders de sokol est de 32 par défaut : au-delà, les derniers ne sont pas créés, sans message en version normale (la passe des lasers donnait 0 ms). Portée à 64 (`main.cpp`).
+
+Fumée de la pièce (modification 14) :
+
+| Version | Passe des lasers L1 / L2 / L3 / L4 / M1 |
+|---|---|
+| v1 : `fog_density` des lyres au point P (amas + détail « coton » : 2 lectures 3D, exponentielle) | +1,3 / +2,1 / +1,4 / +0,2 / +0,6 ms |
+| v2 : la même, lue plus tôt | dans le bruit contre v1 |
+| v3 : texture préparée sur le CPU (diffusion par mètre, R16F, 64 × 24 × 32), une lecture | passe ~0, mais attente de l'envoi : « scene (surfaces) » +1,3 à +2,7 ms en moyenne |
+| v4 : 3 textures en rotation | +0,2 / +0,8 / +0,6 / +0,1 / +0,7 ms en scène immobile ; les pics reviennent en mouvement (+1 à +1,3 ms) |
+| v5 : lecture directe de la texture des amas, brume et hauteur calculées dans le shader | aucun pic, mais passe +3 à +10 % (exponentielle, division ; +0,25 à +1,1 ms même avec un polynôme) |
+| **v6 : densité préparée sur le CPU dans le 2e canal de la texture des amas (RG8), une lecture, 2 opérations** | **aucun pic ; au niveau de v4 sans ses pics : gardée.** Banc des lyres inchangé, images identiques (PSNR 61 à 105 dB) |
+
+Diffusion vers l'avant (modification 15) : coupé contre actif dans le bruit (−0,3 à +0,2 ms), mais la présence du code coûtait +1,0 / +1,3 / +1,0 / 0 / +0,8 ms (branchement, `vec2`) : corrigé par les variantes et l'écriture en scalaires.
+
+Volutes fines (modifications 16 et 17) ; « coût seul » avec le code présent des deux côtés, sauf la dernière ligne :
+
+| Version | Passe des lasers L1 / L2 / L3 / L4 / M1 |
+|---|---|
+| 128³ RGBA8, 4 instants, 1,25 cm par texel | +5,7 / +7,7 / +5,1 / +1,1 / +2,6 ms (L7 +10,4) |
+| même lecture forcée dans un niveau de 4³ | revient au niveau sans volutes : c'est la mémoire et l'attente, pas le calcul |
+| 128³ BC5, 2 instants | +2,8 / +4,1 / +2,5 / +0,8 / +1,5 ms |
+| 64³ BC5 (motif de 0,8 m) | +2,0 / +3,0 / +1,7 / +0,3 / +1,05 ms |
+| lectures lancées un segment à l'avance | pire : lit aussi pour les couples rejetés (L4 sans volutes +0,75 ms) |
+| lectures indépendantes, lancées tôt | +1,35 / +1,6 / +1,45 / +0,07 / +0,67 ms |
+| **motif de 1,6 m (texels de 2,5 cm) : niveaux plus petits lus** | **+0,8 / +1,2 / +0,65 / +0,04 / +0,4 ms : gardé** |
+| BC4 (1 canal, 0,5 octet par texel) | −2 à −4 % seulement : BC5 gardé (il porte l'évolution) |
+| 2e octave (0,44 m), lue quand un pixel couvre moins de 2 texels | +0,3 à +0,7 / +1,0 à +1,3 / +0,7 ms ; L5 +1,1, L7 +2,2 ; invisible à la distance de L1 et L5 |
+| **2e octave lue quand un pixel couvre moins de 3,5 mm (à moins de ~7 m)** | **0 à +0,5 / +0,85 / +0,6 ms ; L5 +0,95, L7 +1,7 : gardée, dans sa propre variante** |
+| rotation de la 2e octave remplacée par une permutation (3 opérations au lieu de 9), normalisation sans racine | dans le bruit : gardé (plus simple) |
+| **variantes séparées, niveau 3 (volutes et 2e octave) contre niveau 1, banc complet** | **L1 +1,3 à +1,8, L2 +3,2, L3 +2,3, L4 +0,24, L5 +2,2, L6 +2,8, M1 +0,7 à +1,2, L7 +4,8 ms (+25 à +35 %)** |
+
+- Niveau 1 (fumée de la pièce + 2 lobes) contre niveau 0 : +0,6 / +1,5 / +0,6 / +0,1 / +0,6 ms (+8 à +14 %).
+- Contraste des volutes par niveau de mip : 0,170 / 0,165 / 0,155 / 0,134 / 0,102 / 0,059 / 0 (en-tête de `resultats.txt` du banc des lasers) : les grosses structures restent visibles jusqu'au niveau 4, on ne peut pas arrêter de lire plus tôt.
+- Génération au lancement : 0,3 s (12 fils).
+
+**Banc complet en mouvement, avant → après l'étape 3** (réglages par défaut, tout actif ; `bench\e3_complet_*`, historique 19) :
+
+| Cas | Lasers seuls | Image (GPU) |
+|---|---|---|
+| L1 / public, scène, sous les trusses | 7,29 / 4,80 / 5,26 → **10,19 / 7,07 / 7,25 ms** | 11,0 / 8,2 / 9,4 → 14,4 / 11,1 / 11,0 ms |
+| L2 / public, scène | 7,56 / 7,79 → **11,92 / 12,14 ms** | 11,5 / 12,3 → 15,9 / 16,1 ms |
+| L3 caméra dans les nappes | 5,01 → **7,05 ms** | 8,6 → 11,1 ms |
+| L4 8 traits séparés | 1,22 → **1,52 ms** | 5,2 → 5,1 ms |
+| L5 gros plan | 5,56 → **8,08 ms** | 10,1 → 12,0 ms |
+| L6 sol et obstacles | 7,57 → **10,80 ms** | 11,1 → 15,0 ms |
+| M1 / public, scène, sous les trusses | 3,97 / 2,64 / 2,86 → **5,31 / 3,65 / 3,92 ms** | 10,3 / 7,5 / 7,6 → 11,0 / 9,4 / 9,2 ms |
+| L7 programmeur | 13,71 → **20,59 ms** | 18,7 → 24,5 ms |
+
+- Ce sont les nouvelles valeurs de référence des lasers (réglages par défaut). Sans les volutes (`volutes=0`), environ 25 % de moins sur la passe des lasers.
+- Banc des lyres (lasers éteints, 16 cas, `bench\e3_lyres_rg8_*`) : images identiques (PSNR 61 à 105 dB, aucun pixel au-dessus de 4/255 sauf 0,05 % sur un cas), temps dans le bruit. Les deux cas « sol mouillé » paraissaient +13 et +18 % : la passe « reflet : tables » vaut tantôt 0,85 ms, tantôt 2,1 à 2,3 ms, **avec n'importe quel exécutable** (même celui d'avant l'étape 3) : comportement de la carte, pas une régression.
+
+### Fichiers ILDA (15 octobre 2026)
+
+Lecture ILDA, réduction en faisceaux et nappes (README, « Lasers : fichiers ILDA »), mode ligne. Banc complet en mouvement, banc rapide (`bench\ilda_final_*`, historique 20) : les cas L1 à L7 et M1 sont ceux de l'étape 3, à ±2 % (aucun changement de leur rendu) ; banc des lyres inchangé (+0,4 / +0,4 / +2,4 %, images identiques).
+
+| Cas (200 lasers, vue public) | Primitives | Lasers seuls | Image (GPU) |
+|---|---|---|---|
+| I1 banque Nappes | 825 faisceaux, 11 825 nappes | 31,2 à 32,3 ms | 36 à 37 ms |
+| I2 banque Faisceaux | 2 000 faisceaux | 1,9 ms | 5,6 à 5,7 ms |
+| I3 banque Géométrie | 1 080 faisceaux, 12 660 nappes (tolérance 3) | 47,8 à 49,4 ms | 53 à 55 ms |
+| I4 banque Tunnels | 1 883 faisceaux, 12 368 nappes | 32,7 à 33,7 ms | 38 à 39 ms |
+| L1 en mode ligne (200 nappes continues) | 200 segments | 8,4 à 8,9 ms (L1 : 10,1) | 12,7 à 13,5 ms |
+
+- Le coût est celui de la surface couverte : I3 fait environ 1 milliard de couples (pixel, segment), 4 fois L2. Chaque figure de 40° se découpe en dizaines de nappes planes qui partent toutes de la sortie : près de la source, une tuile contient toutes les nappes de la figure. Lecture des fichiers et moteur CPU : 1,2 à 2,3 ms.
+- Moteur CPU : une réduction par image du fichier, en cache (200 lasers sur un même fichier : une seule).
+
+| Essai | Résultat |
+|---|---|
+| Plafond de 8 192 segments | I1, I3, I4 tronqués sans bruit (I3 : 12 660 nappes voulues), d'où des temps trop flatteurs (17 à 23 ms) : plafond porté à 16 384, compteur des segments perdus dans le tri (`--stats`) : 0 partout |
+| Variante du shader « nappes et traits seuls » (sans le calcul des traits séparés ni de leur ondulation, choisie quand aucune figure n'en a besoin) | images identiques, temps à ±2 % sur les 19 cas (historique 20a) : **retirée** (8 shaders de moins). Le −20 % mesuré à l'étape 1 sans ce chemin ne se retrouve pas avec le code de la fumée de l'étape 3 |
+| Mode ligne contre 1 000 traits (L1) | −15 % : le gain vient de l'image (nappe lisse calculée partout au lieu des traits séparés), pas d'une variante |
+
+- Piège : le nettoyage des bancs ne garde que les exécutables `bench\ref\avant*.exe` : nommer ainsi toute référence à garder.
+
 ### Pistes pour la suite (sans dégrader l'image)
 
 1. Profondeur maximale par tuile : ignorer les segments entièrement derrière les surfaces de la tuile (peu de gain attendu dans les cas du banc, plus dans une vraie scène).
@@ -474,6 +559,9 @@ Moteur des lasers (programmeur, formes, dégradés, diffraction, effets, galvos)
 3. Registres : alléger le chemin des traits (moins de variables vivantes), puisque sa seule présence coûte ~1,3 ms sur L1.
 4. **L7 à alléger plus tard** (décision de l'utilisateur, 15 octobre 2026 : on continue d'abord le plan) : 15,4 ms de lasers seuls, dû à la surface couverte (doubles éventails des trusses 3, tunnels du sol de scène). Pistes : profondeur maximale par tuile, rejet plus tôt des pixels hors des bords (cônes, tunnels), moins de morceaux pour les cônes de petite ouverture ; mesurer chaque groupe avec `--cases 14` (voir « Étape 2 »).
 5. Si les cibles L1 / L2 restent hors d'atteinte : décider avec l'utilisateur (par exemple, une qualité adaptative qui baisse la largeur minimale des traits au loin) ; aucune dégradation sans son accord.
+6. **Variante « nappes et traits seuls »** (sans le code des traits séparés et de l'ondulation), choisie quand aucune figure n'a de traits visibles : ~−20 % attendu (sans ce chemin, L1 passait de 6,9 à 5,6 ms à l'étape 1). Prévue avec la lecture ILDA (`PLAN-LASERS.md`, « Étape 3 bis »).
+8. Fichiers ILDA : les figures planes découpées en dizaines de nappes depuis la même sortie sont le pire cas (I3 : 1 milliard de couples). Pistes : rejet plus tôt des pixels hors du coin de chaque nappe (test des deux bords à l'écran, comme pour les cônes, piste 2) ; grosses tuiles plus fines près des sorties.
+7. Volutes : un cas de banc « L1 sans volutes » mesurerait leur coût dans le même lancement (moins de bruit) ; la 2e octave est choisie dans tous les cas du banc (il y a toujours une nappe à moins de 7 m de la caméra) : un test par segment plus fin (part de l'écran à moins de 7 m) la couperait plus souvent.
 
 ## Ce qui coûte cher (à garder en tête)
 
@@ -486,6 +574,8 @@ Moteur des lasers (programmeur, formes, dégradés, diffraction, effets, galvos)
 - **Boucles avec des lectures de texture.**
   - Toujours `textureLod`, jamais `texture`. Sinon le compilateur HLSL déroule la boucle : 25 s de compilation, puis échec sous Direct3D 11.
   - Une boucle avec `continue` autour d'une lecture de texture empêche les lectures de partir ensemble.
+- **Textures envoyées à chaque image** (Direct3D 11) : une texture transitoire de plus peut faire attendre la carte (+1 à +2,7 ms en moyenne, pics). Préférer ajouter un canal à une texture déjà envoyée, ou un tampon (renommé par le pilote).
+- **Code présent mais coupé** dans une passe limitée par les registres (lasers) : il ralentit quand même (6 à 15 %). Faire des variantes du shader, choisies à chaque image ; vérifier les registres (`dcl_temps` de `fxc /Fc`).
 - **Basse résolution :** à n'utiliser que pour ce qui est vraiment flou.
   - La lumière indirecte de la brume calculée à 1/4 a rendu la brume tachée : annulé.
   - Les faisceaux très doux (frost) et les lyres très douces sur les surfaces, eux, passent à 1/2 ou 1/4 sans différence visible.

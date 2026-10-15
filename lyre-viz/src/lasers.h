@@ -5,6 +5,7 @@
 // scanner (pan, tilt, roll), dans la limite de son angle maximal, comme sur un vrai laser.
 #pragma once
 #include "fixtures.h"
+#include "ilda.h"
 #include "mathx.h"
 #include "scene.h"
 #include <string>
@@ -12,6 +13,12 @@
 
 // Un segment d'eventail : n traits dans un plan, repartis entre deux directions de bord. La couleur varie
 // lineairement d'un bord a l'autre (flux au bord 0, flux1 au bord 1) : degrades et profils le long d'une figure.
+// Nombre de traits d'une nappe continue (balayage sans coupure : mode ligne, nappes ILDA). Le rendu la calcule en
+// nappe lisse ; aucune ondulation de traits n'y est visible.
+constexpr int LASER_SHEET_TRAITS = 1 << 20;
+// Segments au plus par image (comme Renderer::MAX_LASER_SEGS).
+constexpr int LASER_MAX_SEGS = 16384;
+
 struct LaserSegment {
     vec3 src;           // source
     float range;        // portee (m)
@@ -43,6 +50,7 @@ enum LaserPattern {
     LP_CLOSEUP,    // L5 : nappes fixes vues en gros plan (fumee epaisse)
     LP_FLOOR,      // L6 : traits vers le sol, les obstacles et les mannequins
     LP_PROGRAM,    // programmeur : reglages, formes et effets de chaque boitier
+    LP_FANS_LINE,  // L1 en mode ligne : les memes eventails en nappes continues (au lieu de 1 000 traits)
     LP_COUNT
 };
 extern const char* LASER_PATTERN_NAMES[LP_COUNT];
@@ -83,7 +91,7 @@ struct LaserParams {
     float gradient_speed = 0.25f;   // defilement le long de la figure (cycles/s) : defilant, arc-en-ciel
     int shape = LS_FAN;
     float opening = 60;        // deg : 0 = un point (tous les traits confondus) .. angle maximal du boitier
-    int traits = 1000;         // nombre de traits de la figure (1 = un trait seul)
+    int traits = 1000;         // nombre de traits de la figure (1 = un trait seul, 0 = nappe continue : mode ligne)
     float pan = 0, tilt = 0;   // deg : position de la figure dans le champ du scanner
     float roll = 0;            // deg : rotation de la figure autour de son axe
     float roll_speed = 0;      // deg/s : rotation continue
@@ -91,6 +99,13 @@ struct LaserParams {
     float diffraction_angle = 8;   // deg entre deux copies
     float shape_param = 10;    // double eventail : ecart (deg) ; vague : amplitude (deg) ; grille : rangees
     float wave_cycles = 3;     // vague : ondulations le long de l'eventail
+    // source : la figure du programmeur (0) ou un fichier ILDA (1, bibliotheque server/storage/ilda)
+    int source = 0;
+    int ilda_clip = -1;        // indice dans LaserRig::ilda
+    float ilda_fps = 30;       // images du fichier par seconde
+    int ilda_play = 0;         // boucle (0), aller-retour (1), image fixe (2)
+    int ilda_frame = 0;        // image fixe
+    bool ilda_colors = true;   // couleurs du fichier (sinon : sa luminosite, teintee par la couleur du laser)
     // calcules par les effets (pas regles directement)
     float chase_pos = -1;      // chenillard de traits : position de la vague (0..1), < 0 : aucun
     float chase_width = 0.2f;
@@ -121,7 +136,12 @@ struct LaserRig {
     float aperture_mm = 5.0f;   // diametre de sortie (1/e2)
     float divergence_mrad = 1.0f;   // divergence (angle total)
     bool show_housings = true;
-    int total_traits = 0;       // traits de toutes les figures (compteur)
+    int total_traits = 0;       // traits de toutes les figures (compteur ; une nappe continue n'en compte aucun)
+    // fichiers ILDA (src/ilda.h) : bibliotheque, niveau de tolerance global (monte quand les segments depassent le
+    // budget, comme le budget adaptatif du web), compteurs
+    IldaLibrary ilda;
+    int ilda_bias = 0;
+    int ilda_points = 0, ilda_beams = 0, ilda_sheets = 0;
     int lit = 0;                // boitiers allumes (compteur)
     double time = 0;
 
@@ -145,4 +165,6 @@ struct LaserRig {
     // Programmation de demonstration (vues --demo-laser, cas L7 du banc).
     void program_default();
     void program_showcase();
+    // Tous les boitiers jouent les fichiers ILDA d'une banque (un fichier par boitier, en boucle) : bancs, vues.
+    void program_ilda(const std::string& bank);
 };

@@ -36,12 +36,14 @@ Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la proc
    - Un ajout par version mesurée (et par jeu de réglages : par exemple option à 0, puis à 1). Numéroter les modifications dans l'ordre.
    - Le banc complet en mouvement (`-Full -Moving`) de préférence, pour que les lignes se comparent.
    - Si Excel a le fichier ouvert, l'enregistrement échoue : demander à l'utilisateur de le fermer.
-9. **Après une série d'essais, vider les bancs inutiles** (`bench\` grossit vite : ~25 Mo par image) : `python tools\nettoyer_bench.py` les liste (garde ceux cités dans les documents ou l'historique) ; donner à l'utilisateur la commande avec `--supprimer` et la taille libérée.
+9. Toute référence à garder s'appelle `bench\ref\avant_*.exe` : le nettoyage efface les autres exécutables de `bench\ref`.
+10. **Après une série d'essais, vider les bancs inutiles** (`bench\` grossit vite : ~25 Mo par image) : `python tools\nettoyer_bench.py` les liste (garde ceux cités dans les documents ou l'historique) ; donner à l'utilisateur la commande avec `--supprimer` et la taille libérée.
 
 ## Rappels techniques
 
 - Les shaders sont dans `shaders/lyreviz.glsl`. Ils sont traduits par `sokol-shdc` (version figée b975d56) dans `src/shaders/lyreviz.glsl.h`, avec le bytecode HLSL précompilé.
 - Dans les boucles, toujours `textureLod`, jamais `texture` (sinon échec du compilateur HLSL sous Direct3D 11).
+- Passe des lasers (`cs_laser_shade`) : limitée par le calcul et les registres ; tout code ajouté la ralentit même coupé. Nouvelle option coûteuse = nouvelle variante du shader (voir `LASER_FOG`, `LASER_GRADIENT`), choisie à chaque image. Réserve de shaders de sokol : 64 (`main.cpp`), à agrandir si besoin (au-delà, les derniers ne sont pas créés, sans message).
 - Mesures GPU par passe : Direct3D 11 seulement. Les appels `gpuprof::mark("nom")` dans `Renderer::render` découpent l'image en passes ; en ajouter un pour chaque nouvelle passe.
 - Vérifier aussi que le code compile pour OpenGL : `cl /c /DSOKOL_GLCORE` sur les fichiers de `src`.
 - Aucune autre instance de LyreViz pendant les mesures (elles faussent tout) : si une instance est ouverte, demander a l'utilisateur de la fermer, ne pas la fermer soi-meme.
