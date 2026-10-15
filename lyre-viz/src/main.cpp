@@ -356,8 +356,9 @@ void after_frame(int w, int h) {
         median(beam_frags) / 1e6, app.renderer.stats.tier_count[0], app.renderer.stats.tier_count[1], app.renderer.stats.tier_count[2],
         app.renderer.stats.table_rows, app.renderer.stats.table_cells / 1e6, app.renderer.stats.table_scale);
     if (laser_bench) {
-        log("  Lasers : %d boitiers, %d segments, %d traits ; moteur CPU %.3f ms ; fumee : variante %d\n", app.lasers.lit,
-            app.renderer.stats.laser_segments, app.lasers.total_traits, mean(cpu_laser), app.renderer.stats.laser_fog_variant);
+        log("  Lasers : %d boitiers, %d segments, %d traits, %d impacts ; moteur CPU %.3f ms ; fumee : variante %d\n", app.lasers.lit,
+            app.renderer.stats.laser_segments, app.lasers.total_traits, app.renderer.stats.laser_hits, mean(cpu_laser),
+            app.renderer.stats.laser_fog_variant);
         if (app.lasers.ilda_points > 0)
             log("  ILDA : %d points, %d faisceaux, %d nappes (niveau de tolerance %d)\n", app.lasers.ilda_points, app.lasers.ilda_beams,
                 app.lasers.ilda_sheets, app.lasers.ilda_bias);
@@ -458,6 +459,7 @@ static void add_avatar() {
     auto part = [&](vec3 local, vec3 half) {
         vec3 c = app.player + fx * local.x + vec3(0, local.y, 0) + fz * local.z;
         app.renderer.dyn_cubes.push_back(make_instance(c, fx * half.x, {0, half.y, 0}, fz * half.z, skin, 0.6f));
+        app.lasers.dyn_obstacles.push_back({c, fx * half.x, {0, half.y, 0}, fz * half.z});   // les lasers s'y arretent
     };
     part({0, 0.45f, -0.1f}, {0.08f, 0.45f, 0.08f});
     part({0, 0.45f, 0.1f}, {0.08f, 0.45f, 0.08f});
@@ -531,6 +533,7 @@ static void frame() {
     if (app.show_ui) draw_ui();
     app.timings.ui_ms = (float)stm_ms(stm_since(tu));
 
+    app.lasers.dyn_obstacles.clear();   // personnage : remis par add_avatar
     if (!bench::active) update_camera(dt);
 
     const uint64_t tr = stm_now();
@@ -776,7 +779,8 @@ static void setup_demo() {
 //   2 programmation de demonstration sur les 200 lasers (cas L7 du banc), vue du public ;
 //   3 un eventail vert vu de pres, en biais, fumee epaisse : volutes (comparer a la photo 5 des references) ;
 //   4 fichiers ILDA : 7 lasers du pont de scene, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, coeur,
-//     eventail multicolore), vus depuis le public.
+//     eventail multicolore), vus depuis le public ;
+//   5 une personne dans une nappe : nappe verte a hauteur de poitrine a travers les mannequins et le personnage (mode F).
 static void setup_demo_laser() {
     for (Fixture& f : app.rig.fixtures) f.base.dimmer = 0;
     app.rig.effects.clear();
@@ -787,6 +791,27 @@ static void setup_demo_laser() {
         app.cam.pos = {30, 1.8f, 0};
         app.cam.yaw = PI;
         app.cam.pitch = 0.08f;
+    } else if (g_demo_laser == 5) {
+        // une nappe verte continue a hauteur de poitrine, du nez de scene vers le public : elle traverse les mannequins
+        // et le personnage (mode F, camera derriere lui) ; derriere chacun, un trou d'ombre a bord net (etape 5)
+        lr.effects.clear();
+        for (LaserFixture& f : lr.fixtures) {
+            f.base = LaserParams();
+            f.base.dimmer = 0;
+        }
+        int pick = -1;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++)
+            if (lr.fixtures[i].mount.group == 6 && pick < 0) pick = i + 3;
+        LaserParams& p = lr.fixtures[pick].base;
+        p.dimmer = 1;
+        p.color = {0, 1, 0};
+        p.opening = 50;
+        p.traits = 0;          // nappe continue
+        p.tilt = -6.5f;        // axe du nez de scene a +5 deg : nappe 1,5 deg sous l'horizontale
+        app.character = true;
+        app.player = {-9, 0, -1.2f};
+        app.cam.yaw = PI * 0.97f;
+        app.cam.pitch = -0.12f;
     } else if (g_demo_laser == 4) {
         // 7 lasers du pont de scene, un fichier ILDA chacun (une banque par laser), vus depuis le public
         lr.effects.clear();
@@ -926,6 +951,9 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "laserwidth") r.laser_width_px = v;
     else if (k == "laserair") r.laser_air = v;
     else if (k == "laserfog") r.laser_room_fog = v != 0;
+    else if (k == "lasercoll") app.lasers.collisions = v != 0;
+    else if (k == "laserimpacts") { r.laser_impacts = v != 0; app.lasers.impacts = v != 0; }
+    else if (k == "laserhitgain") r.laser_hit_gain = v;
     else if (k == "laserphase") r.laser_fwd_lobe = v != 0;
     else if (k == "laserfwd") r.laser_fwd_weight = v;
     else if (k == "laserg") r.laser_g_fwd = v;

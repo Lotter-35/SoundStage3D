@@ -378,10 +378,11 @@ Vidéo : « Royallaser | Depence R3 Showcase » (Syncronorm), https://youtu.be/M
    - C'est l'étape la plus longue côté réglage visuel (gros plan de la photo verte, comparaisons à la vidéo).
 4. **Blanc.** Réponse du capteur, sorties (point chaud, halo, étoile), bords lumineux, divergence.
 3 bis. **Lecture ILDA** (étape 8 avancée, demande de l'utilisateur du 15 octobre 2026 : « le but final, un laser qui lit de l'ILDA, le plus optimisé possible ») : voir la section « Étape 3 bis » à la fin.
-5. **Intersections.** Portées par trait, ombres dans les nappes, impacts sur les surfaces, personnage. **Rappel de l'utilisateur (15 octobre 2026)** : gérer la collision avec tous les obstacles (joueur, décor, etc.), et **la nappe laser doit se couper au passage d'un joueur** (trou d'ombre à bord net, section 7).
+5. **Intersections.** *(collisions et impacts faits le 15 octobre 2026 : voir « Étape 5 » à la fin)* Portées par trait, ombres dans les nappes, impacts sur les surfaces, personnage. **Rappel de l'utilisateur (15 octobre 2026)** : gérer la collision avec tous les obstacles (joueur, décor, etc.), et **la nappe laser doit se couper au passage d'un joueur** (trou d'ombre à bord net, section 7).
 6. **Éblouissement.**
 7. **Persistance et lumière dans la pièce.** Flou de mouvement, lumières virtuelles dans les sondes, puis reflet dans le sol mouillé.
 8. **Plus tard.** DMX, inertie complète des galvos (cahier laser2) ; l'ILDA est avancé en 3 bis.
+9. **Moteur de tracé unique** (demande de l'utilisateur du 15 octobre 2026) : toute figure devient un tracé de scanner (points ILDA), rendu en arcs et en droites raccordés ; remplace les formes codées une à une. Voir « Étape 9 » à la fin.
 
 ## 12. Sources
 
@@ -484,3 +485,66 @@ Détail des mesures : `PERFORMANCE.md`, « Fichiers ILDA » ; historique : modif
   - point 4 (variante du shader « nappes et traits seuls ») : faite, mesurée, **retirée** : aucun gain (images identiques, temps à ±2 %) ; le −20 % de l'étape 1 ne se retrouve pas avec le code de la fumée de l'étape 3 ;
   - pas d'ILDA en direct (IDN) ni de choix par DMX : à faire avec le DMX.
 - **Coût** : faisceaux (I2) 1,9 ms ; nappes, figures, tunnels sur 200 lasers 31 à 49 ms : la surface couverte (jusqu'à 1 milliard de couples pixel × segment), pas la lecture du fichier (moteur CPU 1,2 à 2,3 ms). À alléger avec L7 (mêmes pistes).
+
+## Étape 5 : résultats (15 octobre 2026)
+
+Détail : `PERFORMANCE.md`, « Étape 5 : collisions et impacts » ; historique 21 et 22.
+
+- **Collisions** : les traits s'arrêtent sur les pavés (décor, mannequins, personnage en mode F) ; dans une nappe, chaque pavé proche est coupé par le plan de l'éventail, et l'éventail est découpé aux angles de ces coupes, chaque morceau s'arrêtant exactement sur l'arête du pavé : trou d'ombre à bord net. Sur le CPU, coût GPU dans le bruit. `--set lasercoll=0` pour couper.
+- **Impacts** : passe « lasers : impacts » ; la ligne d'arrivée de chaque morceau (sol, murs, plafond, faces des pavés) ou le point d'un trait, dessinés par pixel (distance 3D au plan de la nappe ou à l'axe du trait). +0,5 à +2,8 ms sur L1 à L7. `--set laserimpacts=0` pour couper.
+- Vue d'essai `--demo-laser 5` : une nappe verte à hauteur de poitrine à travers les mannequins et le personnage.
+
+## Nappes coniques exactes : résultats (15 octobre 2026)
+
+Demande de l'utilisateur : aucun cercle, sinus ni cône fait de traits droits, avec un rendu des nappes identique (lumière, bords, fumée). Détail : `PERFORMANCE.md`, « Nappes coniques exactes » ; historique 23.
+
+- **Primitive** : nappe conique exacte (`laser_arc`) : les directions passent par un cercle du plan de projection du scanner ; intersection du rayon de la caméra avec le cône (équation du 2e degré), même lumière que les nappes planes (traits, fumée, volutes, diffusion avant). Cônes et tunnels en morceaux de 90° au plus ; impacts en arcs exacts.
+- **Silhouettes** sans escalier (rayon qui frôle la nappe), enveloppe à l'écran coupée comme celle des segments droits, base posée sur la paroi du hangar, passe des arcs à part (un pixel par fil), rejet de l'autre côté du cône.
+- **Coût** : L2 +0,9 ms, L7 +3,5 ms à l'image (première version des arcs : +7,7 ms sur L2).
+- **Écarté** : biarcs pour la vague et les fichiers ILDA (une paire d'arcs par corde) : beaucoup trop cher (35 à 45 ms GPU et 64 à 116 ms CPU sur les bancs ILDA). C'est ce qui a conduit à l'étape 9.
+
+## Étape 9 : moteur de tracé unique (plan du 15 octobre 2026, à valider)
+
+### Demande
+
+L'utilisateur (15 octobre 2026) : au lieu de traiter les formes une à une (cônes, sinus…), un seul moteur de laser qui marche pour **n'importe quelle forme**, en partant du principe qu'un laser **projette de l'ILDA** : les formes (et les volutes dans la fumée) en découlent. Le cas le plus dur : le **dessin au crayon** de son logiciel ILDA (tracé arbitraire de l'utilisateur, à rendre fidèlement), mais aussi carré, étoile, cœur, lignes, points, sinus qui se déplacent et sont modulés. Le rendu peut changer un peu ; il doit rester très beau (comme Depence) et surtout **fluide**. Choix de l'utilisateur :
+- galvos **réalistes sans défaut** : inertie des miroirs (tremblement lissé, coins rapides un peu arrondis, intensité selon la vitesse), mais jamais de scintillement ni de baisse d'intensité quand la figure est chargée ;
+- le travail sur les cônes (ci-dessus) est gardé ; les biarcs par corde sont retirés ;
+- plan écrit d'abord, puis étapes mesurées.
+
+### Constat (mesures du 15 octobre 2026)
+
+- Les formes du programmeur sont codées une à une (éventail, cône, vague en ligne brisée, grille…) et les fichiers ILDA passent par une autre voie (réduction en faisceaux et cordes).
+- La réduction ILDA est faite pour des figures propres : sur un trait de crayon simulé (1 200 points, vitesse irrégulière), elle coupe une nappe à chaque changement d'espacement de 12 % et à chaque tremblement : 370 à 450 cordes sans tremblement, **860 à 1 170 avec**, au-delà du budget de 700 par laser à tous les niveaux. Le rendu reste un polygone.
+- Les nappes à l'ombre d'un obstacle sont redécoupées sur le CPU (tous les 1° pour un arc) : c'est ce qui fait exploser le nombre de segments et le temps CPU dès qu'il y a beaucoup de petites nappes.
+
+### Principe
+
+1. **Un tracé par laser et par image** : suite de points dans le champ du scanner (angles), couleur, allumé ou éteint, et durée de chaque point (cadence en points par seconde). Sources :
+   - fichiers ILDA (tels quels) ; dessin au crayon (même format, connexion plus tard) ;
+   - **générateurs** pour les formes du programmeur, qui remplacent le code forme par forme : éventail (N points allumés séparés par des sauts éteints, ou une ligne continue), cône et tunnel (cercles), vague, grille, et de nouvelles formes simples (carré, étoile, cœur, ligne, point ; texte plus tard) ;
+   - **effets** appliqués au tracé (déplacement, rotation, taille, ondulation, modulation d'un sinus, couleurs, chenillards).
+2. **Scanner** : les miroirs suivent les points avec leur inertie (filtre du 2e ordre, réglable ; l'inertie actuelle des boîtiers s'y range). Le tremblement du crayon est lissé, les coins pris vite s'arrondissent un peu, un point où le faisceau s'attarde devient un faisceau. L'intensité le long du tracé vient du temps passé (passage lent = plus lumineux). Pas de limite de cadence (choix « sans défaut ») : la figure entière est rendue à chaque image.
+3. **Ajustement en courbes** : le tracé des miroirs (allumé) est découpé en morceaux d'**arcs de cercle et de droites** qui se raccordent sans cassure, à une tolérance d'angle plus fine que la largeur du faisceau (ordre de grandeur : 0,02°). Les vrais coins (carré, étoile) restent des coins. Chaque morceau porte sa couleur et son intensité à chaque bout (dégradé, déjà dans le rendu). Un cercle tient en 1 à 4 arcs, un trait de crayon en quelques dizaines.
+   - Suites régulières de points allumés séparés par des sauts éteints, sur une droite ou un arc (éventail de 1 000 traits, cône de traits) : reconnues comme **un morceau à n traits** ; le rendu rapide actuel des traits séparés est gardé tel quel.
+   - Points où le faisceau s'attarde : traits seuls (chemin le moins cher).
+4. **Budget et fluidité** :
+   - budget global de morceaux par image ; si une image le dépasse, la tolérance s'élargit d'abord pour les figures petites ou lointaines ;
+   - mise en cache du résultat tant que le tracé ne change pas (figure fixe, image ILDA qui se répète) ;
+   - calcul sur plusieurs cœurs du CPU (un laser par tâche).
+5. **Rendu** : les deux nappes actuelles (plane et conique) avec dégradé, les traits seuls et les impacts. Les obstacles passent **dans le shader** : chaque morceau garde la liste des quelques pavés qui peuvent l'ombrer, et le pixel teste le segment source → point de la nappe contre ces pavés ; plus de redécoupage sur le CPU. À mesurer contre la méthode actuelle (bord net exact) : on garde la moins chère à image égale.
+6. **Bancs** : nouveaux cas P1 trait de crayon (tracé généré, avec tremblement), P2 formes (carré, étoile, cœur), P3 sinus modulés en mouvement, P4 mélange ; les cas actuels (L1 à L7, M1, I1 à I4) restent. Chaque étape mesurée contre `bench\ref\avant_etape9.exe` (version actuelle), images avant / après, historique.
+
+### Étapes
+
+1. **9a. Tracé et ajustement en courbes pour les fichiers ILDA** (le plus gros gain attendu : I1 à I4) : modèle du tracé, scanner (inertie), ajustement en arcs et droites, morceaux à n traits, budget ; remplace la réduction en faisceaux et cordes. Bancs I1 à I4 et P1 (le crayon).
+2. **9b. Obstacles dans le shader** : supprime le redécoupage CPU ; mesure contre la méthode actuelle.
+3. **9c. Générateurs** : les formes du programmeur passent par le tracé (éventail, double éventail, cône, tunnel, vague, grille, puis carré, étoile, cœur) ; les effets s'appliquent au tracé. Bancs L1 à L7 : mêmes images à la tolérance près (éventails, cônes), vague et nouvelles formes lisses.
+4. **9d. Cache et plusieurs cœurs** ; banc complet en mouvement (`-Full -Moving`), comparaison aux valeurs de référence.
+5. **9e. Connexion au logiciel ILDA** (dessin au crayon en direct) : plus tard, à la demande de l'utilisateur.
+
+### Critères
+
+- Aucun polygone visible sur une courbe ; les coins voulus restent nets ; aucun trou (coutures entre morceaux comprises).
+- Rendu des nappes (lumière, bords, fumée, volutes) inchangé pour une même forme ; les petites différences de forme dues au scanner sont acceptées (choix de l'utilisateur).
+- Pas plus lent que la version actuelle sur L1 à L7 et M1 ; plus rapide sur I1 à I4 (moins de morceaux) ; moteur CPU sous 2 ms pour 200 lasers en figures fixes, à mesurer en mouvement.

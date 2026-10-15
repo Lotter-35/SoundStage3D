@@ -58,7 +58,10 @@ void add_collider_box(Scene& s, vec3 c, vec3 h, vec3 albedo, float rough, float 
                       bool occluder = true) {
     if (visible) s.cubes.push_back(make_box(c, h, albedo, rough, metal));
     s.colliders.push_back({c - h, c + h, albedo});
-    if (occluder) s.occluders.push_back({c, {h.x, 0, 0}, {0, h.y, 0}, {0, 0, h.z}});
+    if (occluder) {
+        s.occluders.push_back({c, {h.x, 0, 0}, {0, h.y, 0}, {0, 0, h.z}});
+        s.laser_occluders.push_back(s.occluders.back());
+    }
 }
 
 // Mannequin simple (silhouette humaine en paves).
@@ -67,6 +70,7 @@ void add_mannequin(Scene& s, vec3 feet, float yaw, vec3 albedo) {
     auto part = [&](vec3 local, vec3 half) {
         vec3 c = feet + fx * local.x + vec3(0, local.y, 0) + fz * local.z;
         s.cubes.push_back(make_instance(c, fx * half.x, {0, half.y, 0}, fz * half.z, albedo, 0.7f));
+        s.laser_occluders.push_back({c, fx * half.x, {0, half.y, 0}, fz * half.z});
     };
     // ombre : 2 paves (corps de la tete aux pieds, bras) au lieu de 6 pieces
     s.occluders.push_back({feet + vec3(0, 0.9f, 0), fx * 0.12f, {0, 0.9f, 0}, fz * 0.2f});
@@ -83,7 +87,7 @@ void add_mannequin(Scene& s, vec3 feet, float yaw, vec3 albedo) {
 }  // namespace
 
 void Scene::build() {
-    cubes.clear(); cylinders.clear(); colliders.clear(); occluders.clear(); mounts.clear(); group_names.clear();
+    cubes.clear(); cylinders.clear(); colliders.clear(); occluders.clear(); laser_occluders.clear(); mounts.clear(); group_names.clear();
 
     // Hangar : 100 m (X) x 44 m (Z) x 34 m (Y)
     const float HX = 50, HZ = 22, H = 34;

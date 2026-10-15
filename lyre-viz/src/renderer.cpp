@@ -617,17 +617,43 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     laser_scr_view = storage_view(laser_scr_buf);
     laser_stats_buf = make_storage(4 * sizeof(uint32_t), false, "laser-stats");
     laser_stats_view = storage_view(laser_stats_buf);
-    laser_data.reserve((size_t)MAX_LASER_SEGS * 24);
+    laser_data.reserve((size_t)MAX_LASER_SEGS * 28);
     pip_laser_setup = make_compute_pipeline(laser_setup_shader_desc(backend), "laser-setup");
+    {
+        // impacts : 6 sommets par impact (instances), sans tampon de sommets, additionnes a l'image de la scene
+        laser_hit_buf = make_storage((size_t)MAX_LASER_HITS * sizeof(sb_hit_t), true, "laser-hits");
+        laser_hit_view = storage_view(laser_hit_buf);
+        laser_hit_data.reserve((size_t)MAX_LASER_HITS * 28);
+        sg_pipeline_desc p = {};
+        p.shader = sg_make_shader(laser_hit_shader_desc(backend));
+        p.depth.pixel_format = SG_PIXELFORMAT_NONE;
+        p.colors[0].pixel_format = SG_PIXELFORMAT_RGBA16F;
+        p.colors[0].blend.enabled = true;
+        p.colors[0].blend.src_factor_rgb = SG_BLENDFACTOR_ONE;
+        p.colors[0].blend.dst_factor_rgb = SG_BLENDFACTOR_ONE;
+        p.colors[0].blend.src_factor_alpha = SG_BLENDFACTOR_ZERO;
+        p.colors[0].blend.dst_factor_alpha = SG_BLENDFACTOR_ONE;
+        p.sample_count = 1;
+        p.label = "laser-hits";
+        pip_laser_hit = sg_make_pipeline(&p);
+    }
     pip_laser_bin = make_compute_pipeline(laser_bin_shader_desc(backend), "laser-bin");
-    pip_laser_shade[0][0] = make_compute_pipeline(laser_shade_shader_desc(backend), "laser-shade");
-    pip_laser_shade[0][1] = make_compute_pipeline(laser_shade_f1_shader_desc(backend), "laser-shade-fog1");
-    pip_laser_shade[0][2] = make_compute_pipeline(laser_shade_f2_shader_desc(backend), "laser-shade-fog2");
-    pip_laser_shade[0][3] = make_compute_pipeline(laser_shade_f3_shader_desc(backend), "laser-shade-fog3");
-    pip_laser_shade[1][0] = make_compute_pipeline(laser_shade_grad_shader_desc(backend), "laser-shade-gradient");
-    pip_laser_shade[1][1] = make_compute_pipeline(laser_shade_grad_f1_shader_desc(backend), "laser-shade-gradient-fog1");
-    pip_laser_shade[1][2] = make_compute_pipeline(laser_shade_grad_f2_shader_desc(backend), "laser-shade-gradient-fog2");
-    pip_laser_shade[1][3] = make_compute_pipeline(laser_shade_grad_f3_shader_desc(backend), "laser-shade-gradient-fog3");
+    pip_laser_shade[0][0][0] = make_compute_pipeline(laser_shade_shader_desc(backend), "laser-shade");
+    pip_laser_shade[0][0][1] = make_compute_pipeline(laser_shade_a_shader_desc(backend), "laser-shade-arcs");
+    pip_laser_shade[0][1][0] = make_compute_pipeline(laser_shade_f1_shader_desc(backend), "laser-shade-fog1");
+    pip_laser_shade[0][1][1] = make_compute_pipeline(laser_shade_f1_a_shader_desc(backend), "laser-shade-fog1-arcs");
+    pip_laser_shade[0][2][0] = make_compute_pipeline(laser_shade_f2_shader_desc(backend), "laser-shade-fog2");
+    pip_laser_shade[0][2][1] = make_compute_pipeline(laser_shade_f2_a_shader_desc(backend), "laser-shade-fog2-arcs");
+    pip_laser_shade[0][3][0] = make_compute_pipeline(laser_shade_f3_shader_desc(backend), "laser-shade-fog3");
+    pip_laser_shade[0][3][1] = make_compute_pipeline(laser_shade_f3_a_shader_desc(backend), "laser-shade-fog3-arcs");
+    pip_laser_shade[1][0][0] = make_compute_pipeline(laser_shade_grad_shader_desc(backend), "laser-shade-gradient");
+    pip_laser_shade[1][0][1] = make_compute_pipeline(laser_shade_grad_a_shader_desc(backend), "laser-shade-gradient-arcs");
+    pip_laser_shade[1][1][0] = make_compute_pipeline(laser_shade_grad_f1_shader_desc(backend), "laser-shade-gradient-fog1");
+    pip_laser_shade[1][1][1] = make_compute_pipeline(laser_shade_grad_f1_a_shader_desc(backend), "laser-shade-gradient-fog1-arcs");
+    pip_laser_shade[1][2][0] = make_compute_pipeline(laser_shade_grad_f2_shader_desc(backend), "laser-shade-gradient-fog2");
+    pip_laser_shade[1][2][1] = make_compute_pipeline(laser_shade_grad_f2_a_shader_desc(backend), "laser-shade-gradient-fog2-arcs");
+    pip_laser_shade[1][3][0] = make_compute_pipeline(laser_shade_grad_f3_shader_desc(backend), "laser-shade-gradient-fog3");
+    pip_laser_shade[1][3][1] = make_compute_pipeline(laser_shade_grad_f3_a_shader_desc(backend), "laser-shade-gradient-fog3-arcs");
 }
 
 void Renderer::make_target(Target& t, int w, int h, sg_pixel_format fmt, const char* label) {
@@ -709,6 +735,9 @@ void Renderer::resize(int w, int h, int volw, int volh) {
             sg_destroy_view(laser_store);
             sg_destroy_view(laser_tex);
             sg_destroy_image(laser_img);
+            sg_destroy_view(laser_arc_store);
+            sg_destroy_view(laser_arc_tex);
+            sg_destroy_image(laser_arc_img);
         }
         sg_image_desc ld = {};
         ld.width = w;
@@ -721,6 +750,12 @@ void Renderer::resize(int w, int h, int volw, int volh) {
         lvd.storage_image.image = laser_img;
         laser_store = sg_make_view(&lvd);
         laser_tex = texture_view(laser_img);
+        // nappes coniques : leur passe (variantes _a) ecrit cette image, la passe principale l'ajoute
+        ld.label = "lasers-arcs";
+        laser_arc_img = sg_make_image(&ld);
+        lvd.storage_image.image = laser_arc_img;
+        laser_arc_store = sg_make_view(&lvd);
+        laser_arc_tex = texture_view(laser_arc_img);
         // grosses tuiles de 128 pixels : nombre de segments et liste (LASER_CAP au plus)
         if (laser_ccount_buf.id) {
             sg_destroy_view(laser_ccount_view);
@@ -1519,28 +1554,80 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     // lasers : segments de l'image (puissance mise a l'echelle de la fumee)
     int nlas = 0;
     bool laser_grad = false;   // une figure au moins a un degrade : variante du shader qui les lit
+    bool laser_arcs = false;   // une figure au moins a une nappe conique (arc) : variante du shader avec laser_arc
     if (rs.lasers && lasers) {
         nlas = std::min((int)lasers->segs.size(), MAX_LASER_SEGS);
         // puissance d'un trait ; la diffusion (air + fumee de la piece) est lue au point de la nappe (laser_sigma)
         const float k = rs.laser_gain * LASER_FLUX_PER_W;
-        laser_data.resize((size_t)std::max(nlas, 1) * 24);
+        laser_data.resize((size_t)std::max(nlas, 1) * 28);
         for (int i = 0; i < nlas; i++) {
             const LaserSegment& g = lasers->segs[i];
+            if (g.arc) {
+                // nappe conique (laser_arc) : repere (d, rr, uu), cercle, angles ; traits aux deux bouts compris
+                const float nbA = std::max(g.traits, 2.0f);
+                const vec3 q = cam.pos - g.src;
+                float* d = &laser_data[(size_t)i * 28];
+                set4(d, g.ec, g.th0);
+                set4(d + 4, g.es, -nbA);
+                set4(d + 8, g.uu, g.range);
+                set4(d + 12, dot(q, g.ec), dot(q, g.es), dot(q, g.uu), g.dth);
+                set4(d + 16, g.flux * (k / nbA), (nbA - 1.0f) / std::max(g.dth, 1e-6f));
+                set4(d + 20, g.flux1 * (k / nbA), 1.0f / nbA);
+                set4(d + 24, g.cx, g.cy, g.rho, 0.0f);
+                laser_grad = laser_grad || g.flux1.x != g.flux.x || g.flux1.y != g.flux.y || g.flux1.z != g.flux.z;
+                laser_arcs = true;
+                continue;
+            }
             float nb = std::max(g.traits, 1.0f);
             if (g.half_angle < 1e-6f) nb = 1.0f;   // ouverture nulle : tous les traits confondus
             const vec3 nrm = cross(g.ec, g.es);
             const vec3 q = cam.pos - g.src;      // camera dans le repere de l'eventail (une fois par image)
-            float* d = &laser_data[(size_t)i * 24];
+            float* d = &laser_data[(size_t)i * 28];
             set4(d, g.ec, std::sin(g.half_angle));
             set4(d + 4, g.es, nb);
             set4(d + 8, nrm, g.range);
             set4(d + 12, dot(q, g.ec), dot(q, g.es), dot(q, nrm), std::cos(g.half_angle));
             set4(d + 16, g.flux * (k / nb), nb > 1.5f ? (nb - 1.0f) / (2.0f * g.half_angle) : 0.0f);
             set4(d + 20, g.flux1 * (k / nb), 1.0f / nb);
+            // coupe par un obstacle : droite d'arret (a x + b y <= 1 du cote de la source), portee au bord 1
+            if (nb > 1.5f) set4(d + 24, g.cut_a, g.cut_b, g.range1, 0.0f);
+            else set4(d + 24, 0.0f, 0.0f, 0.0f, 0.0f);
             laser_grad = laser_grad || g.flux1.x != g.flux.x || g.flux1.y != g.flux.y || g.flux1.z != g.flux.z;
         }
     }
     stats.laser_segments = nlas;
+    // impacts : coupes au plan proche de la camera (bandes dessinees a l'ecran)
+    laser_hit_data.clear();
+    int nhits = 0;
+    if (rs.lasers && rs.laser_impacts && lasers && nlas > 0) {
+        const float zn = 0.1f;
+        for (const LaserHit& hh : lasers->hits) {
+            if (nhits >= MAX_LASER_HITS) break;
+            LaserHit q = hh;
+            const float za = dot(q.a - cam.pos, cam.fwd), zb = dot(q.b - cam.pos, cam.fwd);
+            if (q.kind > 0.5f && q.kind < 1.5f) {   // point (trait) ; lignes et arcs : coupes au plan proche
+                if (za < zn) continue;
+            } else {
+                if (za < zn && zb < zn) continue;
+                if (za < zn) q.a = q.a + (q.b - q.a) * ((zn - za) / (zb - za));
+                else if (zb < zn) q.b = q.b + (q.a - q.b) * ((zn - zb) / (za - zb));
+                // puissance par radian aux nouveaux bouts : approchee par celle des anciens (la coupe est rare)
+            }
+            const float k = rs.laser_gain * LASER_FLUX_PER_W;
+            float d[28];
+            set4(d, q.a, q.kind);
+            set4(d + 4, q.b, q.pad0);   // arc : rho, rr, cx, cy dans les w (LaserHit)
+            set4(d + 8, q.src, q.pad1);
+            set4(d + 12, q.nrm, q.pad2);
+            set4(d + 16, q.f0 * k, q.pad3);
+            set4(d + 20, q.f1 * k, q.pad4);
+            set4(d + 24, q.surf, q.pad5);
+            laser_hit_data.insert(laser_hit_data.end(), d, d + 28);
+            nhits++;
+        }
+    }
+    stats.laser_hits = nhits;
+    const bool hit_pass = nhits > 0;
     const bool laser_tiles = nlas > 0;
     stats.laser_tiles_x = (w + 15) / 16;
     stats.laser_tiles_y = (h + 15) / 16;
@@ -1678,6 +1765,11 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     if (nlas > 0) {
         wb.src.data = {laser_data.data(), (size_t)nlas * sizeof(sb_laser_t)};
         wb.dst.buffer = laser_buf;
+        sg_write_buffer_transient(&wb);
+    }
+    if (hit_pass) {
+        wb.src.data = {laser_hit_data.data(), (size_t)nhits * sizeof(sb_hit_t)};
+        wb.dst.buffer = laser_hit_buf;
         sg_write_buffer_transient(&wb);
     }
     if (rs.gi) {
@@ -1852,7 +1944,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         sg_pass pass = {};
         pass.attachments.colors[0] = scene_color.att;
         pass.attachments.colors[1] = scene_depth_lin.att;
-        if (soft_pass) {
+        if (soft_pass || hit_pass) {   // normale et couleur : lyres douces, impacts des lasers
             pass.attachments.colors[2] = scene_normal.att;
             pass.attachments.colors[3] = scene_albedo.att;
             pass.action.colors[2].load_action = SG_LOADACTION_DONTCARE;
@@ -1868,7 +1960,7 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         pass.label = "scene";
         sg_begin_pass(&pass);
         const int wet = (floor_p[3] > 0.5f && floor_p[1] > 0.0f) ? 1 : 0;   // eau au sol : variante mouillee
-        if (soft_pass) sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq_gb[wet] : pip_scene_gb[wet]);
+        if (soft_pass || hit_pass) sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq_gb[wet] : pip_scene_gb[wet]);
         else sg_apply_pipeline(rs.depth_prepass ? pip_scene_eq[wet] : pip_scene[wet]);
         scene_fs_params_t fsp = {};
         set4(fsp.cam_pos, cam.pos, (float)num_lights);
@@ -1959,6 +2051,42 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         sg_apply_bindings(&b);
         sg_apply_uniforms(UB_soft_params, SG_RANGE_REF(sp));
         sg_draw(0, 3, 1);
+        sg_end_pass();
+    }
+
+    // ---- 4c : impacts des lasers sur les surfaces (ajoutes a l'image de la scene) ----------------
+    if (hit_pass) {
+        gpuprof::mark("lasers : impacts");
+        sg_pass pass = {};
+        pass.attachments.colors[0] = scene_color.att;
+        pass.action.colors[0].load_action = SG_LOADACTION_LOAD;
+        pass.label = "laser-hits";
+        sg_begin_pass(&pass);
+        sg_apply_pipeline(pip_laser_hit);
+        hit_vs_params_t hv = {};
+        std::memcpy(hv.view_proj, view_proj.m, sizeof(hv.view_proj));
+        set4(hv.cam_pos, cam.pos, 2.0f * tanY / (float)h);
+        set4(hv.cam_fwd, cam.fwd, 0.0f);
+        set4(hv.beam, lp.beam[0], lp.beam[1], lp.beam[2], 0.0f);
+        set4(hv.res, (float)w, (float)h, 0.0f, 0.0f);
+        hit_fs_params_t hf = {};
+        set4(hf.cam_pos, cam.pos, sigma_ext);
+        set4(hf.cam_right, cam.right, tanX);
+        set4(hf.cam_up, cam.up, tanY);
+        set4(hf.cam_fwd, cam.fwd, rs.laser_hit_gain);
+        set4(hf.res, (float)w, (float)h, 2.0f * tanY / (float)h, 0.0f);
+        set4(hf.beam, lp.beam[0], lp.beam[1], lp.beam[2], 0.0f);
+        sg_bindings b = {};
+        b.views[VIEW_hits_vs] = laser_hit_view;
+        b.views[VIEW_hits_fs] = laser_hit_view;
+        b.views[VIEW_hit_depth] = scene_depth_lin.tex;
+        b.views[VIEW_hit_normal] = scene_normal.tex;
+        b.views[VIEW_hit_albedo] = scene_albedo.tex;
+        b.samplers[SMP_hit_smp] = point_smp;
+        sg_apply_bindings(&b);
+        sg_apply_uniforms(UB_hit_vs_params, SG_RANGE_REF(hv));
+        sg_apply_uniforms(UB_hit_fs_params, SG_RANGE_REF(hf));
+        sg_draw(0, 6, nhits);
         sg_end_pass();
     }
 
@@ -2140,26 +2268,39 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         sg_apply_bindings(&b);
         sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lcp));
         sg_dispatch(laser_ctx, laser_cty, 1);
-        gpuprof::mark("lasers : fumee");
-        sg_apply_pipeline(pip_laser_shade[laser_grad ? 1 : 0][fogv]);
-        b = {};
-        b.views[VIEW_lasers_cs] = laser_view;
-        b.views[VIEW_laser_scr_ro] = laser_scr_view;
-        b.views[VIEW_laser_stats_rw] = laser_stats_view;
-        b.views[VIEW_laser_ccount_ro] = laser_ccount_view;
-        b.views[VIEW_laser_clist_ro] = laser_clist_view;
-        b.views[VIEW_laser_depth_cs] = scene_depth_lin.tex;
-        if (fogv >= 1) b.views[VIEW_laser_fog_tex] = fog_view;
-        if (fogv >= 2) {
-            b.views[VIEW_laser_vol_tex] = volutes_view;
-            b.samplers[SMP_laser_vol_smp] = volutes_smp;
+        // Nappes coniques (arcs) d'abord, dans leur passe et leur image (leur long calcul ralentissait aussi les
+        // eventails quand il etait dans la meme boucle) ; la passe principale ajoute cette image (cam_pos.w = 1).
+        laser_cs_params_t lcp_main = lp;
+        lcp_main.cam_pos[3] = laser_arcs ? 1.0f : 0.0f;
+        for (int pass_arcs = laser_arcs ? 1 : 0; pass_arcs >= 0; pass_arcs--) {
+            if (pass_arcs) gpuprof::mark("lasers : arcs");
+            else gpuprof::mark("lasers : fumee");
+            sg_apply_pipeline(pip_laser_shade[laser_grad ? 1 : 0][fogv][pass_arcs]);
+            b = {};
+            b.views[VIEW_lasers_cs] = laser_view;
+            b.views[VIEW_laser_scr_ro] = laser_scr_view;
+            b.views[VIEW_laser_stats_rw] = laser_stats_view;
+            b.views[VIEW_laser_ccount_ro] = laser_ccount_view;
+            b.views[VIEW_laser_clist_ro] = laser_clist_view;
+            b.views[VIEW_laser_depth_cs] = scene_depth_lin.tex;
+            if (fogv >= 1) b.views[VIEW_laser_fog_tex] = fog_view;
+            if (fogv >= 2) {
+                b.views[VIEW_laser_vol_tex] = volutes_view;
+                b.samplers[SMP_laser_vol_smp] = volutes_smp;
+            }
+            b.views[VIEW_laser_w] = pass_arcs ? laser_arc_store : laser_store;
+            if (!pass_arcs) b.views[VIEW_laser_arc_in] = laser_arc_tex;
+            b.samplers[SMP_laser_smp_cs] = point_smp;
+            b.samplers[SMP_laser_lin_clamp] = lin_clamp;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lcp_main));
+            sg_dispatch(stats.laser_tiles_x, stats.laser_tiles_y, 1);
+            if (pass_arcs) {
+                // l'image des arcs, ecrite, sera lue : nouvelle passe (Direct3D 11 : vue d'ecriture detachee)
+                sg_end_pass();
+                sg_begin_pass(&pass);
+            }
         }
-        b.views[VIEW_laser_w] = laser_store;
-        b.samplers[SMP_laser_smp_cs] = point_smp;
-        b.samplers[SMP_laser_lin_clamp] = lin_clamp;
-        sg_apply_bindings(&b);
-        sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lcp));
-        sg_dispatch(stats.laser_tiles_x, stats.laser_tiles_y, 1);
         sg_end_pass();
         if (gpuprof::stats_enabled()) {
             unsigned c[4];

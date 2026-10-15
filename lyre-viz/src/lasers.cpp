@@ -25,6 +25,17 @@ float exit_distance(vec3 p, vec3 d, vec3 mn, vec3 mx) {
     return std::max(t, 0.0f);
 }
 
+// Sortie de la boite [mn, mx] depuis p (dedans) le long de d : distance, et face touchee (0..5 : -x, +x, -y, +y, -z, +z).
+float exit_face(vec3 p, vec3 d, vec3 mn, vec3 mx, int& face) {
+    float t = 1e30f;
+    face = 0;
+    for (int a = 0; a < 3; a++) {
+        if (d[a] > 1e-6f) { const float u = (mx[a] - p[a]) / d[a]; if (u < t) { t = u; face = 2 * a + 1; } }
+        else if (d[a] < -1e-6f) { const float u = (mn[a] - p[a]) / d[a]; if (u < t) { t = u; face = 2 * a; } }
+    }
+    return std::max(t, 0.0f);
+}
+
 // Une direction perpendiculaire a 'a' (unitaire), stable.
 vec3 any_perp(vec3 a) {
     const vec3 r = std::fabs(a.y) < 0.9f ? vec3(0, 1, 0) : vec3(1, 0, 0);
@@ -50,14 +61,239 @@ float smooth_noise(int seed, float t) {
 // Couleur (et intensite) le long d'une figure : t de 0 (bord 0) a 1 (bord 1), ou autour d'un cercle.
 using Profile = std::function<vec3(float)>;
 
+// Distance d'entree du rayon (o, d unitaire) dans un pave oriente (methode des dalles), 1e30 s'il le manque.
+float ray_box(vec3 o, vec3 d, const Occluder& b) {
+    const vec3 rel = o - b.c;
+    const vec3 ax[3] = {b.ax, b.ay, b.az};
+    float t0 = 0.0f, t1 = 1e30f;
+    for (int i = 0; i < 3; i++) {
+        const float l2 = dot(ax[i], ax[i]);
+        if (l2 < 1e-12f) return 1e30f;
+        const float p = dot(rel, ax[i]) / l2, v = dot(d, ax[i]) / l2;   // en demi-tailles
+        if (std::fabs(v) < 1e-12f) {
+            if (std::fabs(p) > 1.0f) return 1e30f;
+            continue;
+        }
+        float ta = (-1.0f - p) / v, tb = (1.0f - p) / v;
+        if (ta > tb) std::swap(ta, tb);
+        t0 = std::max(t0, ta);
+        t1 = std::min(t1, tb);
+        if (t0 > t1) return 1e30f;
+    }
+    return t0;
+}
+
+// Normale (vers l'exterieur) de la face d'un pave touchee au point X.
+vec3 box_normal(const Occluder& b, vec3 X) {
+    const vec3 rel = X - b.c;
+    const vec3 ax[3] = {b.ax, b.ay, b.az};
+    int best = 0;
+    float bv = -1, sgn = 1;
+    for (int i = 0; i < 3; i++) {
+        const float l2 = std::max(dot(ax[i], ax[i]), 1e-12f);
+        const float p = dot(rel, ax[i]) / l2;
+        if (std::fabs(p) > bv) { bv = std::fabs(p); best = i; sgn = p < 0 ? -1.0f : 1.0f; }
+    }
+    return normalize(ax[best]) * sgn;
+}
+
+// Coupe d'un pave par le plan d'un eventail : polygone convexe (au plus 6 sommets) en coordonnees du plan
+// (x le long de ec, y le long de es, origine a la source), sommets tries par angle autour de leur centre.
+int box_section(const Occluder& b, vec3 S, vec3 ec, vec3 es, vec3 nrm, vec2* out) {
+    vec3 P[8];
+    float d[8];
+    for (int k = 0; k < 8; k++) {
+        P[k] = b.c + b.ax * ((k & 1) ? 1.0f : -1.0f) + b.ay * ((k & 2) ? 1.0f : -1.0f) + b.az * ((k & 4) ? 1.0f : -1.0f);
+        d[k] = dot(P[k] - S, nrm);
+    }
+    int m = 0;
+    for (int k = 0; k < 8; k++)
+        for (int bit = 1; bit <= 4; bit <<= 1) {
+            const int j = k | bit;
+            if (j == k) continue;
+            if ((d[k] < 0.0f) == (d[j] < 0.0f)) continue;
+            const vec3 X = P[k] + (P[j] - P[k]) * (d[k] / (d[k] - d[j]));
+            if (m < 6) out[m++] = {dot(X - S, ec), dot(X - S, es)};
+        }
+    if (m < 3) return 0;
+    float cx = 0, cy = 0;
+    for (int i = 0; i < m; i++) { cx += out[i].x; cy += out[i].y; }
+    cx /= m;
+    cy /= m;
+    std::sort(out, out + m, [&](vec2 a, vec2 b2) { return std::atan2(a.y - cy, a.x - cx) < std::atan2(b2.y - cy, b2.x - cx); });
+    return m;
+}
+
 struct Builder {
     std::vector<LaserSegment>& segs;
     vec3 mn, mx;
     int traits = 0;
+    int cuts = 0;
+    // obstacles (decor, personnage) et rayon de leur sphere englobante ; 'local' : ceux qui touchent le cone de
+    // balayage du laser en cours (set_source), sinon tous
+    std::vector<const Occluder*> all;
+    std::vector<float> rad;
+    std::vector<int> all_idx, local;
+    bool use_local = false;
 
-    // Un segment : portee = le plus loin que l'eventail va avant de sortir du hangar (5 directions).
+    void set_obstacles(const std::vector<Occluder>& a, const std::vector<Occluder>& b) {
+        for (const std::vector<Occluder>* L : {&a, &b})
+            for (const Occluder& o : *L) {
+                all_idx.push_back((int)all.size());
+                all.push_back(&o);
+                rad.push_back(length(o.ax) + length(o.ay) + length(o.az));
+            }
+    }
+    // Laser en cours : source S, axe de sa figure et demi-angle (rad) qui contient toute la figure.
+    void set_source(vec3 S, vec3 axis, float theta) {
+        local.clear();
+        use_local = true;
+        const float ct = std::cos(theta), st = std::sin(theta);
+        for (int i : all_idx) {
+            const vec3 v = all[i]->c - S;
+            const float dist = length(v);
+            if (dist <= rad[i]) { local.push_back(i); continue; }
+            // sphere et cone : l'angle entre l'axe et le centre, moins le demi-angle vu de la sphere, sous theta
+            const float ca = dot(v, axis) / dist, sa = std::sqrt(std::max(0.0f, 1.0f - ca * ca));
+            const float sr = rad[i] / dist, cr = std::sqrt(std::max(0.0f, 1.0f - sr * sr));
+            // cos(angle - asin(sr)) >= cos(theta)
+            if (ca * cr + sa * sr >= ct || theta >= 1.5f) local.push_back(i);
+            (void)st;
+        }
+    }
+    void clear_source() { use_local = false; }
+    const std::vector<int>& cand() const { return use_local ? local : all_idx; }
+
+    // Portee d'un trait : sortie du hangar, ou le premier obstacle.
+    float trait_range(vec3 S, vec3 d, float R) const {
+        for (int i : cand()) {
+            const vec3 rel = all[i]->c - S;
+            const float proj = dot(rel, d), r = rad[i];
+            if (proj < -r || proj - r > R) continue;
+            if (dot(rel, rel) - proj * proj > r * r) continue;
+            R = std::min(R, ray_box(S, d, *all[i]));
+        }
+        return R;
+    }
+
+    // Un segment, coupe par les obstacles. Le plan de l'eventail est coupe par chaque pave proche (polygone) ; les
+    // angles des sommets de ces polygones decoupent l'eventail en morceaux (recales entre deux traits). Dans chaque
+    // morceau, le pave le plus proche (s'il y en a un) est vu par une seule de ses aretes : le morceau s'arrete
+    // exactement sur cette droite (portee a chaque bord, range et range1). Un trait seul : un rayon.
     void seg(vec3 S, vec3 ec, vec3 es, float ha, int n, vec3 f0, vec3 f1) {
-        if (segs.size() >= LASER_MAX_SEGS) return;
+        if (cand().empty()) {
+            seg_raw(S, ec, es, ha, n, f0, f1, -1.0f, 0.0f);
+            return;
+        }
+        if (n <= 1 || ha <= 0.0f) {
+            seg_raw(S, ec, es, 0.0f, 1, f0, f1, -2.0f, 0.0f);   // portee du trait : rayon (seg_raw)
+            return;
+        }
+        const vec3 nrm = cross(ec, es);
+        const float Rh = hall_range(S, ec, es, ha);
+        const float sh0 = std::sin(ha), ch0 = std::cos(ha);
+        // paves coupes par le plan, a portee et dans l'angle de l'eventail
+        struct Sec { vec2 p[6]; int m; };
+        Sec secs[24];
+        int ns = 0;
+        float splits[160];
+        int nsp = 0;
+        {
+            for (int bi : cand()) {
+                const Occluder& b = *all[bi];
+                const float r = rad[bi];
+                const vec3 rel = b.c - S;
+                if (std::fabs(dot(rel, nrm)) > r) continue;   // le plan ne touche pas le pave
+                // dans le coin de l'eventail elargi de r, a portee (sans racine ni trigonometrie)
+                const float x = dot(rel, ec), y = dot(rel, es);
+                if (x + r <= 0.0f || x * x + y * y > (Rh + r) * (Rh + r)) continue;
+                if (-x * sh0 - y * ch0 > r || -x * sh0 + y * ch0 > r) continue;
+                if (ns >= 24) break;
+                Sec& sc = secs[ns];
+                sc.m = box_section(b, S, ec, es, nrm, sc.p);
+                if (sc.m == 0) continue;
+                bool ok = true;
+                for (int i = 0; i < sc.m; i++) ok = ok && sc.p[i].x > 1e-3f;
+                if (!ok) continue;   // pave contre la sortie : ignore
+                ns++;
+                for (int i = 0; i < sc.m && nsp < 160; i++) {
+                    const float a = std::atan2(sc.p[i].y, sc.p[i].x);
+                    if (a > -ha && a < ha) splits[nsp++] = a;
+                }
+            }
+        }
+        if (ns == 0) {
+            seg_raw(S, ec, es, ha, n, f0, f1, -1.0f, 0.0f);
+            return;
+        }
+        // morceaux en traits : bornes entre deux traits (traits aux angles -ha + k da, k = 0 .. n - 1)
+        const int N = n <= 0 ? LASER_SHEET_TRAITS : n;
+        const float da = 2.0f * ha / (float)(N - 1);
+        std::sort(splits, splits + nsp);
+        int bounds[162];
+        int nb = 0;
+        bounds[nb++] = 0;
+        for (int i = 0; i < nsp; i++) {
+            const int j = std::clamp((int)std::floor((splits[i] + ha) / da) + 1, 1, N - 1);
+            if (j > bounds[nb - 1]) bounds[nb++] = j;
+        }
+        bounds[nb++] = N;
+        for (int k = 0; k + 1 < nb; k++) {
+            const int j0 = bounds[k], j1 = bounds[k + 1] - 1;   // traits j0 .. j1
+            const int nk = j1 - j0 + 1;
+            const float u0 = N > 1 ? (float)j0 / (float)(N - 1) : 0.0f, u1 = N > 1 ? (float)j1 / (float)(N - 1) : 0.0f;
+            const vec3 c0 = (f0 + (f1 - f0) * u0) * ((float)nk / (float)N), c1 = (f0 + (f1 - f0) * u1) * ((float)nk / (float)N);
+            const float g = -ha + da * 0.5f * (float)(j0 + j1), h = da * 0.5f * (float)(j1 - j0);
+            const float cg = std::cos(g), sg = std::sin(g);
+            const vec3 ec2 = ec * cg + es * sg, es2 = es * cg - ec * sg;
+            const bool cnt = N < LASER_SHEET_TRAITS;
+            if (nk == 1) {
+                seg_raw(S, ec2, es2, 0.0f, 1, c0, c0, -2.0f, 0.0f, cnt);
+                continue;
+            }
+            // pave le plus proche sur le rayon du milieu du morceau, et l'arete qu'il touche
+            float best = 1e30f;
+            vec2 ea = {0, 0}, eb = {0, 0};
+            for (int s = 0; s < ns; s++) {
+                const Sec& sc = secs[s];
+                for (int i = 0; i < sc.m; i++) {
+                    const vec2 p = sc.p[i], q = sc.p[(i + 1) % sc.m];
+                    // rayon t (cg, sg) contre l'arete p + u (q - p)
+                    const float ex = q.x - p.x, ey = q.y - p.y;
+                    const float den = cg * ey - sg * ex;
+                    if (std::fabs(den) < 1e-12f) continue;
+                    const float t = (p.x * ey - p.y * ex) / den, u = (p.x * sg - p.y * cg) / den;
+                    if (t > 0.0f && t < best && u >= -1e-4f && u <= 1.0f + 1e-4f) {
+                        best = t;
+                        ea = p;
+                        eb = q;
+                    }
+                }
+            }
+            const float Rk = hall_range(S, ec2, es2, h);
+            if (best >= Rk) {
+                seg_raw(S, ec2, es2, h, nk, c0, c1, Rk, 0.0f, cnt);
+                continue;
+            }
+            // droite de l'arete dans le repere du morceau, puis portee le long de ses deux bords
+            const vec2 pa = {ea.x * cg + ea.y * sg, ea.y * cg - ea.x * sg}, pb = {eb.x * cg + eb.y * sg, eb.y * cg - eb.x * sg};
+            vec2 nn = {pb.y - pa.y, pa.x - pb.x};
+            float dd = nn.x * pa.x + nn.y * pa.y;
+            if (dd < 0.0f) { nn.x = -nn.x; nn.y = -nn.y; dd = -dd; }
+            const float ch = std::cos(h), sh = std::sin(h);
+            const float q0 = nn.x * ch - nn.y * sh, q1 = nn.x * ch + nn.y * sh;   // bords 0 (-h) et 1 (+h)
+            const float r0 = q0 > 1e-9f ? std::min(dd / q0, Rk) : Rk, r1 = q1 > 1e-9f ? std::min(dd / q1, Rk) : Rk;
+            seg_raw(S, ec2, es2, h, nk, c0, c1, std::max(r0, 0.01f), std::max(r1, 0.01f), cnt);
+            if (!segs.empty()) {
+                segs.back().cut_a = nn.x / dd;
+                segs.back().cut_b = nn.y / dd;
+            }
+            cuts++;
+        }
+    }
+
+    // Portee dans le hangar : le plus loin que l'eventail va avant d'en sortir (5 directions).
+    float hall_range(vec3 S, vec3 ec, vec3 es, float ha) const {
         const float c1 = std::cos(0.5f * ha), s1 = std::sin(0.5f * ha), c2 = std::cos(ha), s2 = std::sin(ha);
         float R = exit_distance(S, ec, mn, mx);
         if (ha > 0.0f) {
@@ -66,9 +302,18 @@ struct Builder {
                 R = std::max(R, exit_distance(S, ec * c2 + es * (s2 * sg), mn, mx));
             }
         }
+        return std::min(R, 160.0f);
+    }
+
+    // Un segment tel quel : portee 'R' (< 0 : celle du hangar ; -2 : trait arrete au premier obstacle), 'R1' > 0 :
+    // coupe (portee au bord 1).
+    void seg_raw(vec3 S, vec3 ec, vec3 es, float ha, int n, vec3 f0, vec3 f1, float R, float R1, bool count = true) {
+        if (segs.size() >= LASER_MAX_SEGS) return;
+        if (R == -2.0f) R = trait_range(S, ec, hall_range(S, ec, es, 0.0f));
+        else if (R < 0.0f) R = hall_range(S, ec, es, n > 1 ? ha : 0.0f);
         LaserSegment s;
         s.src = S;
-        s.range = std::min(R, 160.0f);
+        s.range = R;
         s.ec = ec;
         s.half_angle = n > 1 ? ha : 0.0f;
         s.es = es;
@@ -76,9 +321,10 @@ struct Builder {
         s.flux = f0;
         s.pad = 0;
         s.flux1 = f1;
-        s.pad1 = 0;
+        s.range1 = R1;
+        s.cut_a = s.cut_b = 0.0f;
         segs.push_back(s);
-        if (n < LASER_SHEET_TRAITS) traits += std::max(n, 1);
+        if (count && n < LASER_SHEET_TRAITS) traits += std::max(n, 1);
     }
 
     // Eventail de n traits (milieu ec, plan (ec, es), demi-ouverture ha), puissance P, couleur prof(t) entre
@@ -116,6 +362,7 @@ struct Builder {
 
     // Ancienne forme (motifs du banc) : couleur uniforme, flux = puissance de toute la figure.
     void fan(vec3 S, vec3 ec, vec3 es, float ha, int n, vec3 flux) {
+        if (!all.empty()) set_source(S, ec, ha + 2.0f * DEG);   // obstacles dans le coin de la figure
         const float P = std::max(std::max(flux.x, flux.y), std::max(flux.z, 1e-9f));
         fan(S, ec, es, ha, n, P, [&](float) { return flux * (1.0f / P); });
     }
@@ -143,22 +390,168 @@ struct Builder {
         }
     }
 
-    // Cone de traits (cercle) : nseg morceaux plans dont les bouts sont sur le cone.
-    void cone(vec3 S, vec3 axis, vec3 u, float half_cone, int nseg, int n_total, float spin, float P, const Profile& prof, bool flat) {
-        const vec3 w = cross(axis, u);
-        nseg = std::clamp(nseg, 1, 64);
-        const float cb = std::cos(half_cone), sb = std::sin(half_cone);
-        vec3 D[65];
-        float tt[65];
-        for (int j = 0; j <= nseg; j++) {
-            const float a = spin + 2 * PI * j / nseg;
-            D[j] = axis * cb + (u * std::cos(a) + w * std::sin(a)) * sb;
-            tt[j] = (float)j / (float)nseg;
+    // Arc de cercle du plan de projection du scanner : nappe conique exacte (rendu : laser_arc). Repere : axe d,
+    // rr, uu = d x rr ; cercle (cx, cy, rho) ; de l'angle th0 a th0 + dth autour du centre ; n traits (0 : nappe
+    // continue), aux deux bouts compris ; puissance P, couleur prof(t) de t0 a t1. Morceaux de 90 deg au plus (et K au
+    // moins, pour les degrades). Obstacles : chaque pave est projete dans le plan du scanner ; les angles ou le cercle
+    // entre dans son ombre et en sort (cercle contre les bords de son enveloppe) coupent l'arc ; les morceaux a l'ombre sont
+    // redecoupes (1 deg de direction au plus), chacun arrete a son pave.
+    void arc(vec3 S, vec3 d, vec3 rr, float cx, float cy, float rho, float th0, float dth, int n, float P, const Profile& prof,
+             int K, float t0, float t1, bool flat) {
+        const vec3 uu = cross(d, rr);
+        const int N = n <= 0 ? LASER_SHEET_TRAITS : std::max(n, 2);
+        auto dirf = [&](float th) { return normalize(d + rr * (cx + rho * std::cos(th)) + uu * (cy + rho * std::sin(th))); };
+        const float dt = dth / (float)(N - 1);   // ecart de deux traits (en theta)
+        auto jof = [&](float th) { return std::clamp((int)std::floor((th - th0) / dt) + 1, 1, N - 1); };
+        std::vector<int> bounds = {0};
+        const int pieces = std::clamp(std::max(K, (int)std::ceil(dth / (0.5f * PI) - 1e-4f)), 1, std::max(1, N - 1));
+        for (int k = 1; k < pieces; k++) bounds.push_back((int)((long long)k * (N - 1) / pieces) + 1);
+        // ombres des paves sur le cercle
+        for (int bi : cand()) {
+            const Occluder& o = *all[bi];
+            vec2 pc[8];
+            bool ok = true;
+            for (int k = 0; k < 8 && ok; k++) {
+                const vec3 X = o.c + o.ax * ((k & 1) ? 1.0f : -1.0f) + o.ay * ((k & 2) ? 1.0f : -1.0f) + o.az * ((k & 4) ? 1.0f : -1.0f) - S;
+                const float zd = dot(X, d);
+                if (zd <= 0.05f) ok = false;
+                else pc[k] = {dot(X, rr) / zd, dot(X, uu) / zd};
+            }
+            // enveloppe convexe des 8 coins projetes (Jarvis), puis le cercle dedans ou dehors ; pave a cheval sur le
+            // plan de la source (projection impossible) : rayons lances (ray_box)
+            vec2 hull[8];
+            int nh = 0, start = 0;
+            for (int k = 1; k < 8 && ok; k++) if (pc[k].x < pc[start].x) start = k;
+            int cur = start;
+            for (int it = 0; it < 8 && ok; it++) {
+                hull[nh++] = pc[cur];
+                int nxt = (cur + 1) % 8;
+                for (int k = 0; k < 8; k++) {
+                    const float ax = pc[nxt].x - pc[cur].x, ay = pc[nxt].y - pc[cur].y, bx = pc[k].x - pc[cur].x, by = pc[k].y - pc[cur].y;
+                    if (ax * by - ay * bx < 0.0f) nxt = k;
+                }
+                cur = nxt;
+                if (cur == start) break;
+            }
+            if (ok && nh < 3) continue;
+            if (ok) {
+                // le cercle coupe chaque bord de l'enveloppe en 2 points au plus : angles exacts d'entree et de sortie
+                for (int k = 0; k < nh; k++) {
+                    const vec2 p = hull[k], q = hull[(k + 1) % nh];
+                    const float ex = q.x - p.x, ey = q.y - p.y, fx = p.x - cx, fy = p.y - cy;
+                    const float A = ex * ex + ey * ey, B = fx * ex + fy * ey, Cq = fx * fx + fy * fy - rho * rho;
+                    const float disc = B * B - A * Cq;
+                    if (A < 1e-12f || disc < 0.0f) continue;
+                    for (float sg : {-1.0f, 1.0f}) {
+                        const float u = (-B + sg * std::sqrt(disc)) / A;
+                        if (u < 0.0f || u > 1.0f) continue;
+                        float th = std::atan2(fy + ey * u, fx + ex * u);
+                        th -= 2.0f * PI * std::floor((th - th0) / (2.0f * PI));   // dans [th0, th0 + 2 pi)
+                        if (th > th0 && th < th0 + dth) bounds.push_back(jof(th));
+                    }
+                }
+                continue;
+            }
+            // pave a cheval sur le plan de la source : rayons lances, puis dichotomie
+            auto inside = [&](float th) { return ray_box(S, dirf(th), o) < 1e29f; };
+            const int ns = std::clamp((int)(dth / (2.0f * DEG)), 8, 180);
+            bool prev = inside(th0);
+            for (int k = 1; k <= ns; k++) {
+                const float th = th0 + dth * (float)k / (float)ns;
+                const bool in = inside(th);
+                if (in != prev) {
+                    float lo = th - dth / (float)ns, hi = th;
+                    for (int it = 0; it < 10; it++) {
+                        const float m = 0.5f * (lo + hi);
+                        if (inside(m) == prev) lo = m; else hi = m;
+                    }
+                    bounds.push_back(jof(0.5f * (lo + hi)));
+                }
+                prev = in;
+            }
         }
-        polyline(S, D, tt, nseg, n_total, P, prof, flat);
+        bounds.push_back(N);
+        std::sort(bounds.begin(), bounds.end());
+        bounds.erase(std::unique(bounds.begin(), bounds.end()), bounds.end());
+        for (size_t k = 0; k + 1 < bounds.size(); k++) {
+            const int j0 = bounds[k], j1 = bounds[k + 1] - 1;
+            if (j1 < j0) continue;
+            // a l'ombre ? (rayon du milieu)
+            const vec3 Dm = dirf(th0 + dt * 0.5f * (float)(j0 + j1));
+            const float em = exit_distance(S, Dm, mn, mx);
+            if (trait_range(S, Dm, em) < em - 1e-3f) {
+                // redecoupe : 1 deg de direction au plus par morceau
+                const float ang = std::acos(clampf(dot(dirf(th0 + dt * (float)j0), dirf(th0 + dt * (float)j1)), -1.0f, 1.0f));
+                const int m = std::clamp((int)std::ceil(ang / (1.0f * DEG)), 1, std::max(1, j1 - j0 + 1));
+                for (int q = 0; q < m; q++) {
+                    const int a0 = j0 + (int)((long long)q * (j1 - j0 + 1) / m), a1 = j0 + (int)((long long)(q + 1) * (j1 - j0 + 1) / m) - 1;
+                    if (a1 >= a0) emit_arc(S, d, rr, uu, cx, cy, rho, th0, dt, a0, a1, N, P, prof, t0, t1, flat, dirf, true);
+                }
+            } else {
+                emit_arc(S, d, rr, uu, cx, cy, rho, th0, dt, j0, j1, N, P, prof, t0, t1, flat, dirf, false);
+            }
+        }
+    }
+    // Un morceau d'arc : traits j0 .. j1 ; portee : sortie du hangar (le plus loin de 9 rayons), ou a l'ombre le pave
+    // le plus proche (rayon du milieu).
+    template <typename F>
+    void emit_arc(vec3 S, vec3 d, vec3 rr, vec3 uu, float cx, float cy, float rho, float th0, float dt, int j0, int j1, int N,
+                  float P, const Profile& prof, float t0, float t1, bool flat, const F& dirf, bool shadow) {
+        if (segs.size() >= LASER_MAX_SEGS) return;
+        const int nk = j1 - j0 + 1;
+        const float a0 = th0 + dt * (float)j0, da = dt * (float)(j1 - j0);
+        const float ta = t0 + (t1 - t0) * (float)j0 / (float)(N - 1), tb = t0 + (t1 - t0) * (float)j1 / (float)(N - 1);
+        const float w = P * (float)nk / (float)N;
+        vec3 c0 = prof(ta) * w, c1 = prof(tb) * w;
+        if (flat) c0 = c1 = prof(0.5f * (ta + tb)) * w;
+        if (nk == 1) {
+            const vec3 D = dirf(a0);
+            seg_raw(S, D, any_perp(D), 0.0f, 1, c0, c0, -2.0f, 0.0f, N < LASER_SHEET_TRAITS);
+            return;
+        }
+        float R = 0.0f;
+        if (shadow) {
+            const vec3 Dm = dirf(a0 + 0.5f * da);
+            R = trait_range(S, Dm, exit_distance(S, Dm, mn, mx));
+        } else {
+            for (int i = 0; i < 9; i++) R = std::max(R, exit_distance(S, dirf(a0 + da * (float)i * 0.125f), mn, mx));
+            R *= 1.05f;   // entre deux rayons : le sol arrete la nappe (profondeur), la portee ne doit pas la couper avant
+        }
+        LaserSegment s;
+        s.src = S;
+        s.range = std::min(R, 160.0f);
+        s.ec = d;
+        s.half_angle = 0.0f;
+        s.es = rr;
+        s.traits = (float)nk;
+        s.flux = c0;
+        s.pad = 0;
+        s.flux1 = c1;
+        s.range1 = 0;
+        s.arc = 1;
+        s.uu = uu;
+        s.cx = cx;
+        s.cy = cy;
+        s.rho = rho;
+        s.th0 = a0;
+        s.dth = da;
+        segs.push_back(s);
+        if (N < LASER_SHEET_TRAITS) traits += nk;
+    }
+
+    // Cone de traits (cercle) : une nappe conique exacte autour de l'axe (arc de 360 deg, cercle centre).
+    void cone(vec3 S, vec3 axis, vec3 u, float half_cone, int nseg, int n_total, float spin, float P, const Profile& prof, bool flat) {
+        (void)nseg;
+        const vec3 rr = normalize(u - axis * dot(u, axis));
+        const int n = n_total >= LASER_SHEET_TRAITS || n_total <= 0 ? 0 : std::max(n_total, 3);
+        // n traits sur le cercle : le dernier a un ecart du premier (pas de double) ; nappe continue : tout le tour
+        const float span = n > 0 ? 2.0f * PI * (float)(n - 1) / (float)n : 2.0f * PI;
+        const int K = flat ? 16 : 4;
+        arc(S, axis, rr, 0.0f, 0.0f, std::tan(std::max(half_cone, 0.05f * DEG)), spin, span, n, P, prof, K, 0.0f, 1.0f, flat);
     }
     // Ancienne forme (motifs du banc).
     void cone(vec3 S, vec3 axis, float half_cone, int nseg, int n_total, float spin, vec3 flux) {
+        if (!all.empty()) set_source(S, axis, half_cone + 2.0f * DEG);
         const float P = std::max(std::max(flux.x, flux.y), std::max(flux.z, 1e-9f));
         cone(S, axis, any_perp(axis), half_cone, nseg, n_total, spin, P, [&](float) { return flux * (1.0f / P); }, false);
     }
@@ -205,6 +598,7 @@ void LaserRig::build(const Scene& scene) {
     mounts.clear();
     fixtures.clear();
     effects.clear();
+    obstacles = scene.laser_occluders;
     group_names = scene.group_names;
     // trusses (memes lignes que les lyres, a mi-chemin entre deux lyres, un peu plus bas)
     const float trussY = 18.0f;
@@ -393,6 +787,7 @@ void LaserRig::housings(std::vector<Instance>& cubes) const {
 void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
     segs.clear();
     Builder b{segs, hall_min, hall_max};
+    if (collisions) b.set_obstacles(obstacles, dyn_obstacles);
     lit = 0;
     total_traits = 0;
     ilda_points = ilda_beams = ilda_sheets = 0;
@@ -411,6 +806,7 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
             const vec3 flux = GROUP_COLORS[m.group] * power_w;
             const bool hanging = m.n.y < 0;
             const vec3 S = m.pos + m.n * 0.12f;
+            b.clear_source();   // motifs : chaque figure choisit ses obstacles (fan, cone)
             switch (pattern) {
                 case LP_FANS:
                 case LP_FANS_LINE:
@@ -481,6 +877,8 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
             }
         }
         total_traits = b.traits;
+        cut_segments = b.cuts;
+        build_hits(hall_min, hall_max);
         return;
     }
 
@@ -585,6 +983,14 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
         // direction de la figure dans le champ du scanner, puis repere autour d'elle
         const vec3 S = f.mount.pos + f.aim * 0.17f;
         const vec3 d0 = normalize(f.aim + f.right * std::tan(f.pan * DEG) + f.up * std::tan(f.tilt * DEG));
+        {
+            // obstacles dans le cone de la figure : ouverture (coin du champ pour un fichier ILDA ou une grille),
+            // forme (double eventail, vague), copies de la diffraction, marge
+            const float spread = o.diffraction > 1 ? 1.5f * o.diffraction_angle : 0.0f;
+            const float extra = std::max(o.shape_param, 0.0f);
+            const float th = (0.5f * f.opening * 1.42f + spread + extra + 2.0f) * DEG;
+            b.set_source(S, d0, std::min(th, 1.6f));
+        }
         const vec3 r1 = normalize(f.right - d0 * dot(d0, f.right)), u1 = cross(r1, d0);
         const float roll = (f.roll + f.roll_acc) * DEG;
         const float ha = 0.5f * f.opening * DEG;
@@ -670,9 +1076,213 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
         }
     }
     total_traits = b.traits;
+    cut_segments = b.cuts;
+    build_hits(hall_min, hall_max);
     // budget global (LASER_MAX_SEGS) : primitives ILDA regroupees plus largement quand il est presque atteint
     if (ilda_beams + ilda_sheets > 0) {
         if (segs.size() >= (size_t)LASER_MAX_SEGS * 95 / 100 && ilda_bias < ILDA_LEVELS - 1) ilda_bias++;
         else if (segs.size() < (size_t)LASER_MAX_SEGS * 35 / 100 && ilda_bias > 0) ilda_bias--;
+    }
+}
+
+// ---------------------------------------------------------------------------------------------
+//  Impacts sur les surfaces (etape 5)
+// ---------------------------------------------------------------------------------------------
+// Pour chaque segment : un trait laisse un point la ou il s'arrete (le premier obstacle, sinon la paroi du hangar) ;
+// un morceau d'eventail laisse une ligne. Coupe par un obstacle : la droite qui joint ses deux impacts, sur la face
+// de l'obstacle. Sinon : sa coupe par les parois du hangar (sol, murs, plafond), en deux lignes (ou plus) s'il passe
+// un coin (angle du coin cherche par dichotomie). Les obstacles ne sont pas dans les morceaux non coupes (decoupage
+// des segments), les lignes sur les parois sont donc entieres.
+void LaserRig::build_hits(vec3 mn, vec3 mx) {
+    hits.clear();
+    if (!impacts) return;
+    const float tiny = 1e-6f;
+    auto all_obs = [&](vec3 X, vec3& nrm) {
+        float best = 1e30f;
+        for (const std::vector<Occluder>* L : {&obstacles, &dyn_obstacles})
+            for (const Occluder& o : *L) {
+                const vec3 rel = X - o.c;
+                // le point est-il sur ce pave (a 2 cm pres) ?
+                float worst = 0;
+                const vec3 ax[3] = {o.ax, o.ay, o.az};
+                for (int i = 0; i < 3; i++) {
+                    const float l = length(ax[i]);
+                    worst = std::max(worst, std::fabs(dot(rel, ax[i])) / std::max(l, tiny) - l);
+                }
+                if (worst < best) { best = worst; nrm = box_normal(o, X); }
+            }
+        return best;
+    };
+    static const vec3 FACE_N[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};   // vers l'interieur
+    for (const LaserSegment& g : segs) {
+        if ((int)hits.size() >= LASER_MAX_SEGS * 2) break;
+        if (g.arc) {
+            // arc : morceaux de la courbe (meme face de sortie, 4 deg de direction et 22,5 deg d'arc au plus) ; le
+            // dessin teste la distance exacte au cone (kind 2) : courbe exacte, bouts fondus en angle (sans trou aux
+            // jonctions). L'arc couvre ses traits plus un demi-ecart de chaque cote (les morceaux se touchent).
+            const vec3 d = g.ec, rr = g.es, uu = g.uu;
+            const float nk = std::max(g.traits, 2.0f);
+            auto dirf = [&](float th) {
+                return normalize(d + rr * (g.cx + g.rho * std::cos(th)) + uu * (g.cy + g.rho * std::sin(th)));
+            };
+            const float dt = g.dth / (nk - 1.0f);
+            const float ta = g.th0 - 0.5f * dt, span = g.dth + dt;
+            if (span <= 1e-7f) continue;
+            const vec3 fa = g.flux / span, fb = g.flux1 / span;   // puissance par radian de theta
+            LaserHit h = {};
+            h.kind = 2;
+            h.src = g.src;
+            h.nrm = d;
+            h.pad0 = g.rho;
+            h.pad1 = rr.x;
+            h.pad2 = g.cx;
+            h.pad3 = rr.y;
+            h.pad4 = rr.z;
+            h.pad5 = g.cy;
+            auto push = [&](float t0, float t1, float e0, float e1, vec3 sn) {
+                if ((int)hits.size() >= LASER_MAX_SEGS * 2) return;
+                LaserHit q = h;
+                q.a = g.src + dirf(t0) * e0;
+                q.b = g.src + dirf(t1) * e1;
+                q.f0 = fa + (fb - fa) * ((t0 - ta) / span);
+                q.f1 = fa + (fb - fa) * ((t1 - ta) / span);
+                q.surf = sn;
+                hits.push_back(q);
+            };
+            const vec3 Dm = dirf(ta + 0.5f * span);
+            if (g.range < exit_distance(g.src, Dm, mn, mx) - 0.01f) {
+                // a l'ombre d'un obstacle (morceau de 1 deg au plus) : sur sa face
+                vec3 sn = {0, 1, 0};
+                all_obs(g.src + Dm * g.range, sn);
+                push(ta, ta + span, g.range, g.range, sn);
+                continue;
+            }
+            struct Piece { float t0, t1; };
+            Piece st[8];
+            int ns = 0;
+            st[ns++] = {ta, ta + span};
+            int guard = 0;
+            while (ns > 0 && guard++ < 16) {
+                const Piece p = st[--ns];
+                int f0i, f1i;
+                exit_face(g.src, dirf(p.t0), mn, mx, f0i);
+                exit_face(g.src, dirf(p.t1), mn, mx, f1i);
+                if (f0i == f1i || p.t1 - p.t0 < 1e-5f) {
+                    // morceaux de 22,5 deg d'arc au plus, recoupes en deux tant que la courbe s'ecarte de sa corde de plus
+                    // de 4 % de sa longueur (+ 5 mm) : le dessin n'ajoute que cette marge (vs_laser_hit)
+                    auto exitp = [&](float t) {
+                        int fc;
+                        const vec3 D = dirf(t);
+                        return g.src + D * exit_face(g.src, D, mn, mx, fc);
+                    };
+                    const int m = std::clamp((int)std::ceil((p.t1 - p.t0) / (22.5f * DEG)), 1, 64);
+                    vec3 Pc = exitp(p.t0);
+                    for (int c = 0; c < m; c++) {
+                        struct Ch { float t0, t1; vec3 Pa, Pb; int depth; };
+                        Ch cs[16];
+                        int nc = 0;
+                        const float c1 = p.t0 + (p.t1 - p.t0) * (float)(c + 1) / (float)m;
+                        const vec3 Pn = exitp(c1);
+                        cs[nc++] = {p.t0 + (p.t1 - p.t0) * (float)c / (float)m, c1, Pc, Pn, 0};
+                        Pc = Pn;
+                        while (nc > 0) {
+                            const Ch q = cs[--nc];
+                            const float tm = 0.5f * (q.t0 + q.t1);
+                            const vec3 Pm = exitp(tm);
+                            if (q.depth < 7 && nc + 2 <= 16 && length(Pm - (q.Pa + q.Pb) * 0.5f) > 0.04f * length(q.Pb - q.Pa) + 0.005f) {
+                                cs[nc++] = {tm, q.t1, Pm, q.Pb, q.depth + 1};
+                                cs[nc++] = {q.t0, tm, q.Pa, Pm, q.depth + 1};
+                                continue;
+                            }
+                            push(q.t0, q.t1, length(q.Pa - g.src), length(q.Pb - g.src), FACE_N[f0i]);
+                        }
+                    }
+                    continue;
+                }
+                float lo = p.t0, hi = p.t1;
+                for (int it = 0; it < 14; it++) {
+                    const float mid = 0.5f * (lo + hi);
+                    int fm;
+                    exit_face(g.src, dirf(mid), mn, mx, fm);
+                    if (fm == f0i) lo = mid; else hi = mid;
+                }
+                if (ns + 2 <= 8) {
+                    // les deux cotes du coin se touchent (meme angle) : pas de trou
+                    st[ns++] = {0.5f * (lo + hi), p.t1};
+                    st[ns++] = {p.t0, 0.5f * (lo + hi)};
+                }
+            }
+            continue;
+        }
+        const bool fan = g.traits > 1.5f && g.half_angle > 1e-6f;
+        LaserHit h = {};
+        h.src = g.src;
+        if (!fan) {
+            // trait : point d'arrivee
+            h.kind = 1;
+            h.a = g.src + g.ec * g.range;
+            h.b = h.a;
+            h.nrm = g.ec;
+            h.f0 = g.flux;
+            int face;
+            const float tw = exit_face(g.src, g.ec, mn, mx, face);
+            vec3 sn = FACE_N[face];
+            if (g.range < tw - 0.01f) all_obs(h.a, sn);
+            h.surf = sn;
+            hits.push_back(h);
+            continue;
+        }
+        const vec3 nrm = normalize(cross(g.ec, g.es));
+        const float ha = g.half_angle;
+        const vec3 f0 = g.flux / (2.0f * ha), f1 = g.flux1 / (2.0f * ha);   // puissance par radian aux bords
+        auto dir = [&](float th) { return g.ec * std::cos(th) + g.es * std::sin(th); };
+        h.kind = 0;
+        h.nrm = nrm;
+        if (g.range1 > 0.0f) {
+            // coupe : ligne sur la face de l'obstacle
+            h.a = g.src + dir(-ha) * g.range;
+            h.b = g.src + dir(ha) * g.range1;
+            h.f0 = f0;
+            h.f1 = f1;
+            vec3 sn = {0, 1, 0};
+            all_obs((h.a + h.b) * 0.5f, sn);
+            h.surf = sn;
+            hits.push_back(h);
+            continue;
+        }
+        // parois du hangar : morceaux d'angle qui sortent par la meme face
+        struct Piece { float t0, t1; };
+        Piece st[8];
+        int ns = 0;
+        st[ns++] = {-ha, ha};
+        int guard = 0;
+        while (ns > 0 && guard++ < 16) {
+            const Piece p = st[--ns];
+            int fa, fb;
+            const float ta = exit_face(g.src, dir(p.t0), mn, mx, fa), tb = exit_face(g.src, dir(p.t1), mn, mx, fb);
+            if (fa == fb || p.t1 - p.t0 < 1e-5f) {
+                const float u0 = (p.t0 + ha) / (2.0f * ha), u1 = (p.t1 + ha) / (2.0f * ha);
+                LaserHit q = h;
+                q.a = g.src + dir(p.t0) * ta;
+                q.b = g.src + dir(p.t1) * tb;
+                q.f0 = f0 + (f1 - f0) * u0;
+                q.f1 = f0 + (f1 - f0) * u1;
+                q.surf = FACE_N[fa];
+                hits.push_back(q);
+                continue;
+            }
+            // coin : angle ou la face de sortie change (dichotomie)
+            float lo = p.t0, hi = p.t1;
+            for (int it = 0; it < 14; it++) {
+                const float m = 0.5f * (lo + hi);
+                int fm;
+                exit_face(g.src, dir(m), mn, mx, fm);
+                if (fm == fa) lo = m; else hi = m;
+            }
+            if (ns + 2 <= 8) {
+                st[ns++] = {hi, p.t1};
+                st[ns++] = {p.t0, lo};
+            }
+        }
     }
 }

@@ -552,6 +552,42 @@ Lecture ILDA, réduction en faisceaux et nappes (README, « Lasers : fichiers IL
 
 - Piège : le nettoyage des bancs ne garde que les exécutables `bench\ref\avant*.exe` : nommer ainsi toute référence à garder.
 
+### Étape 5 : collisions et impacts (15 octobre 2026)
+
+Historique 21 et 22 (banc rapide, immobile, 19 cas).
+
+- **Collisions** (`--set lasercoll=0/1`, case de l'onglet Lasers) : les traits s'arrêtent sur les pavés du décor, des mannequins et du personnage ; les nappes y sont coupées exactement (trou d'ombre à bord net). Calcul sur le CPU, à la construction des segments : coût GPU dans le bruit.
+- **Impacts sur les surfaces** (`--set laserimpacts=0/1`, case de l'onglet Rendu) : passe « lasers : impacts », lignes et points là où les lasers touchent sol, murs, plafond et obstacles. Coût (image, GPU) : +0,5 à +2 ms sur L1 à L6, +2,8 ms sur L7, +5 à +6 ms sur les fichiers ILDA chargés (I1, I3, I4).
+
+### Nappes coniques exactes (cônes, tunnels) (15 octobre 2026)
+
+À la demande de l'utilisateur : plus de cercles faits de traits droits. Un cône est une nappe conique exacte (`laser_arc`), en morceaux de 90° au plus ; ses impacts sont des arcs exacts. Historique 23. Banc rapide, immobile, 2 lancements chacun, contre `benchefvant_etape6.exe` (cônes en 32 nappes planes ; `benchrcs4_*`, lyres `benchrcs4ly_*`) :
+
+| Cas | Avant (polygones) | Nappes coniques | Note |
+|---|---|---|---|
+| L2 cônes / public | 18,4 ms | 19,3 ms | première version des arcs : +7,7 ms sur la passe |
+| L2 cônes / scène | 18,6 ms | 19,4 ms | |
+| L7 programmeur | 24,8 ms | 28,3 ms | passe des arcs 10,2 ms + reste 10,1 ms |
+| autres cas L, M1, I | | dans le bruit (±3 %) | images identiques |
+| banc des lyres | | −3,9 / +0,8 / −1,5 % | images identiques |
+
+Ce qui a été fait, dans l'ordre :
+
+1. **Silhouettes en escalier** : au bord d'un cône vu de côté, le rayon frôle la nappe sans la couper ; le calcul rendait 0 là où la nappe est la plus brillante. Ajout du rayon qui frôle (point le plus proche, poids gaussien selon l'écart à la nappe) et de la corde d'une nappe courbe vue par la tranche (comme la corde des nappes planes). Bord lisse ; le code, minimal (un appel de plus coûtait 4 ms), coûte 0,7 ms sur L2.
+2. **Enveloppe à l'écran** (la vraie cause du surcoût) : la pyramide d'un morceau d'arc était coupée par le plan proche (5 cm), sans les bords de l'écran ; ces points, loin hors de l'écran, avaient des marges de centaines de pixels, appliquées à des bords entiers. L'enveloppe est maintenant coupée à l'écran élargi de moitié, comme les segments droits, avec la profondeur exacte des nouveaux sommets : L2 de 413 à 145 millions de couples, image identique.
+3. **Base de la pyramide sur la paroi** quand ses 6 coins sortent du hangar par la même paroi : 165 → 145 millions de couples (−0,5 ms).
+4. **Passe des arcs à part** (variantes `_a`, image `lasers-arcs` ajoutée par la passe principale) : le calcul des arcs gardait des registres pour toute la boucle (37 registres contre 27) et ralentissait aussi les éventails : L7 23,5 → 21,9 ms ; puis un pixel par fil dans cette passe (−0,6 ms sur L2).
+5. **L'autre côté du cône** : chaque morceau voit tout le cône ; une intersection à plus de 90° du milieu du morceau (et à plus de 4 épaisseurs de nappe, pour garder la pointe près de la source) est rejetée avant le long calcul (−0,5 à −1 ms).
+
+| Essai écarté | Résultat |
+|---|---|
+| Morceaux de 45° ou 22,5° au lieu de 90° | plus de couples (165 et 1 071 millions) : la marge près de la caméra dominait, puis le nombre de morceaux |
+| Rejet angulaire avec une marge fixe de 4 sigma | image changée (coutures entre morceaux) ; avec la bonne marge, aucun gain |
+| Seuil du rayon qui frôle à 1 sigma | aucun gain : le coût est par couple (code ajouté), pas par évaluation |
+| Biarcs (arcs raccordés) pour la vague et les nappes ILDA, une paire d'arcs par corde | trop cher : passe des arcs 35 à 45 ms sur I1 à I4, moteur CPU 64 à 116 ms (arcs à l'ombre redécoupés tous les 1°), I3 au plafond de 16 384 segments ; L7 +5 ms. Retiré : remplacé par le moteur de tracé (`PLAN-LASERS.md`, étape 9) |
+
+Pointe des cônes : quelques pixels changent d'un lancement à l'autre (déjà dans la référence, image crénelée sur 1 à 2 pixels) ; certaines programmations ont deux états d'image possibles d'un lancement à l'autre (0,02 % des pixels), quel que soit l'exécutable.
+
 ### Pistes pour la suite (sans dégrader l'image)
 
 1. Profondeur maximale par tuile : ignorer les segments entièrement derrière les surfaces de la tuile (peu de gain attendu dans les cas du banc, plus dans une vraie scène).

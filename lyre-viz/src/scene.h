@@ -49,6 +49,7 @@ struct Scene {
     std::vector<Instance> cylinders;   // geometrie statique (cylindres unitaires)
     std::vector<Collider> colliders;
     std::vector<Occluder> occluders;   // ombres des faisceaux (pas les parois du hangar)
+    std::vector<Occluder> laser_occluders;   // obstacles des lasers : les memes, mannequins en 6 pieces (leur silhouette)
     std::vector<FixtureMount> mounts;
     std::vector<std::string> group_names;
     vec3 bounds_min, bounds_max;       // volume interieur du hangar

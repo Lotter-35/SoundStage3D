@@ -660,6 +660,13 @@ void render_ui() {
     ImGui::SameLine();
     ImGui::TextDisabled("(%d segments, %d traits)", s.laser_segments, app.lasers.total_traits);
     ImGui::Checkbox("Lasers : fumee de la piece (amas, brume ; sinon uniforme)", &r.laser_room_fog);
+    ImGui::Checkbox("Lasers : arretes par les obstacles et le personnage", &app.lasers.collisions);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d segments coupes)", app.lasers.cut_segments);
+    if (ImGui::Checkbox("Lasers : impacts sur les surfaces (points et lignes)", &r.laser_impacts)) app.lasers.impacts = r.laser_impacts;
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d)", s.laser_hits);
+    ImGui::SliderFloat("Intensite des impacts", &r.laser_hit_gain, 0.01f, 10, "x %.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::Checkbox("Lasers : diffusion tres avant (2 lobes ; sinon comme les lyres)", &r.laser_fwd_lobe);
     ImGui::Checkbox("Lasers : volutes fines dans les nappes", &r.laser_volutes);
     ImGui::Checkbox("Lasers : volutes, 2e octave de pres (detail de quelques mm)", &r.laser_vol_fine);

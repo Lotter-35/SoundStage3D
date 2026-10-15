@@ -2357,6 +2357,8 @@ struct sb_laser {
     vec4 cam_rel;     // xyz : camera - source dans le repere (ec, es, normale), w : cosinus de la demi-ouverture
     vec4 flux;        // rgb : puissance d'un trait x diffusion par metre, au bord 0 ; w : 1 / ecart angulaire de deux traits (rad)
     vec4 flux1;       // rgb : idem au bord 1 (degrade lineaire le long de l'eventail) ; w : 1 / nombre de traits
+    vec4 cut;         // coupe par un obstacle (etape 5) : le segment s'arrete sur la droite x a + y b = 1 de son plan (la face
+                      // de l'obstacle ; 0, 0 : pas de coupe) ; z : portee au bord 1 (nrm_range.w : au bord 0)
 };
 // source = camera - (ec, es, normale) . cam_rel
 vec3 laser_source(sb_laser L, vec3 cam) {
@@ -2367,7 +2369,7 @@ vec3 laser_source(sb_laser L, vec3 cam) {
 
 @block laser_uniforms_cs
 layout(binding=0) uniform laser_cs_params {
-    vec4 cam_pos;     // w : inutilise
+    vec4 cam_pos;     // w : 1 = nappes coniques rendues avant (cs_laser_shade_*_a) : laser_arc_in a ajouter
     vec4 cam_right;   // w : tan x
     vec4 cam_up;      // w : tan y
     vec4 cam_fwd;     // w : extinction moyenne par metre
@@ -2546,7 +2548,7 @@ float laser_trait(vec3 q, vec3 dv, vec3 vw, float R, float tMax) {
 // Le cout vient surtout des operations speciales (divisions, racines, exponentielles, cosinus). La nappe lisse
 // (cas le plus courant) n'en demande que 4 : Q et f y sont compares au carre, et les bords sont testes avec le
 // sinus de l'angle vu de la source (juste pres des bords, la ou il sert) au lieu de l'arc tangente.
-vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 v, float tMax) {
+vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, vec3 v, float tMax) {
     float R = L2.w, nb = L1.w;
     float ia = 1.0 / dot(v, L2.xyz);   // rayon dans le repere de l'eventail : composante sur la normale
     float tP = -L3.z * ia;
@@ -2557,7 +2559,9 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 v, fl
     vec2 dxy = vec2(dot(v, L0.xyz), dot(v, L1.xyz));
     vec2 p2 = L3.xy + dxy * tP;   // P dans le plan, depuis la source
     float r2 = dot(p2, p2);
-    if (r2 > R * R || p2.x <= 0.0) {
+    // coupe par un obstacle : seulement du cote de la source de la droite d'arret (exacte pour une face plane : sa coupe
+    // par le plan est une droite) ; sans obstacle, a = b = 0 : toujours vrai (2 operations, sans branchement)
+    if (r2 > R * R || p2.x <= 0.0 || dot(p2, cut) > 1.0) {
         return vec3(0.0);
     }
     float irP = inversesqrt(r2);
@@ -2665,6 +2669,160 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 v, fl
                * lfog.x);
 #endif
 }
+
+#ifdef LASER_ARCS
+// ---- Nappes coniques (arcs) ----------------------------------------------------------------------------------------
+// Un arc de cercle trace par le scanner : les directions du faisceau passent par un cercle (centre c, rayon rho) du plan
+// de projection du scanner (a distance 1 de la source, perpendiculaire a l'axe d de la figure). Elles forment un cone
+// (oblique si le cercle n'est pas centre sur l'axe), exact : aucune facette. Repere (d, rr, uu) ; un point X = (zd, x, y)
+// depuis la source est sur la nappe si (x - cx zd)^2 + (y - cy zd)^2 = rho^2 zd^2 avec zd > 0. Un rayon de la camera la
+// coupe en 2 points au plus (equation du 2e degre) ; en chacun, les memes grandeurs que pour une nappe plane (distance a
+// la source, angle rayon-trait, 1 / |n.v|, position en traits le long de l'arc), puis la meme somme des traits.
+// Donnees (cs_laser_shade) : L0 = (d, theta0), L1 = (rr, -nb), L2 = (uu, portee), L3 = (camera - source dans le repere,
+// angle de l'arc), L4 = (puissance d'un trait, traits par radian de theta), L5 = (bord 1, 1 / nb), C = (cx, cy, rho).
+
+// Somme des traits en un point (x : position en traits depuis le bord 0) : le calcul de laser_eval.
+float laser_traits_sum(float Q2, float f2, float x, float nb) {
+    float e0 = x + 0.5, e1 = nb - 0.5 - x;
+    float emin = min(e0, e1);
+    if (emin < 0.0 && emin * emin > max(2.25, 16.0 * Q2)) {
+        return 0.0;
+    }
+    if (Q2 >= 0.5625 || f2 >= 0.25) {
+        float S = 1.0;
+        if (emin < 0.0 || emin * emin < 4.0 * Q2) {
+            float iq = inversesqrt(Q2);
+            S = smoothstep(-2.0, 2.0, e0 * iq) * smoothstep(-2.0, 2.0, e1 * iq);
+        }
+        return S;
+    }
+    float iq = inversesqrt(Q2);
+    float Q = Q2 * iq;
+    float wp = Q2 >= 0.1225 ? 1.0 : smoothstep(0.04, 0.09, f2);
+    float S = 0.0;
+    if (wp < 1.0) {
+        float kc = clamp(floor(x + 0.5), 0.0, nb - 1.0);
+        float e = (x - kc) * iq;
+        float sd = abs(e) < 4.0 ? exp(-0.5 * e * e) : 0.0;
+        if (Q2 > 0.015625) {
+            float em = e + iq, ep = e - iq;
+            if (kc > 0.5 && abs(em) < 4.0) {
+                sd += exp(-0.5 * em * em);
+            }
+            if (kc < nb - 1.5 && abs(ep) < 4.0) {
+                sd += exp(-0.5 * ep * ep);
+            }
+        }
+        S = sd * iq * 0.39894228 * (1.0 - wp);
+    }
+    if (wp > 0.0) {
+        float edge = 1.0;
+        if (min(e0, e1) < 2.0 * Q) {
+            edge = smoothstep(-2.0, 2.0, e0 * iq) * smoothstep(-2.0, 2.0, e1 * iq);
+        }
+        float rip = 2.0 * exp(-19.739209 * Q2) * clamp((0.25 - f2) * 5.3333333, 0.0, 1.0) * cos(LASER_TWO_PI * fract(x));
+        S += (1.0 + rip) * edge * wp;
+    }
+    return max(S, 0.0);
+}
+
+// Une intersection t du rayon (vf : sa direction dans le repere, q : camera - source) avec la nappe conique.
+// F : 0 pour une intersection ; sinon le rayon frole la nappe (silhouette) et F = a^2 + b^2 - (rho zd)^2 au point le
+// plus proche : poids 2 exp(-delta^2 / 2 sigma^2), delta = F / |grad F| (voir laser_arc).
+vec3 laser_arc_at(float t, vec3 q, vec3 vf, vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 C, vec3 v, float F) {
+    vec3 X = q + vf * t;
+    float r2 = dot(X, X);
+    if (X.x <= 0.0 || r2 > L2.w * L2.w) {
+        return vec3(0.0);
+    }
+    float irP = inversesqrt(r2), rP = r2 * irP;
+    float a = X.y - C.x * X.x, b = X.z - C.y * X.x;   // (point du cercle - centre) x zd
+    // position le long de l'arc : angle autour du centre, depuis le bord 0
+    float du = atan(b, a) - (L0.w + 0.5 * L3.w);
+    du -= LASER_TWO_PI * floor(du / LASER_TWO_PI + 0.5);
+    float nb = -L1.w;
+    float x = (du + 0.5 * L3.w) * L4.w;
+    // 1 / |n.v| (normale : gradient de l'equation), plafonne par l'epaisseur de la nappe
+    vec3 g = vec3(-C.x * a - C.y * b - C.z * C.z * X.x, a, b);
+    float nv = abs(dot(g, vf)) * inversesqrt(max(dot(g, g), 1e-20));
+    float bP = dot(vf, X) * irP;
+    float sig2 = laser_sig2(rP, t);
+    float m = max(rP, 0.5);
+    float iaa = 1.0 / max(nv, 1e-6);
+    if (sig2 * iaa * iaa > 0.16 * m * m) {
+        iaa = 0.4 * m * inversesqrt(sig2);
+    }
+    // nappe courbe vue par la tranche : le rayon ne reste dans son epaisseur (2,5 sigma) que sur une corde
+    // 2 sqrt(2 Rn 2,5 sigma), Rn le rayon de courbure dans la direction du rayon (rho zd / sin^2 de l'angle
+    // rayon-trait) : 1 / |n.v| <= corde / epaisseur. Comme la corde d'une facette des anciennes nappes planes.
+    float rn = C.z * X.x / max(1.0 - bP * bP, 1e-4);
+    iaa = min(iaa, 2.0 * sqrt(0.8 * rn * inversesqrt(sig2)));
+    // Hors de la portion de ce morceau d'au moins un demi-trait + 4 sigma (etires de 1 / |n.v| plafonne, quand la nappe
+    // est vue par la tranche ; le long du cercle, rho zd par radian) : rien. Chaque morceau voit le cone entier (equation du
+    // cone) : sans ce rejet, tout le calcul etait fait pour tous les morceaux du cone puis mis a 0 par la somme des traits.
+    float outa = abs(du) - 0.5 * L3.w - 0.5 / L4.w;
+    float am = outa * C.z * X.x;
+    if (outa > 0.0 && am * am > 16.0 * sig2 * max(iaa * iaa, 1.0)) {
+        return vec3(0.0);
+    }
+    // vitesse angulaire du faisceau le long de l'arc : |d dir / d theta| = |dY perpendiculaire a dir| / |Y|, Y = X / zd
+    float izr = 1.0 / (C.z * X.x);
+    vec3 dY = vec3(0.0, -b * izr, a * izr) * C.z;
+    vec3 dir = X * irP;
+    vec3 dYp = dY - dir * dot(dir, dY);
+    float kpr = L4.w / max(length(dYp) * X.x * irP, 1e-6);   // traits par radian de direction
+    float sin2 = max(1.0 - bP * bP, 6.25 * sig2 * irP * irP);
+    float k = kpr * irP * iaa;
+    float idu2 = sin2 * k * k;
+    float pt = res.w * t;
+    float S = laser_traits_sum(sig2 * idu2, pt * pt * idu2, x, nb);
+    if (S <= 0.0) {
+        return vec3(0.0);
+    }
+#ifdef LASER_GRADIENT
+    vec3 col = mix(L4.rgb, L5.rgb, clamp((x + 0.5) * L5.w, 0.0, 1.0));
+#else
+    vec3 col = L4.rgb;
+#endif
+    float w = F != 0.0 ? 2.0 * exp(-0.125 * F * F / (max(dot(g, g), 1e-30) * sig2)) : 1.0;
+    return col * (w * S * laser_phase(bP) * exp(-cam_fwd.w * (t + rP)) * kpr * irP * iaa
+                  * laser_sigma(cam_pos.xyz + v * t, pt * iaa));
+}
+
+// Intersections du rayon v avec le cone : r = (t1, t2, F) (t < 0 : aucune ; F voir laser_arc_at). Le calcul de
+// chaque intersection (laser_arc_at) est fait ensuite dans une seule boucle pour les 2 pixels du fil : une seule copie
+// de ce long calcul dans le shader (4 copies en ligne coutaient 3 ms sur L2 : la passe est limitee par les registres).
+vec3 laser_arc_roots(vec4 L1, vec4 L2, vec3 q, vec3 vf, vec3 C, float tMax) {
+    float A0 = q.y - C.x * q.x, A1 = vf.y - C.x * vf.x;
+    float B0 = q.z - C.y * q.x, B1 = vf.z - C.y * vf.x;
+    float C0 = C.z * q.x, C1 = C.z * vf.x;
+    float qa = A1 * A1 + B1 * B1 - C1 * C1, qb = A0 * A1 + B0 * B1 - C0 * C1, qc = A0 * A0 + B0 * B0 - C0 * C0;
+    float disc = qb * qb - qa * qc;
+    float t1 = -1.0, t2 = -1.0, F = 0.0;
+    if (disc < 0.0) {
+        // Le rayon passe a cote du cone (silhouette) : la nappe a une epaisseur (gaussienne de largeur sigma), un rayon
+        // qui la frole de delta s'y eclaire encore. Point du rayon le plus proche de la surface (sommet de la parabole,
+        // t = -qb / qa) : meme valeur que les 2 intersections confondues au contact, puis decroissance gaussienne (poids
+        // dans laser_arc_at) : bord adouci comme celui d'une nappe plane, sans escalier. Code minimal ici : la passe est
+        // limitee par les registres (un calcul complet de plus coutait 4 ms sur L2, meme peu execute).
+        // Rejet sans division au-dela de 3 sigma : |F| = -disc / qa, rho zd = rho (q.x qa - vf.x qb) / qa, sigma^2 borne.
+        float zq = q.x * qa - vf.x * qb, pxm = beam.z * res.w * min(tMax, 200.0);
+        if (disc * disc > 36.0 * (beam.x + beam.y * L2.w * L2.w + pxm * pxm) * C.z * C.z * zq * zq) {
+            return vec3(-1.0, -1.0, 0.0);
+        }
+        t1 = -qb / qa;
+        F = -disc / qa;
+    } else {
+        float tq = -(qb + (qb >= 0.0 ? sqrt(disc) : -sqrt(disc)));   // racines t = tq / qa et qc / tq (forme stable)
+        if (abs(tq) < 1e-20) {
+            return vec3(-1.0, -1.0, 0.0);
+        }
+        t1 = abs(qa) > 1e-20 ? tq / qa : -1.0;
+        t2 = qc / tq;
+    }
+    return vec3(t1 <= tMax ? t1 : -1.0, t2 <= tMax ? t2 : -1.0, F);
+}
+#endif
 @end
 
 // Rayon du pixel (rendu plein) et distance de la premiere surface. Necessite laser_uniforms_cs.
@@ -2734,16 +2892,20 @@ void main() {
     vec3 S = laser_source(L, cam_pos.xyz), ec = L.ec_half.xyz, es = L.es_n.xyz;
     float R = L.nrm_range.w;
     float sh = L.ec_half.w, ch = L.cam_rel.w;   // sinus et cosinus de la demi-ouverture
-    float Rf = R / ch;   // la corde des bouts contient l'arc des traits
+    if (L.es_n.w < -0.5) {   // arc : ces champs y ont un autre sens
+        sh = 0.0;
+        ch = 1.0;
+    }
+    float Rf = max(R, L.cut.z) / ch;   // la corde des bouts contient l'arc des traits (et les impacts d'un segment coupe)
     // sommets (xyz : repere de la camera, w : distance a la source), coupes plan par plan (Sutherland-Hodgman)
     vec4 pl[11];
+    const float ZN = 0.05, G = 1.5;
     pl[0] = view_plane(vec3(-1, 0, 0), -hall_min.x);
     pl[1] = view_plane(vec3(1, 0, 0), hall_max.x);
     pl[2] = view_plane(vec3(0, -1, 0), -hall_min.y);
     pl[3] = view_plane(vec3(0, 1, 0), hall_max.y);
     pl[4] = view_plane(vec3(0, 0, -1), -hall_min.z);
     pl[5] = view_plane(vec3(0, 0, 1), hall_max.z);
-    const float ZN = 0.05, G = 1.5;
     pl[6] = vec4(0.0, 0.0, -1.0, -ZN);
     pl[7] = vec4(1.0, 0.0, -G * cam_right.w, 0.0);
     pl[8] = vec4(-1.0, 0.0, -G * cam_right.w, 0.0);
@@ -2758,7 +2920,76 @@ void main() {
     va[1] = vec4(to_view(S + (ec * ch - es * sh) * Rf), Rf);
     va[2] = vec4(to_view(S + (ec * ch + es * sh) * Rf), Rf);
     int np = 3;
+    bool arc = L.es_n.w < -0.5;
+    if (arc) {
+        // arc : pyramide qui contient la nappe. Dans le plan de projection du scanner, l'arc est dans le polygone des
+        // deux bouts et des 4 coins des tangentes en 5 points de l'arc (rayon rho / cos(demi-pas), aux milieux) ; la
+        // nappe a la portee R a zd <= R : pyramide de sommet la source et de base ce polygone a zd = R. Coupee
+        // exactement par le plan proche (sommets devant, et ses 12 aretes), sans les autres plans.
+        // Base posee sur une paroi du hangar quand les 6 coins en sortent par la meme paroi avant la portee : la
+        // nappe s'arrete a la paroi (rien n'est visible au-dela), et la base reste un polygone plan qui la contient
+        // (projection centrale depuis la source). Sinon (coins de sorties differentes : un coin du hangar
+        // depasserait), base a zd = R. Marge : zd x 1,01.
+        vec3 uu = L.nrm_range.xyz;
+        float th0 = L.ec_half.w, dl = L.cam_rel.w * 0.25;
+        float rc = L.cut.z / cos(0.5 * dl);
+        vec3 V[6];
+        float zw[6];
+        int wall = -1;
+        bool same = all(greaterThan(S, hall_min.xyz)) && all(lessThan(S, hall_max.xyz));
+        float zmax = 0.0;
+        for (int k = 0; k < 6; k++) {
+            float th = k == 0 ? th0 : (k == 5 ? th0 + 4.0 * dl : th0 + (float(k) - 0.5) * dl);
+            float rk = (k == 0 || k == 5) ? L.cut.z : rc;
+            V[k] = ec + es * (L.cut.x + rk * cos(th)) + uu * (L.cut.y + rk * sin(th));
+            // sortie du hangar : zd = min sur les axes des distances positives aux parois, et la paroi touchee
+            vec3 d = V[k];
+            vec3 tw = (mix(hall_min.xyz, hall_max.xyz, step(0.0, d)) - S) / max(abs(d), vec3(1e-8));
+            tw = mix(vec3(1e30), abs(tw), greaterThan(abs(d), vec3(1e-8)));
+            int wk;
+            if (tw.x <= tw.y && tw.x <= tw.z) {
+                wk = d.x > 0.0 ? 1 : 0;
+                zw[k] = tw.x;
+            } else if (tw.y <= tw.z) {
+                wk = d.y > 0.0 ? 3 : 2;
+                zw[k] = tw.y;
+            } else {
+                wk = d.z > 0.0 ? 5 : 4;
+                zw[k] = tw.z;
+            }
+            zmax = max(zmax, zw[k]);
+            same = same && (k == 0 || wk == wall);
+            wall = wk;
+        }
+        same = same && R >= zmax;
+        vec4 pb[7];
+        pb[0] = vec4(to_view(S), 0.0);
+        for (int k = 0; k < 6; k++) {
+            float zb = same ? zw[k] * 1.01 : R;
+            pb[1 + k] = vec4(to_view(S + V[k] * zb), zb);
+        }
+        int no = 0;
+        for (int k = 0; k < 7; k++) {
+            if (pb[k].z >= ZN) {
+                va[no] = pb[k];
+                no++;
+            }
+        }
+        for (int k = 0; k < 12; k++) {
+            // aretes : source - base (k < 6), puis le tour de la base
+            vec4 A = k < 6 ? pb[0] : pb[1 + (k - 6)];
+            vec4 B = k < 6 ? pb[1 + k] : pb[1 + (k - 5) % 6];
+            if ((A.z >= ZN) != (B.z >= ZN) && no < 16) {
+                va[no] = mix(A, B, (ZN - A.z) / (B.z - A.z));
+                no++;
+            }
+        }
+        np = no;
+    }
     for (int j = 0; j < 11; j++) {
+        if (arc) {
+            break;
+        }
         vec4 P = pl[j];
         int no = 0;
         for (int k = 0; k < 16; k++) {
@@ -2801,6 +3032,102 @@ void main() {
         hi = max(hi, pp[k]);
         mmax = max(mmax, pm[k]);
     }
+    if (arc) {
+        // arc : enveloppe convexe des points a l'ecran (Jarvis), dans l'ordre, pour les bords
+        int hidx[16];
+        int nh = 0, start = 0;
+        for (int k = 1; k < 16; k++) {
+            if (k < np && pp[k].x < pp[start].x) {
+                start = k;
+            }
+        }
+        int cur = start;
+        for (int it = 0; it < 16; it++) {
+            hidx[nh] = cur;
+            nh++;
+            int nxt = cur + 1 < np ? cur + 1 : 0;
+            for (int k = 0; k < 16; k++) {
+                if (k < np) {
+                    vec2 ea = pp[nxt] - pp[cur], eb = pp[k] - pp[cur];
+                    if (ea.x * eb.y - ea.y * eb.x < 0.0) {
+                        nxt = k;
+                    }
+                }
+            }
+            cur = nxt;
+            if (cur == start) {
+                break;
+            }
+        }
+        // Puis enveloppe coupee par l'ecran elargi de moitie, comme les segments droits (plans 7 a 10) : un point
+        // coupe par le plan proche, loin hors de l'ecran, aurait une marge de centaines de pixels, appliquee a tout un
+        // bord (la pyramide d'un morceau qui passe derriere la camera couvrait alors tout l'ecran). Nouveau sommet sur
+        // un bord de l'ecran : profondeur exacte (1 / z lineaire a l'ecran le long d'un segment), distance a la source
+        // interpolee, et sa marge.
+        vec4 hc[24], hd[24];   // pixel x, y, 1 / z, distance a la source
+        for (int k = 0; k < 24; k++) {
+            int h = hidx[min(k, nh - 1)];
+            hc[k] = vec4(pp[h], 1.0 / va[h].z, va[h].w);
+            hd[k] = hc[k];
+        }
+        int nc = nh;
+        for (int j = 0; j < 4; j++) {
+            float lim = (j < 2 ? res.x : res.y) * 0.5 * (j == 0 || j == 2 ? -0.5 : 2.5);
+            float sg = (j == 0 || j == 2) ? -1.0 : 1.0;   // garde sg * x <= sg * lim
+            int no = 0;
+            for (int k = 0; k < 24; k++) {
+                if (k >= nc) {
+                    break;
+                }
+                vec4 A = hc[k], B = hc[k + 1 < nc ? k + 1 : 0];
+                float da = sg * ((j < 2 ? A.x : A.y) - lim), db = sg * ((j < 2 ? B.x : B.y) - lim);
+                if (da <= 0.0 && no < 24) {
+                    hd[no] = A;
+                    no++;
+                }
+                if ((da <= 0.0) != (db <= 0.0) && no < 24) {
+                    float u = da / (da - db);
+                    float iz = mix(A.z, B.z, u);
+                    float t3 = u * B.z / iz;   // position le long du segment en 3D
+                    hd[no] = vec4(mix(A.xy, B.xy, u), iz, mix(A.w, B.w, t3));
+                    no++;
+                }
+            }
+            nc = no;
+            for (int k = 0; k < 24; k++) {
+                hc[k] = hd[k];
+            }
+        }
+        np = min(nc, 16);
+        lo = vec2(1e30);
+        hi = vec2(-1e30);
+        mmax = 0.0;
+        for (int k = 0; k < 24; k++) {
+            if (k >= nc) {
+                break;
+            }
+            float sp = sqrt(beam.x + beam.y * hc[k].w * hc[k].w) * hc[k].z / res.w;
+            float mk = 3.5 * sqrt(sp * sp + beam.z * beam.z) + 1.0;
+            lo = min(lo, hc[k].xy);
+            hi = max(hi, hc[k].xy);
+            mmax = max(mmax, mk);
+            if (k < 16) {
+                pp[k] = hc[k].xy;
+                pm[k] = mk;
+            }
+        }
+        if (nc > 16) {
+            // plus de 16 sommets (rare) : les bords suivants ne sont pas gardes (test plus large, jamais faux) ; la
+            // marge de tous les bords gardes : la plus grande
+            for (int k = 0; k < 16; k++) {
+                pm[k] = mmax;
+            }
+        }
+        if (nc < 3) {
+            scr_w[i * 9u].v = vec4(1e9, 1e9, -1e9, -1e9);
+            return;
+        }
+    }
     for (int k = 0; k < 16; k++) {
         if (k >= np) {
             break;
@@ -2814,7 +3141,7 @@ void main() {
     // (4 largeurs de trait + 1 pixel), rangees dans les w des bords 1 a 4 : cs_laser_shade rejette les pixels
     // hors de cette bande en 3 operations. Trait vu presque dans son axe (moins d'un pixel) : pas de rejet.
     vec4 ln = vec4(0.0, 0.0, 0.0, 1e30);
-    if (L.es_n.w < 1.5) {
+    if (L.es_n.w < 1.5 && L.es_n.w > -0.5) {
         vec2 a = pp[0], b = pp[0];
         float far2 = 0.0, mline = 0.0;
         for (int k = 0; k < 16; k++) {
@@ -2835,7 +3162,8 @@ void main() {
             ln = vec4(nl, -dot(nl, a), mline);
         }
     }
-    // 8 bords au plus (garder une partie des bords seulement rend le test plus large, jamais faux)
+    // 8 bords au plus (garder une partie des bords seulement rend le test plus large, jamais faux) ; arc : son
+    // enveloppe convexe
     for (int k = 0; k < 8; k++) {
         vec4 e = vec4(0.0, 0.0, 1e30, k < 4 ? ln[k] : 0.0);
         if (k < np) {
@@ -2913,6 +3241,9 @@ layout(binding=14) readonly buffer laser_clist_ro { sb_index clist[]; };
 layout(binding=6) uniform texture2D laser_depth_cs;
 layout(binding=7) uniform texture3D laser_fog_tex;    // amas de fumee simules (la texture des lyres : fog_tex)
 layout(binding=8) uniform texture3D laser_vol_tex;    // volutes fines (2 instants, BC5)
+#ifndef LASER_ARCS
+layout(binding=9) uniform texture2D laser_arc_in;     // lumiere des nappes coniques (passe des arcs), si cam_pos.w
+#endif
 layout(binding=1) uniform sampler laser_smp_cs;
 layout(binding=2) uniform sampler laser_lin_clamp;
 layout(binding=3) uniform sampler laser_vol_smp;      // repetee, mipmaps lineaires
@@ -2921,8 +3252,14 @@ layout(binding=15, rgba16f) uniform writeonly image2D laser_w;
 @include_block laser_ray
 @include_block laser_tiles
 // 128 fils pour une tuile de 16 x 16 : chaque fil calcule 2 pixels (8 lignes d'ecart), chaque segment est lu
-// une fois en memoire partagee pour les deux.
+// une fois en memoire partagee pour les deux. Passe des arcs : 256 fils, un pixel chacun (leur long calcul garde
+// beaucoup de registres : un pixel par fil en libere, plus de fils actifs a la fois).
+#ifdef LASER_ARCS
+layout(local_size_x=16, local_size_y=16, local_size_z=1) in;
+#else
+#define LASER_PIX2 1
 layout(local_size_x=16, local_size_y=8, local_size_z=1) in;
+#endif
 
 shared uint s_n;
 shared uint s_idx[128];
@@ -2932,21 +3269,27 @@ const uint LS = 6u;   // vec4 par segment en memoire partagee (couleur au bord 1
 const uint LS = 5u;
 #endif
 shared vec4 s_seg[128u * LS];
-shared vec4 s_line[128];   // traits seuls : droite a l'ecran et demi-largeur (cs_laser_setup)
+shared vec4 s_line[128];   // traits seuls : droite a l'ecran et demi-largeur (cs_laser_setup) ; eventails : portee au bord 1
 
 void main() {
     uint lid = gl_LocalInvocationIndex;
     ivec2 pa = ivec2(gl_WorkGroupID.xy) * 16 + ivec2(gl_LocalInvocationID.xy);
+#ifdef LASER_PIX2
     ivec2 pb = pa + ivec2(0, 8);
+#endif
     uint ct = (gl_WorkGroupID.x >> 3u) + (gl_WorkGroupID.y >> 3u) * uint(tiles.z);
     uint n = ccount[ct].v;
     vec2 tc = (vec2(gl_WorkGroupID.xy) + 0.5) * 16.0;
     ivec2 pmax = ivec2(res.xy) - 1;
-    float tMaxA, tMaxB;
+    float tMaxA;
     vec3 va = laser_ray(vec2(pa) + 0.5, texelFetch(sampler2D(laser_depth_cs, laser_smp_cs), min(pa, pmax), 0).r, tMaxA);
+    vec3 accA = vec3(0.0);
+#ifdef LASER_PIX2
+    float tMaxB;
     vec3 vb = laser_ray(vec2(pb) + 0.5, texelFetch(sampler2D(laser_depth_cs, laser_smp_cs), min(pb, pmax), 0).r, tMaxB);
     vec2 fpA = vec2(pa) + 0.5, fpB = vec2(pb) + 0.5;   // centres des pixels (meme repere que cs_laser_setup)
-    vec3 accA = vec3(0.0), accB = vec3(0.0);
+    vec3 accB = vec3(0.0);
+#endif
     uint total = 0u;
     for (uint base = 0u; base < n; base += 128u) {
         if (lid == 0u) {
@@ -2954,9 +3297,16 @@ void main() {
         }
         barrier();
         uint i = base + lid;
-        if (i < n) {
+        if (i < n && lid < 128u) {
             uint si = clist[ct * LASER_CAP + i].v;
-            if (laser_tile_hit(si, tc, vec2(8.0))) {
+            // Nappes coniques (arcs) dans leur propre passe (variantes _a), avant celle-ci : leur long calcul gardait des
+            // registres pour toute la boucle et ralentissait aussi les eventails et les traits de la meme image.
+#ifdef LASER_ARCS
+            bool kind_ok = lasers[si].es_n.w < -0.5;
+#else
+            bool kind_ok = cam_pos.w < 0.5 || lasers[si].es_n.w >= -0.5;
+#endif
+            if (kind_ok && laser_tile_hit(si, tc, vec2(8.0))) {
                 s_idx[atomicAdd(s_n, 1u)] = si;
             }
         }
@@ -2973,7 +3323,14 @@ void main() {
             s_seg[lid * LS + 5u] = L.flux1;
 #endif
             uint so = s_idx[lid] * 9u;
-            s_line[lid] = vec4(scr[so + 1u].v.w, scr[so + 2u].v.w, scr[so + 3u].v.w, scr[so + 4u].v.w);
+            // traits seuls : leur droite a l'ecran ; eventails : leur portee au bord 1 (x, coupe par un obstacle)
+            s_line[lid] = (L.es_n.w < 1.5 && L.es_n.w > -0.5) ? vec4(scr[so + 1u].v.w, scr[so + 2u].v.w, scr[so + 3u].v.w, scr[so + 4u].v.w)
+                                                           : L.cut;   // eventails : droite d'arret ; arcs : cercle
+#ifdef LASER_ARCS
+            // arcs : direction du milieu du morceau (autour du centre du cercle), en 2 demi-flottants dans w
+            float thm = L.ec_half.w + 0.5 * L.cam_rel.w;
+            s_line[lid].w = uintBitsToFloat(packHalf2x16(vec2(cos(thm), sin(thm))));
+#endif
         }
         barrier();
         for (uint j = 0u; j < m; j++) {
@@ -2984,6 +3341,26 @@ void main() {
 #else
             vec4 L5 = vec4(0.0);
 #endif
+#ifdef LASER_ARCS
+            {
+                vec3 C = s_line[j].xyz;
+                vec2 mid = unpackHalf2x16(floatBitsToUint(s_line[j].w));
+                vec3 vfA = vec3(dot(va, L0.xyz), dot(va, L1.xyz), dot(va, L2.xyz));
+                vec3 rA = laser_arc_roots(L1, L2, L3.xyz, vfA, C, tMaxA);
+                // une seule copie de laser_arc_at (voir laser_arc_roots) : intersections 1 et 2
+                [[dont_unroll]] for (int k = 0; k < 2; k++) {
+                    float t = k == 0 ? rA.x : rA.y;
+                    // intersection a plus de 90 deg du milieu du morceau (l'autre cote du cone, vu par un autre
+                    // morceau), a plus de 4 epaisseurs de nappe (pixel compris) de son demi-plan : rien, sans le long
+                    // calcul. Pres de la source (cercle de quelques pixels), l'autre cote eclaire encore : garde.
+                    vec3 X = L3.xyz + vfA * t;
+                    float dm = dot(vec2(X.y - C.x * X.x, X.z - C.y * X.x), mid), pxt = beam.z * res.w * t;
+                    if (t > 0.0 && (dm > 0.0 || dm * dm < 16.0 * (beam.x + beam.y * X.x * X.x + pxt * pxt))) {
+                        accA += laser_arc_at(t, L3.xyz, vfA, L0, L1, L2, L3, L4, L5, C, va, k == 0 ? rA.z : 0.0);
+                    }
+                }
+            }
+#else
             if (L1.w < 1.5) {
                 // trait seul : rien a calculer hors de sa bande a l'ecran
                 vec4 ln = s_line[j];
@@ -2994,9 +3371,11 @@ void main() {
                     accB += L4.rgb * laser_trait(L3.xyz, vec3(dot(vb, L0.xyz), dot(vb, L1.xyz), dot(vb, L2.xyz)), vb, L2.w, tMaxB);
                 }
             } else {
-                accA += laser_eval(L0, L1, L2, L3, L4, L5, va, tMaxA);
-                accB += laser_eval(L0, L1, L2, L3, L4, L5, vb, tMaxB);
+                vec2 cut = s_line[j].xy;
+                accA += laser_eval(L0, L1, L2, L3, L4, L5, cut, va, tMaxA);
+                accB += laser_eval(L0, L1, L2, L3, L4, L5, cut, vb, tMaxB);
             }
+#endif
         }
         total += m;
         barrier();
@@ -3006,12 +3385,20 @@ void main() {
         atomicMax(stats_w[1].v, total);
         atomicAdd(stats_w[2].v, total > 0u ? 1u : 0u);
     }
+#ifndef LASER_ARCS
+    if (cam_pos.w > 0.5) {
+        accA += texelFetch(sampler2D(laser_arc_in, laser_smp_cs), min(pa, pmax), 0).rgb;
+        accB += texelFetch(sampler2D(laser_arc_in, laser_smp_cs), min(pb, pmax), 0).rgb;
+    }
+#endif
     if (pa.x < int(res.x) && pa.y < int(res.y)) {
         imageStore(laser_w, pa, vec4(min(accA, vec3(60000.0)), 1.0));
     }
+#ifdef LASER_PIX2
     if (pb.x < int(res.x) && pb.y < int(res.y)) {
         imageStore(laser_w, pb, vec4(min(accB, vec3(60000.0)), 1.0));
     }
+#endif
 }
 @end
 
@@ -3019,6 +3406,7 @@ void main() {
 // piece (1), avec volutes (2, 3) : voir LASER_FOG.
 @cs cs_laser_shade
 @image_sample_type laser_depth_cs unfilterable_float
+@image_sample_type laser_arc_in unfilterable_float
 @sampler_type laser_smp_cs nonfiltering
 @include_block laser_shade_body
 @end
@@ -3061,6 +3449,275 @@ void main() {
 @include_block laser_shade_body
 @end
 
+// Passe des nappes coniques (arcs, LASER_ARCS) seules, avant la passe principale (qui ajoute leur image) : seulement
+// quand une figure en a.
+@cs cs_laser_shade_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f1_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_FOG 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f2_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_FOG 2
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f3_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_FOG 3
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_GRADIENT 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f1_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_GRADIENT 1
+#define LASER_FOG 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f2_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_GRADIENT 1
+#define LASER_FOG 2
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f3_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_GRADIENT 1
+#define LASER_FOG 3
+@include_block laser_shade_body
+@end
+
+
+// 10d. Impacts des lasers sur les surfaces (etape 5) : la ligne d'arrivee de chaque morceau de nappe, le point
+//      d'arrivee de chaque trait (LaserRig::build_hits). Chaque impact est dessine comme une bande fine a l'ecran (en
+//      instances) ; chaque pixel reconstruit son point de surface X (profondeur) et calcule en 3D :
+//        - nappe : X a la distance z du plan de la nappe ; eclairement = puissance par radian / r x gaussienne(z) x
+//          cos(incidence) ; z en 3D : la ligne suit la surface (sol, mur, obstacle, joueur), et rien ne s'allume sur un
+//          objet place devant elle (son point X est loin du plan) ;
+//        - trait : gaussienne 2D de la distance de X a l'axe du trait, jusqu'a son point d'arret.
+//      Largeur : faisceau physique (sortie + divergence) et largeur minimale en pixels, energie conservee. Diffusion de
+//      la surface (couleur x cos / pi), attenuation par la fumee. Ajoute a l'image de la scene (avant la fumee).
+@block laser_hit_data
+struct sb_hit {
+    vec4 a;      // xyz, w : 0 ligne, 1 point, 2 arc
+    vec4 b;      // arc : w = rho
+    vec4 src;    // arc : w = rr.x
+    vec4 nrm;    // ligne : normale du plan ; point : direction du trait ; arc : axe d, w = cx
+    vec4 f0;     // ligne : puissance par radian en a ; point : puissance ; arc : par radian de theta, w = rr.y
+    vec4 f1;     // ligne : en b ; arc : w = rr.z
+    vec4 surf;   // normale de la surface touchee ; arc : w = cy
+};
+// Arc (nappe conique, cs_laser_shade : laser_arc) : point p dans le repere (d, rr, uu) depuis la source, puis
+// (zd, a, b) avec a = x - cx zd, b = y - cy zd (le cercle : a^2 + b^2 = rho^2 zd^2) ; et la moitie du gradient de
+// F = a^2 + b^2 - rho^2 zd^2, dans le monde.
+vec3 hit_arc_frame(sb_hit H, vec3 rel, out vec3 grad) {
+    vec3 d = H.nrm.xyz, rr = vec3(H.src.w, H.f0.w, H.f1.w), uu = cross(d, rr);
+    float z = dot(rel, d);
+    float a = dot(rel, rr) - H.nrm.w * z, b = dot(rel, uu) - H.surf.w * z;
+    grad = d * (-H.nrm.w * a - H.surf.w * b - H.b.w * H.b.w * z) + rr * a + uu * b;
+    return vec3(z, a, b);
+}
+@end
+
+@vs vs_laser_hit
+@glsl_options fixup_clipspace
+@include_block laser_hit_data
+layout(binding=0) uniform hit_vs_params {
+    mat4 view_proj;
+    vec4 cam_pos;   // w : angle d'un pixel (rad)
+    vec4 cam_fwd;
+    vec4 beam;      // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels)
+    vec4 res;       // xy : taille du rendu
+};
+layout(binding=25) readonly buffer hits_vs { sb_hit hits[]; };
+flat out int v_hit;
+
+vec2 hit_screen(vec3 p) {
+    vec4 c = view_proj * vec4(p, 1.0);
+    return (c.xy / max(c.w, 1e-4) * 0.5 + 0.5) * res.xy;
+}
+// Marge d'un bout (pixels) : la bande allumee est |z| < 4 largeurs de faisceau (z : distance au plan de la nappe, ou a
+// l'axe du trait) ; sur la surface, on s'en eloigne le long de w (dans la surface, en travers de la ligne) : la
+// distance a parcourir est 4 sigma / |w.n| ; projetee a l'ecran, plus 1,5 pixel. Exact, meme vu en rasant.
+float hit_margin(vec3 p, vec3 src, vec3 w, float rate, vec2 sp) {
+    vec3 rel = p - src;
+    float t = max(dot(p - cam_pos.xyz, cam_fwd.xyz), 0.05);
+    float px = beam.z * cam_pos.w * t;
+    float sig = sqrt(beam.x + beam.y * dot(rel, rel) + px * px);
+    float dl = 4.0 * sig / max(rate, 0.02);
+    // le point decale reste devant la camera (a la moitie de la profondeur de p au moins) : pres de la camera, sa
+    // projection exploserait (bande de tout l'ecran)
+    float wz = dot(w, cam_fwd.xyz);
+    if (wz < 0.0 && t + wz * dl < 0.5 * t) {
+        dl = -0.5 * t / wz;
+    }
+    return length(hit_screen(p + w * dl) - sp) + 1.5;
+}
+
+void main() {
+    int i = gl_InstanceIndex;
+    v_hit = i;
+    vec4 A = hits[i].a, B = hits[i].b;
+    vec3 src = hits[i].src.xyz, sn = hits[i].surf.xyz;
+    vec2 sa = hit_screen(A.xyz), sb = hit_screen(B.xyz);
+    // direction dans la surface, en travers de la ligne (nappe) ; pour un trait : le grand axe de la tache (la
+    // direction du trait couchee sur la surface)
+    vec3 nr = hits[i].nrm.xyz;
+    vec3 w;
+    float rate;
+    float sag = 0.0;   // arc : ecart de la courbe a sa corde (m)
+    if (A.w > 1.5) {
+        // arc : la normale du cone au milieu de la corde ; la courbe s'ecarte de sa corde de 4 % de sa longueur au plus
+        // (LaserRig::build_hits) : marge de 8 % (en metres, projetee a la profondeur de chaque bout)
+        vec3 g;
+        hit_arc_frame(hits[i], 0.5 * (A.xyz + B.xyz) - src, g);
+        nr = normalize(g);
+        vec3 ln = cross(nr, sn);
+        float l2 = dot(ln, ln);
+        w = l2 > 1e-8 ? cross(sn, ln * inversesqrt(l2)) : nr;
+        rate = abs(dot(w, nr));
+        sag = 0.08 * length(B.xyz - A.xyz);
+    } else if (A.w < 0.5) {
+        // nappe : la ligne est l'intersection du plan de la nappe et de la surface ; w la traverse dans la surface
+        vec3 ln = cross(nr, sn);
+        float l2 = dot(ln, ln);
+        w = l2 > 1e-8 ? cross(sn, ln * inversesqrt(l2)) : nr;
+        rate = abs(dot(w, nr));
+    } else {
+        // trait : la tache s'allonge le long du trait couche sur la surface
+        vec3 lay = nr - sn * dot(nr, sn);
+        w = dot(lay, lay) > 1e-8 ? normalize(lay) : normalize(cross(sn, abs(sn.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0)));
+        rate = length(cross(w, nr));
+    }
+    float ta = max(dot(A.xyz - cam_pos.xyz, cam_fwd.xyz), 0.05), tb = max(dot(B.xyz - cam_pos.xyz, cam_fwd.xyz), 0.05);
+    float ma = hit_margin(A.xyz, src, w, rate, sa) + sag / (ta * cam_pos.w), mb = hit_margin(B.xyz, src, w, rate, sb) + sag / (tb * cam_pos.w);
+    vec2 d = sb - sa;
+    float len = length(d);
+    d = len > 1e-3 ? d / len : vec2(1.0, 0.0);
+    vec2 n = vec2(-d.y, d.x);
+    int c = gl_VertexIndex;   // 2 triangles : 0 1 2, 2 1 3
+    int corner = c < 3 ? c : (c == 3 ? 2 : (c == 4 ? 1 : 3));
+    bool atB = corner >= 2;
+    float m = atB ? mb : ma;
+    vec2 p = (atB ? sb + d * m : sa - d * m) + n * (((corner & 1) == 0) ? -m : m);
+    vec2 ndc = p / res.xy * 2.0 - 1.0;
+    gl_Position = vec4(ndc, 0.5, 1.0);
+}
+@end
+
+@fs fs_laser_hit
+@include_block common
+@include_block laser_hit_data
+layout(binding=1) uniform hit_fs_params {
+    vec4 cam_pos;     // w : extinction moyenne par metre
+    vec4 cam_right;   // w : tan x
+    vec4 cam_up;      // w : tan y
+    vec4 cam_fwd;     // w : intensite (reglage)
+    vec4 res;         // xy : taille du rendu, z : angle d'un pixel
+    vec4 beam;        // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels)
+};
+layout(binding=29) readonly buffer hits_fs { sb_hit hitsf[]; };
+layout(binding=26) uniform texture2D hit_depth;
+layout(binding=27) uniform texture2D hit_normal;
+layout(binding=28) uniform texture2D hit_albedo;
+layout(binding=1) uniform sampler hit_smp;
+@image_sample_type hit_depth unfilterable_float
+@image_sample_type hit_normal unfilterable_float
+@image_sample_type hit_albedo unfilterable_float
+@sampler_type hit_smp nonfiltering
+flat in int v_hit;
+out vec4 frag_color;
+
+void main() {
+    ivec2 pix = ivec2(gl_FragCoord.xy);
+    vec2 uv = gl_FragCoord.xy / res.xy;
+    vec2 ndc = ndc_from_uv(uv);
+    vec3 dir = normalize(cam_fwd.xyz + cam_right.xyz * (ndc.x * cam_right.w) + cam_up.xyz * (ndc.y * cam_up.w));
+    float t = texelFetch(sampler2D(hit_depth, hit_smp), pix, 0).r / max(dot(dir, cam_fwd.xyz), 1e-3);
+    vec3 X = cam_pos.xyz + dir * t;
+    sb_hit H = hitsf[v_hit];
+    vec3 rel = X - H.src.xyz;
+    float r2 = dot(rel, rel), r = sqrt(r2);
+    float px = beam.z * res.z * t;
+    float sig2 = beam.x + beam.y * r2 + px * px;
+    vec3 E;
+    if (H.a.w > 1.5) {
+        // arc : distance au cone (F / |grad F|, exacte a l'echelle du faisceau), puis position en angle sur l'arc ; bouts
+        // fondus en angle : deux morceaux voisins se completent exactement (pas de trou ni de surplus a la jonction)
+        vec3 g, gd;
+        vec3 f = hit_arc_frame(H, rel, g);
+        float g2 = max(dot(g, g), 1e-30);
+        float z = (f.y * f.y + f.z * f.z - H.b.w * H.b.w * f.x * f.x) * 0.5 * inversesqrt(g2);
+        if (f.x <= 0.0 || z * z > 16.0 * sig2) {
+            discard;
+        }
+        vec3 fa = hit_arc_frame(H, H.a.xyz - H.src.xyz, gd), fb = hit_arc_frame(H, H.b.xyz - H.src.xyz, gd);
+        float tha = atan(fa.z, fa.y);
+        float span = atan(fb.z, fb.y) - tha;
+        span -= 6.2831853 * floor(span / 6.2831853);   // dans [0, 2 pi)
+        float du = atan(f.z, f.y) - tha;
+        du -= 6.2831853 * floor(du / 6.2831853 + 0.5 - 0.5 * span / 6.2831853);   // autour du milieu du morceau
+        // vitesse angulaire du faisceau le long de l'arc (rad de direction par rad de theta)
+        vec3 d = H.nrm.xyz, rr = vec3(H.src.w, H.f0.w, H.f1.w), uu = cross(d, rr);
+        vec3 dY = (uu * f.y - rr * f.z) / f.x;
+        vec3 dir = rel / max(r, 1e-6);
+        float rate = max(length(dY - dir * dot(dir, dY)) * f.x / max(r, 1e-6), 1e-6);
+        float e = 2.0 * sqrt(sig2) / (max(r, 0.05) * rate);   // demi-largeur du fondu (rad de theta)
+        float w = smoothstep(-e, e, du) * smoothstep(-e, e, span - du);
+        E = mix(H.f0.rgb, H.f1.rgb, clamp(du / max(span, 1e-6), 0.0, 1.0))
+            * (w * exp(-0.5 * z * z / sig2) * 0.39894228 * inversesqrt(sig2) / (max(r, 0.05) * rate));
+    } else if (H.a.w < 0.5) {
+        // nappe : distance au plan, puis position le long de la ligne (bouts adoucis)
+        float z = dot(rel, H.nrm.xyz);
+        if (z * z > 16.0 * sig2) {
+            discard;
+        }
+        vec3 ab = H.b.xyz - H.a.xyz;
+        float l2 = max(dot(ab, ab), 1e-8);
+        float u = dot(X - H.a.xyz, ab) / l2;
+        float e = 2.0 * sqrt(sig2 / l2);
+        float w = smoothstep(-e, e, u) * smoothstep(-e, e, 1.0 - u);
+        E = mix(H.f0.rgb, H.f1.rgb, clamp(u, 0.0, 1.0)) * (w * exp(-0.5 * z * z / sig2) * 0.39894228 * inversesqrt(sig2) / max(r, 0.05));
+    } else {
+        // trait : distance a son axe, jusqu'a son point d'arret
+        float s = dot(rel, H.nrm.xyz);
+        float R = length(H.a.xyz - H.src.xyz);
+        float d2 = max(r2 - s * s, 0.0);
+        if (d2 > 16.0 * sig2 || s < 0.0 || s > R + 4.0 * sqrt(sig2)) {
+            discard;
+        }
+        E = H.f0.rgb * (exp(-0.5 * d2 / sig2) * 0.15915494 / sig2);
+    }
+    vec3 N = texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz;
+    vec3 alb = texelFetch(sampler2D(hit_albedo, hit_smp), pix, 0).rgb;
+    float cosi = max(dot(N, -rel / max(r, 1e-4)), 0.0);
+    vec3 L = E * cosi * alb * 0.31830989 * exp(-cam_pos.w * (r + t)) * cam_fwd.w;
+    frag_color = vec4(min(L, vec3(60000.0)), 0.0);
+}
+@end
+
 // -------------------------------------------------------------------------------------
 //  Programmes
 // -------------------------------------------------------------------------------------
@@ -3087,6 +3744,7 @@ void main() {
 @program bloom_down vs_fullscreen fs_bloom_down
 @program bloom_up vs_fullscreen fs_bloom_up
 @program final vs_fullscreen fs_final
+@program laser_hit vs_laser_hit fs_laser_hit
 @program laser_setup cs_laser_setup
 @program laser_bin cs_laser_bin
 @program laser_shade cs_laser_shade
@@ -3097,3 +3755,11 @@ void main() {
 @program laser_shade_grad_f1 cs_laser_shade_grad_f1
 @program laser_shade_grad_f2 cs_laser_shade_grad_f2
 @program laser_shade_grad_f3 cs_laser_shade_grad_f3
+@program laser_shade_a cs_laser_shade_a
+@program laser_shade_f1_a cs_laser_shade_f1_a
+@program laser_shade_f2_a cs_laser_shade_f2_a
+@program laser_shade_f3_a cs_laser_shade_f3_a
+@program laser_shade_grad_a cs_laser_shade_grad_a
+@program laser_shade_grad_f1_a cs_laser_shade_grad_f1_a
+@program laser_shade_grad_f2_a cs_laser_shade_grad_f2_a
+@program laser_shade_grad_f3_a cs_laser_shade_grad_f3_a

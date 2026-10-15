@@ -29,7 +29,35 @@ struct LaserSegment {
     vec3 flux;          // puissance de tout le segment (couleur x W), au bord 0
     float pad;
     vec3 flux1;         // idem au bord 1
-    float pad1;
+    float range1;       // > 0 : coupe par un obstacle ; portee au bord 1 (range : au bord 0), le segment s'arrete sur la
+                        // droite qui joint ses deux impacts (la face de l'obstacle dans son plan) ; 0 : portee 'range'
+    float cut_a = 0, cut_b = 0;   // cette droite dans le repere du segment (x le long de ec, y de es) : a x + b y = 1
+    // arc (nappe conique, arc = 1) : les directions passent par le cercle (cx, cy, rho) du plan de projection du scanner
+    // (a distance 1 de la source, axes es et uu, normale ec), de l'angle th0 a th0 + dth autour de son centre ; traits
+    // 'traits' (LASER_SHEET_TRAITS : nappe continue), aux deux bouts compris
+    int arc = 0;
+    vec3 uu;
+    float cx = 0, cy = 0, rho = 0, th0 = 0, dth = 0;
+};
+
+// Impact d'un laser sur une surface (etape 5) : la ligne d'arrivee d'un morceau d'eventail (de a a b, sur le sol, un
+// mur, le plafond ou la face d'un obstacle) ou le point d'arrivee d'un trait (a). Dessine par le rendu (passe des
+// impacts) : chaque pixel teste en 3D sa distance au plan de la nappe (ou a l'axe du trait).
+struct LaserHit {
+    vec3 a;
+    float kind;         // 0 : ligne (nappe), 1 : point (trait), 2 : arc (nappe conique)
+    vec3 b;
+    float pad0;         // arc : rho
+    vec3 src;           // source du laser
+    float pad1;         // arc : rr.x
+    vec3 nrm;           // normale du plan de la nappe (ligne) ; direction du trait (point) ; axe d (arc)
+    float pad2;         // arc : cx
+    vec3 f0;            // ligne : puissance par radian au bout a ; point : puissance du trait ; arc : par radian de theta
+    float pad3;         // arc : rr.y
+    vec3 f1;            // ligne : puissance par radian au bout b
+    float pad4;         // arc : rr.z
+    vec3 surf;          // normale de la surface touchee (marge du dessin, vu en rasant)
+    float pad5;         // arc : cy
 };
 
 // Emplacement d'un boitier : 168 sur les trusses (entre les lyres), 16 sur le pont de scene, 8 au sol de
@@ -126,6 +154,7 @@ struct LaserRig {
     std::vector<LaserFixture> fixtures;
     std::vector<Effect> effects;     // type : LaserEffectType
     std::vector<LaserSegment> segs;
+    std::vector<LaserHit> hits;      // impacts sur les surfaces (calcules apres les segments)
     std::vector<std::string> group_names;
     int pattern = LP_PROGRAM;
     int count = 200;            // motifs du banc : boitiers allumes (repartis sur tous les emplacements)
@@ -140,16 +169,23 @@ struct LaserRig {
     // fichiers ILDA (src/ilda.h) : bibliotheque, niveau de tolerance global (monte quand les segments depassent le
     // budget, comme le budget adaptatif du web), compteurs
     IldaLibrary ilda;
+    // obstacles (etape 5) : paves du decor et des mannequins (Scene::laser_occluders), et ceux du personnage (mode F,
+    // remplis a chaque image) ; les traits s'y arretent et les nappes y sont coupees (trou d'ombre a bord net)
+    bool collisions = true;
+    std::vector<Occluder> obstacles, dyn_obstacles;
+    int cut_segments = 0;   // segments coupes par un obstacle (compteur)
     int ilda_bias = 0;
     int ilda_points = 0, ilda_beams = 0, ilda_sheets = 0;
     int lit = 0;                // boitiers allumes (compteur)
     double time = 0;
 
-    void build(const Scene& scene);
+    void build(const Scene& scene);   // garde aussi les obstacles de la scene
     // Figures a l'instant 'time' : motif du banc, ou programmeur et effets (dt : pas de temps).
     void update(float time, float dt, vec3 hall_min, vec3 hall_max);
     // Corps des boitiers (paves sombres) et sorties, pour le rendu de la scene.
     void housings(std::vector<Instance>& cubes) const;
+    bool impacts = true;   // impacts sur les surfaces (points et lignes)
+    void build_hits(vec3 hall_min, vec3 hall_max);
 
     // Programmeur (comme les lyres)
     template <typename F> void for_selected(F fn) {

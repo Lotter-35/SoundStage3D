@@ -60,6 +60,8 @@ struct RenderSettings {
     float laser_gain = 1.0f;      // intensite des faisceaux dans la fumee (multiplicateur)
     float laser_width_px = 0.6f;  // largeur minimale d'un trait (sigma de la gaussienne, en pixels)
     float laser_air = 0.0005f;    // diffusion de l'air (par m) : traits visibles meme sans fumee
+    bool laser_impacts = true;    // impacts sur les surfaces (points et lignes la ou les lasers touchent)
+    float laser_hit_gain = 1.0f;  // intensite des impacts
     bool laser_room_fog = true;   // fumee de la piece (amas, brume) lue au point de chaque nappe ; sinon uniforme
     // diffusion vers l'avant des lasers : deux lobes (tres avant + doux), sinon un seul comme les lyres (g de la fumee)
     bool laser_fwd_lobe = true;
@@ -106,6 +108,7 @@ struct RenderStats {
     double laser_tile_pairs = 0;  // tuiles de 16 px : couples (tuile, segment)
     int laser_tile_max = 0;       // segments au plus dans une tuile
     int laser_tiles_hit = 0;      // tuiles touchees par au moins un segment
+    int laser_hits = 0;           // impacts dessines
     int laser_bin_overflow = 0;   // segments perdus par les grosses tuiles pleines (plus de LASER_CAP)
     int laser_fog_variant = 0;    // variante de la fumee des lasers (0 a 3, voir LASER_FOG dans le shader)
 };
@@ -286,7 +289,9 @@ class Renderer {
     int laser_ctx = 0, laser_cty = 0;                        // grosses tuiles allouees
     sg_image laser_img = {};                                 // tuiles en calcul : lasers du pixel (RGBA16F)
     sg_view laser_store = {}, laser_tex = {};
-    std::vector<float> laser_data;                           // sb_laser_t[] (20 flottants)
+    sg_image laser_arc_img = {};                             // nappes coniques (passe des arcs), ajoutees par cs_laser_shade
+    sg_view laser_arc_store = {}, laser_arc_tex = {};
+    std::vector<float> laser_data;                           // sb_laser_t[] (28 flottants)
     sg_image volutes_img = {};                               // volutes fines (128^3 RGBA8, mipmaps)
     sg_view volutes_view = {};
     sg_sampler volutes_smp = {};
@@ -295,8 +300,14 @@ class Renderer {
     std::vector<float> volutes_sd;                           // ecart type de chaque niveau de mip
   private:
     sg_pipeline pip_laser_setup = {}, pip_laser_bin = {};
+    // impacts sur les surfaces (LaserRig::hits) : bandes fines ajoutees a l'image de la scene
+    static constexpr int MAX_LASER_HITS = 32768;
+    sg_pipeline pip_laser_hit = {};
+    sg_buffer laser_hit_buf = {};
+    sg_view laser_hit_view = {};
+    std::vector<float> laser_hit_data;   // sb_hit_t[] (28 flottants), coupes au plan proche de la camera
     // [sans, avec degrades (couleur au bord 1)][fumee uniforme, de la piece, avec volutes, et leur 2e octave]
-    sg_pipeline pip_laser_shade[2][4] = {};
+    sg_pipeline pip_laser_shade[2][4][2] = {};   // [...][...][sans, avec nappes coniques (arcs)]
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;
