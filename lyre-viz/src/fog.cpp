@@ -41,7 +41,7 @@ void FogSim::init(vec3 bmin, vec3 bmax) {
     size = bmax - bmin;
     d.assign(NX * NY * NZ, 0.0f);
     tmp.assign(NX * NY * NZ, 0.0f);
-    upload.assign(NX * NY * NZ * 2, 0);
+    upload.assign(NX * NY * NZ * 4, 0);
 
     machines.clear();
     machines.push_back({{-34.5f, 1.8f, -12}, normalize(vec3(1, 0.15f, 0.2f))});
@@ -170,13 +170,17 @@ void FogSim::step(float dt, const FogSettings& s) {
     d.swap(tmp);
 }
 
-void FogSim::update(float dt, const FogSettings& s) {
+void FogSim::update(float dt, const FogSettings& s, const SpatialFogSettings* sf) {
     if (s.animate) {
         const float STEP = 1.0f / 20.0f;
         accum += std::min(dt, 0.25f);
         int n = 0;
         while (accum >= STEP && n < 3) { step(STEP, s); accum -= STEP; n++; }
         if (n == 3) accum = 0;
+    }
+    if (sf && sf->model == 1) {
+        update_spatial(s, *sf);
+        return;
     }
     double sum = 0;
     // densite de la piece : brume x exp(-decroissance x hauteur) + poids des amas x amas (au plus 2)
@@ -189,11 +193,50 @@ void FogSim::update(float dt, const FogSettings& s) {
             for (int x = 0; x < NX; x++) {
                 const float dv = d[o + x];
                 const uint8_t q = (uint8_t)std::min(255.0f, dv * 127.5f + 0.5f);
-                upload[(o + x) * 2] = q;
-                upload[(o + x) * 2 + 1] = (uint8_t)std::min(255.0f, (hz + (float)q * (1.0f / 127.5f) * s.smoke) * inv + 0.5f);
+                upload[(o + x) * 4] = q;
+                upload[(o + x) * 4 + 1] = (uint8_t)std::min(255.0f, (hz + (float)q * (1.0f / 127.5f) * s.smoke) * inv + 0.5f);
+                upload[(o + x) * 4 + 2] = 0;
                 sum += dv;
             }
         }
     }
     mean_smoke = (float)(sum / (double)d.size());
+}
+
+// Fumee spatiale des lasers (v2, PLAN-FUMEE-LASERS-V2.md, 3.1) : la carte envoie le champ des bancs (continu, en loi
+// normale, canal a), la brume (decroissance en hauteur, canal g) et les amas (canal r, comme pour les lyres). Le profil des
+// bancs (seuil, nettete, zones vides) est applique par pixel dans le shader : applique ici case par case, les bords nets
+// des bancs suivaient la grille (escaliers). Les bancs sont recalcules quand la simulation avance ou que leurs reglages
+// changent.
+void FogSim::update_spatial(const FogSettings& s, const SpatialFogSettings& sf) {
+    const float wa = s.wind_angle * DEG;
+    const bool moved = sim_time != banks_time;
+    const bool changed = sf.bank_size != banks_set.bank_size || sf.bank_period != banks_set.bank_period || banks.z.empty();
+    if (moved || changed) {
+        const float o[3] = {origin.x, origin.y, origin.z}, sz[3] = {size.x, size.y, size.z};
+        banks.field(NX, NY, NZ, o, sz, sim_time, std::cos(wa) * s.wind_speed, std::sin(wa) * s.wind_speed, sf);
+        banks_time = sim_time;
+        banks_set = sf;
+    }
+    // quantite de fumee : celle du modele Classique en moyenne (brume + amas moyens), repartie par les bancs ; les amas
+    // des machines s'y ajoutent (part sf.sim)
+    double dsum = 0;
+    for (float dv : d) dsum += dv;
+    mean_smoke = (float)(dsum / (double)d.size());
+    sf_haze_scale = (s.haze + s.smoke * mean_smoke) * std::max(sf.haze, 0.0f);
+    sf_smoke_scale = 2.0f * s.smoke * std::max(sf.sim, 0.0f);   // canal r = amas / 2
+    room_max = 1;
+    const float cy = size.y / NY;
+    for (int y = 0; y < NY; y++) {
+        const uint8_t hz = (uint8_t)(std::exp(-std::max(origin.y + (y + 0.5f) * cy, 0.0f) * sf.height) * 255.0f + 0.5f);
+        for (int z = 0; z < NZ; z++) {
+            const size_t o = (size_t)z * NX * NY + (size_t)y * NX;
+            for (int x = 0; x < NX; x++) {
+                upload[(o + x) * 4] = (uint8_t)std::min(255.0f, d[o + x] * 127.5f + 0.5f);
+                upload[(o + x) * 4 + 1] = hz;
+                upload[(o + x) * 4 + 2] = 0;
+                upload[(o + x) * 4 + 3] = (uint8_t)(saturate(0.5f + banks.z[o + x] * 0.125f) * 255.0f + 0.5f);
+            }
+        }
+    }
 }

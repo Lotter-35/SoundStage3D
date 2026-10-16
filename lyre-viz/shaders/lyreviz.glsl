@@ -2876,6 +2876,14 @@ layout(binding=0) uniform laser_cs_params {
     vec4 lvol4;       // x : log2(texels par metre) de la 2e octave, y : niveau ou elle s'efface, z : son poids
     vec4 lphase0;     // lobe doux : 1 + g^2, 2 g, poids x (1 - g^2) / 4 pi
     vec4 lphase1;     // lobe tres avant : idem (poids 0 : un seul lobe, comme les lyres)
+    // fumee spatiale (LASER_FOG 4, 5) : tourbillons (laser_swirl) et filaments de pres
+    vec4 lswirl;      // grands tourbillons (nuages et filaments) : x nombre d'onde (rad/m), y amplitude (m), z phase (rad)
+    vec4 lswirl2;     // petits tourbillons (filaments seuls) : idem, plus petits et plus rapides
+    vec4 lfil;        // filaments (texture des volutes) : xyz decalage (vent), w 1 / taille
+    vec4 lfil2;       // x, y poids des 2 instants (en ecarts types), z : -0,5 x leur somme, w : log2(texels par metre)
+    vec4 lfil3;       // x : niveau ou ils s'effacent (de pres seulement), y : force
+    vec4 lbank;       // bancs (seuil par pixel) : x seuil (ecarts types), y nettete, z debut des coeurs, w relief des coeurs
+    vec4 lbank2;      // x densite hors des bancs, y 1 / moyenne, z echelle de la brume (canal g), w des amas (canal r)
 };
 @end
 
@@ -2923,10 +2931,85 @@ float laser_sig2(float s, float t) {
 //   2 : fumee de la piece, deux lobes, volutes fines (1re octave) ;
 //   3 : idem avec la 2e octave, seulement si un segment passe assez pres de la camera pour qu'elle soit lue (le
 //       CPU calcule la distance de la camera au triangle de chaque segment).
+//   4 : fumee spatiale (v2, PLAN-FUMEE-LASERS-V2.md, src/fumee_spatiale.cpp) : carte de la piece (canal a : champ des
+//       bancs, seuille par pixel ; g : brume ; r : amas) rongee par une texture de nuages (liee a la place des volutes, laser_vol_tex), deformee par
+//       des tourbillons ;
+//   5 : idem avec les filaments de pres (la texture des volutes, laser_fil_tex), seulement si un segment passe assez pres
+//       de la camera.
 #ifndef LASER_FOG
 #define LASER_FOG 0
 #endif
-#if LASER_FOG >= 1
+#if LASER_FOG >= 4
+// Mouvement de fluide sans simulation (PLAN-FUMEE-LASERS-V2.md, 3.4, option 1) : les coordonnees de lecture sont
+// deplacees par un champ de tourbillons analytique borne, de type ABC (Arnold-Beltrami-Childress : chaque composante ne
+// depend que d'un autre axe, divergence nulle ; 3 sinus : avec 6, +0,3 ms sur L4), dont les phases avancent avec le temps :
+// la fumee tourne et se tord
+// sur place au lieu de glisser. Nombres d'onde differents par axe (pas de reseau visible). w : (nombre d'onde,
+// amplitude, phase).
+vec3 laser_swirl(vec3 X, vec4 w) {
+    float px = X.x * w.x + w.z;
+    float py = X.y * (w.x * 1.27) + w.z * 1.13 + 1.7;
+    float pz = X.z * (w.x * 0.83) + w.z * 0.87 + 4.1;
+    return X + w.y * vec3(sin(py), sin(pz), sin(px));
+}
+// Fumee spatiale : f.x fumee de la carte (sans l'air), f.y structure (0 : brume uniforme, jamais rongee ; 1 : banc,
+// amas), f.zw nuages aux deux instants de leur evolution ; f2 : filaments de pres (LASER_FOG 5). Les lectures sont
+// independantes (la deformation est analytique) et partent ensemble.
+vec4 laser_fetch(vec3 X, float lf, out vec2 f2) {
+    f2 = vec2(0.5);
+    vec4 fr = textureLod(sampler3D(laser_fog_tex, laser_lin_clamp), X * fog_box_inv.xyz - fog_box_min.xyz, 0.0);
+    vec4 f = vec4(0.0, 0.0, 0.5, 0.5);
+    float lod = lf + lvol2.y;
+    if (lod < lvol2.z) {
+        vec3 Xs = laser_swirl(X, lswirl);
+        f.zw = textureLod(sampler3D(laser_vol_tex, laser_vol_smp), Xs * lvol.w + lvol.xyz, max(lod, 0.0)).rg;
+#if LASER_FOG >= 5
+        // filaments : la texture des volutes, petite, axes permutes et cisailles, deformee aussi par les petits tourbillons
+        float lod2 = lf + lfil2.w;
+        if (lod2 < lfil3.x) {
+            Xs = laser_swirl(Xs, lswirl2);
+            f2 = textureLod(sampler3D(laser_fil_tex, laser_vol_smp), (Xs.zxy + Xs.yzx * 0.37) * lfil.w + lfil.xyz, max(lod2, 0.0)).rg;
+        }
+#endif
+    }
+    // f : brume (canal g : decroissance en hauteur), amas des machines (canal r), champ des bancs (canal a, loi normale),
+    // nuages aux 2 instants melanges (en ecarts types) ; les bancs sont seuilles dans laser_sigma_of
+    f = vec4(fr.g * lbank2.z, fr.r * lbank2.w, fr.a * 8.0 - 4.0, f.z * lvolw.x + f.w * lvolw.y + lvol2.x);
+    return f;
+}
+// Bancs et erosion (nuages temps reel, Schneider), par pixel :
+//  - bancs : seuil (couverture, nettete) sur le champ des bancs deforme par les nuages : leurs bords prennent la forme des
+//    nuages (bombes, dechiquetes) au lieu de suivre le champ lisse de grande echelle. Seuilles sur le CPU case par case,
+//    leurs bords nets suivaient les cases de 1,5 m de la grille (escaliers, rectangles). Densite relative M (moyenne 1) ;
+//  - structure : part des bancs (au-dela de la fumee qui reste hors des bancs) et des amas ; 0 dans la brume uniforme ;
+//  - erosion : z, la valeur des nuages en ecarts types (ramenee au contraste du niveau 0 : les grandes formes restent
+//    visibles de loin), seuillee en bord doux ; seuil plus haut au bord des bancs (structure faible), plus dense vers le
+//    coeur des nuages, masque ramene a une moyenne de 1 au coeur des bancs. Force : erosion x structure, effacee au-dela
+//    du niveau lvol2.z. L'air n'est pas ronge.
+float laser_sigma_of(vec4 f, vec2 f2, float lf) {
+    float lod = max(lf + lvol2.y, 0.0);
+    float fade = clamp(lvol2.z - lod, 0.0, 1.0);
+    float z = f.w / max(1.0 - lvol3.x * lod * lod, 0.35);
+    float zb = f.z + lvol2.w * fade * z;
+    float tb = clamp((zb - lbank.x) * lbank.y, 0.0, 1.0);
+    float B = tb * tb * (3.0 - 2.0 * tb);
+    float M = lbank2.x + B * (lbank2.y * (1.0 + lbank.w * clamp(zb - lbank.z, 0.0, 3.0)) - lbank2.x);
+    float dens = f.x * M + f.y;
+    float st = (f.x * max(M - lbank2.x, 0.0) + f.y) / max(dens, 1e-20);
+    float t = lvol3.y + (1.0 - st) * lvol3.z;
+    // relief interne : la densite monte du bord vers le coeur du nuage (sur 1,5 ecart type)
+    float m = smoothstep(t - lvol3.w, t + lvol3.w, z) * (lvol4.z + lvol4.w * clamp(z - t, 0.0, 1.5)) * lvol4.x;
+    float e = st * lvol4.y * fade;
+#if LASER_FOG >= 5
+    // filaments : modulation de moyenne 1, force x structure (rien dans la brume uniforme), effacee au-dela de lfil3.x
+    float kf = clamp(lfil3.x - (lf + lfil2.w), 0.0, 1.0) * lfil3.y * st;
+    float zf = f2.x * lfil2.x + f2.y * lfil2.y + lfil2.z;
+    return lroom.x + dens * (1.0 + e * (m - 1.0)) * max(1.0 + kf * zf, 0.0);
+#else
+    return lroom.x + dens * (1.0 + e * (m - 1.0));
+#endif
+}
+#elif LASER_FOG >= 1
 vec4 laser_fetch(vec3 X, float lf, out vec2 f2) {
     vec4 f = vec4(lfog.xz, 0.5, 0.5);
     f2 = vec2(0.5);
@@ -3754,6 +3837,9 @@ layout(binding=14) readonly buffer laser_clist_ro { sb_index clist[]; };
 layout(binding=6) uniform texture2D laser_depth_cs;
 layout(binding=7) uniform texture3D laser_fog_tex;    // amas de fumee simules (la texture des lyres : fog_tex)
 layout(binding=8) uniform texture3D laser_vol_tex;    // volutes fines (2 instants, BC5)
+#if LASER_FOG >= 5
+layout(binding=16) uniform texture3D laser_fil_tex;   // fumee spatiale : filaments de pres (la texture des volutes)
+#endif
 #ifndef LASER_ARCS
 layout(binding=9) uniform texture2D laser_arc_in;     // lumiere des nappes coniques (passe des arcs), si cam_pos.w
 #endif
@@ -3927,7 +4013,7 @@ void main() {
 @end
 
 // Variantes : sans degrade (aucune figure n'en a : rien a lire ni a melanger) et avec ; fumee uniforme (0), de la
-// piece (1), avec volutes (2, 3) : voir LASER_FOG.
+// piece (1), avec volutes (2, 3), fumee spatiale (4, 5) : voir LASER_FOG.
 @cs cs_laser_shade
 @image_sample_type laser_depth_cs unfilterable_float
 @image_sample_type laser_arc_in unfilterable_float
@@ -3947,6 +4033,16 @@ void main() {
 
 @cs cs_laser_shade_f3
 #define LASER_FOG 3
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f4
+#define LASER_FOG 4
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f5
+#define LASER_FOG 5
 @include_block laser_shade_body
 @end
 
@@ -3970,6 +4066,18 @@ void main() {
 @cs cs_laser_shade_grad_f3
 #define LASER_GRADIENT 1
 #define LASER_FOG 3
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f4
+#define LASER_GRADIENT 1
+#define LASER_FOG 4
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f5
+#define LASER_GRADIENT 1
+#define LASER_FOG 5
 @include_block laser_shade_body
 @end
 
@@ -4002,6 +4110,20 @@ void main() {
 @include_block laser_shade_body
 @end
 
+@cs cs_laser_shade_f4_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_FOG 4
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f5_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_FOG 5
+@include_block laser_shade_body
+@end
+
 @cs cs_laser_shade_grad_a
 #extension GL_EXT_control_flow_attributes : require
 #define LASER_ARCS 1
@@ -4030,6 +4152,22 @@ void main() {
 #define LASER_ARCS 1
 #define LASER_GRADIENT 1
 #define LASER_FOG 3
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f4_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_GRADIENT 1
+#define LASER_FOG 4
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f5_a
+#extension GL_EXT_control_flow_attributes : require
+#define LASER_ARCS 1
+#define LASER_GRADIENT 1
+#define LASER_FOG 5
 @include_block laser_shade_body
 @end
 
@@ -4338,3 +4476,11 @@ void main() {
 @program laser_shade_grad_f1_a cs_laser_shade_grad_f1_a
 @program laser_shade_grad_f2_a cs_laser_shade_grad_f2_a
 @program laser_shade_grad_f3_a cs_laser_shade_grad_f3_a
+@program laser_shade_f4 cs_laser_shade_f4
+@program laser_shade_grad_f4 cs_laser_shade_grad_f4
+@program laser_shade_f4_a cs_laser_shade_f4_a
+@program laser_shade_grad_f4_a cs_laser_shade_grad_f4_a
+@program laser_shade_f5 cs_laser_shade_f5
+@program laser_shade_grad_f5 cs_laser_shade_grad_f5
+@program laser_shade_f5_a cs_laser_shade_f5_a
+@program laser_shade_grad_f5_a cs_laser_shade_grad_f5_a

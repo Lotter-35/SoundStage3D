@@ -127,6 +127,8 @@ std::vector<uint8_t> bc5_level(const std::vector<float>& f, int n) {
 
 }  // namespace
 
+std::vector<uint8_t> bc5_compress_level(const std::vector<float>& f, int n) { return bc5_level(f, n); }
+
 // Champ (prototype compare a la photo 5 de docs/references-lasers) : bruit a 5 octaves dans un domaine deforme
 // deux fois (deformations de Quilez). La 1re deformation, large, tourne au fil de la boucle d'evolution
 // (cos, sin de la phase) : c'est elle qui fait evoluer les volutes ; la 2e, plus fine, les enroule. Puis un

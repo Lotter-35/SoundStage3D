@@ -49,7 +49,7 @@ else
 fi
 OBJ=build/$MODE_DIR
 mkdir -p "$OBJ"
-SRCS="src/main.cpp src/scene.cpp src/fixtures.cpp src/gobos.cpp src/fog.cpp src/renderer.cpp src/ui.cpp src/gpu_profiler.cpp src/floor_texture.cpp src/lasers.cpp src/ilda.cpp src/trace.cpp src/volutes.cpp src/ambiances.cpp src/scenes/scenes.cpp src/scenes/scenes_a.cpp src/scenes/scenes_b.cpp
+SRCS="src/main.cpp src/scene.cpp src/fixtures.cpp src/gobos.cpp src/fog.cpp src/renderer.cpp src/ui.cpp src/gpu_profiler.cpp src/floor_texture.cpp src/lasers.cpp src/ilda.cpp src/trace.cpp src/volutes.cpp src/fumee_spatiale.cpp src/ambiances.cpp src/scenes/scenes.cpp src/scenes/scenes_a.cpp src/scenes/scenes_b.cpp
       external/imgui/imgui.cpp external/imgui/imgui_draw.cpp external/imgui/imgui_tables.cpp external/imgui/imgui_widgets.cpp"
 
 echo "Compilation ($OS, $MODE, $CXX)..."

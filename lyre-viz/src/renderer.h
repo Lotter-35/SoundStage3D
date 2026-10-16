@@ -72,6 +72,7 @@ struct RenderSettings {
     float laser_exit = 1.0f;      // lueur de sortie des lasers (point chaud et halo ; 0 : aucune)
     float laser_white = 0.6f;     // blanchiment des lasers tres intenses (comme une camera ; 0 : couleurs pures, comme l'oeil)
     bool laser_room_fog = true;   // fumee de la piece (amas, brume) lue au point de chaque nappe ; sinon uniforme
+    SpatialFogSettings sfog;      // modele de fumee des lasers : Classique (reglages ci-dessous) ou Spatiale (v2, fumee_spatiale.h)
     // diffusion vers l'avant des lasers : deux lobes (tres avant + doux), sinon un seul comme les lyres (g de la fumee)
     bool laser_fwd_lobe = true;
     float laser_fwd_weight = 0.42f;   // part du lobe tres avant
@@ -308,9 +309,12 @@ class Renderer {
     sg_image volutes_img = {};                               // volutes fines (128^3 RGBA8, mipmaps)
     sg_view volutes_view = {};
     sg_sampler volutes_smp = {};
+    sg_image clouds_img = {};                                // fumee spatiale : nuages (64^3 BC5), crees au 1er usage du modele v2
+    sg_view clouds_view = {};
   public:
     double volutes_build_ms = 0;                             // generation au lancement
     std::vector<float> volutes_sd;                           // ecart type de chaque niveau de mip
+    SpatialFogClouds clouds;                                 // nuages : temps de generation, contraste des niveaux
   private:
     sg_pipeline pip_laser_setup = {}, pip_laser_bin = {};
     // impacts sur les surfaces (LaserRig::hits) : bandes fines ajoutees a l'image de la scene
@@ -322,8 +326,8 @@ class Renderer {
     sg_buffer laser_exit_buf = {};       // lueurs de sortie (sb_hit_t, type 3), dessinees apres la composition
     sg_view laser_exit_view = {};
     std::vector<float> laser_exit_data;
-    // [sans, avec degrades (couleur au bord 1)][fumee uniforme, de la piece, avec volutes, et leur 2e octave]
-    sg_pipeline pip_laser_shade[2][4][2] = {};   // [...][...][sans, avec nappes coniques (arcs)]
+    // [sans, avec degrades (couleur au bord 1)][fumee uniforme, de la piece, avec volutes, et leur 2e octave, fumee spatiale, avec ses filaments]
+    sg_pipeline pip_laser_shade[2][6][2] = {};   // [...][...][sans, avec nappes coniques (arcs)]
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;

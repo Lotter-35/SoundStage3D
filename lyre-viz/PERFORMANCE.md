@@ -660,6 +660,15 @@ Banc complet en mouvement, banc rapide, 2 lancements chacun, contre `bench\ref\a
 8. Fichiers ILDA : les figures planes découpées en dizaines de nappes depuis la même sortie sont le pire cas (I3 : 1 milliard de couples). Pistes : rejet plus tôt des pixels hors du coin de chaque nappe (test des deux bords à l'écran, comme pour les cônes, piste 2) ; grosses tuiles plus fines près des sorties.
 7. Volutes : un cas de banc « L1 sans volutes » mesurerait leur coût dans le même lancement (moins de bruit) ; la 2e octave est choisie dans tous les cas du banc (il y a toujours une nappe à moins de 7 m de la caméra) : un test par segment plus fin (part de l'écran à moins de 7 m) la couperait plus souvent.
 
+## Lasers : fumée spatiale v2 (16 octobre 2026)
+
+Mesures rapides seulement (banc des lasers `-Fast`, immobile), pour l'ordre de grandeur : l'utilisateur choisit d'abord le rendu ; banc complet et optimisation viendront après (étape 5 de `PLAN-FUMEE-LASERS-V2.md`, où chaque mesure est détaillée ; historique 33 à 36).
+
+- Texture des amas en RGBA8 (structure dans le canal b) : aucune attente à l'envoi (« scene (surfaces) » inchangée en mouvement), banc des lyres dans le bruit, images identiques ; « fumée : faisceaux » +0,03 ms (texels 2 fois plus gros).
+- Modèle Classique : images identiques et temps dans le bruit à chaque étape (le code v2 est dans ses propres variantes, `LASER_FOG` 4 et 5).
+- Passe des lasers, contre le Classique (volutes et 2e octave), après la correction des bancs (seuil par pixel, bords nuageux ; historique 37) : Concert sans filaments (variante 4) +0,3 à +1,0 ms (L1 9,7 → 10,6, L3 9,6 → 10,7, L4 3,0 → 3,7, M1 5,6 → 5,9, arcs 14,0 → 14,3) ; filaments de près (variante 5) encore +0,75 à +1,1 ms dès qu'un éventail passe à moins de ~7 m de la caméra, même pour peu de pixels (registres de la variante). Les mesures « sans filaments » de l'historique 35 sont fausses (mauvaise variante, voir `PLAN-FUMEE-LASERS-V2.md`).
+- Pistes : variante 5 seulement pour les tuiles proches, portée des filaments plus courte, lecture des nuages lancée avant la déformation, saut du calcul dans les trous (densité nulle).
+
 ## Lyres superposées (16 octobre 2026)
 
 Constat (banc `--bench-lyres`, historique n°26 et 27) : quand toutes les lyres visent le même point, chaque pixel du sol est éclairé par presque toutes les lyres : la passe des surfaces passe de 3,8 ms (zoom 3) à 38 ms (zoom 20) et 110 ms (zoom 50), alors que le sol n'y montre plus que du flou. Le mouvement des lyres ne coûte presque rien de plus : c'est la superposition qui coûte. Part du temps d'une lyre dans un pixel : tache (image projetée) ~55 %, ombres ~27 %, le reste (direction, reflet GGX ~2 %) ~20 %.

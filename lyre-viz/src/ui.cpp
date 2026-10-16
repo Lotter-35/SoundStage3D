@@ -572,15 +572,17 @@ void laser_global_ui() {
     ImGui::SliderFloat("Intensite dans la fumee", &r.laser_gain, 0.01f, 100, "x %.2f", ImGuiSliderFlags_Logarithmic);
     ImGui::SliderFloat("Largeur minimale d'un trait", &r.laser_width_px, 0.3f, 2.0f, "%.2f pixel");
     ImGui::SliderFloat("Diffusion de l'air", &r.laser_air, 0, 0.005f, "%.4f /m");
-    ImGui::Checkbox("Fumee de la piece (amas, brume ; sinon uniforme)##l", &r.laser_room_fog);
+    spatial_fog_ui_model(r.sfog);
+    if (r.sfog.model == 0) ImGui::Checkbox("Fumee de la piece (amas, brume ; sinon uniforme)##l", &r.laser_room_fog);
     ImGui::Checkbox("Diffusion tres avant (2 lobes)##l", &r.laser_fwd_lobe);
     if (r.laser_fwd_lobe) {
         ImGui::SliderFloat("Part du lobe tres avant##l", &r.laser_fwd_weight, 0, 1, "%.2f");
         ImGui::SliderFloat("g du lobe tres avant##l", &r.laser_g_fwd, 0.5f, 0.98f, "%.2f");
         ImGui::SliderFloat("g du lobe doux##l", &r.laser_g_soft, -0.3f, 0.9f, "%.2f");
     }
-    ImGui::Checkbox("Volutes fines dans les nappes##l", &r.laser_volutes);
-    if (r.laser_volutes) {
+    if (r.sfog.model == 0) ImGui::Checkbox("Volutes fines dans les nappes##l", &r.laser_volutes);
+    spatial_fog_ui_settings(r.sfog, app.fog.banks);
+    if (r.sfog.model == 0 && r.laser_volutes) {
         ImGui::SliderFloat("Contraste des volutes##l", &r.laser_vol_strength, 0, 1.5f, "%.2f");
         ImGui::SliderFloat("Taille des volutes##l", &r.laser_vol_size, 0.3f, 6, "%.2f m");
         ImGui::SliderFloat("Evolution (boucle)##l", &r.laser_vol_period, 2, 60, "%.0f s");

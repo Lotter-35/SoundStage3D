@@ -46,6 +46,8 @@ static bool g_bench_requested = false;
 static int g_demo = -1;           // --demo [variante] : vue d'essai des gobos au sol (aberration chromatique)
 static void setup_demo();
 static int g_demo_laser = -1;     // --demo-laser [variante] : vues d'essai des lasers (formes, degrades, programmation)
+static bool g_play = false;        // --play : les vues d'essai (--demo, --demo-laser) demarrent sans pause, pas de 1/60 s
+                                   // (images en mouvement : --frames 30 = 0,5 s)
 static bool g_cam_set = false;    // --cam x,y,z,cap,site : camera au lancement (cap et site en degres)
 static float g_cam[5];
 static void setup_demo_laser();
@@ -492,6 +494,7 @@ static void init() {
     desc.logger.func = slog_func;
     desc.uniform_buffer_size = 4 * 1024 * 1024;
     desc.shader_pool_size = 64;   // 32 par defaut : depasse avec les variantes des lasers (les dernieres n'etaient pas creees)
+    desc.pipeline_pool_size = 128;   // 64 par defaut : depasse avec les variantes de la fumee des lasers (idem, sans message)
     sg_setup(&desc);
     stm_setup();
 
@@ -524,6 +527,7 @@ static void init() {
     if (g_ambiance >= 0) apply_ambiance(g_ambiance);
     if (g_demo >= 0) setup_demo();
     if (g_demo_laser >= 0) setup_demo_laser();
+    if (g_play) app.paused = false;
     if (g_cam_set) {
         app.cam.pos = {g_cam[0], g_cam[1], g_cam[2]};
         app.cam.yaw = g_cam[3] * DEG;
@@ -598,8 +602,8 @@ static void update_camera(float dt) {
 
 static void frame() {
     const uint64_t t0 = stm_now();
-    // banc d'essai : pas de temps constant, pour des images identiques d'une mesure a l'autre
-    const float dt = bench::active ? 1.0f / 60.0f : std::min((float)sapp_frame_duration(), 0.1f);
+    // banc d'essai (et --play) : pas de temps constant, pour des images identiques d'une mesure a l'autre
+    const float dt = (bench::active || g_play) ? 1.0f / 60.0f : std::min((float)sapp_frame_duration(), 0.1f);
     const int w = sapp_width(), h = sapp_height();
     if (!app.paused) app.time += dt;
 
@@ -623,7 +627,7 @@ static void frame() {
     app.timings.rig_ms = (float)stm_ms(stm_since(tr));
 
     const uint64_t tf = stm_now();
-    app.fog.update(app.paused ? 0.0f : dt, app.fog_settings);
+    app.fog.update(app.paused ? 0.0f : dt, app.fog_settings, &app.rs.sfog);
     app.timings.fog_ms = (float)stm_ms(stm_since(tf));
 
     const uint64_t tl = stm_now();
@@ -865,6 +869,8 @@ static void setup_demo() {
 //   4 fichiers ILDA : 7 lasers du pont de scene, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, coeur,
 //     eventail multicolore), vus depuis le public ;
 //   5 une personne dans une nappe : nappe verte a hauteur de poitrine a travers les mannequins et le personnage (mode F).
+//   10 fumee des lasers (image 09 de docs/references-lasers/fumee-v2) : un eventail vert continu du nez de scene, vu de
+//      dessous depuis le public (camera de l'image 09).
 static void setup_demo_laser() {
     for (Fixture& f : app.rig.fixtures) f.base.dimmer = 0;
     app.rig.effects.clear();
@@ -986,6 +992,23 @@ static void setup_demo_laser() {
             app.cam.yaw = std::atan2(d.z, d.x);
             app.cam.pitch = std::asin(d.y);
         }
+    } else if (g_demo_laser == 10) {
+        lr.effects.clear();
+        int pick = -1;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++) {
+            lr.fixtures[i].base = LaserParams();
+            lr.fixtures[i].base.dimmer = 0;
+            if (lr.fixtures[i].mount.group == 6 && pick < 0) pick = i + 2;
+        }
+        LaserParams& p = lr.fixtures[pick].base;
+        p.dimmer = 1;
+        p.color = {0, 1, 0};
+        p.opening = 40;
+        p.tilt = 8;
+        p.traits = 0;   // nappe continue
+        app.cam.pos = {7.14f, 0.36f, 2.84f};
+        app.cam.yaw = 189.3f * DEG;
+        app.cam.pitch = 23.5f * DEG;
     } else {
         lr.effects.clear();
         for (LaserFixture& f : lr.fixtures) {
@@ -1089,6 +1112,7 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "volfine") r.laser_vol_fine = v != 0;
     else if (k == "volfinelod") r.laser_vol_fine_lod = v;
     else if (k == "volfinepoids") r.laser_vol_fine_weight = v;
+    else if (spatial_fog_set(r.sfog, k, v)) {}   // fumee spatiale des lasers : laserfogmodel, sf...
     else if (k == "laserpattern") app.lasers.pattern = (int)v;
     else if (k == "lasercount") app.lasers.count = (int)v;
     else if (k == "laserpower") app.lasers.power_w = v;
@@ -1128,6 +1152,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         }
         else if (!std::strcmp(argv[i], "--behind")) g_behind = true;
         else if (!std::strcmp(argv[i], "--static")) bench::frozen = true;
+        else if (!std::strcmp(argv[i], "--play")) g_play = true;
         else if (!std::strcmp(argv[i], "--stats")) g_stats = true;
         else if (!std::strcmp(argv[i], "--demo")) {
             g_demo = 0;

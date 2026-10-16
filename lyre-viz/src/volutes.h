@@ -21,3 +21,7 @@ struct Volutes {
     double build_ms = 0;
     void build();
 };
+
+// Un niveau (n^3 valeurs par canal, 2 canaux entrelaces, 0..1) compresse en blocs BC5 (aussi pour les nuages de la fumee
+// spatiale, fumee_spatiale.cpp)
+std::vector<uint8_t> bc5_compress_level(const std::vector<float>& f, int n);
