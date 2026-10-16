@@ -1,12 +1,13 @@
 // Fumee des lasers, v2 (« fumee spatiale », PLAN-FUMEE-LASERS-V2.md) : une fumee 3D statique dans l'espace, commune a
 // tous les lasers. Le modele « Classique » (fumee de la piece + volutes periodiques) reste intact.
 //
-// Etape 1 : la carte de la piece (grande echelle). La grille des amas des lyres (64 x 24 x 32, cases de ~1,5 m), deja
-// lue par le shader des lasers, recoit en modele v2 :
-//   g : brume de fond x bancs de fumee x decroissance en hauteur + amas des machines (densite / room_max) ;
-//   b : « structure » 0..1 : part chargee de la densite (bancs, amas) ; 0 dans la brume uniforme (nappe lisse).
-// Les bancs : champ procedural 3D a grande echelle (table periodique 64^3 generee au lancement), qui derive avec le
-// vent et evolue lentement (deux instants melanges) : zones denses, diluees et vides (le laser n'y passe pas).
+// La carte de la piece (grande echelle) : la grille des amas des lyres (64 x 24 x 32, cases de ~1,5 m), deja lue par le
+// shader des lasers, recoit en modele v2 :
+//   r : amas des machines (comme pour les lyres) ; g : brume (decroissance en hauteur, logique de la salle) ;
+//   b : style de la region (salle composee : 0 ambiance douce, 1 ambiance chargee ; 0 sinon) ;
+//   a : champ des bancs (loi normale, plus la couverture propre a la region), seuille par pixel dans le shader.
+// Les bancs : champ procedural 3D (table periodique 64^3 generee au 1er usage), qui derive avec le vent et evolue
+// lentement (deux instants melanges) : zones denses, diluees et vides (le laser n'y passe pas).
 #pragma once
 #include <cstdint>
 #include <string>
@@ -41,19 +42,57 @@ struct SpatialFogSettings {
     float swirl_amp = 0.4f;     // amplitude des tourbillons (m ; 0 : aucun)                          sfswirl
     float swirl_size = 4.0f;    // taille des tourbillons (m, longueur d'onde)                        sfswirlsize
     float swirl_speed = 0.35f;  // vitesse (rad/s ; un tour en 2 pi / vitesse)                        sfswirlspeed
+    float cloud_warp = 4.0f;    // nuages deformes a tres grande echelle (m) : le motif ne se repete pas  sfcloudwarp
     // filaments de pres (la texture des volutes, petite) : detail marbre, seulement pres de la camera
-    float fil_strength = 0.6f;  // force (ecarts types de la modulation ; 0 : aucun)                  sffil
-    float fil_size = 0.5f;      // taille du motif (m)                                                sffilsize
-    float fil_lod = -1.0f;      // lus tant qu'un pixel couvre moins de 2^x texels (-1 : < 4 mm)      sffillod
-    float fil_period = 8.0f;    // duree d'une evolution (s)                                          sffilevol
+    // (reglage de l'utilisateur, 16 octobre 2026)
+    float fil_strength = 1.0f;  // force (ecarts types de la modulation ; 0 : aucun)                  sffil
+    float fil_size = 2.0f;      // taille du motif (m)                                                sffilsize
+    float fil_lod = 1.0f;       // lus tant qu'un pixel couvre moins de 2^x texels (1 : < 6 cm)       sffillod
+    float fil_period = 60.0f;   // duree d'une evolution (s)                                          sffilevol
+    // salle composee : les ambiances des prereglages melangees dans la piece, par regions organiques (15 m et plus),
+    // selon une logique de salle (scene, hauteur, fond, panaches) ; champs sans periode (aucun endroit ne se repete)
+    int mix = 0;                // 1 : salle composee                                                 sfmix
+    int mix_soft = 0;           // ambiance douce (prereglage 0, 1, 2 ou 4)                           sfmixa
+    int mix_dense = 3;          // ambiance chargee (prereglage 3 ou 5)                               sfmixb
+    float region_size = 35.0f;  // taille des regions (m)                                             sfregion
+    float dense_share = 0.45f;  // part de la salle en ambiance chargee                               sfdense
+    float region_sharp = 0.3f;  // transitions entre regions (0 tres douces, 1 plus courtes, toujours en degrade) sfregsharp
+    float stage_boost = 0.8f;   // plus de fumee pres de la scene                                     sfstage
+    float stage_dist = 25.0f;   // ... sur quelle distance (m)                                        sfstagedist
+    float low_boost = 0.6f;     // fumee qui s'accumule pres du sol                                   sflow
+    float back_dilute = 0.35f;  // fond de salle dilue                                                sfback
+    float density_var = 0.5f;   // variation de la quantite de fumee a grande echelle                 sfvar
+    int plumes = 6;             // panaches qui montent (machines a fumee et colonnes)                sfplumes
+    float plume_width = 4.0f;   // largeur d'un panache (m)                                           sfplumew
+    float plume_height = 16.0f; // hauteur d'un panache (m)                                           sfplumeh
+    int seed = 1;               // graine de la disposition                                           sfseed
     int preset = 0;             // dernier prereglage choisi (interface ; sfpreset=n le choisit et remplit tout le reste)
 };
 
 // Prereglages (PLAN-FUMEE-LASERS-V2.md, section 4) : 0 par defaut, 1 hazer propre, 2 hazer + panache local, 3 concert
-// (machines a fumee), 4 nuages larges et doux, 5 marbre de pres. Choisir un prereglage passe en modele v2.
-constexpr int SPATIAL_FOG_PRESETS = 6;
+// (machines a fumee), 4 nuages larges et doux, 5 marbre de pres, 6 salle composee. Choisir un prereglage passe en v2.
+constexpr int SPATIAL_FOG_PRESETS = 7;
 extern const char* const SPATIAL_FOG_PRESET_NAMES[SPATIAL_FOG_PRESETS];
 SpatialFogSettings spatial_fog_preset(int n);
+// Reglages d'une ambiance de la salle composee (0 douce, 1 chargee) : ceux de son prereglage pour les bancs et les
+// nuages, les autres (quantite, tailles, mouvement, filaments) pris dans s. Hors salle composee : s.
+SpatialFogSettings spatial_fog_style(const SpatialFogSettings& s, int dense);
+// Salle composee au hasard (bouton « Aleatoire », --set sfrandom=n) : chaque curseur tire dans une fourchette verifiee
+// aux extremes (le rendu reste realiste) ; n sert de graine.
+void spatial_fog_randomize(SpatialFogSettings& s, uint32_t n);
+
+// Logique de la salle (salle composee), calculee sur le CPU une fois par reglage (pas a chaque image) : quantite de
+// fumee relative (plus pres de la scene et du sol, moins au fond, variations de grande echelle, panaches), style
+// (0 doux, 1 charge) et couverture propre a chaque region (ajoutee au champ des bancs). Champs sans periode.
+struct SpatialFogRoom {
+    std::vector<float> amount, style, zbias;   // par case de la grille des amas
+    float amount_max = 1;
+    double build_ms = 0;
+    SpatialFogSettings built;                  // reglages du dernier calcul
+    bool valid = false;
+    void compute(int nx, int ny, int nz, const float origin[3], const float size[3], float wind_x, float wind_z,
+                 const SpatialFogSettings& s);
+};
 
 // Nuages : texture 3D periodique 64^3 (bruit de Perlin-Worley, formes de cumulus), 2 instants d'une boucle d'evolution
 // (canaux r, g, BC5), valeurs en loi normale : 0,5 + z x CLOUD_SD. Generee au 1er usage du modele v2.
@@ -69,10 +108,10 @@ struct SpatialFogClouds {
 // Uniformes de la passe des lasers pour les nuages (lvol, lvolw, lvol2, lvol3, lvol4 : voir laser_fetch, LASER_FOG 4)
 void spatial_fog_cloud_params(const SpatialFogSettings& s, const SpatialFogClouds& c, float time, float wind_x, float wind_y,
                               float wind_z, float out[5][4]);
-// Uniformes des tourbillons et des filaments (lswirl, lswirl2, lfil, lfil2, lfil3 : LASER_FOG 4 et 5) ; vol_sd : ecart
-// type de la texture des volutes (VOLUTES_SD), vol_n : sa taille (VOLUTES_N)
+// Uniformes des tourbillons, des filaments et de la deformation a tres grande echelle (lswirl, lswirl2, lfil, lfil2,
+// lfil3, lwarp : LASER_FOG 4 et 5) ; vol_sd : ecart type de la texture des volutes (VOLUTES_SD), vol_n : sa taille
 void spatial_fog_motion_params(const SpatialFogSettings& s, float time, float wind_x, float wind_y, float wind_z, float vol_sd,
-                               int vol_n, float out[5][4]);
+                               int vol_n, float out[6][4]);
 
 // Bancs de fumee : table periodique N^3 de valeurs de loi normale (moyenne 0, ecart type 1 : le melange de deux
 // instants, ramene au meme ecart type, garde exactement la meme loi, donc la meme couverture a tout instant).
@@ -107,4 +146,4 @@ struct SpatialFogProfile {
 bool spatial_fog_set(SpatialFogSettings& s, const std::string& k, float v);
 // Interface (onglet Lasers, « Dans la fumee ») : choix du modele, puis les reglages du modele v2
 void spatial_fog_ui_model(SpatialFogSettings& s);
-void spatial_fog_ui_settings(SpatialFogSettings& s, const SpatialFogBanks& banks);
+void spatial_fog_ui_settings(SpatialFogSettings& s, const SpatialFogBanks& banks, const SpatialFogRoom& room);

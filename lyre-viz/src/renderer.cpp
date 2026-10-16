@@ -1792,13 +1792,16 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             set4(lp.lvol2, 0.0f, 0.0f, -1000.0f, 0.0f);
             set4(lp.lvol4, 0.0f, -1000.0f, 0.0f, 0.0f);
         }
-        // fumee spatiale : profil des bancs (seuil par pixel), nuages (meme vent que les volutes), texture generee au 1er usage
+        // fumee spatiale : profil des bancs (seuil par pixel), nuages (meme vent que les volutes), texture generee au 1er
+        // usage ; salle composee : ambiance douce (A, uniformes habituels) et chargee (B, lmixb*), melangees par pixel
         if (sfog) {
-            SpatialFogProfile prof;
-            prof.setup(rs.sfog);
+            const SpatialFogSettings sa = spatial_fog_style(rs.sfog, 0), sb = spatial_fog_style(rs.sfog, 1);
+            SpatialFogProfile pa, pb;
+            pa.setup(sa);
+            pb.setup(sb);
             const float k = fs.density * fs.scattering;
-            set4(lp.lbank, std::min(prof.thr, 1e6f), prof.edge, prof.thr + 1.0f / prof.edge, prof.core);
-            set4(lp.lbank2, prof.keep * prof.inv_mean, prof.inv_mean, k * fog.sf_haze_scale, k * fog.sf_smoke_scale);
+            set4(lp.lbank, std::min(pa.thr, 1e6f), pa.edge, pa.thr + 1.0f / pa.edge, pa.core);
+            set4(lp.lbank2, pa.keep * pa.inv_mean, pa.inv_mean, k * fog.sf_haze_scale, k * fog.sf_smoke_scale);
             if (!clouds_img.id) {
                 clouds.build();
                 sg_image_desc d = {};
@@ -1816,22 +1819,33 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
                 clouds.mips.clear();
             }
             const float wa = fs.wind_angle * DEG;
-            float cpar[5][4];
-            spatial_fog_cloud_params(rs.sfog, clouds, fs.animate ? time : 0.0f, std::cos(wa) * fs.wind_speed, fs.rise * 0.25f,
-                                     std::sin(wa) * fs.wind_speed, cpar);
+            const float tt = fs.animate ? time : 0.0f;
+            const float wx = std::cos(wa) * fs.wind_speed, wy = fs.rise * 0.25f, wz = std::sin(wa) * fs.wind_speed;
+            // nuages lus si l'une des deux ambiances ronge
+            SpatialFogSettings sr = sa;
+            sr.cloud_erode = std::max(sa.cloud_erode, sb.cloud_erode);
+            float cpar[6][4], cb[5][4];
+            spatial_fog_cloud_params(sr, clouds, tt, wx, wy, wz, cpar);
+            const float rag_a = sa.cloud_erode > 0.0f ? std::max(sa.bank_rag, 0.0f) : 0.0f;
             set4(lp.lvol, cpar[0][0], cpar[0][1], cpar[0][2], cpar[0][3]);
             set4(lp.lvolw, cpar[1][0], cpar[1][1], cpar[1][2], cpar[1][3]);
-            set4(lp.lvol2, cpar[2][0], cpar[2][1], cpar[2][2], cpar[2][3]);
+            set4(lp.lvol2, cpar[2][0], cpar[2][1], cpar[2][2], rag_a);
+            spatial_fog_cloud_params(sa, clouds, tt, wx, wy, wz, cpar);
             set4(lp.lvol3, cpar[3][0], cpar[3][1], cpar[3][2], cpar[3][3]);
             set4(lp.lvol4, cpar[4][0], cpar[4][1], cpar[4][2], cpar[4][3]);
-            // tourbillons et filaments de pres (texture des volutes)
-            spatial_fog_motion_params(rs.sfog, fs.animate ? time : 0.0f, std::cos(wa) * fs.wind_speed, fs.rise * 0.25f,
-                                      std::sin(wa) * fs.wind_speed, VOLUTES_SD, VOLUTES_N, cpar);
+            spatial_fog_cloud_params(sb, clouds, tt, wx, wy, wz, cb);
+            set4(lp.lmixb0, std::min(pb.thr, 1e6f), pb.edge, pb.core, pb.keep * pb.inv_mean);
+            set4(lp.lmixb1, pb.inv_mean, sb.cloud_erode > 0.0f ? std::max(sb.bank_rag, 0.0f) : 0.0f, cb[3][1], cb[3][2]);
+            set4(lp.lmixb2, cb[3][3], cb[4][2], cb[4][3], cb[4][0]);
+            set4(lp.lmixb3, cb[4][1], 0.0f, 0.0f, 0.0f);
+            // tourbillons, filaments de pres (texture des volutes), deformation a tres grande echelle
+            spatial_fog_motion_params(rs.sfog, tt, wx, wy, wz, VOLUTES_SD, VOLUTES_N, cpar);
             set4(lp.lswirl, cpar[0][0], cpar[0][1], cpar[0][2], cpar[0][3]);
             set4(lp.lswirl2, cpar[1][0], cpar[1][1], cpar[1][2], cpar[1][3]);
             set4(lp.lfil, cpar[2][0], cpar[2][1], cpar[2][2], cpar[2][3]);
             set4(lp.lfil2, cpar[3][0], cpar[3][1], cpar[3][2], cpar[3][3]);
             set4(lp.lfil3, cpar[4][0], cpar[4][1], cpar[4][2], cpar[4][3]);
+            set4(lp.lwarp, cpar[5][0], cpar[5][1], cpar[5][2], cpar[5][3]);
         }
         // diffusion vers l'avant : lobe doux (g de la fumee si un seul lobe) + lobe tres avant (poids w)
         const float w = rs.laser_fwd_lobe ? saturate(rs.laser_fwd_weight) : 0.0f;
@@ -1848,7 +1862,8 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         // pres (5) seulement si un segment passe assez pres de la camera pour qu'ils y soient lus
         if (rs.sfog.model == 1 && clouds_img.id) {
             fogv = 4;
-            if (rs.sfog.fil_strength > 0.0f && rs.sfog.cloud_erode > 0.0f && volutes_img.id) {
+            const float erode_any = std::max(spatial_fog_style(rs.sfog, 0).cloud_erode, spatial_fog_style(rs.sfog, 1).cloud_erode);
+            if (rs.sfog.fil_strength > 0.0f && erode_any > 0.0f && volutes_img.id) {
                 // lus si log2(taille du pixel) + lfil2.w < lfil3.x ; meme calcul que la 2e octave du Classique
                 const float dmax = std::exp2(lp.lfil3[0] - lp.lfil2[3]) / lp.res[3];
                 for (int i = 0; i < nlas && fogv == 4; i++) {

@@ -581,7 +581,7 @@ void laser_global_ui() {
         ImGui::SliderFloat("g du lobe doux##l", &r.laser_g_soft, -0.3f, 0.9f, "%.2f");
     }
     if (r.sfog.model == 0) ImGui::Checkbox("Volutes fines dans les nappes##l", &r.laser_volutes);
-    spatial_fog_ui_settings(r.sfog, app.fog.banks);
+    spatial_fog_ui_settings(r.sfog, app.fog.banks, app.fog.room);
     if (r.sfog.model == 0 && r.laser_volutes) {
         ImGui::SliderFloat("Contraste des volutes##l", &r.laser_vol_strength, 0, 1.5f, "%.2f");
         ImGui::SliderFloat("Taille des volutes##l", &r.laser_vol_size, 0.3f, 6, "%.2f m");

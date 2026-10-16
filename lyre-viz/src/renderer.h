@@ -72,7 +72,9 @@ struct RenderSettings {
     float laser_exit = 1.0f;      // lueur de sortie des lasers (point chaud et halo ; 0 : aucune)
     float laser_white = 0.6f;     // blanchiment des lasers tres intenses (comme une camera ; 0 : couleurs pures, comme l'oeil)
     bool laser_room_fog = true;   // fumee de la piece (amas, brume) lue au point de chaque nappe ; sinon uniforme
-    SpatialFogSettings sfog;      // modele de fumee des lasers : Classique (reglages ci-dessous) ou Spatiale (v2, fumee_spatiale.h)
+    // modele de fumee des lasers : Spatiale (v2, fumee_spatiale.h), prereglage « Nuages larges et doux » par defaut (choix de
+    // l'utilisateur, 16 octobre 2026) ; Classique (reglages ci-dessous) avec --set laserfogmodel=0
+    SpatialFogSettings sfog = spatial_fog_preset(4);
     // diffusion vers l'avant des lasers : deux lobes (tres avant + doux), sinon un seul comme les lyres (g de la fumee)
     bool laser_fwd_lobe = true;
     float laser_fwd_weight = 0.42f;   // part du lobe tres avant

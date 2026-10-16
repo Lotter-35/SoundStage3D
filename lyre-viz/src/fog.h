@@ -39,13 +39,16 @@ struct FogSim {
     // densite quantifiee pour le GPU (NX*NY*NZ, RGBA8) : r = amas / 2 (lyres, fog_density) ; g = densite de la piece
     // (brume x decroissance en hauteur + amas) / room_max, pour les lasers (meme texture : une 2e texture envoyee a
     // chaque image faisait attendre la carte sous Direct3D 11). Fumee spatiale v2 (lasers) : g = brume (decroissance en
-    // hauteur seule), a = champ des bancs (loi normale, 0,5 + z / 8), seuille par pixel dans le shader ; b libre (0)
+    // hauteur, logique de la salle), b = style de la region (salle composee), a = champ des bancs (loi normale,
+    // 0,5 + z / 8), seuille par pixel dans le shader
     std::vector<uint8_t> upload;
     float room_max = 1;
     // fumee spatiale des lasers (v2, fumee_spatiale.h) : bancs de fumee, recalcules a chaque pas de la simulation
     SpatialFogBanks banks;
     float banks_time = -1;
     SpatialFogSettings banks_set;
+    SpatialFogRoom room;                           // salle composee : logique de la salle, recalculee a chaque reglage
+    float room_wind = 0;
     float sf_haze_scale = 0, sf_smoke_scale = 0;   // v2 : brume = canal g x sf_haze_scale, amas = canal r x sf_smoke_scale
     std::vector<uint8_t> detail; // bruit de detail (DETAIL^3)
     std::vector<SmokeMachine> machines;

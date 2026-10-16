@@ -2884,6 +2884,13 @@ layout(binding=0) uniform laser_cs_params {
     vec4 lfil3;       // x : niveau ou ils s'effacent (de pres seulement), y : force
     vec4 lbank;       // bancs (seuil par pixel) : x seuil (ecarts types), y nettete, z debut des coeurs, w relief des coeurs
     vec4 lbank2;      // x densite hors des bancs, y 1 / moyenne, z echelle de la brume (canal g), w des amas (canal r)
+    vec4 lwarp;       // deformation des nuages a tres grande echelle (comme lswirl : nombre d'onde, amplitude, phase)
+    // salle composee : reglages de l'ambiance chargee (style 1, canal b) ; ceux de l'ambiance douce (style 0) sont dans
+    // lbank, lbank2, lvol2.w, lvol3, lvol4. Les deux fumees sont calculees puis superposees selon le style.
+    vec4 lmixb0;      // seuil des bancs, nettete, relief des coeurs, densite hors des bancs
+    vec4 lmixb1;      // 1 / moyenne, bords nuageux, seuil des nuages, bords des bancs ronges
+    vec4 lmixb2;      // douceur du bord des nuages, relief des nuages (a, b), 1 / moyenne du masque
+    vec4 lmixb3;      // x : force de l'erosion
 };
 @end
 
@@ -2956,22 +2963,26 @@ vec3 laser_swirl(vec3 X, vec4 w) {
 // amas), f.zw nuages aux deux instants de leur evolution ; f2 : filaments de pres (LASER_FOG 5). Les lectures sont
 // independantes (la deformation est analytique) et partent ensemble.
 vec4 laser_fetch(vec3 X, float lf, out vec2 f2) {
-    f2 = vec2(0.5);
+    f2 = vec2(0.0);
     vec4 fr = textureLod(sampler3D(laser_fog_tex, laser_lin_clamp), X * fog_box_inv.xyz - fog_box_min.xyz, 0.0);
     vec4 f = vec4(0.0, 0.0, 0.5, 0.5);
     float lod = lf + lvol2.y;
     if (lod < lvol2.z) {
-        vec3 Xs = laser_swirl(X, lswirl);
+        // nuages : deformes a tres grande echelle (le motif ne se repete pas d'un bout a l'autre de la salle), puis par
+        // les tourbillons
+        vec3 Xs = laser_swirl(laser_swirl(X, lwarp), lswirl);
         f.zw = textureLod(sampler3D(laser_vol_tex, laser_vol_smp), Xs * lvol.w + lvol.xyz, max(lod, 0.0)).rg;
 #if LASER_FOG >= 5
         // filaments : la texture des volutes, petite, axes permutes et cisailles, deformee aussi par les petits tourbillons
         float lod2 = lf + lfil2.w;
         if (lod2 < lfil3.x) {
             Xs = laser_swirl(Xs, lswirl2);
-            f2 = textureLod(sampler3D(laser_fil_tex, laser_vol_smp), (Xs.zxy + Xs.yzx * 0.37) * lfil.w + lfil.xyz, max(lod2, 0.0)).rg;
+            vec2 fv = textureLod(sampler3D(laser_fil_tex, laser_vol_smp), (Xs.zxy + Xs.yzx * 0.37) * lfil.w + lfil.xyz, max(lod2, 0.0)).rg;
+            f2.x = fv.x * lfil2.x + fv.y * lfil2.y + lfil2.z;
         }
 #endif
     }
+    f2.y = fr.b;   // style de la region (salle composee)
     // f : brume (canal g : decroissance en hauteur), amas des machines (canal r), champ des bancs (canal a, loi normale),
     // nuages aux 2 instants melanges (en ecarts types) ; les bancs sont seuilles dans laser_sigma_of
     f = vec4(fr.g * lbank2.z, fr.r * lbank2.w, fr.a * 8.0 - 4.0, f.z * lvolw.x + f.w * lvolw.y + lvol2.x);
@@ -2981,32 +2992,53 @@ vec4 laser_fetch(vec3 X, float lf, out vec2 f2) {
 //  - bancs : seuil (couverture, nettete) sur le champ des bancs deforme par les nuages : leurs bords prennent la forme des
 //    nuages (bombes, dechiquetes) au lieu de suivre le champ lisse de grande echelle. Seuilles sur le CPU case par case,
 //    leurs bords nets suivaient les cases de 1,5 m de la grille (escaliers, rectangles). Densite relative M (moyenne 1) ;
+//    (laser_v2_dens, une fois par ambiance)
 //  - structure : part des bancs (au-dela de la fumee qui reste hors des bancs) et des amas ; 0 dans la brume uniforme ;
 //  - erosion : z, la valeur des nuages en ecarts types (ramenee au contraste du niveau 0 : les grandes formes restent
 //    visibles de loin), seuillee en bord doux ; seuil plus haut au bord des bancs (structure faible), plus dense vers le
 //    coeur des nuages, masque ramene a une moyenne de 1 au coeur des bancs. Force : erosion x structure, effacee au-dela
 //    du niveau lvol2.z. L'air n'est pas ronge.
+// Fumee d'une ambiance (bancs, structure, erosion) au point lu : P0 (seuil des bancs, nettete, relief des coeurs, densite
+// hors des bancs), P1 (1 / moyenne, bords nuageux, seuil des nuages, bords des bancs ronges), P2 (douceur du bord des
+// nuages, relief des nuages a et b, 1 / moyenne du masque), er : force de l'erosion ; st : structure.
+float laser_v2_dens(vec4 f, float z, float fade, vec4 P0, vec4 P1, vec4 P2, float er, out float st) {
+    float zb = f.z + P1.y * fade * z;
+    float tb = clamp((zb - P0.x) * P0.y, 0.0, 1.0);
+    float B = tb * tb * (3.0 - 2.0 * tb);
+    float M = P0.w + B * (P1.x * (1.0 + P0.z * clamp(zb - P0.x - 1.0 / P0.y, 0.0, 3.0)) - P0.w);
+    float dens = f.x * M + f.y;
+    st = (f.x * max(M - P0.w, 0.0) + f.y) / max(dens, 1e-20);
+    float t = P1.z + (1.0 - st) * P1.w;
+    // relief interne : la densite monte du bord vers le coeur du nuage (sur 1,5 ecart type)
+    float m = smoothstep(t - P2.x, t + P2.x, z) * (P2.y + P2.z * clamp(z - t, 0.0, 1.5)) * P2.w;
+    return dens * (1.0 + st * er * fade * (m - 1.0));
+}
 float laser_sigma_of(vec4 f, vec2 f2, float lf) {
     float lod = max(lf + lvol2.y, 0.0);
     float fade = clamp(lvol2.z - lod, 0.0, 1.0);
     float z = f.w / max(1.0 - lvol3.x * lod * lod, 0.35);
-    float zb = f.z + lvol2.w * fade * z;
-    float tb = clamp((zb - lbank.x) * lbank.y, 0.0, 1.0);
-    float B = tb * tb * (3.0 - 2.0 * tb);
-    float M = lbank2.x + B * (lbank2.y * (1.0 + lbank.w * clamp(zb - lbank.z, 0.0, 3.0)) - lbank2.x);
-    float dens = f.x * M + f.y;
-    float st = (f.x * max(M - lbank2.x, 0.0) + f.y) / max(dens, 1e-20);
-    float t = lvol3.y + (1.0 - st) * lvol3.z;
-    // relief interne : la densite monte du bord vers le coeur du nuage (sur 1,5 ecart type)
-    float m = smoothstep(t - lvol3.w, t + lvol3.w, z) * (lvol4.z + lvol4.w * clamp(z - t, 0.0, 1.5)) * lvol4.x;
-    float e = st * lvol4.y * fade;
+    // salle composee : les deux ambiances calculees chacune entiere, puis superposees selon le style de la region (f2.y,
+    // en degrade sur plusieurs metres) : melanger leurs reglages faisait des coupures nettes (seuil des bancs qui saute
+    // d'une ambiance sans bancs a une ambiance a zones vides). Une seule est calculee la ou l'autre est absente.
+    float sy = f2.y;
+    float dens = 0.0, st = 0.0;
+    if (sy < 0.999) {
+        dens = laser_v2_dens(f, z, fade, vec4(lbank.xyw, lbank2.x), vec4(lbank2.y, lvol2.w, lvol3.yz),
+                             vec4(lvol3.w, lvol4.zwx), lvol4.y, st);
+    }
+    if (sy > 0.001) {
+        float stb;
+        float db = laser_v2_dens(f, z, fade, lmixb0, lmixb1, lmixb2, lmixb3.x, stb);
+        dens = mix(dens, db, sy);
+        st = mix(st, stb, sy);
+    }
 #if LASER_FOG >= 5
-    // filaments : modulation de moyenne 1, force x structure (rien dans la brume uniforme), effacee au-dela de lfil3.x
+    // filaments (f2.x, en ecarts types) : modulation de moyenne 1, force x structure (rien dans la brume uniforme),
+    // effacee au-dela de lfil3.x
     float kf = clamp(lfil3.x - (lf + lfil2.w), 0.0, 1.0) * lfil3.y * st;
-    float zf = f2.x * lfil2.x + f2.y * lfil2.y + lfil2.z;
-    return lroom.x + dens * (1.0 + e * (m - 1.0)) * max(1.0 + kf * zf, 0.0);
+    return lroom.x + dens * max(1.0 + kf * f2.x, 0.0);
 #else
-    return lroom.x + dens * (1.0 + e * (m - 1.0));
+    return lroom.x + dens;
 #endif
 }
 #elif LASER_FOG >= 1

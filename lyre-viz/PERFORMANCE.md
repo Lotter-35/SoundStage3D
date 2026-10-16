@@ -667,7 +667,8 @@ Mesures rapides seulement (banc des lasers `-Fast`, immobile), pour l'ordre de g
 - Texture des amas en RGBA8 (structure dans le canal b) : aucune attente à l'envoi (« scene (surfaces) » inchangée en mouvement), banc des lyres dans le bruit, images identiques ; « fumée : faisceaux » +0,03 ms (texels 2 fois plus gros).
 - Modèle Classique : images identiques et temps dans le bruit à chaque étape (le code v2 est dans ses propres variantes, `LASER_FOG` 4 et 5).
 - Passe des lasers, contre le Classique (volutes et 2e octave), après la correction des bancs (seuil par pixel, bords nuageux ; historique 37) : Concert sans filaments (variante 4) +0,3 à +1,0 ms (L1 9,7 → 10,6, L3 9,6 → 10,7, L4 3,0 → 3,7, M1 5,6 → 5,9, arcs 14,0 → 14,3) ; filaments de près (variante 5) encore +0,75 à +1,1 ms dès qu'un éventail passe à moins de ~7 m de la caméra, même pour peu de pixels (registres de la variante). Les mesures « sans filaments » de l'historique 35 sont fausses (mauvaise variante, voir `PLAN-FUMEE-LASERS-V2.md`).
-- Pistes : variante 5 seulement pour les tuiles proches, portée des filaments plus courte, lecture des nuages lancée avant la déformation, saut du calcul dans les trous (densité nulle).
+- Salle composée et filaments de l'utilisateur (force 1, 2 m, portée 1) : historique 38, +2,3 à +5,7 ms contre le Classique ; après le fondu des deux ambiances (historique 39) : L1 10,5 → 15,3, L3 9,7 → 15,0, L4 3,0 → 6,2, M1 5,6 → 8,6, arcs 14,3 → 18,4 ms, dont les filaments, lus presque partout, +1,1 à +2,8 ms.
+- Pistes : variante 5 seulement pour les tuiles proches, portée des filaments plus courte, lecture des nuages lancée avant la déformation, saut du calcul dans les trous (densité nulle), fondu des ambiances seulement dans une variante à part (salle composée), transitions plus courtes ou calcul partagé entre les deux ambiances (la lecture et la déformation sont déjà communes).
 
 ## Lyres superposées (16 octobre 2026)
 

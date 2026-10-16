@@ -226,16 +226,37 @@ void FogSim::update_spatial(const FogSettings& s, const SpatialFogSettings& sf) 
     sf_haze_scale = (s.haze + s.smoke * mean_smoke) * std::max(sf.haze, 0.0f);
     sf_smoke_scale = 2.0f * s.smoke * std::max(sf.sim, 0.0f);   // canal r = amas / 2
     room_max = 1;
+    // salle composee : logique de la salle (quantite, style, couverture par region), recalculee seulement quand ses
+    // reglages ou le vent changent (champs fixes dans l'espace)
+    const bool mix = sf.mix != 0;
+    if (mix) {
+        const SpatialFogSettings& b = room.built;
+        const bool same = room.valid && b.seed == sf.seed && b.region_size == sf.region_size && b.dense_share == sf.dense_share &&
+                          b.region_sharp == sf.region_sharp && b.stage_boost == sf.stage_boost && b.stage_dist == sf.stage_dist &&
+                          b.low_boost == sf.low_boost && b.back_dilute == sf.back_dilute && b.density_var == sf.density_var &&
+                          b.plumes == sf.plumes && b.plume_width == sf.plume_width && b.plume_height == sf.plume_height &&
+                          room_wind == s.wind_angle;
+        if (!same) {
+            const float o[3] = {origin.x, origin.y, origin.z}, sz[3] = {size.x, size.y, size.z};
+            room.compute(NX, NY, NZ, o, sz, std::cos(wa) * std::max(s.wind_speed, 0.01f), std::sin(wa) * std::max(s.wind_speed, 0.01f), sf);
+            room_wind = s.wind_angle;
+        }
+        sf_haze_scale *= room.amount_max;
+    }
+    const float inv_amax = mix ? 1.0f / room.amount_max : 1.0f;
     const float cy = size.y / NY;
     for (int y = 0; y < NY; y++) {
-        const uint8_t hz = (uint8_t)(std::exp(-std::max(origin.y + (y + 0.5f) * cy, 0.0f) * sf.height) * 255.0f + 0.5f);
+        const float hz = std::exp(-std::max(origin.y + (y + 0.5f) * cy, 0.0f) * sf.height);
         for (int z = 0; z < NZ; z++) {
             const size_t o = (size_t)z * NX * NY + (size_t)y * NX;
             for (int x = 0; x < NX; x++) {
-                upload[(o + x) * 4] = (uint8_t)std::min(255.0f, d[o + x] * 127.5f + 0.5f);
-                upload[(o + x) * 4 + 1] = hz;
-                upload[(o + x) * 4 + 2] = 0;
-                upload[(o + x) * 4 + 3] = (uint8_t)(saturate(0.5f + banks.z[o + x] * 0.125f) * 255.0f + 0.5f);
+                const size_t i = o + x;
+                const float am = mix ? room.amount[i] * inv_amax : 1.0f;
+                const float zb = mix ? room.zbias[i] : 0.0f;
+                upload[i * 4] = (uint8_t)std::min(255.0f, d[i] * 127.5f + 0.5f);
+                upload[i * 4 + 1] = (uint8_t)(saturate(hz * am) * 255.0f + 0.5f);
+                upload[i * 4 + 2] = mix ? (uint8_t)(saturate(room.style[i]) * 255.0f + 0.5f) : 0;
+                upload[i * 4 + 3] = (uint8_t)(saturate(0.5f + (banks.z[i] + zb) * 0.125f) * 255.0f + 0.5f);
             }
         }
     }
