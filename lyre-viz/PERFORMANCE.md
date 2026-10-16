@@ -740,6 +740,11 @@ Dernier recours, **coupé par défaut** (onglet Rendu « AMD FSR 1 », `--set fs
   - Variante sans CPU : réduire le masque de l'eau (`refl_beam_mask`) à une grille grossière lue par le calcul des tables, qui s'arrêterait pour les lignes dont le plan épipolaire ne traverse aucune case mouillée.
 - **À vérifier** : image identique dans l'eau (vue public et `--demo 5`, à 0,1, 0,3 et 1) ; gain attendu de l'ordre de 1 à 2 ms à 0,1 avec gobo + prisme ou frost, rien à 1.
 
+### FSR dynamique (scènes lourdes)
+
+- **Idée** (demande du 16 octobre 2026) : activer FSR 1 tout seul quand la scène est trop lourde pour la cadence visée, et faire varier le diviseur (1 → 1,5 → 2, plafonné) selon les images par seconde ; revenir à la pleine résolution dès que la cadence est tenue. Toujours en dernier recours, après les autres réglages de la qualité adaptative (lyres superposées, faisceaux 1/2 et 1/4).
+- **À soigner** : changer de diviseur sans à-coup (paliers, pas plus d'un changement par seconde environ, hystérésis) ; les cibles de résolution interne sont recréées à chaque changement de taille (`Renderer::resize`) : garder des tailles fixes par palier, ou réserver la taille pleine et ne rendre que dans une partie (viewport) ; l'accumulation temporelle de la fumée doit suivre (historique à la bonne taille) ; une case « FSR dynamique » coupée par défaut, réglable dans l'onglet Rendu.
+
 ## Essais écartés (mesurés, pas gardés)
 
 | Essai | Résultat |
