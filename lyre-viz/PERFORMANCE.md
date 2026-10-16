@@ -729,6 +729,7 @@ Dernier recours, **coupé par défaut** (onglet Rendu « AMD FSR 1 », `--set fs
 
 - **Constat** (16 octobre 2026, scène Contre-jour 57 vue du public) : petits blocs dans la fumée autour des lentilles et du truss, venant des faisceaux doux calculés à 1/2 et 1/4 (voir « Marches dans la fumée »). Les couper coûte ×3 à ×4 sur les faisceaux larges.
 - **Idée** (demandée par l'utilisateur, à faire plus tard) : n'utiliser que le niveau 1/2 (`assign_beam_tiers` : plus de niveau 2), éventuellement en réglage. Mesurer le coût (banc général cas 4 à 9, banc des lyres C2, C3, K3, K4) et montrer les images de Contre-jour (`--ambiance 57 --cam 5,1.7,0,180,5`).
+- **Selon la cadence** (demande du 16 octobre 2026) : choisir le niveau selon les images par seconde. Si la cadence visée est tenue (par exemple 120 img/s), calculer ces faisceaux à la résolution de la fumée (ni 1/2 ni 1/4) ; si ça rame, passer à 1/2, puis à 1/4. La qualité adaptative abaisse déjà les seuils de `assign_beam_tiers` (`detail_px >= 12 * quality`) : il faudrait qu'à pleine qualité aucun faisceau ne soit à 1/2 ou 1/4, et que le 1/2 puis le 1/4 n'arrivent qu'en dessous de la cadence visée. Vérifier que le passage d'un niveau à l'autre ne se voit pas (pas de saut d'image quand la qualité bouge).
 
 ### Tables des faisceaux du miroir : seulement pour les lyres reflétées dans l'eau
 
