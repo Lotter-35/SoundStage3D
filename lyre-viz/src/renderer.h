@@ -25,6 +25,11 @@ struct Camera {
 // Toutes les options de qualite / effets (activables une par une).
 struct RenderSettings {
     float render_scale = 1.0f;    // resolution interne (1 = native)
+    // AMD FSR 1 (dernier recours) : image calculee a la resolution / fsr_div, agrandie par EASU, netteté RCAS.
+    // Remplace la resolution interne quand il est actif. L'interface reste a pleine resolution.
+    bool fsr = false;
+    float fsr_div = 1.5f;         // diviseur de resolution (1,5 qualite, 1,7 equilibre, 2 performance, 3 ultra)
+    float fsr_sharpness = 0.8f;   // netteté RCAS (1 : maximale ; attenuation en diaphragmes = 2 x (1 - netteté))
     bool surface_lights = true;   // taches de lumiere sur les surfaces
     bool specular = true;         // reflets brillants
     bool depth_prepass = true;    // pre-passe de profondeur : chaque pixel n'est eclaire qu'une fois
@@ -32,6 +37,8 @@ struct RenderSettings {
     bool analytic_beams = true;   // fumee : calcul analytique (tables) plutot qu'echantillons au hasard
     bool beam_tiers = true;       // fumee : faisceaux tres doux calcules a plus basse resolution
     bool soft_lights = true;      // surfaces : lyres tres douces (frost) eclairees a 1/4 de la resolution
+    int crowd_soft = 24;          // surfaces : case ou plus de N lyres sans gobo se superposent -> eclairees a 1/4 (0 : jamais)
+    float sparkle = 1.75f;        // lyres douces : scintillement des reflets rendu par le relief fin (0 : reflet lisse)
     bool adaptive = true;         // qualite adaptative : tient la cadence visee dans les scenes lourdes
     float target_fps = 120.0f;
     int vol_div = 2;              // fumee a 1/2, 1/3 ou 1/4 de la resolution
@@ -53,7 +60,7 @@ struct RenderSettings {
     float floor_tile = 8.0f;      // taille de repetition de la texture du sol (m) : 4 x 4 dalles de 2 m
     float floor_wet = 0.0f;       // eau au sol : 0 sec, 0,1 creux remplis et quelques flaques, 1 inonde (voir floor_material)
     int floor_aniso = 4;          // filtrage anisotrope du sol (1 a 16, fixe au lancement) : 4 = meme image que 16, 3 x moins cher
-    bool chroma = false;          // aberration chromatique de l'optique : franges colorees au bord des taches et des gobos (coupee : +0,5 a +0,9 ms avec gobo + prisme)
+    bool chroma = true;           // aberration chromatique de l'optique : franges colorees au bord des taches et des gobos (+0,5 a +0,9 ms avec gobo + prisme)
     float chroma_strength = 1.0f; // intensite (1 = lyre courante)
     // lasers (PLAN-LASERS.md : segments d'eventail analytiques, tuiles en calcul)
     bool lasers = true;           // lasers dans la fumee
@@ -62,6 +69,8 @@ struct RenderSettings {
     float laser_air = 0.0005f;    // diffusion de l'air (par m) : traits visibles meme sans fumee
     bool laser_impacts = true;    // impacts sur les surfaces (points et lignes la ou les lasers touchent)
     float laser_hit_gain = 1.0f;  // intensite des impacts
+    float laser_exit = 1.0f;      // lueur de sortie des lasers (point chaud et halo ; 0 : aucune)
+    float laser_white = 0.6f;     // blanchiment des lasers tres intenses (comme une camera ; 0 : couleurs pures, comme l'oeil)
     bool laser_room_fog = true;   // fumee de la piece (amas, brume) lue au point de chaque nappe ; sinon uniforme
     // diffusion vers l'avant des lasers : deux lobes (tres avant + doux), sinon un seul comme les lyres (g de la fumee)
     bool laser_fwd_lobe = true;
@@ -143,7 +152,7 @@ class Renderer {
     void build_fixture_instances(const Rig& rig, const RenderSettings& rs);
     // mirror : tables de la camera miroir (reflet du sol mouille), dans leurs propres tampons
     void build_beam_tables(const struct Camera& cam, float pixel_angle, bool mirror = false);
-    void assign_beam_tiers(const struct Camera& cam, float pixel_angle, bool tiers, bool soft, int vol_div);
+    void assign_beam_tiers(const struct Camera& cam, float pixel_angle, bool tiers, bool soft, int vol_div, bool crowd);
     void update_quality(const RenderSettings& rs);
     float quality = 1.0f;          // facteur de qualite adaptative (0.2 .. 1)
     float quality_ms = 0;          // temps GPU lisse
@@ -251,13 +260,14 @@ class Renderer {
     Target scene_color, scene_depth_lin, depth, vol_cur, vol_hist[2], combined;
     Target vol_tier[2];                 // fumee a 1/2 et 1/4 de sa resolution (faisceaux doux)
     Target scene_normal, scene_albedo;  // pour la passe des lyres douces
-    Target soft_diffuse, soft_spec;     // lyres douces, a 1/4 de la resolution
+    Target soft_r, soft_g, soft_b, soft_spec;   // lyres douces, a 1/4 : eclairement par direction, reflet
     // reflet du sol mouille : la scene vue d'une camera miroir sous le sol, a demi-resolution
     Target refl_color, refl_depth_lin, refl_depth, refl_vol, refl_final;
     Target refl_beam_mask;   // reflet : eau sous chaque pixel du miroir (fs_refl_mask), lu par les faisceaux
     int refl_w = 0, refl_h = 0, refl_vw = 0, refl_vh = 0;
     int soft_w = 0, soft_h = 0;
     int num_soft = 0;
+    int num_open = 0;   // lyres a grande tache floue sans gobo (lyres superposees : cs_cull_clusters)
     int tier_w[2] = {}, tier_h[2] = {};
     static constexpr int BLOOM_LEVELS = 6;
     Target bloom[BLOOM_LEVELS];
@@ -271,7 +281,10 @@ class Renderer {
 
     // pipelines
     sg_pipeline pip_cull_clusters = {}, pip_probes = {};
-    sg_pipeline pip_depth = {}, pip_soft = {};
+    sg_pipeline pip_depth = {}, pip_soft = {}, pip_soft_simple = {};
+    sg_pipeline pip_final_fsr = {}, pip_fsr_easu = {}, pip_fsr_rcas = {};
+    Target fsr_in, fsr_up;              // FSR : image a agrandir (resolution interne), image agrandie (ecran)
+    int fsr_w = 0, fsr_h = 0, fsr_iw = 0, fsr_ih = 0;
     // surfaces : [0] sol sec, [1] sol mouille (eau au sol : variante plus lourde, seulement si de l'eau)
     sg_pipeline pip_scene[2] = {}, pip_scene_eq[2] = {}, pip_scene_gb[2] = {}, pip_scene_eq_gb[2] = {};
     sg_pipeline pip_beam_tables = {}, pip_beams_an = {}, pip_vol_merge = {}, pip_pattern_images = {}, pip_pattern_images_rgb = {};
@@ -306,6 +319,9 @@ class Renderer {
     sg_buffer laser_hit_buf = {};
     sg_view laser_hit_view = {};
     std::vector<float> laser_hit_data;   // sb_hit_t[] (28 flottants), coupes au plan proche de la camera
+    sg_buffer laser_exit_buf = {};       // lueurs de sortie (sb_hit_t, type 3), dessinees apres la composition
+    sg_view laser_exit_view = {};
+    std::vector<float> laser_exit_data;
     // [sans, avec degrades (couleur au bord 1)][fumee uniforme, de la piece, avec volutes, et leur 2e octave]
     sg_pipeline pip_laser_shade[2][4][2] = {};   // [...][...][sans, avec nappes coniques (arcs)]
 

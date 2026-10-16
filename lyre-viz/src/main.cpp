@@ -34,7 +34,7 @@ App app;
 
 static int g_quit_after_frames = 0;   // --frames N : quitte apres N images (tests)
 static bool g_novsync = false;
-static bool g_fullscreen = false;
+static bool g_fullscreen = true;    // plein ecran sans bordure au lancement (--windowed : fenetre ; F11 bascule)
 // --behind : la fenetre s'ouvre derriere les autres et rend le clavier a la fenetre active (bancs lances
 // pendant que l'on travaille a cote). Elle reste visible si on la ramene devant. Mais Windows donne la
 // priorite a la fenetre active : derriere, le GPU est 5 a 15 % plus lent dans les cas lourds (mesure).
@@ -49,7 +49,7 @@ static int g_demo_laser = -1;     // --demo-laser [variante] : vues d'essai des 
 static bool g_cam_set = false;    // --cam x,y,z,cap,site : camera au lancement (cap et site en degres)
 static float g_cam[5];
 static void setup_demo_laser();
-static int g_ambiance = -1;       // --ambiance N : demarre sur l'ambiance N (1 a 20)
+static int g_ambiance = -1;       // --ambiance N : demarre sur l'ambiance N (1 a 60 ; 21 a 60 : scenes, src/scenes)
 static std::string g_shot_path;
 static bool g_stats = false;      // --stats : compte les couples (pixel, faisceau) de la fumee et des lasers
 
@@ -71,8 +71,10 @@ const View VIEWS[] = {
     // banc des lasers
     {"dans les nappes", {8, 1.7f, 0.3f}, PI, 0.25f},         // L3 : au milieu des rideaux
     {"gros plan", {14, 12.5f, -2.2f}, PI * 0.93f, -0.32f},   // L5 : nappe vue de pres, en biais
+    // banc des lyres (--bench-lyres) : vers le point (4, 0, 0) que visent les lyres (ambiance Couronne), a 17 m
+    {"vers le point", {20, 2.5f, 6}, -2.7828f, -0.1450f},
 };
-enum { V_PUBLIC = 0, V_SCENE, V_TRUSSES, V_INSIDE, V_CLOSEUP };
+enum { V_PUBLIC = 0, V_SCENE, V_TRUSSES, V_INSIDE, V_CLOSEUP, V_FOCUS };
 
 // Scenarios de lyres
 enum { SC_DEFAULT = 0, SC_GOBO_PRISM, SC_FROST_WIDE, SC_COUNT };
@@ -106,12 +108,16 @@ struct Case {
     int lyres = 200;         // lyres allumees (une sur deux pour 100)
     const char* ilda = nullptr;   // banque ILDA jouee par tous les boitiers (programmeur)
     float fog = 1.0f;        // multiplicateur de la densite de la fumee
+    // banc des lyres (--bench-lyres) : programmation des lyres apres le scenario, et lyres en mouvement meme avec --static
+    void (*lyres_setup)() = nullptr;
+    bool moving = false;
 };
 std::vector<Case> cases;
 bool active = false;
 bool quick = false;
 std::vector<int> only;     // --cases 3,14 : seulement ces cas (numeros de la liste complete)
 bool laser_bench = false;   // --bench-lasers : cas L1 a L6 et M1 (PLAN-LASERS.md, section 10)
+bool lyre_bench = false;    // --bench-lyres : lyres qui visent toutes le meme point, zoom, mouvement (lasers eteints)
 FogSettings fog_defaults;
 bool frozen = false;   // --static : lyres et fumee immobiles (comparaison d'images sans mouvement)
 std::string dir = "bench";
@@ -123,7 +129,7 @@ std::map<std::string, std::vector<float>> samples;
 std::vector<std::string> order;
 std::vector<float> totals, cpu_frames;
 std::vector<float> cpu_rig, cpu_fog, cpu_render, cpu_wait, cpu_total, beam_frags, gpu_gaps, outside;
-std::vector<float> cpu_laser, laser_pairs, laser_tile_avg, laser_tile_max, laser_tiles_hit;
+std::vector<float> cpu_laser, cpu_laser_build, cpu_laser_hits, laser_pairs, laser_tile_avg, laser_tile_max, laser_tiles_hit;
 FILE* frames_csv = nullptr;   // une ligne par image (diagnostic)
 unsigned last_id = 0;
 FILE* out = nullptr;
@@ -170,11 +176,85 @@ void build_laser_cases() {
     I("I4 ILDA tunnels (banque Tunnels) / public", "Tunnels");
     // L1 en mode ligne : les memes eventails en nappes continues (au lieu de 1 000 traits)
     L("L1 en mode ligne (nappes continues) / public", V_PUBLIC, LP_FANS_LINE);
+    // moteur de trace (PLAN-LASERS.md, etape 9) : banques generees (src/ilda.cpp, add_generated)
+    I("P1 trace : dessins a main levee (banque Crayon) / public", "Crayon");
+    I("P2 trace : formes (banque Formes) / public", "Formes");
+    I("P3 trace : sinus modules et Lissajous animes (banque Sinus) / public", "Sinus");
+}
+
+// Banc des lyres : les 184 lyres des trusses et du pont visent toutes le meme point au sol (4, 0, 0) (ambiance
+// Couronne), ou pendent droit (sans convergence, meme nombre de faisceaux) ; zooms 3, 20 et 50 deg ; vue vers le point
+// (17 m) ou du public ; immobiles, ou en mouvement. Lasers eteints : on ne mesure que les lyres.
+template <int ZOOM, bool FOCUS, int FROST10 = 0, int MOVE = 0> void lyres_program() {
+    app.rig.aim_points[0] = {4, 0, 0};
+    for (Fixture& f : app.rig.fixtures) {
+        FixtureParams& p = f.base;
+        p = FixtureParams();
+        if (f.mount.group > 4) {   // sol et nez de scene : eteints
+            p.dimmer = 0;
+            continue;
+        }
+        p.dimmer = 1;
+        p.zoom = (float)ZOOM;
+        p.frost = 0.1f * (float)FROST10;
+        p.focus = 18;
+        if (FOCUS) p.aim_point = 0;
+        else p.tilt = f.mount.group == 4 ? 30.0f : 0.0f;
+    }
+    app.rig.effects.clear();
+    if (MOVE) {
+        // deplacement : cercle (convergence) ou vagues pan et tilt (sans), comme on deplace des lyres a la main
+        for (Fixture& f : app.rig.fixtures) f.selected = f.base.dimmer > 0;
+        app.rig.add_effect(FOCUS ? FX_CIRCLE : FX_TILT_WAVE);
+        app.rig.effects.back().size = FOCUS ? 6.0f : 25.0f;
+        app.rig.effects.back().speed = 0.4f;
+        app.rig.effects.back().spread = FOCUS ? 0.0f : 360.0f;
+        app.rig.select_all(false);
+    }
+}
+
+// Ambiance Couronne (n° 9) telle quelle (cercle en mouvement), puis avec ses lyres zoomees
+template <int ZOOM> void couronne_program() {
+    apply_ambiance(8);
+    if (ZOOM > 0)
+        for (Fixture& f : app.rig.fixtures)
+            if (f.base.dimmer > 0) f.base.zoom = (float)ZOOM;
+}
+
+void build_lyre_cases() {
+    auto C = [](const char* name, int view, void (*setup)(), bool moving = false) {
+        Case c{name, view, SC_DEFAULT, nullptr};
+        c.lyres_setup = setup;
+        c.moving = moving;
+        cases.push_back(c);
+    };
+    C("C1 convergence zoom 3 / vers le point", V_FOCUS, lyres_program<3, true>);
+    C("C2 convergence zoom 20 / vers le point", V_FOCUS, lyres_program<20, true>);
+    C("C3 convergence zoom 50 / vers le point", V_FOCUS, lyres_program<50, true>);
+    if (quick) return;
+    C("C4 convergence zoom 50 + frost 0.6 / vers le point", V_FOCUS, lyres_program<50, true, 6>);
+    C("C5 convergence zoom 3 / public", V_PUBLIC, lyres_program<3, true>);
+    C("C6 convergence zoom 50 / public", V_PUBLIC, lyres_program<50, true>);
+    C("D1 sans convergence zoom 3 / vers le point", V_FOCUS, lyres_program<3, false>);
+    C("D2 sans convergence zoom 20 / vers le point", V_FOCUS, lyres_program<20, false>);
+    C("D3 sans convergence zoom 50 / vers le point", V_FOCUS, lyres_program<50, false>);
+    C("M1 convergence zoom 20 en mouvement / vers le point", V_FOCUS, lyres_program<20, true, 0, 1>, true);
+    C("M2 sans convergence zoom 20 en mouvement / vers le point", V_FOCUS, lyres_program<20, false, 0, 1>, true);
+    C("M3 convergence zoom 50 en mouvement / vers le point", V_FOCUS, lyres_program<50, true, 0, 1>, true);
+    // ambiance Couronne (reglages de l'image de l'ambiance : en dernier)
+    C("K1 ambiance Couronne / public", V_PUBLIC, couronne_program<0>, true);
+    C("K2 ambiance Couronne / vers le point", V_FOCUS, couronne_program<0>, true);
+    C("K3 Couronne zoom 20 / vers le point", V_FOCUS, couronne_program<20>, true);
+    C("K4 Couronne zoom 45 / vers le point", V_FOCUS, couronne_program<45>, true);
 }
 
 void build_cases() {
     if (laser_bench) {
         build_laser_cases();
+        return;
+    }
+    if (lyre_bench) {
+        build_lyre_cases();
         return;
     }
     for (int sc = 0; sc < SC_COUNT; sc++)
@@ -196,6 +276,7 @@ void start_case() {
     app.rs = defaults;
     if (c.opts) c.opts(app.rs);
     apply_scenario(c.scenario);
+    if (c.lyres_setup) c.lyres_setup();
     // banc des lasers : lyres allumees (toutes, une sur deux ou aucune), motif des lasers, fumee
     if (c.lyres < 200)
         for (size_t i = 0; i < app.rig.fixtures.size(); i++)
@@ -212,11 +293,12 @@ void start_case() {
     app.fog_settings.density *= c.fog;
     app.rig.instant_moves = true;
     app.rig.update(0);
+    app.rig.update(0);   // 2e fois : la visee (aim_angles) part de la tete, placee par la 1re
     app.rig.instant_moves = false;
     app.fog.prefill();
     app.time = 0;
     app.renderer.reset_quality();
-    app.paused = frozen;
+    app.paused = frozen && !c.moving;
     const View& v = VIEWS[c.view];
     app.cam.pos = v.pos;
     app.cam.yaw = v.yaw;
@@ -235,7 +317,7 @@ void start_case() {
     beam_frags.clear();
     gpu_gaps.clear();
     outside.clear();
-    for (std::vector<float>* v : {&cpu_laser, &laser_pairs, &laser_tile_avg, &laser_tile_max, &laser_tiles_hit}) v->clear();
+    for (std::vector<float>* v : {&cpu_laser, &cpu_laser_build, &cpu_laser_hits, &laser_pairs, &laser_tile_avg, &laser_tile_max, &laser_tiles_hit}) v->clear();
 }
 
 void log(const char* fmt, ...) {
@@ -301,6 +383,8 @@ void after_frame(int w, int h) {
         cpu_wait.push_back(gpuprof::last_wait_ms());
         cpu_total.push_back(app.timings.cpu_ms - gpuprof::last_wait_ms());
         cpu_laser.push_back(app.timings.laser_ms);
+        cpu_laser_build.push_back(app.lasers.cpu_build_ms);
+        cpu_laser_hits.push_back(app.lasers.cpu_hits_ms);
         {
             // chaque couple (tuile, segment) calcule les 256 pixels de la tuile
             const RenderStats& rs = app.renderer.stats;
@@ -356,12 +440,12 @@ void after_frame(int w, int h) {
         median(beam_frags) / 1e6, app.renderer.stats.tier_count[0], app.renderer.stats.tier_count[1], app.renderer.stats.tier_count[2],
         app.renderer.stats.table_rows, app.renderer.stats.table_cells / 1e6, app.renderer.stats.table_scale);
     if (laser_bench) {
-        log("  Lasers : %d boitiers, %d segments, %d traits, %d impacts ; moteur CPU %.3f ms ; fumee : variante %d\n", app.lasers.lit,
-            app.renderer.stats.laser_segments, app.lasers.total_traits, app.renderer.stats.laser_hits, mean(cpu_laser),
-            app.renderer.stats.laser_fog_variant);
+        log("  Lasers : %d boitiers, %d segments, %d traits, %d impacts ; moteur CPU %.3f ms (morceaux %.3f, impacts %.3f) ; fumee : "
+            "variante %d\n", app.lasers.lit, app.renderer.stats.laser_segments, app.lasers.total_traits, app.renderer.stats.laser_hits,
+            mean(cpu_laser), mean(cpu_laser_build), mean(cpu_laser_hits), app.renderer.stats.laser_fog_variant);
         if (app.lasers.ilda_points > 0)
-            log("  ILDA : %d points, %d faisceaux, %d nappes (niveau de tolerance %d)\n", app.lasers.ilda_points, app.lasers.ilda_beams,
-                app.lasers.ilda_sheets, app.lasers.ilda_bias);
+            log("  ILDA : %d points, %d faisceaux, %d droites, %d arcs (niveau de tolerance %d)\n", app.lasers.ilda_points,
+                app.lasers.ilda_beams, app.lasers.ilda_sheets, app.lasers.ilda_arcs, app.lasers.ilda_bias);
         if (g_stats && app.renderer.stats.laser_segments > 0)
             log("  Lasers (compteurs) : %.0f tuiles de 16 px touchees sur %d, %.1f segments par tuile touchee (%.0f au plus) ; "
                 "%.1f millions de couples (pixel, segment) ; %d segments perdus (grosses tuiles pleines)\n",
@@ -475,16 +559,14 @@ static void update_camera(float dt) {
     const bool ui_kb = ImGui::GetIO().WantCaptureKeyboard;
     float speed = app.move_speed * (app.keys[SAPP_KEYCODE_LEFT_SHIFT] ? 4.0f : 1.0f);
     vec3 move = {0, 0, 0};
-    // touches physiques W A S D (= Z Q S D sur un clavier AZERTY) et fleches
+    // touches physiques W A S D (= Z Q S D sur un clavier AZERTY) ; les fleches changent d'ambiance (voir event)
     if (!ui_kb) {
         vec3 f = app.character ? normalize(vec3(c.fwd.x, 0, c.fwd.z)) : c.fwd;
         vec3 r = c.right;
-        // onglet Ambiances ouvert : les fleches changent d'ambiance (voir event)
-        const bool arrows = !app.ambiance_tab;
-        if (app.keys[SAPP_KEYCODE_W] || (arrows && app.keys[SAPP_KEYCODE_UP])) move += f;
-        if (app.keys[SAPP_KEYCODE_S] || (arrows && app.keys[SAPP_KEYCODE_DOWN])) move -= f;
-        if (app.keys[SAPP_KEYCODE_D] || (arrows && app.keys[SAPP_KEYCODE_RIGHT])) move += r;
-        if (app.keys[SAPP_KEYCODE_A] || (arrows && app.keys[SAPP_KEYCODE_LEFT])) move -= r;
+        if (app.keys[SAPP_KEYCODE_W]) move += f;
+        if (app.keys[SAPP_KEYCODE_S]) move -= f;
+        if (app.keys[SAPP_KEYCODE_D]) move += r;
+        if (app.keys[SAPP_KEYCODE_A]) move -= r;
         if (!app.character) {
             if (app.keys[SAPP_KEYCODE_SPACE] || app.keys[SAPP_KEYCODE_E]) move += vec3(0, 1, 0);
             if (app.keys[SAPP_KEYCODE_C] || app.keys[SAPP_KEYCODE_Q]) move -= vec3(0, 1, 0);
@@ -589,13 +671,15 @@ static void event(const sapp_event* ev) {
             if ((int)ev->key_code >= 0 && (int)ev->key_code < 512 && !io.WantCaptureKeyboard) app.keys[ev->key_code] = true;
             if (io.WantCaptureKeyboard) break;
             if (ev->key_code == SAPP_KEYCODE_H) app.show_ui = !app.show_ui;
+            if (ev->key_code == SAPP_KEYCODE_F11 && !ev->key_repeat) sapp_toggle_fullscreen();
             if (ev->key_code == SAPP_KEYCODE_F) {
                 app.character = !app.character;
                 if (app.character) app.player = {app.cam.pos.x, ground_height(app.cam.pos), app.cam.pos.z};
             }
             if (ev->key_code == SAPP_KEYCODE_P) app.paused = !app.paused;
-            if (app.ambiance_tab && !ev->key_repeat) {
-                // grille des ambiances : gauche / droite d'une case, haut / bas d'une rangee (en boucle)
+            if (!ev->key_repeat) {
+                // grille des ambiances, a tout moment (menu ferme ou autre onglet) : gauche / droite d'une case,
+                // haut / bas d'une rangee (en boucle)
                 int d = 0;
                 if (ev->key_code == SAPP_KEYCODE_LEFT) d = -1;
                 if (ev->key_code == SAPP_KEYCODE_RIGHT) d = 1;
@@ -840,6 +924,38 @@ static void setup_demo_laser() {
         app.cam.pos = {-8, 6.0f, 0};
         app.cam.yaw = PI;
         app.cam.pitch = 0.05f;
+    } else if (g_demo_laser == 7) {
+        // programmation de depart (pont et nez de scene en eventails), dimmers montes, camera du lancement
+        lr.program_default();
+        for (LaserFixture& f : lr.fixtures)
+            if (f.mount.group == 4 || f.mount.group == 6) f.base.dimmer = 1;
+    } else if (g_demo_laser == 6) {
+        // la sortie d'un laser de pres : un eventail cyan de 1 000 traits du pont de scene, camera a quelques metres de
+        // la sortie, en dessous et de cote (rendu de la sortie : point chaud, lueur)
+        lr.effects.clear();
+        for (LaserFixture& f : lr.fixtures) {
+            f.base = LaserParams();
+            f.base.dimmer = 0;
+        }
+        int pick = -1;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++)
+            if (lr.fixtures[i].mount.group == 4 && pick < 0) pick = i + 7;
+        LaserParams& p = lr.fixtures[pick].base;
+        p.dimmer = 1;
+        p.color = {0, 1, 0.9f};
+        p.opening = 40;
+        p.traits = 1000;
+        p.tilt = -8;
+        lr.update(0.0f, 0.0f, app.scene.bounds_min, app.scene.bounds_max);
+        if (!lr.segs.empty()) {
+            const LaserSegment& g = lr.segs[0];
+            vec3 n = cross(g.ec, g.es);
+            if (n.y > 0) n = -n;   // vers le bas
+            app.cam.pos = g.src + g.ec * 5.0f + n * 1.6f + g.es * 1.2f;
+            const vec3 d = normalize(g.src - app.cam.pos);
+            app.cam.yaw = std::atan2(d.z, d.x);
+            app.cam.pitch = std::asin(d.y);
+        }
     } else if (g_demo_laser == 3) {
         // un eventail vert du pont de scene vu de pres, en biais et par en dessous, dans une fumee epaisse : volutes
         // (comparer a docs/references-lasers/5-depence-nappe-gros-plan-volutes.png)
@@ -935,9 +1051,14 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "analytic") r.analytic_beams = v != 0;
     else if (k == "tiers") r.beam_tiers = v != 0;
     else if (k == "soft") r.soft_lights = v != 0;
+    else if (k == "crowd") r.crowd_soft = (int)v;
+    else if (k == "sparkle") r.sparkle = v;
     else if (k == "adaptive") r.adaptive = v != 0;
     else if (k == "fps") r.target_fps = v;
     else if (k == "scale") r.render_scale = v;
+    else if (k == "fsr") r.fsr = v != 0;
+    else if (k == "fsrdiv") r.fsr_div = v;
+    else if (k == "fsrsharp") r.fsr_sharpness = v;
     else if (k == "floor") r.floor_texture = v != 0;
     else if (k == "floortile") r.floor_tile = v;
     else if (k == "wet") r.floor_wet = v;
@@ -952,6 +1073,9 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "laserair") r.laser_air = v;
     else if (k == "laserfog") r.laser_room_fog = v != 0;
     else if (k == "lasercoll") app.lasers.collisions = v != 0;
+    else if (k == "lasercache") app.lasers.figure_cache = v != 0;
+    else if (k == "laserwhite") r.laser_white = v;
+    else if (k == "laserexit") r.laser_exit = v;
     else if (k == "laserimpacts") { r.laser_impacts = v != 0; app.lasers.impacts = v != 0; }
     else if (k == "laserhitgain") r.laser_hit_gain = v;
     else if (k == "laserphase") r.laser_fwd_lobe = v != 0;
@@ -986,8 +1110,10 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         else if (!std::strcmp(argv[i], "--nogi")) app.rs.gi = false;
         else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) app.rs.render_scale = (float)std::atof(argv[++i]);
         else if (!std::strcmp(argv[i], "--fullscreen")) g_fullscreen = true;
+        else if (!std::strcmp(argv[i], "--windowed")) g_fullscreen = false;
         else if (!std::strcmp(argv[i], "--bench")) { g_bench_requested = true; g_novsync = true; }
         else if (!std::strcmp(argv[i], "--bench-lasers")) { g_bench_requested = true; g_novsync = true; bench::laser_bench = true; }
+        else if (!std::strcmp(argv[i], "--bench-lyres")) { g_bench_requested = true; g_novsync = true; bench::lyre_bench = true; }
         else if (!std::strcmp(argv[i], "--quick")) bench::quick = true;
         else if (!std::strcmp(argv[i], "--cases") && i + 1 < argc) {
             for (const char* c = argv[++i]; *c;) {

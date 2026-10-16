@@ -318,7 +318,7 @@ powershell -ExecutionPolicy Bypass -File tools\set_ab.ps1 -Lasers -SetA "adaptiv
 ```
 
 - Sans `-Full` : 5 cas (L1 public, L2 public, L3, L4, M1 public). Avec `-Full` : les 14 cas.
-- `--cases 1,14` (lancement direct, pas encore dans les scripts) : seulement ces cas, numérotés comme dans le banc complet.
+- `--cases 1,14` : seulement ces cas, numérotés comme dans le banc complet ; dans `perf_ab.ps1` : `-Cases "4,14,17,22"` (implique tous les cas, ignore `-Full`).
 - Cas : L1 éventails 200 × 1 000 traits (3 vues), L2 cônes 200 × 32 segments (2 vues), L3 caméra dans les nappes, L4 200 × 8 traits séparés, L5 nappes en gros plan dans une fumée 4 fois plus dense, L6 traits vers le sol et les obstacles, M1 100 lyres + 100 lasers (3 vues), la scène sans lasers (base de comparaison), puis L7 la programmation de démonstration (depuis l'étape 2).
 - Lasers seuls : les lyres sont éteintes (leurs corps restent dessinés).
 - Les cas « L1 en coupant chaque option » viendront avec les options (volutes, portées, impacts, éblouissement, flou de mouvement, blanchiment).
@@ -561,7 +561,7 @@ Historique 21 et 22 (banc rapide, immobile, 19 cas).
 
 ### Nappes coniques exactes (cônes, tunnels) (15 octobre 2026)
 
-À la demande de l'utilisateur : plus de cercles faits de traits droits. Un cône est une nappe conique exacte (`laser_arc`), en morceaux de 90° au plus ; ses impacts sont des arcs exacts. Historique 23. Banc rapide, immobile, 2 lancements chacun, contre `benchefvant_etape6.exe` (cônes en 32 nappes planes ; `benchrcs4_*`, lyres `benchrcs4ly_*`) :
+À la demande de l'utilisateur : plus de cercles faits de traits droits. Un cône est une nappe conique exacte (`laser_arc`), en morceaux de 90° au plus ; ses impacts sont des arcs exacts. Historique 23. Banc rapide, immobile, 2 lancements chacun, contre `bench\ref\avant_etape6.exe` (cônes en 32 nappes planes ; `bench\arcs4_*`, lyres `bench\arcs4ly_*`) :
 
 | Cas | Avant (polygones) | Nappes coniques | Note |
 |---|---|---|---|
@@ -588,6 +588,67 @@ Ce qui a été fait, dans l'ordre :
 
 Pointe des cônes : quelques pixels changent d'un lancement à l'autre (déjà dans la référence, image crénelée sur 1 à 2 pixels) ; certaines programmations ont deux états d'image possibles d'un lancement à l'autre (0,02 % des pixels), quel que soit l'exécutable.
 
+### Étape 9 : moteur de tracé (15 octobre 2026)
+
+`PLAN-LASERS.md`, « Étape 9 » ; historique 24 (lasers et lyres). Fichiers ILDA, dessins, sinus et formes du programmeur passent par le moteur de tracé (`src/trace.cpp`) : miroirs avec inertie, faisceaux, droites et arcs de cercle raccordés ; arcs à l'ombre arrêtés sur le plan de la face du pavé (shader) ; moteur CPU sur tous les cœurs, cache des figures fixes.
+
+Banc complet en mouvement, banc rapide, 2 lancements chacun, contre `bench\ref\avant_etape9.exe` (`bench\e9_las_*`, lyres `bench\e9_ly_*`), image entière (GPU) :
+
+| Cas | Avant | Étape 9 | Note |
+|---|---|---|---|
+| L1, L3 à L6, M1, L1 en mode ligne | | dans le bruit (−7 à +1 %) | images identiques |
+| L2 cônes (public, scène) | 18,8 / 19,2 ms | 19,6 / 19,5 ms | +2 à +4 % ; ombres des cônes arrêtées sur les faces (0,1 à 0,3 % des pixels) |
+| L7 programmeur | 32,9 ms | 34,2 ms | +4 % : vague, double éventail, grille et formes en droites et arcs exacts |
+| I1 nappes | 42,7 ms | 46,9 ms | +10 % : arcs au lieu de polygones |
+| I2 faisceaux | 7,4 ms | 6,7 ms | −10 % |
+| I3 géométrie | 58,7 ms | 91,6 ms | +56 % : passe des arcs 72 ms |
+| I4 tunnels | 44,6 ms | 48,6 ms | +9 % |
+| P1 dessins à main levée | (nouveau) | 99 ms | passe des arcs 82 ms, 11 400 arcs |
+| P2 formes | (nouveau) | 45 ms | passe des arcs 31 ms |
+| P3 sinus, Lissajous | (nouveau) | 92 ms | passe des arcs 81 ms, 8 400 arcs |
+| banc des lyres | | images identiques | temps dans le bruit (1er lancement de la référence perturbé) |
+
+**Moteur CPU** (moyenne par image) :
+
+| Cas | Avant (un cœur) | Plusieurs cœurs | + cache des figures fixes (immobile) | En mouvement (cache actif) |
+|---|---|---|---|---|
+| L7 | 3,4 ms | 1,7 ms | 0,4 ms | 1,4 ms |
+| I1 | 7,2 ms (9,1 au début de l'étape 9) | 1,8 ms | 0,5 ms | 1,3 ms |
+| I3 | 9,1 ms (14,6) | 2,7 ms | 0,7 ms | 2,6 ms |
+| P1 | (24,4) | 4,1 ms | 1,0 ms | 1,0 ms |
+| P3 | (18,5) | 3,1 ms | 0,7 ms | 2,2 ms |
+
+- Plusieurs cœurs : un laser par tâche (12 fils sur le i7-5820K, 6 cœurs), morceaux puis impacts mis bout à bout dans l'ordre : images identiques (0 % de pixels changés). Une allocation mémoire par arc retirée (freinait les fils).
+- Cache (`--set lasercache=0` pour couper, case de l'onglet Rendu) : clé = toutes les entrées de la figure (position, angles des galvos, couleurs, forme, image ILDA, puissance), et hangar et obstacles pour tout le cache (le personnage qui bouge invalide tout).
+- Ligne « Lasers » du banc : `moteur CPU x ms (morceaux a, impacts b)`.
+
+**Passe des arcs : où va le temps** (diagnostics, cas L2, L7, I3, P3, immobile, passe des arcs) :
+
+| Essai (non gardé) | L2 | L7 | I3 | P3 |
+|---|---|---|---|---|
+| version de l'étape 9 | 14,0 ms | 15,2 ms | 62,2 ms | 75,9 ms |
+| sans le calcul d'un point de nappe (`laser_arc_at`) : racines, boucle, lectures | 5,0 | 5,1 | 21,1 | 25,9 |
+| sans fumée ni volutes dans les arcs | 11,7 | 13,4 | 54,5 | 66,5 |
+| une seule intersection par couple (image fausse) | 7,9 | 7,6 | 32,5 | 40,2 |
+
+- Comptage (P3, `--stats`) : 809 millions de couples (pixel, morceau), 867 millions d'intersections calculées en entier, **589 millions qui éclairent vraiment (73 %)**, deux intersections éclairées pour un même couple dans 0,4 % des cas. Le travail est presque entièrement utile : 70 nappes traversées par pixel en moyenne (200 figures de ±40° vues du public).
+- **Un point de nappe conique coûte environ 2 fois un point de nappe plane** : ≈ 95 ps contre ≈ 45 ps (référence : I1 31,5 ms pour 698 millions de couples, I3 45,4 ms pour 977 millions). En plus : les racines (équation du 2e degré), l'angle le long de l'arc (arc tangente), la normale, la limite de courbure, la vitesse angulaire.
+- Les arcs couvrent moins de couples que les polygones (I1 : 506 contre 698 millions ; I3 : 845 contre 977), mais chacun coûte le double.
+
+| Essai d'allègement (exact) | Résultat |
+|---|---|
+| Rejet de l'intersection hors du morceau avant l'arc tangente et la lecture de la fumée (borne de Taylor, jamais plus strict que le test exact) | dans le bruit (−1 à +4 %) : retiré |
+| Tri des intersections par fil avant le long calcul (le 1er tour pour la 1re gardée) | +2 à +13 % (test rapide fait deux fois par couple) : retiré |
+| Arc tangente relative au milieu du morceau, demi-angle précalculé par tuile (sans recalage ni division) | −5 instructions, temps dans le bruit (−1 à +2 %) : retiré |
+| Faits avant (15 octobre) : fumée lue plus tôt, `kpr` sans division, limite de courbure sans racine, morceaux de 30° ou 45° | aucun gain |
+
+- La passe n'est limitée ni par les instructions ni par les intersections inutiles : par le nombre de points de nappe réellement éclairés et le coût de chacun. Un vrai gain demande soit moins de points (moins de lasers, figures plus petites, résolution réduite des passes laser), soit un compromis sur l'image : à décider avec l'utilisateur (voir `PLAN-LASERS.md`, « Étape 9 : résultats »).
+- Défaut existant (déjà dans la référence) : les impacts lointains sur le sol, vus en rasant, sont en pointillés (lignes plus fines qu'un pixel).
+
+### Blanc à la sortie (15 octobre 2026)
+
+`PLAN-LASERS.md`, « Étape 4 (en partie) » ; historique 25. Banc rapide, immobile, 8 cas (`-Cases "1,4,6,7,10,14,15,22"`), contre `bench\ref\avant_sortie.exe` (`bench\blanc_las_*`, lyres `bench\blanc_ly_*`) : +1 à +3 % à l'image (L1 14,4 → 14,6 ms, L7 32,3 → 33,1 ms, I1 48,7 → 49,6 ms) ; passe « lasers : sorties » ~0,25 ms pour 200 lasers ; blanchiment dans la composition : coût nul. Banc des lyres : images identiques, temps dans le bruit.
+
 ### Pistes pour la suite (sans dégrader l'image)
 
 1. Profondeur maximale par tuile : ignorer les segments entièrement derrière les surfaces de la tuile (peu de gain attendu dans les cas du banc, plus dans une vraie scène).
@@ -598,6 +659,52 @@ Pointe des cônes : quelques pixels changent d'un lancement à l'autre (déjà d
 6. **Variante « nappes et traits seuls »** (sans le code des traits séparés et de l'ondulation), choisie quand aucune figure n'a de traits visibles : ~−20 % attendu (sans ce chemin, L1 passait de 6,9 à 5,6 ms à l'étape 1). Prévue avec la lecture ILDA (`PLAN-LASERS.md`, « Étape 3 bis »).
 8. Fichiers ILDA : les figures planes découpées en dizaines de nappes depuis la même sortie sont le pire cas (I3 : 1 milliard de couples). Pistes : rejet plus tôt des pixels hors du coin de chaque nappe (test des deux bords à l'écran, comme pour les cônes, piste 2) ; grosses tuiles plus fines près des sorties.
 7. Volutes : un cas de banc « L1 sans volutes » mesurerait leur coût dans le même lancement (moins de bruit) ; la 2e octave est choisie dans tous les cas du banc (il y a toujours une nappe à moins de 7 m de la caméra) : un test par segment plus fin (part de l'écran à moins de 7 m) la couperait plus souvent.
+
+## Lyres superposées (16 octobre 2026)
+
+Constat (banc `--bench-lyres`, historique n°26 et 27) : quand toutes les lyres visent le même point, chaque pixel du sol est éclairé par presque toutes les lyres : la passe des surfaces passe de 3,8 ms (zoom 3) à 38 ms (zoom 20) et 110 ms (zoom 50), alors que le sol n'y montre plus que du flou. Le mouvement des lyres ne coûte presque rien de plus : c'est la superposition qui coûte. Part du temps d'une lyre dans un pixel : tache (image projetée) ~55 %, ombres ~27 %, le reste (direction, reflet GGX ~2 %) ~20 %.
+
+1. **Gobo ouvert sans lecture de texture** (image identique) : une lyre sans gobo peu floue ne lit plus la texture du gobo (disque plein). −1 à −6 % sur les surfaces.
+2. **Lyres superposées à 1/4** (réglage `crowd`, onglet Rendu « Lyres superposées à 1/4 au-delà de », 24 par défaut depuis le 16 octobre 2026 ; 0 = jamais) :
+   - Seules les lyres sans gobo ni prisme dont le bord de la tache fait au moins 10 pixels à l'écran, là où elle arrive (grand zoom, frost, hors de la mise au point), sont éligibles (`Renderer::assign_beam_tiers`, marque `prism.x = -1`). Les petites taches nettes (Couronne d'origine, zoom 3) restent à pleine résolution.
+   - Le CPU projette la tache de chaque lyre éligible sur 32 × 18 tuiles : le mode n'est actif que si plus de N taches se superposent quelque part. Sinon rien ne change (pas de passe à 1/4, pas de normales à écrire).
+   - Le GPU (`cs_cull_clusters`) passe ces lyres dans la liste des lyres douces des cases où plus de N se superposent.
+   - Passe à 1/4 (`fs_soft_light`) : éclairement **par direction** (somme des E_i · l_i par couleur) : la composition en tire N·D avec la normale fine, donc le relief est exact. Reflet calculé sur la normale moyenne du bloc 4 × 4 avec une rugosité élargie (Toksvig). Bord de la tache adouci sur au moins 8 pixels (pas d'escalier).
+   - **Scintillement** (réglage `sparkle`, 1,75) : la composition multiplie le reflet du bloc par la réponse du relief fin du pixel dans la direction moyenne des lyres, divisée par la moyenne de cette réponse sur le bloc (calculée sur ses 16 pixels). La moyenne ne change pas et le béton scintille. À 1,75, la part de grains brillants est celle de la pleine résolution (1 : moitié moins ; mesures sur C2, C3, C6, K4).
+   - Lyres frost seules (sans lyres superposées) : variante légère `fs_soft_simple`, la passe d'avant (même image, même coût).
+   - L'eau au sol est dans la longueur de la normale du G-buffer (1 + eau) : pas de reflet des lyres à 1/4 dans l'eau (comme la passe des surfaces).
+   - Mesures alternées (`-Fast`, crowd=24, contre `bench\ref\avant_lyres.exe`) : C2 52,6 → 21,5 ms (−59 %) ; C3 127 → 31,9 ms (−75 %) ; C6 78,6 → 25,0 ms (−68 %) ; M1 44,6 → 24,7 ms (−45 %) ; M3 125 → 30,4 ms (−76 %) ; C1, C4, C5, D1 à D3, M2 inchangés. Couronne (crowd 0 contre 24) : ambiance d'origine inchangée (7,5 et 11,4 ms) ; zoom 20 30,8 → 16,8 ms ; zoom 45 59,9 → 19,8 ms. Banc général : images identiques (PSNR 61 à 84 dB), temps inchangés.
+   - Image (cases chargées) : PSNR 24 à 30 dB contre la pleine résolution, car les grains brillants ne tombent pas aux mêmes pixels. Vues entières et agrandissements : `bench\ly_images`.
+3. **Couronne d'origine (ambiance 9)** : 11,4 ms vers le point (faisceaux dans la fumée ~5 ms, surfaces ~4 ms). Ses taches sont petites et nettes : elle n'est pas concernée par le 1/4. Ses à-coups au banc venaient surtout du GPU occupé entre deux images par d'autres programmes (attente jusqu'à 20 ms pour 7 ms de rendu).
+
+Essais écartés (images ou mesures) :
+
+| Essai | Résultat |
+|---|---|
+| Lyres superposées à 1/4 comme les lyres douces d'avant (un pixel du bloc pour la normale) | reflets en pavés de 4 × 4 : refusé |
+| Toutes les lyres sans gobo éligibles (sans critère de taille du bord) | taches nettes abîmées dans les scènes ordinaires (escaliers) : refusé |
+| Une seule direction moyenne pour le reflet (lobe élargi selon l'écart des directions) | plus de scintillement, sol terne |
+| Lyres une par une à pleine résolution sans tache ni ombres, multipliées par un taux de passage calculé à 1/4 | bord de la convergence et ombre du cube perdus : les lyres cachées n'arrivent pas sous le même angle que les visibles ; C3 55 à 78 ms |
+| Scintillement renforcé selon l'écart des directions des lyres | aucun effet (l'écart varie peu) |
+| Moyenne du scintillement par la normale moyenne (Toksvig) au lieu des 16 pixels | image 3 à 9 niveaux plus sombre |
+| Nouvelle passe à 1/4 aussi pour les lyres frost seules | +0,7 ms (1/4) et +0,3 ms (composition) : variante légère gardée |
+| Sinus et cosinus du prisme et log2 de la mise au point précalculés | aucun gain (le compilateur les sort déjà) |
+| Sans lecture du gobo ouvert même flou | aucun gain |
+| Sans la branche des images en cache (prisme) | −3 à −5 % seulement |
+
+## Marches dans la fumée des faisceaux 1/2 et 1/4 (16 octobre 2026)
+
+Scène Contre-jour (57) : marches droites et bords de rectangles dans la fumée autour des lyres. Cause : les faisceaux doux calculés à 1/2 ou 1/4 (`beam_tiers`) prenaient un flou d'anti-crénelage de la taille d'un pixel de leur niveau ; ce flou débordait de l'enveloppe du cône dessiné et y était coupé net. Le flou est maintenant celui d'un pixel de la fumée (`tvp.tiles[3]`, `Renderer::render`) ; l'agrandissement bilatéral adoucit le reste. Image plus proche du calcul tout en pleine résolution (fumée un peu plus lumineuse), banc général : PSNR 50 à 86 dB, coût inchangé (historique 29). Avant / après : `bench	ier_images`.
+
+Reste (vu du public, près des lentilles et du truss) : de petits blocs, parce que la pointe des faisceaux et les pièces fines (étriers, barres) sont plus fines qu'un point des niveaux 1/2 et 1/4. Essais écartés : agrandissement sur 4 × 4 points quand les 4 voisins sont à une autre profondeur (aucun effet visible) ; pointe des faisceaux (tant qu'ils font moins de 8 points du niveau) recalculée à la résolution de la fumée (blocs du bas supprimés, mais 7 % de lumière perdue : la coupure le long du faisceau n'est pas additive dans le calcul analytique) ; pixels de bord de profondeur recalculés à la résolution de la fumée (presque aucun pixel concerné autour du truss : les blocs ne viennent pas de la profondeur). Couper les niveaux (`--set tiers=0`) enlève tout, mais coûte ×1,3 à ×4,8 (zoom 45 + frost 10,9 → 40,8 ms ; C3 31,9 → 135 ms ; Couronne zoom 45 19,8 → 73,5 ms).
+
+## AMD FSR 1 (16 octobre 2026)
+
+Dernier recours, **coupé par défaut** (onglet Rendu « AMD FSR 1 », `--set fsr=1`, `fsrdiv`, `fsrsharp`). L'image est calculée à la résolution de l'écran / diviseur, tonalité et gamma compris (`fs_final` dans `fsr_in`), puis agrandie par EASU (`fs_fsr_easu`) et rendue nette par RCAS (`fs_fsr_rcas`) : portage GLSL de `ffx_fsr1.h` (AMD, licence MIT). Le tramage et l'interface (ImGui) sont ajoutés après, à pleine résolution : le menu n'est pas touché. Marche en fenêtré comme en plein écran (taille de la fenêtre). Remplace la « Résolution interne » (étirement bilinéaire) quand il est actif.
+
+- Coût de FSR en 4K (GTX 1080) : EASU 0,72 ms, RCAS + interface 0,28 ms, image finale réduite 0,07 ms.
+- Banc général (un lancement, historique 28) : ÷1,5 : ×1,2 à ×1,6 (défaut public 7,5 → 5,9 ms ; gobo + prisme 17,0 → 11,5 ms) ; ÷2 : ×1,5 à ×2,1 (défaut 7,5 → 4,7 ms ; gobo + prisme 17,0 → 9,2 ms). Lasers ÷2 : L1 15,7 → 6,8 ms, L2 22,6 → 6,7 ms. Le gain est moindre que le nombre de pixels : tables de la fumée, tri et CPU ne dépendent pas de la résolution.
+- Image (`bench\fsr_images`) : plus nette que l'ancien étirement ; à ÷2 les traits laser fins s'épaississent et deviennent un peu granuleux, le scintillement du sol s'adoucit.
 
 ## Ce qui coûte cher (à garder en tête)
 
@@ -617,6 +724,11 @@ Pointe des cônes : quelques pixels changent d'un lancement à l'autre (déjà d
   - Les faisceaux très doux (frost) et les lyres très douces sur les surfaces, eux, passent à 1/2 ou 1/4 sans différence visible.
 
 ## Pistes d'optimisation futures (pas encore essayées)
+
+### Faisceaux doux en 1/2 seulement (sans le 1/4)
+
+- **Constat** (16 octobre 2026, scène Contre-jour 57 vue du public) : petits blocs dans la fumée autour des lentilles et du truss, venant des faisceaux doux calculés à 1/2 et 1/4 (voir « Marches dans la fumée »). Les couper coûte ×3 à ×4 sur les faisceaux larges.
+- **Idée** (demandée par l'utilisateur, à faire plus tard) : n'utiliser que le niveau 1/2 (`assign_beam_tiers` : plus de niveau 2), éventuellement en réglage. Mesurer le coût (banc général cas 4 à 9, banc des lyres C2, C3, K3, K4) et montrer les images de Contre-jour (`--ambiance 57 --cam 5,1.7,0,180,5`).
 
 ### Tables des faisceaux du miroir : seulement pour les lyres reflétées dans l'eau
 

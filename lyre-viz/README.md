@@ -41,16 +41,18 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `--nogi` | Coupe les rebonds de lumière. |
   | `--frames N` | Quitte après N images. |
   | `--shot image.bmp` | Avec `--frames` : enregistre la dernière image (Direct3D 11). |
-  | `--fullscreen` | Plein écran, à la résolution de l'écran. |
+  | `--fullscreen` | Plein écran sans bordure, à la résolution de l'écran (par défaut). **F11** bascule entre plein écran et fenêtre. |
+  | `--windowed` | Démarre en fenêtre. |
   | `--set nom=valeur` | Change un réglage au lancement (voir la liste ci-dessous). Exemple : `--set gi=0 --set analytic=0`. |
   | `--bench` | Banc d'essai (voir plus bas). |
   | `--bench-lasers` | Banc d'essai des lasers (voir plus bas). Mêmes options que `--bench`. |
+  | `--bench-lyres` | Banc d'essai des lyres qui visent toutes le même point (voir plus bas). Mêmes options que `--bench`. |
   | `--fast` | Banc rapide : 30 images de chauffe et 60 mesurées par cas (au lieu de 60 et 150). |
   | `--behind` | La fenêtre s'ouvre derrière les autres sans prendre le clavier. Attention : le GPU est alors 5 à 15 % plus lent (Windows donne la priorité à la fenêtre active). |
   | `--demo [0..5]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large, 4 pont de scène en orange (gobo barres, zoom 2,2°, tilt 69°) : taches très allongées vues en rasant ; 5 eau au sol (6 taches blanches larges, avec `--set wet=...`). |
-  | `--demo-laser [0..5]` | Vue d'essai des lasers, lyres éteintes, effets figés : 0 les formes (éventail, double éventail, cône, tunnel, vague, grille, diffraction ×9) sur le pont de scène ; 1 les dégradés (aucun, 2 et 3 couleurs, défilant, arc-en-ciel, au hasard) ; 2 la programmation de démonstration sur les 200 lasers (cas L7 du banc), vue du public ; 3 un éventail vert vu de près, en biais, dans une fumée épaisse : les volutes (à comparer à la photo 5 de `docs/references-lasers/`) ; 4 des fichiers ILDA : 7 lasers du pont, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, cœur, éventail), vus du public (dans l'axe : `--cam -44.5,11.8,0,0,-12`) ; 5 une nappe verte à hauteur de poitrine à travers les mannequins et le personnage (trous d'ombre, étape 5). |
+  | `--demo-laser [0..5]` | Vue d'essai des lasers, lyres éteintes, effets figés : 0 les formes (éventail, double éventail, cône, tunnel, vague, grille, diffraction ×9) sur le pont de scène ; 1 les dégradés (aucun, 2 et 3 couleurs, défilant, arc-en-ciel, au hasard) ; 2 la programmation de démonstration sur les 200 lasers (cas L7 du banc), vue du public ; 3 un éventail vert vu de près, en biais, dans une fumée épaisse : les volutes (à comparer à la photo 5 de `docs/references-lasers/`) ; 4 des fichiers ILDA : 7 lasers du pont, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, cœur, éventail), vus du public (dans l'axe : `--cam -44.5,11.8,0,0,-12`) ; 5 une nappe verte à hauteur de poitrine à travers les mannequins et le personnage (trous d'ombre, étape 5) ; 6 la sortie d'un éventail du pont vue de près (point chaud, lueur) ; 7 la programmation de départ, dimmers montés. |
   | `--ilda dossier` | Bibliothèque ILDA (par défaut `server/storage/ilda`, cherchée en remontant depuis l'exécutable ; un sous-dossier = une banque). |
-  | `--ambiance N` | Démarre sur l'ambiance N (1 à 20) de l'onglet Ambiances. Captures : `--ambiance 15 --frames 300 --noui --shot a15.bmp`. |
+  | `--ambiance N` | Démarre sur l'ambiance N (1 à 60 ; 21 à 60 : scènes de `src/scenes`) de l'onglet Ambiances. Captures : `--ambiance 15 --frames 300 --noui --shot a15.bmp`. |
   | `--cam x,y,z,cap,site` | Place la caméra au lancement (position en mètres, cap et site en degrés ; cap 180 = vers la scène). Exemple : `--demo-laser 0 --cam 6,1.7,0,180,9`. |
 
   Réglages de `--set` :
@@ -61,6 +63,9 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `samples` | Fumée : échantillons par faisceau (calcul par échantillons) ; en analytique, densité des morceaux de rayon. |
   | `tiers` | Fumée : faisceaux doux calculés à 1/2 ou 1/4 de la résolution. |
   | `soft` | Surfaces : lyres très douces (frost) éclairées à 1/4 de la résolution. |
+  | `fsr`, `fsrdiv`, `fsrsharp` | AMD FSR 1, dernier recours (0 par défaut) : image calculée à la résolution de l'écran / `fsrdiv` (1,5 Qualité, 1,7 Équilibré, 2 Performance, 3 Ultra), agrandie par EASU, netteté RCAS `fsrsharp` (0 à 1, 0,8). Remplace `scale`. Fenêtré ou plein écran ; l'interface reste à pleine résolution. |
+  | `crowd` | Surfaces : case de l'écran où plus de N lyres sans gobo à grande tache floue (grand zoom, frost) se superposent : éclairées à 1/4 (24 par défaut ; 0 : jamais). |
+  | `sparkle` | Lyres éclairées à 1/4 : scintillement des reflets rendu par le relief fin (1,75 ; 0 : reflet lisse). |
   | `adaptive`, `fps` | Qualité adaptative et cadence visée. |
   | `voldiv`, `temporal`, `history` | Résolution de la fumée, accumulation dans le temps. |
   | `gi`, `volumetrics`, `surfaces`, `specular`, `prepass`, `bloom`, `scale` | Options de l'onglet Rendu. |
@@ -69,12 +74,14 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `floortile` | Taille de répétition de la texture du sol, en mètres (8 par défaut). |
   | `wet` | Eau au sol : 0 sec, 0,1 creux remplis et quelques flaques, 0,5 environ 30 % de flaques, 1 inondé. |
   | `shadows` | Ombres exactes des obstacles (1) ou non (0). |
-  | `chroma`, `chromaforce` | Aberration chromatique des lyres sur les surfaces (0 par défaut, 1 active) et son intensité (1 = lyre courante). |
+  | `chroma`, `chromaforce` | Aberration chromatique des lyres sur les surfaces (1 par défaut, 0 coupée) et son intensité (1 = lyre courante). |
   | `flooraniso` | Filtrage anisotrope de la texture du sol (1 à 16, 4 par défaut). |
   | `lasers` | Lasers dans la fumée (1 par défaut) ou coupés (0). |
   | `laserpattern`, `lasercount`, `laserpower` | Pilotage des lasers (0 éteints, 1 à 6 : motifs des cas L1 à L6, 7 : programmeur de l'onglet Lasers), boîtiers allumés dans les motifs d'essai (1 à 200), puissance d'un boîtier (W). |
   | `lasergain`, `laserwidth`, `laserair` | Intensité des lasers dans la fumée, largeur minimale d'un trait (sigma, en pixels, 0,6 par défaut), diffusion de l'air (traits visibles sans fumée). |
   | `laserfog` | Lasers : fumée de la pièce (amas, brume plus dense en bas) au point de chaque nappe (1 par défaut) ou fumée uniforme (0). |
+  | `laserwhite`, `laserexit` | Lasers : blanchiment des lumières très intenses, comme une caméra (0,6 par défaut ; 0 : couleurs pures, comme l'œil) ; lueur de sortie (point chaud et halo, ×1 par défaut ; 0 : aucune). |
+  | `lasercoll`, `laserimpacts`, `lasercache` | Lasers : arrêtés par les obstacles, impacts sur les surfaces, cache des figures fixes du moteur CPU (1 par défaut ; 0 pour couper). |
   | `laserphase`, `laserfwd`, `laserg`, `laserg2` | Lasers : diffusion vers l'avant à deux lobes (1 par défaut) ou un seul comme les lyres (0) ; part du lobe très avant (0,42), son g (0,88), g du lobe doux (0,35). |
   | `volutes`, `volforce`, `voltaille`, `volperiode` | Lasers : volutes fines dans les nappes (1 par défaut), contraste (0,6), taille d'un motif (1,6 m), durée de la boucle d'évolution (16 s). |
   | `volfine`, `volfinelod`, `volfinepoids` | Volutes : 2e octave de près (1 par défaut), sa portée (niveau −1 : pixel de moins de 3,5 mm, soit à moins de ~7 m) et son poids (0,6). |
@@ -115,17 +122,28 @@ LyreViz.exe --bench-lasers --fullscreen
 ```
 
 - Cas (`PLAN-LASERS.md`, section 10) : L1 200 éventails de 1 000 traits en mouvement (3 vues), L2 200 cônes de 32 segments (2 vues), L3 caméra au milieu des nappes, L4 200 × 8 traits séparés, L5 nappes en gros plan dans une fumée épaisse, L6 traits vers le sol et les obstacles, M1 100 lyres + 100 lasers (3 vues), la scène sans lasers, puis L7 la programmation de démonstration (toutes les formes, dégradés, diffraction et effets sur les 200 lasers, vue du public). Lyres éteintes sauf en M1.
-- Puis les fichiers ILDA (cas 15 à 18) : I1 à I4, les 200 lasers jouent chacun un fichier d'une banque (Nappes, Faisceaux, Géométrie, Tunnels), vue du public ; et le cas 19, L1 en mode ligne (les mêmes éventails en nappes continues). Ligne « ILDA » par cas : points, faisceaux, nappes, niveau de tolérance de la réduction.
+- Puis les fichiers ILDA (cas 15 à 18) : I1 à I4, les 200 lasers jouent chacun un fichier d'une banque (Nappes, Faisceaux, Géométrie, Tunnels), vue du public ; le cas 19, L1 en mode ligne (les mêmes éventails en nappes continues) ; puis le moteur de tracé (cas 20 à 22) : P1 dessins à main levée (banque Crayon), P2 formes, P3 sinus modulés et Lissajous animés. Ligne « ILDA » par cas : points, faisceaux, droites, arcs, niveau de tolérance.
 - `--quick` : 5 cas (L1, L2 et M1 vus du public, L3, L4). Les autres options sont celles du banc des lyres ; `--stats` compte aussi les couples (pixel, segment) des lasers et les segments par tuile.
-- Même format de sortie que le banc des lyres, avec une ligne « Lasers » par cas : boîtiers, segments, traits, temps CPU du moteur laser.
+- Même format de sortie que le banc des lyres, avec une ligne « Lasers » par cas : boîtiers, segments, traits, temps CPU du moteur laser (dont morceaux et impacts).
 - Scripts : option `-Lasers` de `tools\perf_ab.ps1` et `tools\set_ab.ps1` (voir `PERFORMANCE.md`).
+
+### Banc d'essai des lyres superposées
+
+```bat
+LyreViz.exe --bench-lyres --fullscreen
+```
+
+- Les 184 lyres des trusses et du pont visent toutes le point (4, 0, 0) au sol (comme l'ambiance Couronne), ou pendent droit (même nombre de faisceaux, sans convergence). Lasers éteints : seules les lyres sont mesurées.
+- Cas : C1 à C3 convergence zoom 3, 20 et 50° vue vers le point (17 m) ; C4 zoom 50 + frost 0,6 ; C5, C6 zoom 3 et 50 vus du public ; D1 à D3 sans convergence ; M1 à M3 en mouvement (cercle autour du point, ou vagues de tilt), même avec `--static` ; K1 à K4 l'ambiance Couronne (n° 9) du public et vers le point, puis zoomée à 20 et 45°.
+- `--quick` (et `-Fast` de `perf_ab.ps1`) : C1 à C3. Script : option `-Lyres` de `tools\perf_ab.ps1`, `-Cases "1,2"` pour une partie des cas.
 
 ## Commandes
 
 | Action | Touche |
 |---|---|
 | Regarder | clic droit maintenu + souris |
-| Avancer / reculer / côtés | W A S D (Z Q S D en AZERTY) ou flèches |
+| Avancer / reculer / côtés | W A S D (Z Q S D en AZERTY) |
+| Ambiance précédente / suivante, rangée au-dessus / en dessous | flèches (à tout moment, menu ouvert ou fermé) |
 | Monter / descendre | Espace ou E / C ou A (Q en AZERTY) |
 | Aller vite | Maj, la molette règle la vitesse |
 | Mode personnage (vue à la 3e personne, saut avec Espace) | F |
@@ -160,7 +178,7 @@ Chaque lyre a les canaux d'une vraie lyre :
 
 ### Ambiances
 
-Premier onglet du panneau : une grille de 20 boutons, une ambiance par bouton (programmation des lyres, des lasers, de la fumée, de l'eau au sol et de l'aberration chromatique). Tant que l'onglet est ouvert, les **flèches du clavier** passent d'une case à l'autre (la caméra garde Z Q S D). Les lyres rejoignent leur nouvelle position à leur vitesse ; les onglets Lyres, Effets, Lasers et Fumée montrent la programmation, qu'on peut retoucher. Code : `src/ambiances.cpp`.
+Premier onglet du panneau : une grille de 20 boutons, une ambiance par bouton (programmation des lyres, des lasers, de la fumée, de l'eau au sol et de l'aberration chromatique). À tout moment (menu fermé ou autre onglet), les **flèches du clavier** passent d'une case à l'autre (la caméra se déplace avec Z Q S D). Les lyres rejoignent leur nouvelle position à leur vitesse ; les onglets Lyres, Effets, Lasers et Fumée montrent la programmation, qu'on peut retoucher. Code : `src/ambiances.cpp`. **Ambiances 21 à 60 : les 40 scènes du moteur de rendu** (univers très différents : nappes en plafond, couronnes de faisceaux, fichiers ILDA, sol inondé, désert, abysses, synthwave…), dans le dossier `src/scenes/` avec leurs images d'inspiration et un aperçu de chacune (voir `src/scenes/README.md`).
 
 1. Démarrage (lyres du lancement, lasers éteints) ; 2. Lasers simples (verts, au-dessus du public : nappes pleines et éventails de quelques traits) ; 3. Ballet blanc ; 4. Gobos au sol ; 5. Prismes ; 6. Arc-en-ciel ; 7. Sol mouillé ; 8. Cathédrale ; 9. Couronne (toutes les lyres visent un point) ; 10. Techno strobe ; 11. Aube pastel ; 12. Brasier ; 13. Optique nette (aberration chromatique) ; 14. Tunnel laser ; 15. Plafond laser ; 16. Rideaux laser ; 17. Constellation (grilles en diffraction) ; 18. Océan ; 19. Galaxie ; 20. Grand final (toutes les formes laser + lyres). Le grand final reprend la démonstration des lasers (cas L7 du banc) : au-dessus du budget.
 
@@ -168,13 +186,13 @@ Premier onglet du panneau : une grille de 20 boutons, une ambiance par bouton (p
 
 Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionne l'appareil le plus proche (Ctrl + clic l'ajoute ou le retire), un glisser sélectionne ceux du rectangle (Ctrl ajoute, Maj retire). Les boutons « < Précédent » et « Suivant > » ne gardent qu'un appareil et passent au voisin (avec « Inverser » : tous sauf celui-là). Un cadre entoure chaque appareil sélectionné (jaune : lyres, vert d'eau : lasers), avec son numéro s'il y en a 24 au plus ; un petit point marque les autres. Seuls les appareils de l'onglet ouvert sont marqués (lyres dans Lyres, lasers dans Lasers), rien dans les autres onglets.
 
-### Lasers (étapes 1 à 3 de `PLAN-LASERS.md`)
+### Lasers (étapes 1 à 3, 5 et 9 de `PLAN-LASERS.md`)
 
 - 200 boîtiers : 168 sur les trusses (entre les lyres), 16 sur le pont de scène, 8 au sol de la scène, 8 en nez de scène. Chaque boîtier est fixe (axe d'accroche par groupe) et place sa figure dans le champ de son scanner (angle maximal réglable, 60° par défaut), avec l'inertie des galvos. Les corps des boîtiers sont dessinés (pavés sombres, sortie claire).
 - **Onglet Lasers** (même principe que les lyres) :
   - sélection : tous, groupes, une sur deux, inverser, ou laser par laser ;
   - intensité : dimmer, strobe ; couleur (nuancier) et **dégradé le long de la figure** : aucun, 2 ou 3 couleurs, défilant, arc-en-ciel, au hasard par trait ;
-  - **figure** : éventail, double éventail, cône, tunnel, vague, grille de points ; ouverture (0 = un point, jusqu'à l'angle maximal), nombre de traits (1 à 2 000), écart, amplitude, rangées ; **réseau de diffraction** ×3, ×5, ×9 avec l'écart des copies ;
+  - **figure** : éventail, double éventail, cône, tunnel, vague, grille de points, carré, triangle, étoile (nombre de branches), cœur ; toutes passent par le moteur de tracé (droites et arcs de cercle exacts, aucune courbe faite de traits droits) ; ouverture (0 = un point, jusqu'à l'angle maximal), nombre de traits (1 à 2 000), écart, amplitude, rangées ; **réseau de diffraction** ×3, ×5, ×9 avec l'écart des copies ;
   - position : pan, tilt, roulis, rotation continue ;
   - **effets** sur la sélection (même moteur que les lyres : forme d'onde, vitesse, amplitude, décalage, ailes) : vagues pan et tilt, cercle, huit, éventail, roulis, pulsation de l'ouverture, chenillard de traits, chenillard d'intensité, arc-en-ciel, alternance de deux couleurs ;
   - réglages des boîtiers : pilotage (programmeur ou motifs d'essai du banc), programmation de départ, démonstration, grand master, puissance, angle maximal, inertie des galvos, diamètre de sortie, divergence ; dans la fumée : intensité, largeur minimale d'un trait, diffusion de l'air.
@@ -182,8 +200,11 @@ Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionn
 - **Fichiers ILDA** (comme le laser 2 du simulateur web) : source « Fichier ILDA » dans l'onglet Lasers ; bibliothèque `server/storage/ilda` (une banque par sous-dossier) ; lecture en boucle, aller-retour ou image fixe, cadence, couleurs du fichier ou couleur du laser ; la taille (ouverture), le pan, le tilt, le roulis, la rotation, la diffraction et les effets s'appliquent comme aux formes. Voir « Lasers : fichiers ILDA » plus bas.
 - **Mode ligne** : 0 trait (bouton « Ligne ») = nappe continue, comme un balayage sans coupure ; un peu moins cher qu'un éventail de traits (L1 : −15 %).
 - **Dans la fumée** (étape 3, onglet Rendu et onglet Lasers) : la fumée de la pièce éclaire plus ou moins les nappes (amas des machines, brume plus dense en bas) ; la diffusion très avant rend une nappe tournée vers soi beaucoup plus brillante ; les **volutes fines** animées (filaments, trous sombres) se voient dans les nappes, surtout de près.
-- Obstacles (étape 5) : les traits s'arrêtent sur les pavés du décor, les mannequins et le personnage, les nappes y sont coupées (trou d'ombre à bord net, `--set lasercoll=0` pour couper) ; impacts sur les surfaces (`--set laserimpacts=0` pour couper). Cônes et tunnels : nappes coniques exactes.
-- Pas encore : blanc à la sortie, éblouissement, moteur de tracé unique (étape 9 du plan).
+- Obstacles (étape 5) : les traits s'arrêtent sur les pavés du décor, les mannequins et le personnage, les nappes y sont coupées (trou d'ombre à bord net, `--set lasercoll=0` pour couper) ; impacts sur les surfaces (`--set laserimpacts=0` pour couper). Cônes, tunnels et arcs des tracés : nappes coniques exactes ; un arc à l'ombre s'arrête exactement sur le plan de la face du pavé touché (testé dans le shader).
+- **Moteur de tracé** (étape 9) : un laser projette un tracé de scanner, comme un fichier ILDA ; miroirs avec inertie (coins rapides un peu arrondis, tremblement lissé), faisceaux là où le point reste sur place, puis droites et arcs de cercle raccordés, rendus en nappes planes et en nappes coniques exactes. Voir « Lasers : fichiers ILDA » plus bas.
+- **Moteur CPU** : un laser par fil (tous les cœurs du processeur), même résultat que sur un seul cœur ; **cache des figures fixes** (case de l'onglet Rendu, `--set lasercache=0` pour couper) : une figure dont rien ne change reprend ses morceaux et ses impacts de l'image précédente.
+- **Blanc** (étape 4, en partie) : la lumière très intense déborde sur les autres couleurs, comme sur une caméra : la sortie et le cœur des traits virent au blanc, l'éventail garde sa couleur (`laserwhite`) ; **lueur de sortie** : point chaud blanc et halo de la couleur du laser à chaque sortie (`laserexit`, cachée par le boîtier vu de derrière). Cases de l'onglet Rendu.
+- Pas encore : étoile à branches à la sortie, éblouissement.
 
 ### Panneau
 
@@ -211,7 +232,7 @@ Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionn
   - Chaque tache de lumière (sur le sol, les murs, le décor) renvoie sa couleur dans la pièce.
   - La lumière diffusée par la fumée éclaire aussi la salle.
   - Les deux sont réunis dans une grille 3D de sondes, qui éclaire les surfaces et la fumée.
-- **Aberration chromatique** (coupée par défaut). Franges bleues d'un côté et orange de l'autre au bord des taches et des gobos, comme sur les photos de vraies lyres (voir plus bas).
+- **Aberration chromatique** (active par défaut depuis le 16 octobre 2026). Franges bleues d'un côté et orange de l'autre au bord des taches et des gobos, comme sur les photos de vraies lyres (voir plus bas).
 - **Bloom.** Le halo autour des lentilles et des zones très lumineuses.
 - **Tonemapping ACES.** Les couleurs saturées tirent vers le blanc quand elles sont très intenses, comme sur une photo.
 
@@ -295,18 +316,17 @@ Une nappe laser n'éclaire qu'une tranche de la fumée : on y voit une coupe de 
 
 ### Lasers : fichiers ILDA
 
-Même principe que le laser 2 du simulateur web (`src/laser2/`, `docs/laser2-cahier-des-charges.md`) : un laser est un seul faisceau renvoyé par deux miroirs, et chaque image ILDA se réduit à deux primitives, déjà présentes dans le rendu (`src/ilda.cpp`).
+Un laser est un seul faisceau renvoyé par deux miroirs. Chaque image ILDA passe par le **moteur de tracé** (`src/trace.cpp`, `PLAN-LASERS.md` étape 9), comme les formes du programmeur.
 
 - **Lecture** : formats 0, 1 (couleur indexée, palette ILDA par défaut), 2 (palette), 4, 5 (couleur vraie) ; point masqué (bit 6) gardé en noir ; 60 000 points au plus par image. Bibliothèque scannée au lancement, fichiers lus à la première utilisation.
-- **Complément des traits** (comme le web) : un point tous les 0,035 le long des traits allumés (la puissance est répartie entre les points : un long trait de 2 points paraîtrait sinon plus sombre qu'un court).
-- **Réduction** (reprise de `Laser2Scanner._extractPass` du web) :
-  - un point resté sur place (à moins de la demi-divergence, 2,5e-4 rad au moins) : **faisceau**, toute l'énergie de ses points dans un **trait seul** ;
-  - un point qui s'éloigne du précédent : **nappe** entre les deux, prolongée tant que le tracé reste droit, à espacement, niveau et teinte constants ; rendue comme un **segment d'éventail en nappe continue** (énergie des points répartie sur l'angle balayé) ;
-  - chaque point compte 1 / N du temps de l'image (points masqués compris) : un éventail large est plus sombre qu'un étroit, un faisceau fixe éclatant.
-- **Une réduction par image du fichier, en cache**, dans les coordonnées du fichier : la taille, la rotation et la position d'un laser ne changent pas les primitives. 200 lasers qui jouent le même fichier ne la calculent qu'une fois.
-- **Tolérance** : 4 niveaux (×2 chacun) ; un laser dont l'image dépasse 700 primitives passe au suivant, et le niveau monte pour tous quand les segments approchent du plafond (16 384), comme le budget adaptatif du web.
-- **Pas d'inertie des galvos** (comme le web depuis sa refonte : « laser parfait ») ; l'inertie du programmeur s'applique au pan, au tilt et au roulis.
-- **Coût** : celui de la surface couverte, comme pour les formes. 200 lasers en faisceaux (I2) : 1,9 ms ; 200 lasers qui jouent des nappes, des figures ou des tunnels (I1, I3, I4) : 31 à 49 ms (des centaines de millions de couples pixel × segment). Détail : `PERFORMANCE.md`, « Fichiers ILDA ».
+- **Banques générées** (en mémoire, bancs P1 à P3) : « Crayon » (8 dessins à main levée : vitesse irrégulière, tremblement de la main), « Formes » (carré, étoile, triangle, cœur, cercle, spirale, lignes, points), « Sinus » (sinus modulé et Lissajous animés, 60 images).
+- **Complément des traits** (comme le web) : un point tous les 0,035 le long des traits allumés.
+- **Miroirs** : suivi du 2e ordre amorti (constante de temps 60 µs, 30 000 points/s), couleur retardée du retard des miroirs. Chaque course allumée part de son premier point : aucune traînée allumée pendant un saut éteint, quel que soit le nombre de points de saut du fichier (projecteur bien réglé, choix « sans défaut »).
+- **Faisceaux** : un point où les miroirs restent sur place (pas plus courts que la demi-divergence, étendue sous 4 fois) donne un trait seul, avec toute son énergie.
+- **Droites et arcs** : le reste du tracé allumé est découpé en morceaux les plus longs possible (cercle par trois points du tracé, ou droite), à 5e-4 du champ près (0,01° pour 40° d'ouverture) ; la lumière varie linéairement le long de chaque morceau (temps passé : un passage lent est plus lumineux). Rendu : nappe plane pour une droite, nappe conique exacte pour un arc.
+- **Une découpe par image du fichier, en cache**, dans les coordonnées du fichier : 200 lasers qui jouent le même fichier ne la calculent qu'une fois.
+- **Tolérance** : 4 niveaux (×2 chacun) ; une image de plus de 700 morceaux passe au suivant, et le niveau monte pour tous quand les segments approchent du plafond (16 384).
+- **Coût** : celui de la surface couverte. 200 lasers en faisceaux (I2) : 2 ms ; 200 lasers qui jouent des nappes, des figures, des tunnels, des dessins ou des sinus : 30 à 85 ms pour la passe des arcs (un point de nappe conique coûte environ 2 fois un point de nappe plane). Détail : `PERFORMANCE.md`, « Étape 9 ».
 
 ### Ombres des obstacles
 
@@ -416,9 +436,10 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 | `src/ui.cpp` | Panneau de contrôle. |
 | `src/gpu_profiler.cpp` | Temps GPU par passe, limiteur de latence et capture d'image (Direct3D 11). |
 | `src/floor_texture.cpp` | Chargement de la texture du sol (stb_image), mipmaps, couleur du sol pour les rebonds. |
-| `src/lasers.cpp` | Lasers : emplacements des 200 boîtiers, programmeur (formes, dégradés, diffraction, effets, galvos), motifs d'essai, découpage en segments d'éventail. |
+| `src/lasers.cpp` | Lasers : emplacements des 200 boîtiers, programmeur (formes, dégradés, diffraction, effets, galvos), motifs d'essai, découpage en segments d'éventail et en arcs (un laser par fil, cache des figures fixes), impacts. |
 | `src/volutes.cpp` | Lasers : texture 3D des volutes fines (génération au lancement, mipmaps, compression BC5). |
-| `src/ilda.cpp` | Lasers : fichiers ILDA (lecture, bibliothèque, complément des traits, réduction en faisceaux et nappes, cache). |
+| `src/ilda.cpp` | Lasers : fichiers ILDA (lecture, bibliothèque, banques générées, complément des traits, morceaux de chaque image en cache). |
+| `src/trace.cpp` | Lasers : moteur de tracé (miroirs, faisceaux, ajustement en droites et arcs de cercle). |
 | `assets/Concrete031/` | Texture du sol (ambientCG, CC0). |
 | `shaders/lyreviz.glsl` | Tous les shaders (passes ci-dessus). |
 | `tools/compare_bench.py` | Compare deux résultats du banc d'essai (temps et images). |
@@ -445,7 +466,7 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 - **Ombres :** obstacles fixes seulement (pavés), pénombre sur les surfaces mais bord net dans la fumée ; le personnage et les lyres ne font pas d'ombre.
 - **Reflet des faisceaux :** les faisceaux ne se reflètent pas encore dans le sol brillant (seules les taches le font). Prévu. Avec de l'eau au sol, ce serait le reflet le plus visible.
 - **Eau au sol :** le reflet coûte environ 1 ms (4 ms avec gobo + prisme 8 sur toutes les lyres, 11 ms avec zoom 45° + frost : faisceaux larges vus dans le reflet) quand l'eau couvre le sol ; 2 à 3 fois moins à 10 % d'eau (calculé seulement dans l'eau). Les tables des faisceaux du miroir (1,5 à 2,6 ms avec gobo + prisme ou frost) sont encore calculées pour toutes les lyres vues dans le reflet, même si peu de sol est dans l'eau (piste dans `PERFORMANCE.md`, « Pistes d'optimisation futures »). Pas encore de pluie ni d'ondulations dans les flaques.
-- **Aberration chromatique :** sur les surfaces seulement (pas dans la fumée, où elle serait invisible). Coupée par défaut (+0,5 à +0,8 ms avec gobo + prisme 8 sur toutes les lyres).
+- **Aberration chromatique :** sur les surfaces seulement (pas dans la fumée, où elle serait invisible). Active par défaut depuis le 16 octobre 2026 (+0,5 à +0,8 ms avec gobo + prisme 8 sur toutes les lyres) : les bancs mesurés avant cette date l'avaient coupée (comparer avec `--set chroma=0`).
 - **Gobos personnels :** pas encore de chargement de vos propres images de gobo.
 - **Art-Net / DMX :** pas de pilotage par une vraie console. Non prévu pour l'instant.
-- **Lasers :** étapes 1 à 3 de `PLAN-LASERS.md` (rendu par tuiles, moteur et onglet Lasers, fumée). Au-dessus du budget dans les cas lourds, avec la fumée de la pièce et les volutes (réglages par défaut, en mouvement) : lasers seuls 7,1 à 10,2 ms sur L1 (200 × 1 000 traits, selon la vue), 11,9 à 12,1 ms sur L2 (cônes), 7,1 ms sur L3, 20,6 ms sur L7 (démonstration), pour ~4,6 ms disponibles ; L4 (traits séparés) 1,5 ms ; mix 100 lyres + 100 lasers à 9,2 – 11 ms au total. Sans les volutes (`--set volutes=0`) : environ 25 % de moins sur la passe des lasers. Fichiers ILDA : 1,9 ms pour 200 lasers en faisceaux, 31 à 49 ms pour 200 lasers qui jouent des nappes, des figures ou des tunnels. Collisions (traits arrêtés, nappes coupées par les pavés, les mannequins et le personnage) et impacts sur les surfaces (étape 5). Cônes et tunnels en nappes coniques exactes (plus de polygones) : L2 19,3 ms, L7 28,3 ms à l'image (banc rapide, immobile). Puissance provisoire (pas encore en watts par couleur). À venir : un seul moteur de tracé pour toutes les figures (fichiers ILDA, formes, dessin à main levée), étape 9 de `PLAN-LASERS.md`.
+- **Lasers :** étapes 1 à 3 de `PLAN-LASERS.md` (rendu par tuiles, moteur et onglet Lasers, fumée). Au-dessus du budget dans les cas lourds, avec la fumée de la pièce et les volutes (réglages par défaut, en mouvement) : lasers seuls 7,1 à 10,2 ms sur L1 (200 × 1 000 traits, selon la vue), 11,9 à 12,1 ms sur L2 (cônes), 7,1 ms sur L3, 20,6 ms sur L7 (démonstration), pour ~4,6 ms disponibles ; L4 (traits séparés) 1,5 ms ; mix 100 lyres + 100 lasers à 9,2 – 11 ms au total. Sans les volutes (`--set volutes=0`) : environ 25 % de moins sur la passe des lasers. Fichiers ILDA : 1,9 ms pour 200 lasers en faisceaux, 31 à 49 ms pour 200 lasers qui jouent des nappes, des figures ou des tunnels. Collisions (traits arrêtés, nappes coupées par les pavés, les mannequins et le personnage) et impacts sur les surfaces (étape 5). Cônes et tunnels en nappes coniques exactes (plus de polygones) : L2 19,3 ms, L7 28,3 ms à l'image (banc rapide, immobile). Puissance provisoire (pas encore en watts par couleur). Moteur de tracé unique (étape 9) : fichiers ILDA, formes et dessins à main levée en droites et arcs exacts ; moteur CPU sur tous les cœurs avec cache des figures fixes (0,2 à 2,6 ms en mouvement) ; les figures ILDA chargées sur 200 lasers restent très au-dessus du budget (I1 47 ms, I3 90 ms, P1 et P3 environ 100 ms à l'image).

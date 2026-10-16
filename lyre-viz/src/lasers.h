@@ -38,6 +38,10 @@ struct LaserSegment {
     int arc = 0;
     vec3 uu;
     float cx = 0, cy = 0, rho = 0, th0 = 0, dth = 0;
+    // arc a l'ombre d'un obstacle : arret sur le plan de la face touchee ; un point P de la nappe n'est eclaire que si
+    // dot(stop_n, P - src) <= stop_d (1e30 : aucun arret)
+    vec3 stop_n;
+    float stop_d = 1e30f;
 };
 
 // Impact d'un laser sur une surface (etape 5) : la ligne d'arrivee d'un morceau d'eventail (de a a b, sur le sol, un
@@ -83,7 +87,9 @@ enum LaserPattern {
 };
 extern const char* LASER_PATTERN_NAMES[LP_COUNT];
 
-enum LaserShape { LS_FAN = 0, LS_DOUBLE_FAN, LS_CONE, LS_TUNNEL, LS_WAVE, LS_GRID, LS_COUNT };
+// Formes du programmeur : chacune est un trace (courbes du plan de projection), rendu en arcs et droites exacts.
+enum LaserShape { LS_FAN = 0, LS_DOUBLE_FAN, LS_CONE, LS_TUNNEL, LS_WAVE, LS_GRID, LS_SQUARE, LS_TRIANGLE, LS_STAR, LS_HEART,
+                  LS_COUNT };
 extern const char* LASER_SHAPE_NAMES[LS_COUNT];
 
 // Couleur le long de la figure (du bord 0 au bord 1, ou autour du cercle).
@@ -127,6 +133,7 @@ struct LaserParams {
     float diffraction_angle = 8;   // deg entre deux copies
     float shape_param = 10;    // double eventail : ecart (deg) ; vague : amplitude (deg) ; grille : rangees
     float wave_cycles = 3;     // vague : ondulations le long de l'eventail
+    int branches = 5;          // etoile : nombre de branches
     // source : la figure du programmeur (0) ou un fichier ILDA (1, bibliotheque server/storage/ilda)
     int source = 0;
     int ilda_clip = -1;        // indice dans LaserRig::ilda
@@ -175,8 +182,30 @@ struct LaserRig {
     std::vector<Occluder> obstacles, dyn_obstacles;
     int cut_segments = 0;   // segments coupes par un obstacle (compteur)
     int ilda_bias = 0;
-    int ilda_points = 0, ilda_beams = 0, ilda_sheets = 0;
+    int ilda_points = 0, ilda_beams = 0, ilda_sheets = 0, ilda_arcs = 0;   // compteurs : points, faisceaux, droites, arcs
     int lit = 0;                // boitiers allumes (compteur)
+    float cpu_build_ms = 0, cpu_hits_ms = 0;   // temps du moteur : morceaux (plusieurs coeurs), impacts
+    // Sortie de chaque laser allume : la fenetre de sortie diffuse un peu de la puissance dans toutes les directions
+    // (lueur de sortie : point chaud et halo, dessines avec les impacts, Renderer). flux : couleur x puissance (W).
+    struct Exit { vec3 pos, dir, flux; };
+    std::vector<Exit> exits;
+    // Cache des figures fixes (PLAN-LASERS.md, etape 9d) : par boitier, les entrees de sa figure (cle), ses morceaux et
+    // ses impacts ; une figure dont rien n'a change les reprend. Tout est recalcule si le hangar ou les obstacles changent.
+    struct FigCache {
+        std::vector<float> key;
+        std::vector<LaserSegment> segs;
+        std::vector<LaserHit> hits;
+        int traits = 0, cuts = 0;
+        bool valid = false, hits_valid = false;
+    };
+    bool figure_cache = true;   // --set lasercache=0 : tout recalculer a chaque image
+    int cached_lasers = 0;      // boitiers repris du cache (compteur)
+    std::vector<FigCache> fig_cache;
+    std::vector<float> cache_scene;
+    // plage des morceaux de chaque laser dans segs (update), et sa place dans le cache (-1 : aucune)
+    struct TaskRange { int a = 0, b = 0; bool whole = true; };
+    std::vector<TaskRange> task_ranges;
+    std::vector<int> task_slot;
     double time = 0;
 
     void build(const Scene& scene);   // garde aussi les obstacles de la scene

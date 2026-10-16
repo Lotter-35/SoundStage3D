@@ -376,13 +376,13 @@ Vidéo : « Royallaser | Depence R3 Showcase » (Syncronorm), https://youtu.be/M
    - Lien avec la fumée de la pièce, visibilité minimale, diffusion avant ;
    - nouvelle texture de volutes fines animées, niveaux de détail.
    - C'est l'étape la plus longue côté réglage visuel (gros plan de la photo verte, comparaisons à la vidéo).
-4. **Blanc.** Réponse du capteur, sorties (point chaud, halo, étoile), bords lumineux, divergence.
+4. **Blanc.** Réponse du capteur, sorties (point chaud, halo, étoile), bords lumineux, divergence. *(blanchiment et lueur de sortie faits le 15 octobre 2026 : voir « Étape 4 (en partie) » à la fin)*
 3 bis. **Lecture ILDA** (étape 8 avancée, demande de l'utilisateur du 15 octobre 2026 : « le but final, un laser qui lit de l'ILDA, le plus optimisé possible ») : voir la section « Étape 3 bis » à la fin.
 5. **Intersections.** *(collisions et impacts faits le 15 octobre 2026 : voir « Étape 5 » à la fin)* Portées par trait, ombres dans les nappes, impacts sur les surfaces, personnage. **Rappel de l'utilisateur (15 octobre 2026)** : gérer la collision avec tous les obstacles (joueur, décor, etc.), et **la nappe laser doit se couper au passage d'un joueur** (trou d'ombre à bord net, section 7).
 6. **Éblouissement.**
 7. **Persistance et lumière dans la pièce.** Flou de mouvement, lumières virtuelles dans les sondes, puis reflet dans le sol mouillé.
 8. **Plus tard.** DMX, inertie complète des galvos (cahier laser2) ; l'ILDA est avancé en 3 bis.
-9. **Moteur de tracé unique** (demande de l'utilisateur du 15 octobre 2026) : toute figure devient un tracé de scanner (points ILDA), rendu en arcs et en droites raccordés ; remplace les formes codées une à une. Voir « Étape 9 » à la fin.
+9. **Moteur de tracé unique** (demande de l'utilisateur du 15 octobre 2026) : toute figure devient un tracé de scanner (points ILDA), rendu en arcs et en droites raccordés ; remplace les formes codées une à une. *(9a à 9d faits le 15 octobre 2026 ; coût de la passe des arcs à décider avec l'utilisateur : voir « Étape 9 : résultats » à la fin)*
 
 ## 12. Sources
 
@@ -503,7 +503,7 @@ Demande de l'utilisateur : aucun cercle, sinus ni cône fait de traits droits, a
 - **Coût** : L2 +0,9 ms, L7 +3,5 ms à l'image (première version des arcs : +7,7 ms sur L2).
 - **Écarté** : biarcs pour la vague et les fichiers ILDA (une paire d'arcs par corde) : beaucoup trop cher (35 à 45 ms GPU et 64 à 116 ms CPU sur les bancs ILDA). C'est ce qui a conduit à l'étape 9.
 
-## Étape 9 : moteur de tracé unique (plan du 15 octobre 2026, à valider)
+## Étape 9 : moteur de tracé unique (plan du 15 octobre 2026, validé)
 
 ### Demande
 
@@ -548,3 +548,31 @@ L'utilisateur (15 octobre 2026) : au lieu de traiter les formes une à une (côn
 - Aucun polygone visible sur une courbe ; les coins voulus restent nets ; aucun trou (coutures entre morceaux comprises).
 - Rendu des nappes (lumière, bords, fumée, volutes) inchangé pour une même forme ; les petites différences de forme dues au scanner sont acceptées (choix de l'utilisateur).
 - Pas plus lent que la version actuelle sur L1 à L7 et M1 ; plus rapide sur I1 à I4 (moins de morceaux) ; moteur CPU sous 2 ms pour 200 lasers en figures fixes, à mesurer en mouvement.
+
+## Étape 9 : résultats (15 octobre 2026)
+
+Détail des mesures : `PERFORMANCE.md`, « Étape 9 : moteur de tracé » ; historique 24. Images : `bench/lasers_images/etape9/` (vues `--demo-laser 0` et `4`, avant et après) ; captures des cas P1 à P3, I1 à I4, L7 dans `bench/v9_cache/`.
+
+- **9a. Tracé et ajustement** (`src/trace.cpp`) :
+  - miroirs : suivi du 2e ordre amorti (60 µs, 30 000 points/s), couleur retardée du retard des miroirs ; **chaque course allumée part de son premier point** (correction du 15 octobre au soir : la couleur retardée allumait le laser 4 points après le départ des miroirs, d'où des traînées entre les faisceaux d'I2, 2 920 droites et 180 arcs parasites ; maintenant 2 000 faisceaux, comme la référence, 7 ms au lieu de 16 ms) ;
+  - faisceaux : point où les miroirs restent sur place, étendue sous 4 fois la demi-divergence (les points tenus d'un coin, que les miroirs finissent de rejoindre, restent un faisceau) ;
+  - droites et arcs : cercle par trois points du tracé, sans tangente imposée, à 5e-4 du champ près ; lumière linéaire par morceau ; un crayon de 1 222 points donne ~100 arcs ;
+  - fichiers ILDA par le tracé, banques générées « Crayon », « Formes », « Sinus », bancs P1 à P3.
+- **9b. Obstacles** : chaque morceau d'arc à l'ombre s'arrête exactement sur le plan de la face du pavé touché (`sb_laser.stop`, test dans le shader) ; coupures aux 12 arêtes projetées ; impacts sur la face sans trous. Le redécoupage tous les 1° a disparu (moteur CPU d'I1 34 → 11,5 ms avant 9d).
+- **9c. Formes du programmeur** : éventail, double éventail, grille, cône, tunnel, vague et nouvelles formes (carré, triangle, étoile à n branches, cœur) en droites et arcs exacts (`Builder::figure`) ; la vague et le cœur sont ajustés, les droites, polygones et cercles donnés exacts. Les motifs des bancs L1 à L6 gardent leur code (comparables).
+- **9d. Plusieurs cœurs et cache** : un laser par tâche sur tous les fils du processeur (même résultat qu'un seul cœur), impacts aussi ; cache des figures fixes (morceaux et impacts repris tant que rien ne change ; `--set lasercache=0`, case de l'onglet Rendu). Moteur CPU en mouvement : 0,2 à 2,6 ms sur tous les cas (avant : jusqu'à 24 ms sur P1) ; immobile, figures fixes : 0,2 à 1 ms. **Critère « moteur CPU sous 2 ms » tenu** sauf I3 et P3 en mouvement (2,6 et 2,2 ms : images du fichier qui changent).
+- **Images** : courbes lisses (crayon, sinus, Lissajous, cœur), coins des formes nets mais légèrement arrondis par l'inertie des miroirs (voulu : « réalistes sans défaut »), aucun trou ni couture visibles ; I2 identique à la référence. Défaut existant, pas dû à l'étape 9 : impacts lointains en pointillés quand le sol est vu en rasant.
+- **Coût GPU** (image entière, en mouvement) : L1, L3 à L6, M1 inchangés ; L2 +2 à +4 %, L7 +4 % ; I2 −10 % ; I1 +10 %, I4 +9 %, **I3 +56 %** (91,6 ms) ; P1 99 ms, P2 45 ms, P3 92 ms. **Critère « plus rapide sur I1 à I4 » non tenu.**
+- **Pourquoi** : un point de nappe conique coûte environ 2 fois un point de nappe plane (≈ 95 contre ≈ 45 ps), et presque tout le travail est utile (P3 : 73 % des couples éclairent, ~70 nappes traversées par pixel). Les arcs couvrent moins de couples que les polygones (I1 506 contre 698 millions), mais chacun coûte le double. Trois allègements exacts de la passe des arcs essayés et mesurés, sans gain (`PERFORMANCE.md`).
+- **À décider avec l'utilisateur** (aucun compromis appliqué) : voir le compte rendu de la session ; pistes : résolution des passes laser réduite quand l'image dépasse le budget (comme la qualité adaptative des lyres, plancher 80 %), volutes coupées dans les nappes coniques des figures chargées (−15 % sur la passe des arcs), ou accepter le coût (les cas ILDA à 200 lasers en plein champ ne sont pas une cible du plan).
+- **9e** (connexion au logiciel ILDA, dessin au crayon en direct) : plus tard, à la demande de l'utilisateur.
+
+## Étape 4 (en partie) : blanc à la sortie et dans les traits (15 octobre 2026)
+
+Demande de l'utilisateur (photo de référence : sorties blanches, halo vert, cœur des traits blanc, éventails verts). Historique 25. Images : `bench/lasers_images/blanc/`.
+
+- **Traits parasites en croix à la sortie** (signalés par l'utilisateur, ambiance Océan) : le plafond de 1 / |n.v| d'une nappe vue en rasant avait un plancher de 0,5 m (`max(rP, 0.5)`) ; à quelques cm de la sortie, une nappe (surtout le cône d'un arc, qui s'enroule autour de la source) s'allumait hors de son ouverture, en traits fins et très lumineux. Plafond lié à rP jusqu'à la source (`laser_eval`, `laser_arc_at`). Il restait un petit trait (~30 pixels) sur les arcs : le bout d'un morceau, étiré par 1 / |n.v| dans le test de sortie de la portion, s'étalait sur des dizaines de cm le long du cône ; étirement de ce test plafonné à max(4, rP / (20 sigma)) (près de la sortie seulement : vues d'essai 0 et 4 identiques à 0,003 % près, jonctions des morceaux vus par la tranche inchangées). Plus de trait parasite.
+- **Blanchiment** (réponse du capteur, section 6, version simplifiée) : dans la composition, ce qui dépasse le début de la saturation (1 après exposition) déborde à parts égales sur les deux autres couleurs. Les couleurs ordinaires restent pures ; la sortie et le cœur des traits, très intenses, virent au blanc ; l'éventail (lumière étalée) beaucoup moins. `--set laserwhite` (0,6 par défaut ; 0 : œil, 1 et plus : caméra), réglage de l'onglet Rendu. Coût nul (quelques opérations par pixel, calque des lasers seulement : les lyres ne changent pas). La matrice de fuite par longueur d'onde du plan n'est pas faite (le débordement suffit sur les images).
+- **Lueur de sortie** : la fenêtre de sortie diffuse une petite part de la puissance (point source) ; point chaud (sigma 1 pixel, 88 %) et halo (sigma 6 pixels, 12 %), intensité réduite deux fois à la demande de l'utilisateur (lueur trop grosse), blanchis comme le calque des lasers, puis le bloom. Passe « lasers : sorties » après la composition (un éblouissement de l'optique : pas atténué par la fumée pixel par pixel, sinon le halo prenait la forme du truss derrière lui) ; visible si la source l'est (5 lectures de profondeur autour d'elle : le boîtier la cache vue de derrière) ; intensité constante sous 10 m (sinon un disque blanc de près). Couleur : celle du laser, ou la moyenne de l'image ILDA. `--set laserexit` (×1 par défaut), réglage de l'onglet Rendu.
+- **Coût** (banc rapide, immobile, 8 cas) : +1 à +3 % à l'image (passe des sorties ~0,25 ms pour 200 lasers) ; banc des lyres : images identiques.
+- **Pas encore** : étoile à branches (lamelles, rotation), puissance en watts par couleur, éblouissement d'un trait braqué sur la caméra.

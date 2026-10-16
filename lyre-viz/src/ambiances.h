@@ -10,9 +10,13 @@ struct AmbianceInfo {
     vec3 tint;          // couleur du bouton
 };
 
-static constexpr int NUM_AMBIANCES = 20;
-static constexpr int AMBIANCE_COLS = 4;   // grille de 4 colonnes x 5 rangees
-extern const AmbianceInfo AMBIANCES[NUM_AMBIANCES];
+// 20 ambiances (ambiances.cpp), puis les 40 scenes du moteur de rendu (src/scenes : ambiances 21 a 60)
+static constexpr int NUM_BASE_AMBIANCES = 20;
+static constexpr int NUM_AMBIANCES = NUM_BASE_AMBIANCES + 40;
+static constexpr int AMBIANCE_COLS = 4;   // grille de 4 colonnes
+extern const AmbianceInfo AMBIANCES[NUM_BASE_AMBIANCES];
+// Nom, description et couleur de l'ambiance i (0..NUM_AMBIANCES - 1), scenes comprises.
+const AmbianceInfo& ambiance_info(int i);
 
 // Retient les reglages de depart (apres les options de la ligne de commande) : chaque ambiance repart d'eux.
 void ambiance_capture_defaults();

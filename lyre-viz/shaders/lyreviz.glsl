@@ -254,8 +254,14 @@ float phase_hg(float cos_theta, float g) {
 float facet_value(beam_ctx b, vec2 q, float lod, float e0, float prof) {
     float r2 = dot(q, q);
     float edge = 1.0 - smoothstep(e0, b.iris, sqrt(r2));
-    vec2 uv = vec2(b.prot.z * q.x - b.prot.w * q.y, b.prot.w * q.x + b.prot.z * q.y) * 0.5 + 0.5;
-    float g = textureLod(sampler2DArray(gobo_tex, gobo_smp), vec3(uv, b.layer), lod).r;
+    // gobo ouvert (couche 0 : 1 dans tout le disque) peu flou : pas de lecture. Son bord flou (rayon 2^lod / 256) reste
+    // sous 2 % du rayon (lod < 2), dans la marge du bord de l'iris (smoothstep de e0 a l'iris) : ecart sous 3 % du
+    // pic sur un liseré d'un ou deux pixels, invisible. Plus flou (frost, mise au point) : lecture, comme avant.
+    float g = 1.0;
+    if (b.layer > 0.5 || lod >= 2.0) {
+        vec2 uv = vec2(b.prot.z * q.x - b.prot.w * q.y, b.prot.w * q.x + b.prot.z * q.y) * 0.5 + 0.5;
+        g = textureLod(sampler2DArray(gobo_tex, gobo_smp), vec3(uv, b.layer), lod).r;
+    }
     return g * edge * (1.0 - r2 * prof);
 }
 
@@ -431,7 +437,7 @@ layout(binding=0) uniform cull_params {
     vec4 cam_up;      // w : tan(fov y / 2)
     vec4 cam_fwd;
     vec4 grid;        // x, y : cases ecran, z : tranches de profondeur, w : profondeur de la 1re tranche
-    vec4 grid2;       // x : profondeur max, y : camera miroir (rectangles d'ombre)
+    vec4 grid2;       // x : profondeur max, y : camera miroir (rectangles d'ombre), z : seuil des cases chargees (0 : aucun)
 };
 layout(binding=0) readonly buffer lights_cs { sb_light lights[]; };
 layout(binding=1) buffer clusters_rw { sb_index clusters_w[]; };
@@ -444,6 +450,23 @@ layout(local_size_x=64, local_size_y=1, local_size_z=1) in;
 float slice_depth(float k) {
     if (k <= 0.0) return 0.05;
     return grid.w * pow(grid2.x / grid.w, (k - 1.0) / (grid.z - 1.0));
+}
+
+// Le cone de la lyre touche-t-il la sphere de la case ?
+bool cl_touch(sb_light L, vec3 center, float radius) {
+    vec3 V = center - L.pos_range.xyz;
+    float vlen2 = dot(V, V);
+    float v1 = dot(V, L.dir_tanenv.xyz);
+    float t = L.dir_tanenv.w;
+    float cosA = inversesqrt(1.0 + t * t);
+    float sinA = t * cosA;
+    float dist_closest = cosA * sqrt(max(vlen2 - v1 * v1, 0.0)) - v1 * sinA;
+    return !((dist_closest > radius) || (v1 > radius + L.pos_range.w) || (v1 < -radius));
+}
+// Lyre sans gobo ni prisme, a grande tache floue (bord de plus de ~10 pixels a l'ecran : marquee par le CPU,
+// prism.x = -1, voir Renderer::assign_beam_tiers) : sa tache n'a pas de detail fin.
+bool cl_open(sb_light L) {
+    return L.color_gobo.w < 0.5 && L.prism.x < -0.5;
 }
 
 void main() {
@@ -475,22 +498,29 @@ void main() {
     int count = 0;
     int nsharp = 0;
     int nl = int(cam_pos.w);
+    // Case chargee : plus de grid2.z lyres sans gobo ni prisme y eclairent. Chacune n'y apporte qu'une petite part de
+    // la lumiere : le bord net de sa tache ne se distingue plus. Elles passent dans la liste des douces (eclairees a 1/4
+    // de la resolution, passe soft_light) : le cout de la case ne depend plus de leur nombre a pleine resolution.
+    bool crowded = false;
+    if (grid2.z > 0.5) {
+        int nopen = 0;
+        for (int i = 0; i < nl; i++) {
+            sb_light L = lights[i];
+            if (cl_open(L) && cl_touch(L, center, radius)) {
+                nopen++;
+            }
+        }
+        crowded = float(nopen) > grid2.z;
+    }
     // deux tours : les lyres nettes d'abord, puis les douces
     for (int pass = 0; pass < 2; pass++) {
     for (int i = 0; i < nl; i++) {
         sb_light L = lights[i];
-        if ((L.color_gobo.w >= SOFT_FLAG) != (pass == 1)) {
+        bool soft = L.color_gobo.w >= SOFT_FLAG || (crowded && cl_open(L));
+        if (soft != (pass == 1)) {
             continue;
         }
-        vec3 V = center - L.pos_range.xyz;
-        float vlen2 = dot(V, V);
-        float v1 = dot(V, L.dir_tanenv.xyz);
-        float t = L.dir_tanenv.w;
-        float cosA = inversesqrt(1.0 + t * t);
-        float sinA = t * cosA;
-        float dist_closest = cosA * sqrt(max(vlen2 - v1 * v1, 0.0)) - v1 * sinA;
-        bool cull = (dist_closest > radius) || (v1 > radius + L.pos_range.w) || (v1 < -radius);
-        if (!cull && count < CL_STRIDE - 1) {
+        if (cl_touch(L, center, radius) && count < CL_STRIDE - 1) {
             // ombres : un des volumes d'ombre de la lyre touche-t-il la case ? (sphere de la case contre
             // les plans de chaque volume) -> bit 16 : seules ces cases testent l'ombre pixel par pixel
             uint entry = uint(i);
@@ -1149,7 +1179,7 @@ in vec4 v_emissive;
 layout(location=0) out vec4 frag_color;
 layout(location=1) out vec4 frag_depth;
 #ifdef SCENE_GBUFFER
-layout(location=2) out vec4 frag_normal;   // normale (tournee vers la camera), rugosite
+layout(location=2) out vec4 frag_normal;   // normale (tournee vers la camera) * (1 + eau au sol), rugosite
 layout(location=3) out vec4 frag_albedo;   // couleur, metal
 #endif
 
@@ -1266,7 +1296,7 @@ void main() {
     frag_color = vec4(color, 1.0);
     frag_depth = vec4(viewZ, 0.0, 0.0, 1.0);
 #ifdef SCENE_GBUFFER
-    frag_normal = vec4(N, rough);
+    frag_normal = vec4(N * (1.0 + water), rough);
     frag_albedo = vec4(albedo, metal);
 #endif
 }
@@ -1295,8 +1325,12 @@ void main() {
 @end
 
 // -------------------------------------------------------------------------------------
-//  4b. Lyres douces sur les surfaces, a 1/4 de la resolution : eclairement diffus et reflet,
-//      ajoutes a l'image pleine resolution par composite (en respectant bords et normales).
+//  4b. Lyres douces sur les surfaces, a 1/4 de la resolution, ajoutees a l'image pleine resolution par
+//      composite (en respectant les bords) :
+//      - eclairement diffus PAR DIRECTION : D = somme des E_i * l_i (E_i : eclairement face a la lyre i,
+//        l_i : sa direction), une par couleur ; composite en tire N.D avec la normale fine (relief exact) ;
+//      - reflet calcule sur le bloc de 4 x 4 pixels : normale moyenne, rugosite elargie par l'ecart des
+//        normales (Toksvig) : reflet moyen du bloc, sans tirer au hasard un pixel du relief.
 // -------------------------------------------------------------------------------------
 @fs fs_soft_light
 @include_block common
@@ -1325,6 +1359,191 @@ layout(binding=2) uniform sampler lin_clamp_smp;
 layout(binding=22) readonly buffer occ_lights_ro { sb_occ occ_lights[]; };
 layout(binding=23) readonly buffer occ_planes_ro { sb_vec4 occ_planes[]; };
 @image_sample_type normal_tex unfilterable_float
+#define pimg_inv shade.xy
+@include_block beam_pattern
+@include_block pattern_image
+@include_block occlusion
+@include_block ggx
+
+layout(location=0) out vec4 out_dr;     // D rouge (xyz), profondeur utilisee (negative : aucune lyre douce)
+layout(location=1) out vec4 out_dg;     // D vert
+layout(location=2) out vec4 out_db;     // D bleu
+layout(location=3) out vec4 out_spec;   // reflet (rgb)
+
+void main() {
+    vec2 uv = gl_FragCoord.xy / res.zw;
+    ivec2 fp = clamp(ivec2(uv * res.xy), ivec2(0), ivec2(res.xy) - 1);
+    float viewZ = texelFetch(sampler2D(depth_tex, point_smp), fp, 0).r;
+    vec2 ndc = ndc_from_uv((vec2(fp) + 0.5) / res.xy);
+    int cx = clamp(int((ndc.x * 0.5 + 0.5) * grid.x), 0, int(grid.x) - 1);
+    int cy = clamp(int((ndc.y * 0.5 + 0.5) * grid.y), 0, int(grid.y) - 1);
+    int cz = 0;
+    if (viewZ > grid.w) {
+        cz = 1 + int(log(viewZ / grid.w) / log(grid2.x / grid.w) * (grid.z - 1.0));
+    }
+    cz = clamp(cz, 0, int(grid.z) - 1);
+    int base = ((cz * int(grid.y) + cy) * int(grid.x) + cx) * CL_STRIDE;
+    uint head = clusters[base].v;
+    int first = int(head & 65535u), total = int(head >> 16);
+    if (first >= total) {   // aucune lyre douce dans la case : rien a calculer (composition : rien a lire)
+        out_dr = vec4(0.0, 0.0, 0.0, -viewZ);
+        out_dg = vec4(0.0);
+        out_db = vec4(0.0);
+        out_spec = vec4(0.0);
+        return;
+    }
+    vec4 am = texelFetch(sampler2D(albedo_tex, point_smp), fp, 0);
+    vec3 dir = normalize(cam_fwd.xyz + cam_right.xyz * (ndc.x * cam_right.w) + cam_up.xyz * (ndc.y * cam_up.w));
+    vec3 P = cam_pos.xyz + dir * (viewZ / max(dot(dir, cam_fwd.xyz), 1e-3));
+    // normale moyenne et rugosite du bloc (pixels de la meme surface : profondeur voisine)
+    ivec2 b0 = clamp(ivec2(floor(uv * res.xy - 1.5)), ivec2(0), ivec2(res.xy) - 4);
+    vec3 nsum = vec3(0.0);
+    float a2sum = 0.0, cnt = 0.0, wsum_w = 0.0;
+    uint same = 0u;   // pixels du bloc sur la meme surface (relus pour le scintillement)
+    for (int k = 0; k < 16; k++) {
+        ivec2 q = b0 + ivec2(k & 3, k >> 2);
+        float zq = texelFetch(sampler2D(depth_tex, point_smp), q, 0).r;
+        if (abs(zq - viewZ) > 0.02 * viewZ) {
+            continue;
+        }
+        same |= 1u << uint(k);
+        vec4 nq = texelFetch(sampler2D(normal_tex, point_smp), q, 0);
+        float lq = length(nq.xyz);
+        nsum += nq.xyz / max(lq, 1e-4);
+        wsum_w += clamp(lq - 1.0, 0.0, 1.0);
+        float aq = clamp(nq.w, 0.04, 1.0);
+        aq *= aq;
+        a2sum += aq * aq;
+        cnt += 1.0;
+    }
+    vec4 nr = texelFetch(sampler2D(normal_tex, point_smp), fp, 0);
+    vec3 N = normalize(nr.xyz);
+    float rough = clamp(nr.w, 0.04, 1.0);
+    float water = clamp(length(nr.xyz) - 1.0, 0.0, 1.0);
+    if (cnt > 0.5) {
+        float nl_ = length(nsum) / cnt;
+        N = nsum / max(nl_ * cnt, 1e-6);
+        float a2 = a2sum / cnt + (1.0 / max(nl_, 0.05) - 1.0);   // Toksvig
+        rough = clamp(sqrt(sqrt(a2)), 0.04, 1.0);
+        water = wsum_w / cnt;
+    }
+    vec3 V = -dir;
+    vec3 f0 = mix(vec3(0.04), am.rgb, am.a);
+    float sigma = cam_pos.w;
+    float pixWorld = viewZ * cam_fwd.w;
+    vec3 dr = vec3(0.0), dg = vec3(0.0), db = vec3(0.0);
+    vec3 spec = vec3(0.0);
+    for (int i = first; i < total; i++) {
+        uint ce = clusters[base + 1 + i].v;   // lyre (16 bits) ; bits 16..23 : ombres qui touchent la case
+        uint li = ce & 65535u;
+        vec3 rel = P - lights[li].pos_range.xyz;
+        float d2 = dot(rel, rel);
+        float d = sqrt(d2);
+        vec3 l = -rel / d;
+        float nl = dot(N, l);
+        if (nl <= 0.0) {
+            continue;
+        }
+        vec4 dte = lights[li].dir_tanenv;
+        float z = dot(rel, dte.xyz);
+        if (z <= lights[li].optics.w || z > lights[li].pos_range.w) {   // derriere la lentille, ou apres un obstacle
+            continue;
+        }
+        vec4 ut = lights[li].up_tanbeam;
+        vec2 p = vec2(dot(rel, cross(dte.xyz, ut.xyz)), dot(rel, ut.xyz)) / z;
+        if (dot(p, p) > dte.w * dte.w) {
+            continue;
+        }
+        vec4 cg = lights[li].color_gobo;
+        vec4 pd = pdesc[li].v;
+        vec3 pat;   // image projetee, par couleur (aberration chromatique)
+        if (pd.w > 0.5) {
+            // image projetee en cache (prisme) : seul le flou est a calculer (un par couleur : aberration axiale)
+            vec4 op = lights[li].optics;
+            vec3 lod3 = beam_lod3(op.x * 5.0, log2(max(op.y, 0.2)), ut.w, z, d, pixWorld, chroma.z * (1.0 - op.x));
+            pat = pattern_image_rgb(pd, p, dte.w, lod3, chroma.w);
+        } else {
+            beam_ctx b = make_beam(dte, ut, cg, lights[li].prism, lights[li].optics);
+            // bord de la tache sur au moins 2 points de cette passe (8 pixels) : pas d'escalier une fois agrandi
+            b.soft = min(max(b.soft, 8.0 * pixWorld / (z * b.T * max(b.iris, 0.05))), 1.0);
+            pat = beam_pattern_rgb(b, p, z, d, pixWorld, chroma);
+        }
+        if (max(pat.r, max(pat.g, pat.b)) <= 0.0) {
+            continue;
+        }
+        if (ce > 65535u) {   // un volume d'ombre de la lyre touche cette case : ombre et penombre
+            float sh = occ_light(occ_lights[li].v, P, ce >> 16u, lights[li].pos_range.xyz + dte.xyz * lights[li].optics.w);
+            if (sh <= 0.0) {
+                continue;
+            }
+            pat *= sh;
+        }
+        vec3 E0 = cg.rgb * pat * (exp(-sigma * d) / max(d2, 0.04));   // face a la lyre
+        dr += E0.r * l;
+        dg += E0.g * l;
+        db += E0.b * l;
+        if (shade.z > 0.5) {
+            spec += E0 * nl * ggx_spec(N, V, l, rough, f0);
+        }
+    }
+    // Scintillement (composition) : reponse moyenne du reflet du bloc (normales et rugosites fines) dans la
+    // direction moyenne des lyres ; la composition multiplie le reflet du bloc par la reponse du pixel / cette
+    // moyenne : le relief fin scintille, la moyenne du bloc ne change pas.
+    vec3 dlum = dr * 0.2126 + dg * 0.7152 + db * 0.0722;
+    float gmean = 0.0;
+    if (shade.z > 0.5 && dot(dlum, dlum) > 0.0) {
+        vec3 ld = normalize(dlum);
+        float gs = 0.0, gc = 0.0;
+        for (int k = 0; k < 16; k++) {
+            if ((same & (1u << uint(k))) == 0u) {
+                continue;
+            }
+            ivec2 q = b0 + ivec2(k & 3, k >> 2);
+            vec4 nq = texelFetch(sampler2D(normal_tex, point_smp), q, 0);
+            vec3 Nq = normalize(nq.xyz);
+            if (dot(Nq, ld) > 0.0) {
+                gs += ggx_spec(Nq, V, ld, clamp(nq.w, 0.04, 1.0), vec3(1.0)).r * dot(Nq, ld);
+            }
+            gc += 1.0;
+        }
+        gmean = gs / max(gc, 1.0);
+    }
+    out_dr = vec4(dr, viewZ);
+    out_dg = vec4(dg, 0.0);
+    out_db = vec4(db, gmean);
+    // dans l'eau, le reflet des lentilles est celui de la passe miroir (composition) : pas deux fois
+    out_spec = vec4(spec * (1.0 - water), 0.0);
+}
+@end
+
+// Variante legere (lyres frost seules, sans lyres superposees) : eclairement et reflet calcules a 1/4 avec la
+// normale d'un pixel du bloc, comme avant (meme image, meme cout).
+@fs fs_soft_simple
+@include_block common
+layout(binding=3) uniform soft_params {
+    vec4 cam_pos;     // w : extinction moyenne de la fumee
+    vec4 cam_right;   // w : tan x
+    vec4 cam_up;      // w : tan y
+    vec4 cam_fwd;     // w : angle d'un pixel plein ecran (rad)
+    vec4 grid;        // comme cull_params.grid
+    vec4 grid2;       // comme cull_params.grid2
+    vec4 res;         // xy : rendu plein, zw : cette passe
+    vec4 shade;       // xy : 1 / taille de l'atlas des images projetees, z : speculaire (0/1)
+    vec4 chroma;      // aberration chromatique (comme scene_fs_params)
+};
+layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
+layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
+layout(binding=5) uniform texture2DArray gobo_tex;
+layout(binding=6) uniform texture2D depth_tex;
+layout(binding=24) uniform texture2D normal_tex;
+layout(binding=25) uniform texture2D albedo_tex;
+layout(binding=0) uniform sampler gobo_smp;
+layout(binding=1) uniform sampler point_smp;
+layout(binding=26) readonly buffer pimg_desc_ro { sb_vec4 pdesc[]; };
+layout(binding=29) uniform texture2D pimg_tex;
+layout(binding=2) uniform sampler lin_clamp_smp;
+layout(binding=22) readonly buffer occ_lights_ro { sb_occ occ_lights[]; };
+layout(binding=23) readonly buffer occ_planes_ro { sb_vec4 occ_planes[]; };
 #define pimg_inv shade.xy
 @include_block beam_pattern
 @include_block pattern_image
@@ -2106,21 +2325,27 @@ layout(binding=5) uniform composite_params {
     vec4 cam_up;       // w : tan y
     vec4 cam_fwd;      // w : extinction moyenne
     vec4 res;          // xy : rendu plein, zw : fumee
-    vec4 opts;         // x : fumee active, y : lyres douces actives, zw : taille de la passe des lyres douces
+    vec4 opts;         // x : fumee active, y : lyres douces (1 : variante legere, 2 : par direction), zw : taille de leur passe
     vec4 cam_pos;      // xyz : camera, w : reflet du sol calcule (passe miroir)
     vec4 floor_p;      // comme scene_fs_params (sol texture ; y : eau)
     vec4 floor_q;
     vec4 floor_w;
-    vec4 laser;        // x : ajoute le calque des lasers (tuiles en calcul)
+    vec4 laser;        // x : ajoute le calque des lasers (tuiles en calcul), y : exposition, z : blanchiment,
+                       // w : scintillement des reflets des lyres douces (0 : reflet lisse du bloc)
+    vec4 grid;         // cases des lyres (comme cull_params) : lyres douces de la case du pixel
+    vec4 grid2;
 };
+layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
 layout(binding=6) uniform texture2D depth_tex;
 layout(binding=13) uniform texture2D laser_tex;    // lasers dans la fumee (cs_laser_shade)
 layout(binding=10) uniform texture2D vol_hist_tex;
 layout(binding=11) uniform texture2D scene_tex;
 layout(binding=24) uniform texture2D normal_tex;
 layout(binding=25) uniform texture2D albedo_tex;
-layout(binding=26) uniform texture2D soft_diffuse_tex;
-layout(binding=27) uniform texture2D soft_spec_tex;
+layout(binding=26) uniform texture2D soft_r_tex;   // lyres douces : eclairement par direction (fs_soft_light)
+layout(binding=27) uniform texture2D soft_g_tex;
+layout(binding=29) uniform texture2D soft_b_tex;
+layout(binding=3) uniform texture2D soft_spec_tex;
 layout(binding=30) uniform texture2D floor_tex;
 layout(binding=28) uniform texture2D refl0_tex;
 layout(binding=9) uniform texture2D refl_mask_tex;   // profondeur lineaire du miroir : 0 hors de l'eau
@@ -2128,10 +2353,14 @@ layout(binding=31) uniform texture2D floor_cav;
 layout(binding=1) uniform sampler point_smp;
 layout(binding=2) uniform sampler lin_clamp_smp;
 layout(binding=4) uniform sampler floor_smp;
-@image_sample_type soft_diffuse_tex unfilterable_float
+@image_sample_type soft_r_tex unfilterable_float
+@image_sample_type soft_g_tex unfilterable_float
+@image_sample_type soft_b_tex unfilterable_float
 @image_sample_type soft_spec_tex unfilterable_float
 
 out vec4 frag_color;
+
+@include_block ggx
 
 #define FLOOR_WET 1
 @include_block floor_material
@@ -2186,9 +2415,23 @@ void main() {
     [[dont_flatten]] if (cam_pos.w > 0.5 && abs(Pw.y) < 0.03 && viewZ < 900.0) {
         color += floor_reflection(Pw, dir, fw, fgx, fgy, uv);
     }
+    // lyres douces : seulement si la case du pixel en a (sinon ses lyres sont toutes dans la passe des surfaces)
+    bool soft_here = false;
     if (opts.y > 0.5) {
-        // lyres douces : 4 points de la passe a 1/4, ponderes par la profondeur et la normale
-        vec3 N = texelFetch(sampler2D(normal_tex, point_smp), p, 0).xyz;
+        vec2 cn = ndc_from_uv(uv);
+        int cx = clamp(int((cn.x * 0.5 + 0.5) * grid.x), 0, int(grid.x) - 1);
+        int cy = clamp(int((cn.y * 0.5 + 0.5) * grid.y), 0, int(grid.y) - 1);
+        int cz = 0;
+        if (viewZ > grid.w) {
+            cz = 1 + int(log(viewZ / grid.w) / log(grid2.x / grid.w) * (grid.z - 1.0));
+        }
+        cz = clamp(cz, 0, int(grid.z) - 1);
+        uint chead = clusters[((cz * int(grid.y) + cy) * int(grid.x) + cx) * CL_STRIDE].v;
+        soft_here = (chead >> 16) > (chead & 65535u);
+    }
+    [[dont_flatten]] if (soft_here && opts.y < 1.5) {
+        // variante legere (fs_soft_simple) : 4 points de la passe a 1/4, ponderes par la profondeur et la normale
+        vec3 N = normalize(texelFetch(sampler2D(normal_tex, point_smp), p, 0).xyz);   // longueur : 1 + eau
         vec4 am = texelFetch(sampler2D(albedo_tex, point_smp), p, 0);
         vec2 ssz = opts.zw;
         vec2 lp = gl_FragCoord.xy * (ssz / res.xy) - 0.5;
@@ -2200,9 +2443,9 @@ void main() {
         for (int k = 0; k < 4; k++) {
             ivec2 o = ivec2(k & 1, k >> 1);
             ivec2 lc = clamp(l0 + o, ivec2(0), lmax);
-            vec4 dv = texelFetch(sampler2D(soft_diffuse_tex, point_smp), lc, 0);
+            vec4 dv = texelFetch(sampler2D(soft_r_tex, point_smp), lc, 0);
             ivec2 fc = clamp(ivec2((vec2(lc) + 0.5) / ssz * res.xy), ivec2(0), ivec2(res.xy) - 1);
-            vec3 Nk = texelFetch(sampler2D(normal_tex, point_smp), fc, 0).xyz;
+            vec3 Nk = normalize(texelFetch(sampler2D(normal_tex, point_smp), fc, 0).xyz);
             float wb = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
             float wd = 1.0 / (0.02 + abs(dv.w - viewZ) / max(viewZ, 0.1) * 8.0);
             float wn = pow(max(dot(N, Nk), 0.0), 8.0);
@@ -2212,6 +2455,49 @@ void main() {
             wsum += w;
         }
         color += (am.rgb * (1.0 - am.a) * 0.31830989) * (dsum / wsum) + ssum / wsum;
+    } else if (soft_here) {
+        // 4 points de la passe a 1/4, ponderes par la profondeur (sans les points d'une case sans lyre douce) ;
+        // diffus N.D avec la normale fine
+        vec2 ssz = opts.zw;
+        vec2 lp = gl_FragCoord.xy * (ssz / res.xy) - 0.5;
+        ivec2 l0 = ivec2(floor(lp));
+        vec2 f = lp - vec2(l0);
+        ivec2 lmax = ivec2(ssz) - 1;
+        vec4 nr = texelFetch(sampler2D(normal_tex, point_smp), p, 0);
+        vec3 N = normalize(nr.xyz);   // longueur : 1 + eau
+        vec4 am = texelFetch(sampler2D(albedo_tex, point_smp), p, 0);
+        vec3 sr = vec3(0.0), sg = vec3(0.0), sb = vec3(0.0), ssum = vec3(0.0);
+        float wsum = 0.0, gm = 0.0;
+        for (int k = 0; k < 4; k++) {
+            ivec2 o = ivec2(k & 1, k >> 1);
+            ivec2 lc = clamp(l0 + o, ivec2(0), lmax);
+            vec4 dv = texelFetch(sampler2D(soft_r_tex, point_smp), lc, 0);
+            float wb = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+            float wd = 1.0 / (0.02 + abs(abs(dv.w) - viewZ) / max(viewZ, 0.1) * 8.0);
+            float w = wb * wd * (dv.w > 0.0 ? 1.0 : 1e-4) + 1e-9;   // profondeur negative : point sans lyre douce
+            sr += dv.xyz * w;
+            sg += texelFetch(sampler2D(soft_g_tex, point_smp), lc, 0).xyz * w;
+            vec4 bv = texelFetch(sampler2D(soft_b_tex, point_smp), lc, 0);
+            sb += bv.xyz * w;
+            gm += bv.w * w;
+            ssum += texelFetch(sampler2D(soft_spec_tex, point_smp), lc, 0).rgb * w;
+            wsum += w;
+        }
+        vec3 E = max(vec3(dot(N, sr), dot(N, sg), dot(N, sb)) / wsum, vec3(0.0));
+        vec3 S = ssum / wsum;
+        gm /= wsum;
+        // scintillement : reponse du relief fin de ce pixel dans la direction moyenne des lyres, rapportee a la
+        // moyenne du bloc (fs_soft_light)
+        vec3 dl = sr * 0.2126 + sg * 0.7152 + sb * 0.0722;
+        if (laser.w > 0.0 && gm > 1e-6 && dot(dl, dl) > 0.0) {
+            vec3 ld = normalize(dl);
+            float nld = dot(N, ld);
+            float g = nld > 0.0 ? ggx_spec(N, -dir, ld, clamp(nr.w, 0.04, 1.0), vec3(1.0)).r * nld : 0.0;
+            // laser.w > 1 : chaque lyre scintille sur d'autres grains du relief, la somme scintille plus que la
+            // seule direction moyenne ne le montre (1,75 : meme part de grains brillants qu'a pleine resolution)
+            S *= max(1.0 + laser.w * (min(g / gm, 32.0) - 1.0), 0.0);
+        }
+        color += (am.rgb * (1.0 - am.a) * 0.31830989) * E + S;
     }
     if (opts.x > 0.5) {
         color *= exp(-cam_fwd.w * t);
@@ -2238,7 +2524,13 @@ void main() {
         color += acc / wsum;
     }
     if (laser.x > 0.5) {
-        color += texelFetch(sampler2D(laser_tex, point_smp), p, 0).rgb;
+        // Blanchiment (PLAN-LASERS.md, section 6) : comme sur une camera, la lumiere d'un laser tres intense deborde sur
+        // les autres couleurs. Seul ce qui depasse le debut de la saturation (1 apres exposition) deborde, reparti a
+        // parts egales sur les deux autres canaux : les couleurs ordinaires restent pures, le coeur des traits et la
+        // sortie (tres intenses) virent au blanc, l'eventail (lumiere etalee) beaucoup moins.
+        vec3 Lz = texelFetch(sampler2D(laser_tex, point_smp), p, 0).rgb;
+        vec3 ov = max(Lz * laser.y - 1.0, 0.0);
+        color += Lz + (vec3(ov.r + ov.g + ov.b) - ov) * (0.5 * laser.z / laser.y);
     }
     frag_color = vec4(color, 1.0);
 }
@@ -2309,7 +2601,7 @@ void main() {
 @fs fs_final
 @include_block common
 layout(binding=7) uniform final_params {
-    vec4 res;          // xy : taille de l'ecran
+    vec4 res;          // xy : taille de l'ecran (avec FSR : de l'image a agrandir), z : FSR (pas de tramage ici)
     vec4 opts;         // x : exposition, y : force du bloom, z : bloom actif, w : numero d'image
 };
 layout(binding=13) uniform texture2D combined_tex;
@@ -2332,8 +2624,198 @@ void main() {
     c *= opts.x;
     c = aces(c);
     c = pow(c, vec3(1.0 / 2.2));
-    // tramage leger : evite les bandes dans les degrades sombres
-    c += (ign(gl_FragCoord.xy + opts.w * 7.0) - 0.5) / 255.0;
+    // tramage leger : evite les bandes dans les degrades sombres (avec FSR : apres l'agrandissement, fs_fsr_rcas)
+    if (res.z < 0.5) {
+        c += (ign(gl_FragCoord.xy + opts.w * 7.0) - 0.5) / 255.0;
+    }
+    frag_color = vec4(c, 1.0);
+}
+@end
+
+// -------------------------------------------------------------------------------------
+//  9b. AMD FidelityFX Super Resolution 1 (FSR 1), dernier recours (coupe par defaut, onglet Rendu).
+//      L'image est calculee a la resolution / diviseur, tonalite et gamma compris (fs_final dans fsr_in),
+//      puis EASU l'agrandit a la taille de l'ecran (contours gardes nets) et RCAS rend la netteté ; le
+//      tramage et l'interface sont ajoutes apres, a pleine resolution.
+//      Portage GLSL de ffx_fsr1.h (FsrEasuF, FsrRcasF ; FidelityFX FSR 1.0, (c) Advanced Micro Devices,
+//      licence MIT : la permission est accordee gratuitement d'utiliser, copier, modifier, fusionner,
+//      publier, distribuer, sous-licencier et vendre ce logiciel, sous reserve d'inclure cet avis).
+// -------------------------------------------------------------------------------------
+@block fsr_uniforms
+layout(binding=0) uniform fsr_params {
+    vec4 con0;   // EASU (FsrEasuCon) : entree / sortie, et decalage d'un demi-pixel
+    vec4 con1;   // 1 / taille d'entree, (1, -1) / taille d'entree
+    vec4 con2;   // (-1, 2) et (1, 2) / taille d'entree
+    vec4 con3;   // (0, 4) / taille d'entree ; w : RCAS : 2^-attenuation (netteté)
+    vec4 opts;   // x : numero d'image (tramage)
+};
+@end
+
+@fs fs_fsr_easu
+@include_block common
+@include_block fsr_uniforms
+layout(binding=13) uniform texture2D fsr_in_tex;
+layout(binding=2) uniform sampler lin_clamp_smp;
+out vec4 frag_color;
+
+// une direction (bilineaire sur 4 lignes de 3 texels en croix)
+void easu_set(inout vec2 dir, inout float len, vec2 pp, bool biS, bool biT, bool biU, bool biV,
+              float lA, float lB, float lC, float lD, float lE) {
+    float w = 0.0;
+    if (biS) w = (1.0 - pp.x) * (1.0 - pp.y);
+    if (biT) w = pp.x * (1.0 - pp.y);
+    if (biU) w = (1.0 - pp.x) * pp.y;
+    if (biV) w = pp.x * pp.y;
+    float dc = lD - lC;
+    float cb = lC - lB;
+    float lenX = max(abs(dc), abs(cb));
+    lenX = 1.0 / max(lenX, 1e-12);
+    float dirX = lD - lB;
+    dir.x += dirX * w;
+    lenX = clamp(abs(dirX) * lenX, 0.0, 1.0);
+    lenX *= lenX;
+    len += lenX * w;
+    float ec = lE - lC;
+    float ca = lC - lA;
+    float lenY = max(abs(ec), abs(ca));
+    lenY = 1.0 / max(lenY, 1e-12);
+    float dirY = lE - lA;
+    dir.y += dirY * w;
+    lenY = clamp(abs(dirY) * lenY, 0.0, 1.0);
+    lenY *= lenY;
+    len += lenY * w;
+}
+
+// un echantillon du filtre (lanczos 2 approche, etire le long du bord)
+void easu_tap(inout vec3 aC, inout float aW, vec2 off, vec2 dir, vec2 len, float lob, float clp, vec3 c) {
+    vec2 v = vec2(off.x * dir.x + off.y * dir.y, off.x * (-dir.y) + off.y * dir.x);
+    v *= len;
+    float d2 = min(v.x * v.x + v.y * v.y, clp);
+    float wB = 2.0 / 5.0 * d2 - 1.0;
+    float wA = lob * d2 - 1.0;
+    wB *= wB;
+    wA *= wA;
+    wB = 25.0 / 16.0 * wB - (25.0 / 16.0 - 1.0);
+    float w = wB * wA;
+    aC += c * w;
+    aW += w;
+}
+
+void main() {
+    vec2 pp = floor(gl_FragCoord.xy) * con0.xy + con0.zw;
+    vec2 fp = floor(pp);
+    pp -= fp;
+    //    b c
+    //  e f g h
+    //  i j k l
+    //    n o
+    vec2 p0 = fp * con1.xy + con1.zw;
+    vec2 p1 = p0 + con2.xy;
+    vec2 p2 = p0 + con2.zw;
+    vec2 p3 = p0 + con3.xy;
+    vec4 bczzR = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p0, 0);
+    vec4 bczzG = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p0, 1);
+    vec4 bczzB = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p0, 2);
+    vec4 ijfeR = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p1, 0);
+    vec4 ijfeG = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p1, 1);
+    vec4 ijfeB = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p1, 2);
+    vec4 klhgR = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p2, 0);
+    vec4 klhgG = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p2, 1);
+    vec4 klhgB = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p2, 2);
+    vec4 zzonR = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p3, 0);
+    vec4 zzonG = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p3, 1);
+    vec4 zzonB = textureGather(sampler2D(fsr_in_tex, lin_clamp_smp), p3, 2);
+    // luminance approchee (2 G + R + B) / 2
+    vec4 bczzL = bczzB * 0.5 + (bczzR * 0.5 + bczzG);
+    vec4 ijfeL = ijfeB * 0.5 + (ijfeR * 0.5 + ijfeG);
+    vec4 klhgL = klhgB * 0.5 + (klhgR * 0.5 + klhgG);
+    vec4 zzonL = zzonB * 0.5 + (zzonR * 0.5 + zzonG);
+    float bL = bczzL.x, cL = bczzL.y, iL = ijfeL.x, jL = ijfeL.y, fL = ijfeL.z, eL = ijfeL.w;
+    float kL = klhgL.x, lL = klhgL.y, hL = klhgL.z, gL = klhgL.w, oL = zzonL.z, nL = zzonL.w;
+    vec2 dir = vec2(0.0);
+    float len = 0.0;
+    easu_set(dir, len, pp, true, false, false, false, bL, eL, fL, gL, jL);
+    easu_set(dir, len, pp, false, true, false, false, cL, fL, gL, hL, kL);
+    easu_set(dir, len, pp, false, false, true, false, fL, iL, jL, kL, nL);
+    easu_set(dir, len, pp, false, false, false, true, gL, jL, kL, lL, oL);
+    vec2 dir2 = dir * dir;
+    float dirR = dir2.x + dir2.y;
+    bool zro = dirR < 1.0 / 32768.0;
+    dirR = inversesqrt(max(dirR, 1e-20));
+    dirR = zro ? 1.0 : dirR;
+    dir.x = zro ? 1.0 : dir.x;
+    dir *= vec2(dirR);
+    len = len * 0.5;
+    len *= len;
+    float stretch = (dir.x * dir.x + dir.y * dir.y) / max(abs(dir.x), abs(dir.y));
+    vec2 len2 = vec2(1.0 + (stretch - 1.0) * len, 1.0 - 0.5 * len);
+    float lob = 0.5 + ((1.0 / 4.0 - 0.04) - 0.5) * len;
+    float clp = 1.0 / lob;
+    vec3 b = vec3(bczzR.x, bczzG.x, bczzB.x), c = vec3(bczzR.y, bczzG.y, bczzB.y);
+    vec3 i = vec3(ijfeR.x, ijfeG.x, ijfeB.x), j = vec3(ijfeR.y, ijfeG.y, ijfeB.y);
+    vec3 f = vec3(ijfeR.z, ijfeG.z, ijfeB.z), e = vec3(ijfeR.w, ijfeG.w, ijfeB.w);
+    vec3 k = vec3(klhgR.x, klhgG.x, klhgB.x), l = vec3(klhgR.y, klhgG.y, klhgB.y);
+    vec3 h = vec3(klhgR.z, klhgG.z, klhgB.z), g = vec3(klhgR.w, klhgG.w, klhgB.w);
+    vec3 o = vec3(zzonR.z, zzonG.z, zzonB.z), n = vec3(zzonR.w, zzonG.w, zzonB.w);
+    // anti-anneau : borne par les 4 texels les plus proches
+    vec3 min4 = min(min(f, g), min(j, k));
+    vec3 max4 = max(max(f, g), max(j, k));
+    vec3 aC = vec3(0.0);
+    float aW = 0.0;
+    easu_tap(aC, aW, vec2( 0.0, -1.0) - pp, dir, len2, lob, clp, b);
+    easu_tap(aC, aW, vec2( 1.0, -1.0) - pp, dir, len2, lob, clp, c);
+    easu_tap(aC, aW, vec2(-1.0,  1.0) - pp, dir, len2, lob, clp, i);
+    easu_tap(aC, aW, vec2( 0.0,  1.0) - pp, dir, len2, lob, clp, j);
+    easu_tap(aC, aW, vec2( 0.0,  0.0) - pp, dir, len2, lob, clp, f);
+    easu_tap(aC, aW, vec2(-1.0,  0.0) - pp, dir, len2, lob, clp, e);
+    easu_tap(aC, aW, vec2( 1.0,  1.0) - pp, dir, len2, lob, clp, k);
+    easu_tap(aC, aW, vec2( 2.0,  1.0) - pp, dir, len2, lob, clp, l);
+    easu_tap(aC, aW, vec2( 2.0,  0.0) - pp, dir, len2, lob, clp, h);
+    easu_tap(aC, aW, vec2( 1.0,  0.0) - pp, dir, len2, lob, clp, g);
+    easu_tap(aC, aW, vec2( 1.0,  2.0) - pp, dir, len2, lob, clp, o);
+    easu_tap(aC, aW, vec2( 0.0,  2.0) - pp, dir, len2, lob, clp, n);
+    frag_color = vec4(min(max4, max(min4, aC / aW)), 1.0);
+}
+@end
+
+@fs fs_fsr_rcas
+@include_block common
+@include_block fsr_uniforms
+layout(binding=13) uniform texture2D fsr_up_tex;
+layout(binding=1) uniform sampler point_smp;
+out vec4 frag_color;
+
+void main() {
+    ivec2 ip = ivec2(gl_FragCoord.xy);
+    ivec2 mx = textureSize(sampler2D(fsr_up_tex, point_smp), 0) - 1;
+    //    b
+    //  d e f
+    //    h
+    vec3 b = texelFetch(sampler2D(fsr_up_tex, point_smp), clamp(ip + ivec2(0, -1), ivec2(0), mx), 0).rgb;
+    vec3 d = texelFetch(sampler2D(fsr_up_tex, point_smp), clamp(ip + ivec2(-1, 0), ivec2(0), mx), 0).rgb;
+    vec3 e = texelFetch(sampler2D(fsr_up_tex, point_smp), ip, 0).rgb;
+    vec3 f = texelFetch(sampler2D(fsr_up_tex, point_smp), clamp(ip + ivec2(1, 0), ivec2(0), mx), 0).rgb;
+    vec3 h = texelFetch(sampler2D(fsr_up_tex, point_smp), clamp(ip + ivec2(0, 1), ivec2(0), mx), 0).rgb;
+    // luminance (2 G + R + B) / 2, pour l'attenuation du bruit
+    float bL = b.b * 0.5 + (b.r * 0.5 + b.g);
+    float dL = d.b * 0.5 + (d.r * 0.5 + d.g);
+    float eL = e.b * 0.5 + (e.r * 0.5 + e.g);
+    float fL = f.b * 0.5 + (f.r * 0.5 + f.g);
+    float hL = h.b * 0.5 + (h.r * 0.5 + h.g);
+    float nz = 0.25 * bL + 0.25 * dL + 0.25 * fL + 0.25 * hL - eL;
+    nz = clamp(abs(nz) / max(max(max(bL, dL), max(eL, max(fL, hL))) - min(min(bL, dL), min(eL, min(fL, hL))), 1e-6), 0.0, 1.0);
+    nz = -0.5 * nz + 1.0;
+    vec3 mn4 = min(min(b, d), min(f, h));
+    vec3 mx4 = max(max(b, d), max(f, h));
+    // poids negatif le plus fort qui ne sort pas de [0, 1] (FSR_RCAS_LIMIT = 0,25 - 1/16)
+    vec3 hitMin = min(mn4, e) / max(4.0 * mx4, vec3(1e-6));
+    vec3 hitMax = (vec3(1.0) - max(mx4, e)) / min(4.0 * mn4 - 4.0, vec3(-1e-6));
+    vec3 lobeRGB = max(-hitMin, hitMax);
+    float lobe = max(-(0.25 - 1.0 / 16.0), min(max(lobeRGB.r, max(lobeRGB.g, lobeRGB.b)), 0.0)) * con3.w;
+    lobe *= nz;
+    vec3 c = (lobe * (b + d + h + f) + e) / (4.0 * lobe + 1.0);
+    // tramage leger (comme fs_final)
+    c += (ign(gl_FragCoord.xy + opts.x * 7.0) - 0.5) / 255.0;
     frag_color = vec4(c, 1.0);
 }
 @end
@@ -2359,6 +2841,8 @@ struct sb_laser {
     vec4 flux1;       // rgb : idem au bord 1 (degrade lineaire le long de l'eventail) ; w : 1 / nombre de traits
     vec4 cut;         // coupe par un obstacle (etape 5) : le segment s'arrete sur la droite x a + y b = 1 de son plan (la face
                       // de l'obstacle ; 0, 0 : pas de coupe) ; z : portee au bord 1 (nrm_range.w : au bord 0)
+    vec4 stop;        // arcs : arret sur la face d'un obstacle ; le point X de la nappe (depuis la source, dans le repere
+                      // d, rr, uu) n'est eclaire que si dot(X, stop.xyz) <= stop.w (sinon : 0, 0, 0, 1e30)
 };
 // source = camera - (ec, es, normale) . cam_rel
 vec3 laser_source(sb_laser L, vec3 cam) {
@@ -2572,8 +3056,11 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, 
     float rP = r2 * irP;
     float bP = dot(dxy, p2) * irP;   // cos(rayon, trait)
     float sig2 = laser_sig2(rP, tP);
-    // 1 / |n.v| plafonne par l'epaisseur de la nappe (nappe vue par la tranche : rare, la racine seulement alors)
-    float m = max(rP, 0.5);
+    // 1 / |n.v| plafonne par l'epaisseur de la nappe (nappe vue par la tranche : rare, la racine seulement alors) : le
+    // rayon ne reste dans la nappe que sur 0,4 rP au plus. Plafond lie a rP jusqu'a la source : avec un plancher de
+    // 0,5 m, une nappe vue en rasant s'allumait a quelques cm de la sortie hors de son ouverture (traits parasites en
+    // croix a la sortie, surtout sur les cones des arcs)
+    float m = rP;
     float iaa = abs(ia);
     if (ia * ia * sig2 > 0.16 * m * m) {
         iaa = 0.4 * m * inversesqrt(sig2);
@@ -2729,10 +3216,13 @@ float laser_traits_sum(float Q2, float f2, float x, float nb) {
 // Une intersection t du rayon (vf : sa direction dans le repere, q : camera - source) avec la nappe conique.
 // F : 0 pour une intersection ; sinon le rayon frole la nappe (silhouette) et F = a^2 + b^2 - (rho zd)^2 au point le
 // plus proche : poids 2 exp(-delta^2 / 2 sigma^2), delta = F / |grad F| (voir laser_arc).
-vec3 laser_arc_at(float t, vec3 q, vec3 vf, vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 C, vec3 v, float F) {
-    vec3 X = q + vf * t;
+// X : le point (depuis la source, dans le repere), t : sa distance a la camera.
+// SP : plan d'arret (face d'un obstacle, voir sb_laser.stop) : au-dela, la nappe est a l'ombre (bord net, comme la droite
+// d'arret des eventails).
+vec3 laser_arc_at(float t, vec3 X, vec3 vf, vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec3 C, vec4 SP, vec3 v,
+                  float F) {
     float r2 = dot(X, X);
-    if (X.x <= 0.0 || r2 > L2.w * L2.w) {
+    if (X.x <= 0.0 || r2 > L2.w * L2.w || dot(X, SP.xyz) > SP.w) {
         return vec3(0.0);
     }
     float irP = inversesqrt(r2), rP = r2 * irP;
@@ -2747,7 +3237,7 @@ vec3 laser_arc_at(float t, vec3 q, vec3 vf, vec4 L0, vec4 L1, vec4 L2, vec4 L3, 
     float nv = abs(dot(g, vf)) * inversesqrt(max(dot(g, g), 1e-20));
     float bP = dot(vf, X) * irP;
     float sig2 = laser_sig2(rP, t);
-    float m = max(rP, 0.5);
+    float m = rP;   // comme laser_eval : plafond lie a la distance a la source
     float iaa = 1.0 / max(nv, 1e-6);
     if (sig2 * iaa * iaa > 0.16 * m * m) {
         iaa = 0.4 * m * inversesqrt(sig2);
@@ -2755,26 +3245,40 @@ vec3 laser_arc_at(float t, vec3 q, vec3 vf, vec4 L0, vec4 L1, vec4 L2, vec4 L3, 
     // nappe courbe vue par la tranche : le rayon ne reste dans son epaisseur (2,5 sigma) que sur une corde
     // 2 sqrt(2 Rn 2,5 sigma), Rn le rayon de courbure dans la direction du rayon (rho zd / sin^2 de l'angle
     // rayon-trait) : 1 / |n.v| <= corde / epaisseur. Comme la corde d'une facette des anciennes nappes planes.
-    float rn = C.z * X.x / max(1.0 - bP * bP, 1e-4);
-    iaa = min(iaa, 2.0 * sqrt(0.8 * rn * inversesqrt(sig2)));
+    // iaa^2 <= 3,2 Rn / sigma, sans division ni racine sauf quand la limite sert
+    float isig = inversesqrt(sig2), sn2 = max(1.0 - bP * bP, 1e-4);
+    if (iaa * iaa * sn2 > 3.2 * C.z * X.x * isig) {
+        iaa = sqrt(3.2 * C.z * X.x * isig / sn2);
+    }
     // Hors de la portion de ce morceau d'au moins un demi-trait + 4 sigma (etires de 1 / |n.v| plafonne, quand la nappe
     // est vue par la tranche ; le long du cercle, rho zd par radian) : rien. Chaque morceau voit le cone entier (equation du
     // cone) : sans ce rejet, tout le calcul etait fait pour tous les morceaux du cone puis mis a 0 par la somme des traits.
     float outa = abs(du) - 0.5 * L3.w - 0.5 / L4.w;
     float am = outa * C.z * X.x;
-    if (outa > 0.0 && am * am > 16.0 * sig2 * max(iaa * iaa, 1.0)) {
+    // Etirement des bouts du morceau (nappe vue en rasant) plafonne pres de la sortie a max(4, rP / (20 sigma)) : sinon
+    // le bout d'un arc s'etalait sur des dizaines de cm le long du cone hors du morceau (petit trait parasite a la sortie,
+    // ambiance Ocean). Loin de la sortie, le plafond depasse celui de iaa (0,4 rP / sigma) : jonctions des morceaux vus
+    // par la tranche inchangees. La lumiere et la largeur des traits gardent 1 / |n.v| entier (iaa).
+    float iaaE = min(iaa, max(4.0, 0.05 * rP * isig));
+    if (outa > 0.0 && am * am > 16.0 * sig2 * max(iaaE * iaaE, 1.0)) {
         return vec3(0.0);
     }
-    // vitesse angulaire du faisceau le long de l'arc : |d dir / d theta| = |dY perpendiculaire a dir| / |Y|, Y = X / zd
-    float izr = 1.0 / (C.z * X.x);
-    vec3 dY = vec3(0.0, -b * izr, a * izr) * C.z;
+    // fumee au point : les lectures partent ici, leur resultat ne sert qu'a la fin (comme laser_eval)
+    float pt = res.w * t;
+#if LASER_FOG >= 1
+    float lfoot = log2(pt * iaa);
+    vec2 fog2;
+    vec4 fog = laser_fetch(cam_pos.xyz + v * t, lfoot, fog2);
+#endif
+    // vitesse angulaire du faisceau le long de l'arc : |d dir / d theta| = |dY perpendiculaire a dir| / |Y|, Y = X / zd ;
+    // avec dY = (0, -b, a) / zd : traits par radian de direction = L4.w rP / |(0, -b, a) perpendiculaire a dir|
     vec3 dir = X * irP;
+    vec3 dY = vec3(0.0, -b, a);
     vec3 dYp = dY - dir * dot(dir, dY);
-    float kpr = L4.w / max(length(dYp) * X.x * irP, 1e-6);   // traits par radian de direction
+    float kpr = L4.w * rP * inversesqrt(max(dot(dYp, dYp), 1e-24));
     float sin2 = max(1.0 - bP * bP, 6.25 * sig2 * irP * irP);
     float k = kpr * irP * iaa;
     float idu2 = sin2 * k * k;
-    float pt = res.w * t;
     float S = laser_traits_sum(sig2 * idu2, pt * pt * idu2, x, nb);
     if (S <= 0.0) {
         return vec3(0.0);
@@ -2784,21 +3288,30 @@ vec3 laser_arc_at(float t, vec3 q, vec3 vf, vec4 L0, vec4 L1, vec4 L2, vec4 L3, 
 #else
     vec3 col = L4.rgb;
 #endif
-    float w = F != 0.0 ? 2.0 * exp(-0.125 * F * F / (max(dot(g, g), 1e-30) * sig2)) : 1.0;
+    float w = 1.0;
+    if (F != 0.0) {
+        w = 2.0 * exp(-0.125 * F * F * isig * isig / max(dot(g, g), 1e-30));
+    }
     return col * (w * S * laser_phase(bP) * exp(-cam_fwd.w * (t + rP)) * kpr * irP * iaa
-                  * laser_sigma(cam_pos.xyz + v * t, pt * iaa));
+#if LASER_FOG >= 1
+                  * laser_sigma_of(fog, fog2, lfoot));
+#else
+                  * lfog.x);
+#endif
 }
 
-// Intersections du rayon v avec le cone : r = (t1, t2, F) (t < 0 : aucune ; F voir laser_arc_at). Le calcul de
+// Intersections du rayon v avec le cone : r = (t1, t2, F) (-1e30 : aucune ; F voir laser_arc_at). q : point du rayon le
+// plus proche de la source (depuis elle), t compte depuis ce point : equation bien conditionnee (camera a 30 m d'une
+// nappe fine : sans ce decalage, la difference de grands nombres semait des points brillants pres des sorties). Le calcul de
 // chaque intersection (laser_arc_at) est fait ensuite dans une seule boucle pour les 2 pixels du fil : une seule copie
 // de ce long calcul dans le shader (4 copies en ligne coutaient 3 ms sur L2 : la passe est limitee par les registres).
-vec3 laser_arc_roots(vec4 L1, vec4 L2, vec3 q, vec3 vf, vec3 C, float tMax) {
+vec3 laser_arc_roots(vec4 L1, vec4 L2, vec3 q, vec3 vf, vec3 C, float tMax, float tAbs) {
     float A0 = q.y - C.x * q.x, A1 = vf.y - C.x * vf.x;
     float B0 = q.z - C.y * q.x, B1 = vf.z - C.y * vf.x;
     float C0 = C.z * q.x, C1 = C.z * vf.x;
     float qa = A1 * A1 + B1 * B1 - C1 * C1, qb = A0 * A1 + B0 * B1 - C0 * C1, qc = A0 * A0 + B0 * B0 - C0 * C0;
     float disc = qb * qb - qa * qc;
-    float t1 = -1.0, t2 = -1.0, F = 0.0;
+    float t1 = -1e30, t2 = -1e30, F = 0.0;
     if (disc < 0.0) {
         // Le rayon passe a cote du cone (silhouette) : la nappe a une epaisseur (gaussienne de largeur sigma), un rayon
         // qui la frole de delta s'y eclaire encore. Point du rayon le plus proche de la surface (sommet de la parabole,
@@ -2806,21 +3319,21 @@ vec3 laser_arc_roots(vec4 L1, vec4 L2, vec3 q, vec3 vf, vec3 C, float tMax) {
         // dans laser_arc_at) : bord adouci comme celui d'une nappe plane, sans escalier. Code minimal ici : la passe est
         // limitee par les registres (un calcul complet de plus coutait 4 ms sur L2, meme peu execute).
         // Rejet sans division au-dela de 3 sigma : |F| = -disc / qa, rho zd = rho (q.x qa - vf.x qb) / qa, sigma^2 borne.
-        float zq = q.x * qa - vf.x * qb, pxm = beam.z * res.w * min(tMax, 200.0);
+        float zq = q.x * qa - vf.x * qb, pxm = beam.z * res.w * min(tAbs, 200.0);   // tAbs : distance de la camera
         if (disc * disc > 36.0 * (beam.x + beam.y * L2.w * L2.w + pxm * pxm) * C.z * C.z * zq * zq) {
-            return vec3(-1.0, -1.0, 0.0);
+            return vec3(-1e30, -1e30, 0.0);
         }
         t1 = -qb / qa;
         F = -disc / qa;
     } else {
         float tq = -(qb + (qb >= 0.0 ? sqrt(disc) : -sqrt(disc)));   // racines t = tq / qa et qc / tq (forme stable)
         if (abs(tq) < 1e-20) {
-            return vec3(-1.0, -1.0, 0.0);
+            return vec3(-1e30, -1e30, 0.0);
         }
-        t1 = abs(qa) > 1e-20 ? tq / qa : -1.0;
+        t1 = abs(qa) > 1e-20 ? tq / qa : -1e30;
         t2 = qc / tq;
     }
-    return vec3(t1 <= tMax ? t1 : -1.0, t2 <= tMax ? t2 : -1.0, F);
+    return vec3(t1 <= tMax ? t1 : -1e30, t2 <= tMax ? t2 : -1e30, F);
 }
 #endif
 @end
@@ -3264,9 +3777,14 @@ layout(local_size_x=16, local_size_y=8, local_size_z=1) in;
 shared uint s_n;
 shared uint s_idx[128];
 #ifdef LASER_GRADIENT
-const uint LS = 6u;   // vec4 par segment en memoire partagee (couleur au bord 1 comprise)
+const uint LG = 6u;   // vec4 par segment en memoire partagee (couleur au bord 1 comprise)
 #else
-const uint LS = 5u;
+const uint LG = 5u;
+#endif
+#ifdef LASER_ARCS
+const uint LS = LG + 1u;   // arcs : plan d'arret (stop) en plus
+#else
+const uint LS = LG;
 #endif
 shared vec4 s_seg[128u * LS];
 shared vec4 s_line[128];   // traits seuls : droite a l'ecran et demi-largeur (cs_laser_setup) ; eventails : portee au bord 1
@@ -3322,6 +3840,9 @@ void main() {
 #ifdef LASER_GRADIENT
             s_seg[lid * LS + 5u] = L.flux1;
 #endif
+#ifdef LASER_ARCS
+            s_seg[lid * LS + LG] = L.stop;
+#endif
             uint so = s_idx[lid] * 9u;
             // traits seuls : leur droite a l'ecran ; eventails : leur portee au bord 1 (x, coupe par un obstacle)
             s_line[lid] = (L.es_n.w < 1.5 && L.es_n.w > -0.5) ? vec4(scr[so + 1u].v.w, scr[so + 2u].v.w, scr[so + 3u].v.w, scr[so + 4u].v.w)
@@ -3345,18 +3866,21 @@ void main() {
             {
                 vec3 C = s_line[j].xyz;
                 vec2 mid = unpackHalf2x16(floatBitsToUint(s_line[j].w));
+                vec4 SP = s_seg[o + LG];
                 vec3 vfA = vec3(dot(va, L0.xyz), dot(va, L1.xyz), dot(va, L2.xyz));
-                vec3 rA = laser_arc_roots(L1, L2, L3.xyz, vfA, C, tMaxA);
+                float t0 = -dot(L3.xyz, vfA);
+                vec3 q0 = L3.xyz + vfA * t0;   // point du rayon le plus proche de la source
+                vec3 rA = laser_arc_roots(L1, L2, q0, vfA, C, tMaxA - t0, tMaxA);
                 // une seule copie de laser_arc_at (voir laser_arc_roots) : intersections 1 et 2
                 [[dont_unroll]] for (int k = 0; k < 2; k++) {
-                    float t = k == 0 ? rA.x : rA.y;
+                    float tr = k == 0 ? rA.x : rA.y, t = t0 + tr;
                     // intersection a plus de 90 deg du milieu du morceau (l'autre cote du cone, vu par un autre
                     // morceau), a plus de 4 epaisseurs de nappe (pixel compris) de son demi-plan : rien, sans le long
                     // calcul. Pres de la source (cercle de quelques pixels), l'autre cote eclaire encore : garde.
-                    vec3 X = L3.xyz + vfA * t;
+                    vec3 X = q0 + vfA * tr;
                     float dm = dot(vec2(X.y - C.x * X.x, X.z - C.y * X.x), mid), pxt = beam.z * res.w * t;
-                    if (t > 0.0 && (dm > 0.0 || dm * dm < 16.0 * (beam.x + beam.y * X.x * X.x + pxt * pxt))) {
-                        accA += laser_arc_at(t, L3.xyz, vfA, L0, L1, L2, L3, L4, L5, C, va, k == 0 ? rA.z : 0.0);
+                    if (tr > -1e29 && t > 0.0 && (dm > 0.0 || dm * dm < 16.0 * (beam.x + beam.y * X.x * X.x + pxt * pxt))) {
+                        accA += laser_arc_at(t, X, vfA, L0, L1, L2, L3, L4, L5, C, SP, va, k == 0 ? rA.z : 0.0);
                     }
                 }
             }
@@ -3521,7 +4045,7 @@ void main() {
 //      la surface (couleur x cos / pi), attenuation par la fumee. Ajoute a l'image de la scene (avant la fumee).
 @block laser_hit_data
 struct sb_hit {
-    vec4 a;      // xyz, w : 0 ligne, 1 point, 2 arc
+    vec4 a;      // xyz, w : 0 ligne, 1 point, 2 arc, 3 sortie (lueur)
     vec4 b;      // arc : w = rho
     vec4 src;    // arc : w = rr.x
     vec4 nrm;    // ligne : normale du plan ; point : direction du trait ; arc : axe d, w = cx
@@ -3582,6 +4106,14 @@ void main() {
     vec4 A = hits[i].a, B = hits[i].b;
     vec3 src = hits[i].src.xyz, sn = hits[i].surf.xyz;
     vec2 sa = hit_screen(A.xyz), sb = hit_screen(B.xyz);
+    if (A.w > 2.5) {
+        // sortie : carre de 2 x 30 pixels autour de la source (halo de 6 pixels de sigma)
+        int c3 = gl_VertexIndex;
+        int k3 = c3 < 3 ? c3 : (c3 == 3 ? 2 : (c3 == 4 ? 1 : 3));
+        vec2 p3 = sa + vec2((k3 & 1) == 0 ? -30.0 : 30.0, k3 >= 2 ? 30.0 : -30.0);
+        gl_Position = vec4(p3 / res.xy * 2.0 - 1.0, 0.5, 1.0);
+        return;
+    }
     // direction dans la surface, en travers de la ligne (nappe) ; pour un trait : le grand axe de la tache (la
     // direction du trait couchee sur la surface)
     vec3 nr = hits[i].nrm.xyz;
@@ -3636,8 +4168,9 @@ layout(binding=1) uniform hit_fs_params {
     vec4 cam_up;      // w : tan y
     vec4 cam_fwd;     // w : intensite (reglage)
     vec4 res;         // xy : taille du rendu, z : angle d'un pixel
-    vec4 beam;        // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels)
+    vec4 beam;        // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels) ; w : blanchiment
 };
+// res.w : exposition
 layout(binding=29) readonly buffer hits_fs { sb_hit hitsf[]; };
 layout(binding=26) uniform texture2D hit_depth;
 layout(binding=27) uniform texture2D hit_normal;
@@ -3658,6 +4191,45 @@ void main() {
     float t = texelFetch(sampler2D(hit_depth, hit_smp), pix, 0).r / max(dot(dir, cam_fwd.xyz), 1e-3);
     vec3 X = cam_pos.xyz + dir * t;
     sb_hit H = hitsf[v_hit];
+    if (H.a.w > 2.5) {
+        // Lueur de sortie : la fenetre de sortie diffuse un peu de la puissance (point source, intensite H.f0 par
+        // steradian) ; son image : point chaud (sigma 1 pixel, 88 %) et halo (sigma 6 pixels, 12 %), puis le bloom. Sous
+        // 10 m, l'intensite ne croit plus (le point chaud deviendrait un disque blanc de plusieurs dizaines de pixels).
+        // Le halo est un eblouissement de l'optique (pas un objet de la scene) : il ne depend que de la visibilite de la
+        // source (5 lectures de profondeur autour d'elle ; le boitier la cache vue de derriere), pas de ce qui est devant
+        // chaque pixel du halo. Blanchie comme le calque des lasers (fs_composite).
+        vec3 rs = H.a.xyz - cam_pos.xyz;
+        float D = length(rs);
+        if (dot(dir, rs) <= 0.0) {
+            discard;
+        }
+        float zs = dot(rs, cam_fwd.xyz) - 0.03, vis = 0.0;
+        // pixel de la source (inverse de ndc_from_uv)
+        float zf = dot(rs, cam_fwd.xyz);
+        vec2 sndc = vec2(dot(rs, cam_right.xyz) / (zf * cam_right.w), dot(rs, cam_up.xyz) / (zf * cam_up.w));
+#if SOKOL_GLSL
+        vec2 suv = sndc * 0.5 + 0.5;
+#else
+        vec2 suv = vec2(sndc.x * 0.5 + 0.5, 0.5 - sndc.y * 0.5);
+#endif
+        ivec2 sp0 = ivec2(suv * res.xy), smax = ivec2(res.xy) - 1;
+        for (int q = 0; q < 5; q++) {
+            ivec2 o = q == 0 ? ivec2(0) : ivec2(q == 1 ? 2 : (q == 2 ? -2 : 0), q == 3 ? 2 : (q == 4 ? -2 : 0));
+            vis += texelFetch(sampler2D(hit_depth, hit_smp), clamp(sp0 + o, ivec2(0), smax), 0).r >= zs ? 0.2 : 0.0;
+        }
+        if (vis <= 0.0) {
+            discard;
+        }
+        float sp = length(cross(dir, rs / D)) / res.z;   // ecart a la source, en pixels
+        float s2 = sp * sp;
+        float wk = 0.88 * 0.15915494 * exp(-0.5 * s2) + 0.12 * 0.0044209706 * exp(-0.013888889 * s2);
+        float Dc = max(D, 10.0);
+        vec3 E = H.f0.rgb * (vis * wk / (Dc * Dc * res.z * res.z)) * exp(-cam_pos.w * D);
+        vec3 ov = max(E * res.w - 1.0, 0.0);
+        E += (vec3(ov.r + ov.g + ov.b) - ov) * (0.5 * beam.w / res.w);
+        frag_color = vec4(min(E, vec3(60000.0)), 0.0);
+        return;
+    }
     vec3 rel = X - H.src.xyz;
     float r2 = dot(rel, rel), r = sqrt(r2);
     float px = beam.z * res.z * t;
@@ -3710,7 +4282,7 @@ void main() {
         }
         E = H.f0.rgb * (exp(-0.5 * d2 / sig2) * 0.15915494 / sig2);
     }
-    vec3 N = texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz;
+    vec3 N = normalize(texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz);   // longueur : 1 + eau au sol
     vec3 alb = texelFetch(sampler2D(hit_albedo, hit_smp), pix, 0).rgb;
     float cosi = max(dot(N, -rel / max(r, 1e-4)), 0.0);
     vec3 L = E * cosi * alb * 0.31830989 * exp(-cam_pos.w * (r + t)) * cam_fwd.w;
@@ -3728,6 +4300,7 @@ void main() {
 @program scene_wet vs_scene fs_scene_wet
 @program scene_gb_wet vs_scene fs_scene_gb_wet
 @program soft_light vs_fullscreen fs_soft_light
+@program soft_simple vs_fullscreen fs_soft_simple
 @program depth_only vs_scene fs_depth_only
 @program vol_ambient vs_fullscreen fs_vol_ambient
 @program beams vs_beam fs_beam
@@ -3744,6 +4317,8 @@ void main() {
 @program bloom_down vs_fullscreen fs_bloom_down
 @program bloom_up vs_fullscreen fs_bloom_up
 @program final vs_fullscreen fs_final
+@program fsr_easu vs_fullscreen fs_fsr_easu
+@program fsr_rcas vs_fullscreen fs_fsr_rcas
 @program laser_hit vs_laser_hit fs_laser_hit
 @program laser_setup cs_laser_setup
 @program laser_bin cs_laser_bin

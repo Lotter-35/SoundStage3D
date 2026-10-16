@@ -8,6 +8,7 @@ Banc d'essai C++ de lyres (moving heads) dans une fumée volumétrique, séparé
 - **Aucune dégradation visible de l'image** : un rendu plus rapide mais visiblement plus flou, taché ou moins fin n'est pas accepté. Les petites différences invisibles sont acceptées.
 - Répondre en français.
 
+
 ## Règle : toute modification est mesurée
 
 Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la procédure de `PERFORMANCE.md`.

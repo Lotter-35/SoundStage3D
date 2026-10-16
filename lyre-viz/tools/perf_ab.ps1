@@ -9,10 +9,13 @@
 #   -Moving          lyres et fumee en mouvement (par defaut : immobiles, pour comparer les images)
 #   -Set "a=1","b=2" reglages passes a --set (par defaut : adaptive=0, qualite fixe)
 #   -Name essai      prefixe des dossiers de resultats (bench\essai_A0, bench\essai_B0, ...)
+#   -Lyres           banc des lyres (--bench-lyres : lyres qui visent toutes le meme point, zoom, mouvement ; lasers
+#                    eteints) au lieu de celui des lyres general
 #   -Lasers          banc des lasers (--bench-lasers : cas L1 a L6, M1, voir PLAN-LASERS.md) au lieu de celui des lyres
 #   -Fast            banc rapide : 30 images de chauffe et 60 mesurees par cas (au lieu de 60 et 150) ;
 #                    un banc complet en 20 s au lieu de 45. A utiliser par defaut ; sans -Fast pour une
 #                    decision serree ou les valeurs de reference.
+#   -Cases "14,20"   seulement ces cas (numeros de la liste complete, option --cases ; implique tous les cas)
 #   -Behind          fenetre ouverte derriere les autres, sans prendre le clavier. ATTENTION : Windows
 #                    donne la priorite a la fenetre active : derriere (ou si l'on clique ailleurs pendant
 #                    le banc), le GPU est 5 a 15 % plus lent dans les cas lourds. A n'utiliser que pour
@@ -31,7 +34,9 @@ param(
     [switch]$Fast,
     [switch]$Behind,
     [switch]$Lasers,
+    [switch]$Lyres,
     [string[]]$Set = @('adaptive=0'),
+    [string]$Cases = '',
     [string]$Name = 'ab'
 )
 # lance avec powershell -File, "a=1","b=2" arrive en une seule chaine "a=1,b=2" : on la decoupe
@@ -50,10 +55,11 @@ for ($i = 0; $i -lt $Rounds; $i++) {
         $exe = if ($k -eq 'A') { $pathA } else { $pathB }
         $dir = "bench\$Name`_$k$i"
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue
-        $argList = @($(if ($Lasers) { '--bench-lasers' } else { '--bench' }), '--fullscreen', '--benchdir', $dir)
+        $argList = @($(if ($Lasers) { '--bench-lasers' } elseif ($Lyres) { '--bench-lyres' } else { '--bench' }), '--fullscreen', '--benchdir', $dir)
         if ($Fast) { $argList += '--fast' }
         if ($Behind) { $argList += '--behind' }
-        if (-not $Full) { $argList += '--quick' }
+        if ($Cases) { $argList += @('--cases', $Cases) }
+        elseif (-not $Full) { $argList += '--quick' }
         if (-not $Moving) { $argList += '--static' }
         foreach ($s in $Set) { $argList += @('--set', $s) }
         Write-Host "Lancement $k$i : $exe"

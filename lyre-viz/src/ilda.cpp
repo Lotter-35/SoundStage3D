@@ -1,6 +1,7 @@
-#include "ilda.h"
+﻿#include "ilda.h"
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <filesystem>
 #include <fstream>
 
@@ -60,150 +61,208 @@ IldaFrame complete_frame(const IldaFrame& f) {
     return out;
 }
 
-// Reduction d'une image en faisceaux et nappes (reprise de Laser2Scanner._extractPass du web).
-//   - un point a moins de 'dwell' du precedent (ou apres un point masque) : le faisceau reste sur place, son
-//     energie s'ajoute au faisceau courant (position moyenne ponderee) ;
-//   - sinon, le segment (point precedent -> point) ouvre ou prolonge une nappe, coupee quand le trace tourne
-//     (ecart > tol), revient en arriere, change d'espacement entre points (+-12 %), de niveau (15 %) ou de teinte ;
-//   - nappe plus courte que 'dwell' : un faisceau en son milieu ; faisceaux au meme endroit fusionnes.
-// Faux si plus de 'limit' primitives (passe interrompue).
-bool extract(const IldaFrame& f, float dwell, float tol, int limit, IldaPrims& out) {
-    out.beams.clear();
-    out.sheets.clear();
-    const int n = f.size();
-    if (n == 0) return true;
-    const float inv = 1.0f / (float)n;
-    // couleurs lineaires, l : canal le plus fort ; le point 0 est precede du dernier (image fermee)
-    std::vector<float> R(n), G(n), B(n), L(n);
-    for (int i = 0; i < n; i++) {
-        R[i] = srgb_to_linear(f.r[i]);
-        G[i] = srgb_to_linear(f.g[i]);
-        B[i] = srgb_to_linear(f.b[i]);
-        L[i] = std::max(R[i], std::max(G[i], B[i]));
+// ---- Banques generees (bancs P1 a P3) ---------------------------------------------------------------------------
+// Une image se construit comme un fichier ILDA : points de duree egale, a ~30 000 points/s ; les coins sont tenus
+// quelques points (le faisceau s'y arrete, comme dans un fichier bien fait), les sauts sont eteints.
+struct FrameBuilder {
+    IldaFrame f;
+    float x = 0, y = 0;
+    void point(float px, float py, float r, float g, float b) {
+        f.push(px, py, r, g, b);
+        x = px;
+        y = py;
     }
-    bool over = false;
-    int mode = 0;   // 0 rien, 1 faisceau, 2 nappe
-    float bx = 0, by = 0, bw = 0, br = 0, bg = 0, bb = 0, bl = 0;
-    int bn = 0;
-    float sx0 = 0, sy0 = 0, sx1 = 0, sy1 = 0, sr = 0, sg = 0, sb = 0, sl = 0;
-    float sL = 0, sd0 = 0, sdx = 0, sdy = 0, sProj = 0, sLevel = 0;
-    int sCount = 0;
-    bool prevLit = false;
-    float qx = 0, qy = 0;
-    auto count = [&]() { return (int)(out.beams.size() / 6 + out.sheets.size() / 8); };
-    auto emit_beam = [&](float x, float y, float r, float g, float b, float l) {
-        std::vector<float>& A = out.beams;
-        const int nb = (int)(A.size() / 6);
-        for (int i = std::max(0, nb - 48); i < nb; i++) {
-            float* o = &A[(size_t)i * 6];
-            if (std::fabs(o[0] - x) < dwell * 2 && std::fabs(o[1] - y) < dwell * 2) {
-                const float w0 = o[2] + o[3] + o[4], w1 = r + g + b;
-                const float wt = w0 + w1 > 0 ? w1 / (w0 + w1) : 0.5f;
-                o[0] += (x - o[0]) * wt;
-                o[1] += (y - o[1]) * wt;
-                o[2] += r; o[3] += g; o[4] += b; o[5] += l;
-                return;
-            }
-        }
-        if (count() >= limit) { over = true; return; }
-        A.insert(A.end(), {x, y, r, g, b, l});
-    };
-    auto close_beam = [&]() {
-        if (bw > 0) emit_beam(bx / bw, by / bw, br * inv, bg * inv, bb * inv, bl * inv);
-        bw = br = bg = bb = bl = bx = by = 0;
-        bn = 0;
-    };
-    auto close_sheet = [&]() {
-        if (sL < dwell) {
-            if (sr + sg + sb > 0) emit_beam((sx0 + sx1) * 0.5f, (sy0 + sy1) * 0.5f, sr * inv, sg * inv, sb * inv, sl * inv);
-        } else if (count() >= limit) {
-            over = true;
-        } else {
-            out.sheets.insert(out.sheets.end(), {sx0, sy0, sx1, sy1, sr * inv, sg * inv, sb * inv, sl * inv});
-        }
-        sr = sg = sb = sl = sL = 0;
-        sCount = 0;
-    };
-    auto start_sheet = [&](float x, float y) {
-        sx0 = sx1 = x;
-        sy0 = sy1 = y;
-        sr = sg = sb = sl = sL = sd0 = sProj = 0;
-        sCount = 0;
-    };
-    {
-        const int o = n - 1;
-        if (R[o] + G[o] + B[o] > 1e-6f) { prevLit = true; qx = f.x[o]; qy = f.y[o]; }
+    // saut eteint (n points le long du saut, puis 6 points sur place : les miroirs arrivent)
+    void blank_to(float px, float py, int n = 8) {
+        for (int i = 1; i <= n; i++) point(x + (px - x) * i / n, y + (py - y) * i / n, 0, 0, 0);
+        for (int i = 0; i < 6; i++) point(px, py, 0, 0, 0);
     }
-    for (int o = 0; o < n; o++) {
-        const float r = R[o], g = G[o], b = B[o], l = L[o];
-        const float x = f.x[o], y = f.y[o];
-        const float lvl = r + g + b;
-        if (lvl <= 1e-6f) {
-            if (mode == 1) close_beam(); else if (mode == 2) close_sheet();
-            mode = 0;
-            prevLit = false;
-            qx = x;
-            qy = y;
-            continue;
-        }
-        const float ddx = x - qx, ddy = y - qy;
-        const float d = prevLit ? std::sqrt(ddx * ddx + ddy * ddy) : 0.0f;
-        if (!prevLit || d < dwell) {
-            if (mode == 2) close_sheet();
-            if (mode != 1) { mode = 1; bw = br = bg = bb = bl = bx = by = 0; bn = 0; }
-            bx += x * lvl; by += y * lvl; bw += lvl;
-            br += r; bg += g; bb += b; bl += l;
-            bn++;
-        } else {
-            if (mode == 1) {
-                // un seul point avant le trait (son depart) : il appartient au trait, ce n'est pas un faisceau
-                const bool lone = bn == 1;
-                const float cr = br, cg = bg, cb = bb, cl = bl;
-                if (lone) { bw = br = bg = bb = bl = bx = by = 0; bn = 0; } else close_beam();
-                start_sheet(qx, qy);
-                if (lone) { sr = cr; sg = cg; sb = cb; sl = cl; }
-                mode = 2;
-            } else if (mode == 0) {
-                start_sheet(qx, qy);
-                mode = 2;
-            } else {
-                const float ex = x - sx0, ey = y - sy0;
-                const float proj = ex * sdx + ey * sdy;
-                const float perp = std::fabs(ex * sdy - ey * sdx);
-                const float ratio = d / sd0;
-                bool cut = perp > tol || proj <= sProj || ratio < 0.88f || ratio > 1.14f;
-                if (!cut) {
-                    const float lv = sLevel / (float)sCount, se = sr + sg + sb;
-                    cut = std::fabs(lvl - lv) > 0.15f * lv || std::fabs(r / lvl - sr / se) > 0.06f || std::fabs(g / lvl - sg / se) > 0.06f;
-                }
-                if (cut) {
-                    close_sheet();
-                    start_sheet(qx, qy);
-                }
-            }
-            if (sCount == 0) {
-                sd0 = d;
-                sdx = (x - sx0) / d;
-                sdy = (y - sy0) / d;
-                sLevel = 0;
-            }
-            sx1 = x;
-            sy1 = y;
-            sProj = (x - sx0) * sdx + (y - sy0) * sdy;
-            sL += d;
-            sr += r; sg += g; sb += b; sl += l;
-            sLevel += lvl;
-            sCount++;
-        }
-        prevLit = true;
-        qx = x;
-        qy = y;
+    void hold(int n, float r, float g, float b) {
+        for (int i = 0; i < n; i++) point(x, y, r, g, b);
     }
-    if (mode == 1) close_beam(); else if (mode == 2) close_sheet();
-    return !over;
+    // trait allume, un point tous les 'step'
+    void line_to(float px, float py, float r, float g, float b, float step = 0.02f) {
+        const float d = std::sqrt((px - x) * (px - x) + (py - y) * (py - y));
+        const int n = std::max(1, (int)std::ceil(d / step));
+        const float x0 = x, y0 = y;
+        for (int i = 1; i <= n; i++) point(x0 + (px - x0) * i / n, y0 + (py - y0) * i / n, r, g, b);
+    }
+};
+
+// Generateur pseudo-aleatoire reproductible (bancs).
+struct Rng {
+    uint32_t s;
+    float uni() {
+        s = s * 1664525u + 1013904223u;
+        return (float)(s >> 8) / 16777216.0f;
+    }
+    float gauss() {
+        const float u = std::max(uni(), 1e-7f), v = uni();
+        return std::sqrt(-2.0f * std::log(u)) * std::cos(6.2831853f * v);
+    }
+};
+
+// Dessin a main levee : courbe lisse au hasard, vitesse irreguliere, tremblement de la main ; trait ouvert, retour
+// eteint au depart.
+IldaFrame pencil_frame(uint32_t seed) {
+    Rng R{seed * 2654435761u + 17u};
+    float ax[3], ay[3], fx[3], fy[3], px[3], py[3];
+    for (int k = 0; k < 3; k++) {
+        ax[k] = (0.55f - 0.15f * k) * (0.6f + 0.4f * R.uni());
+        ay[k] = (0.5f - 0.13f * k) * (0.6f + 0.4f * R.uni());
+        fx[k] = (0.7f + 1.4f * k) * (0.8f + 0.4f * R.uni());
+        fy[k] = (0.6f + 1.3f * k) * (0.8f + 0.4f * R.uni());
+        px[k] = 6.2831853f * R.uni();
+        py[k] = 6.2831853f * R.uni();
+    }
+    const float hue = R.uni();
+    const float r = 0.5f + 0.5f * std::cos(6.2831853f * hue), g = 0.5f + 0.5f * std::cos(6.2831853f * (hue - 0.333f)),
+                b = 0.5f + 0.5f * std::cos(6.2831853f * (hue - 0.667f));
+    FrameBuilder fb;
+    auto curve = [&](float t, float& cx, float& cy) {
+        cx = 0.0f;
+        cy = 0.0f;
+        for (int k = 0; k < 3; k++) {
+            cx += ax[k] * std::sin(6.2831853f * fx[k] * t + px[k]);
+            cy += ay[k] * std::sin(6.2831853f * fy[k] * t + py[k]);
+        }
+    };
+    const int N = 1200;
+    float t = 0.0f, cx, cy;
+    curve(0.0f, cx, cy);
+    fb.blank_to(cx, cy);
+    fb.hold(4, r, g, b);
+    float jx = 0.0f, jy = 0.0f;
+    for (int i = 0; i < N; i++) {
+        // vitesse irreguliere (la main accelere et ralentit) ; tremblement : bruit correle sur quelques points
+        t += (1.0f + 0.6f * std::sin(i * 0.05f) + 0.4f * R.uni()) / (float)N;
+        jx = 0.7f * jx + 0.3f * 0.003f * R.gauss();
+        jy = 0.7f * jy + 0.3f * 0.003f * R.gauss();
+        curve(t, cx, cy);
+        fb.point(cx + jx, cy + jy, r, g, b);
+    }
+    fb.hold(4, r, g, b);
+    return fb.f;
+}
+
+// Contour ferme par sommets, coins tenus 'hold' points.
+IldaFrame polygon_frame(const std::vector<float>& vx, const std::vector<float>& vy, float r, float g, float b, int hold = 5) {
+    FrameBuilder fb;
+    fb.blank_to(vx[0], vy[0]);
+    fb.hold(hold, r, g, b);
+    for (size_t i = 1; i <= vx.size(); i++) {
+        const size_t k = i % vx.size();
+        fb.line_to(vx[k], vy[k], r, g, b);
+        fb.hold(hold, r, g, b);
+    }
+    return fb.f;
+}
+
+// Courbe parametree fermee (n points), points tenus aux parametres 'holds' (pointes).
+template <typename F>
+IldaFrame curve_frame(F fn, int n, float r, float g, float b, std::vector<int> holds = {}) {
+    FrameBuilder fb;
+    float x0, y0;
+    fn(0.0f, x0, y0);
+    fb.blank_to(x0, y0);
+    for (int i = 0; i <= n; i++) {
+        float x, y;
+        fn((float)i / (float)n, x, y);
+        fb.point(x, y, r, g, b);
+        for (int h : holds)
+            if (h == i % n) fb.hold(5, r, g, b);
+    }
+    return fb.f;
+}
+
+void add_clip(std::vector<IldaClip>& clips, const char* bank, const char* name, std::vector<IldaFrame> frames) {
+    IldaClip c;
+    c.bank = bank;
+    c.name = name;
+    c.loaded = true;
+    c.frames = std::move(frames);
+    for (const IldaFrame& f : c.frames) c.points_max = std::max(c.points_max, f.size());
+    for (int l = 0; l < ILDA_LEVELS; l++) {
+        c.prims[l].assign(c.frames.size(), IldaPrims());
+        c.done[l].assign(c.frames.size(), 0);
+    }
+    clips.push_back(std::move(c));
 }
 
 }  // namespace
+
+void IldaLibrary::add_generated() {
+    const float TAU = 6.2831853f;
+    // P1 : dessins a main levee
+    for (int s = 0; s < 8; s++) {
+        char nm[32];
+        std::snprintf(nm, sizeof(nm), "Dessin %d", s + 1);
+        add_clip(clips, "Crayon", nm, {pencil_frame((uint32_t)s)});
+    }
+    // P2 : formes
+    {
+        std::vector<float> vx, vy;
+        add_clip(clips, "Formes", "Carre", {polygon_frame({-0.6f, 0.6f, 0.6f, -0.6f}, {-0.6f, -0.6f, 0.6f, 0.6f}, 0, 1, 0)});
+        for (int k = 0; k < 10; k++) {
+            const float a = TAU * k / 10.0f + 0.25f * TAU, rr = k % 2 == 0 ? 0.8f : 0.33f;
+            vx.push_back(rr * std::cos(a));
+            vy.push_back(rr * std::sin(a));
+        }
+        add_clip(clips, "Formes", "Etoile", {polygon_frame(vx, vy, 1, 0.8f, 0)});
+        add_clip(clips, "Formes", "Triangle", {polygon_frame({0.0f, 0.7f, -0.7f}, {0.75f, -0.55f, -0.55f}, 0, 0.5f, 1)});
+        add_clip(clips, "Formes", "Coeur", {curve_frame([&](float u, float& x, float& y) {
+            const float t = TAU * u, st = std::sin(t);
+            x = 0.045f * 16.0f * st * st * st;
+            y = 0.045f * (13.0f * std::cos(t) - 5.0f * std::cos(2 * t) - 2.0f * std::cos(3 * t) - std::cos(4 * t)) + 0.1f;
+        }, 300, 1, 0, 0.1f, {0, 150})});
+        add_clip(clips, "Formes", "Cercle", {curve_frame([&](float u, float& x, float& y) {
+            x = 0.7f * std::cos(TAU * u);
+            y = 0.7f * std::sin(TAU * u);
+        }, 160, 0, 0.9f, 1)});
+        add_clip(clips, "Formes", "Spirale", {curve_frame([&](float u, float& x, float& y) {
+            const float rr = 0.1f + 0.7f * u;
+            x = rr * std::cos(3.0f * TAU * u);
+            y = rr * std::sin(3.0f * TAU * u);
+        }, 500, 1, 0, 1)});
+        FrameBuilder fb;
+        for (int k = 0; k < 3; k++) {
+            fb.blank_to(-0.8f, 0.5f - 0.5f * k);
+            fb.hold(4, 1, 1, 1);
+            fb.line_to(0.8f, 0.5f - 0.5f * k + 0.2f, 1, 1, 1);
+            fb.hold(4, 1, 1, 1);
+        }
+        add_clip(clips, "Formes", "Lignes", {fb.f});
+        FrameBuilder fp;
+        for (int k = 0; k < 8; k++) {
+            fp.blank_to(0.7f * std::cos(TAU * k / 8.0f), 0.7f * std::sin(TAU * k / 8.0f));
+            fp.hold(12, 0.2f, 1, 0.2f);
+        }
+        add_clip(clips, "Formes", "Points", {fp.f});
+    }
+    // P3 : sinus modules et Lissajous, animes (60 images)
+    {
+        std::vector<IldaFrame> sin_frames, lis_frames;
+        for (int i = 0; i < 60; i++) {
+            const float ph = TAU * i / 60.0f;
+            FrameBuilder fb;
+            fb.blank_to(-0.9f, 0.0f);
+            for (int k = 0; k <= 400; k++) {
+                const float x = -0.9f + 1.8f * k / 400.0f;
+                const float amp = 0.25f + 0.2f * std::sin(ph + 2.0f * x);
+                fb.point(x, amp * std::sin(4.0f * TAU * 0.25f * (x + 1.0f) * 2.0f + 3.0f * ph), 0.1f, 1, 0.3f);
+            }
+            sin_frames.push_back(fb.f);
+            lis_frames.push_back(curve_frame([&](float u, float& x, float& y) {
+                x = 0.7f * std::sin(3.0f * TAU * u + ph);
+                y = 0.7f * std::sin(2.0f * TAU * u);
+            }, 500, 1, 0.3f, 0.8f));
+        }
+        add_clip(clips, "Sinus", "Sinus module", std::move(sin_frames));
+        add_clip(clips, "Sinus", "Lissajous", std::move(lis_frames));
+    }
+    labels.clear();
+    for (const IldaClip& c : clips) labels.push_back(c.bank.empty() ? c.name : c.bank + " / " + c.name);
+}
 
 bool ilda_parse(const uint8_t* data, size_t size, std::vector<IldaFrame>& frames, std::string& name) {
     static const int RECORD[6] = {8, 6, 3, 0, 10, 8};
@@ -281,7 +340,10 @@ void IldaLibrary::scan(const std::string& exe_path, const std::string& dir) {
             p = p.parent_path();
         }
     }
-    if (base.empty() || !fs::is_directory(base, ec)) return;
+    if (base.empty() || !fs::is_directory(base, ec)) {
+        add_generated();
+        return;
+    }
     root = base.u8string();
     for (auto it = fs::recursive_directory_iterator(base, ec); it != fs::recursive_directory_iterator(); it.increment(ec)) {
         if (ec) break;
@@ -299,7 +361,7 @@ void IldaLibrary::scan(const std::string& exe_path, const std::string& dir) {
     std::sort(clips.begin(), clips.end(), [](const IldaClip& a, const IldaClip& b) {
         return a.bank != b.bank ? a.bank < b.bank : a.name < b.name;
     });
-    for (const IldaClip& c : clips) labels.push_back(c.bank.empty() ? c.name : c.bank + " / " + c.name);
+    add_generated();
 }
 
 IldaClip* IldaLibrary::get(int i) {
@@ -329,16 +391,18 @@ const IldaPrims& IldaLibrary::prims(IldaClip& c, int frame, int level, float div
     level = std::clamp(level, 0, ILDA_LEVELS - 1);
     if (!c.done[level][frame]) {
         c.done[level][frame] = 1;
-        // tolerances du web (angles pour +-30 deg), ramenees aux coordonnees du fichier
-        const float dwell = std::max(divergence * 0.5f, 2.5e-4f) / REF_HALF_FIELD;
-        const float tol = 7e-4f * (float)(1 << level) / REF_HALF_FIELD;
-        // trop de primitives a ce niveau : la derniere passe garde tout
+        // faisceau sur place : la moitie de sa divergence (angles pour +-30 deg, ramenes aux coordonnees du fichier) ;
+        // ecart aux arcs et droites : 5e-4 du champ (0,01 deg pour 40 deg d'ouverture), double a chaque niveau
+        const IldaFrame& f = c.frames[frame];
+        TraceParams tp;
+        tp.dwell = std::max(divergence * 0.5f, 2.5e-4f) / REF_HALF_FIELD;
+        tp.tol = 5e-4f * (float)(1 << level);
+        std::vector<vec3> col(f.size());
+        for (int i = 0; i < f.size(); i++) col[i] = vec3(srgb_to_linear(f.r[i]), srgb_to_linear(f.g[i]), srgb_to_linear(f.b[i]));
+        // trop de morceaux a ce niveau : la derniere passe garde tout
         IldaPrims& P = c.prims[level][frame];
-        P.over = !extract(c.frames[frame], dwell, tol, level < ILDA_LEVELS - 1 ? ILDA_MAX_PRIMS : 1 << 30, P);
-        if (P.over) {
-            P.beams.clear();
-            P.sheets.clear();
-        }
+        P.over = !trace_fit(f.x, f.y, col, tp, level < ILDA_LEVELS - 1 ? ILDA_MAX_PRIMS : 1 << 30, P.prims);
+        if (P.over) P.prims.clear();
     }
     return c.prims[level][frame];
 }

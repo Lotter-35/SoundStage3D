@@ -3,8 +3,12 @@
 // de scene vers le haut (tilt > 0 vers le public). Lasers : tilt > 0 releve la figure, pan la decale en z.
 #include "ambiances.h"
 #include "app.h"
+#include "scenes/scenes.h"
+#include <algorithm>
 
-const AmbianceInfo AMBIANCES[NUM_AMBIANCES] = {
+static_assert(NUM_AMBIANCES == NUM_BASE_AMBIANCES + scenes::NUM_SCENES, "nombre d'ambiances");
+
+const AmbianceInfo AMBIANCES[NUM_BASE_AMBIANCES] = {
     {"Demarrage", "Les lyres du lancement : trusses blancs et bleus, vague lente. Lasers eteints.", {0.6f, 0.7f, 1.0f}},
     {"Lasers simples", "Lasers seuls, verts, au-dessus du public : nappes pleines et eventails de quelques traits (pont), "
                        "traits vers le haut (nez de scene).", {0.0f, 1.0f, 0.2f}},
@@ -33,6 +37,7 @@ namespace {
 FogSettings fog0;
 RenderSettings rs0;
 vec3 aim0[4];
+float laser_power0 = 2.0f, laser_angle0 = 60.0f;
 bool captured = false;
 
 // groupes : 0-3 trusses, 4 pont de scene, 5 sol de scene, 6 nez de scene
@@ -94,6 +99,18 @@ void reset_all() {
     r.floor_wet = rs0.floor_wet;
     r.chroma = rs0.chroma;
     r.chroma_strength = rs0.chroma_strength;
+    // reglages de l'image que les scenes (src/scenes) peuvent changer
+    r.exposure = rs0.exposure;
+    r.bloom_strength = rs0.bloom_strength;
+    r.lens_glow = rs0.lens_glow;
+    r.laser_gain = rs0.laser_gain;
+    r.laser_white = rs0.laser_white;
+    r.laser_exit = rs0.laser_exit;
+    r.laser_air = rs0.laser_air;
+    r.laser_vol_strength = rs0.laser_vol_strength;
+    r.laser_vol_size = rs0.laser_vol_size;
+    app.lasers.power_w = laser_power0;
+    app.lasers.max_angle = laser_angle0;
     Rig& rig = app.rig;
     rig.effects.clear();
     for (int i = 0; i < 4; i++) rig.aim_points[i] = aim0[i];
@@ -118,13 +135,24 @@ void ambiance_capture_defaults() {
     fog0 = app.fog_settings;
     rs0 = app.rs;
     for (int i = 0; i < 4; i++) aim0[i] = app.rig.aim_points[i];
+    laser_power0 = app.lasers.power_w;
+    laser_angle0 = app.lasers.max_angle;
     captured = true;
+}
+
+const AmbianceInfo& ambiance_info(int i) {
+    i = std::clamp(i, 0, NUM_AMBIANCES - 1);
+    return i < NUM_BASE_AMBIANCES ? AMBIANCES[i] : scenes::INFO[i - NUM_BASE_AMBIANCES];
 }
 
 void apply_ambiance(int index) {
     if (index < 0 || index >= NUM_AMBIANCES) return;
     reset_all();
     app.ambiance = index;
+    if (index >= NUM_BASE_AMBIANCES) {
+        scenes::apply(index - NUM_BASE_AMBIANCES);
+        return;
+    }
     FogSettings& fog = app.fog_settings;
     RenderSettings& r = app.rs;
     switch (index) {

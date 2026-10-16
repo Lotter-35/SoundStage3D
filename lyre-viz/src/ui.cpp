@@ -466,8 +466,8 @@ void laser_programmer_ui() {
         }
         if (ImGui::Checkbox("Couleurs du fichier (sinon : couleur du laser)##l", &p.ilda_colors)) LAPPLY(ilda_colors, p.ilda_colors);
         if (ImGui::SliderFloat("Taille##l", &p.opening, 0, lr.max_angle, "%.1f deg")) LAPPLY(opening, p.opening);
-        ImGui::TextDisabled("(%d points, %d faisceaux, %d nappes pour tous les lasers ILDA ; tolerance %d)", lr.ilda_points, lr.ilda_beams,
-                            lr.ilda_sheets, lr.ilda_bias);
+        ImGui::TextDisabled("(%d points, %d faisceaux, %d droites, %d arcs pour tous les lasers ILDA ; tolerance %d)", lr.ilda_points,
+                            lr.ilda_beams, lr.ilda_sheets, lr.ilda_arcs, lr.ilda_bias);
     } else {
     if (ImGui::Combo("Forme##l", &p.shape, LASER_SHAPE_NAMES, LS_COUNT)) LAPPLY(shape, p.shape);
     if (ImGui::SliderFloat("Ouverture##l", &p.opening, 0, lr.max_angle, p.opening <= 0.05f ? "un point" : "%.1f deg")) LAPPLY(opening, p.opening);
@@ -484,6 +484,7 @@ void laser_programmer_ui() {
         int rows = (int)std::lround(p.shape_param);
         if (ImGui::SliderInt("Rangees##l", &rows, 2, 16)) LAPPLY(shape_param, (float)rows);
     }
+    if (p.shape == LS_STAR && ImGui::SliderInt("Branches de l'etoile##l", &p.branches, 3, 12)) LAPPLY(branches, p.branches);
     }
     static const char* DIFF_NAMES[] = {"aucun", "x3", "x5", "x9"};
     int di = p.diffraction >= 9 ? 3 : (p.diffraction >= 5 ? 2 : (p.diffraction >= 3 ? 1 : 0));
@@ -623,12 +624,39 @@ void render_ui() {
     ImGui::SameLine();
     ImGui::TextDisabled("%.0f %%", s.quality * 100.0f);
     ImGui::SliderFloat("Cadence visee", &r.target_fps, 30, 240, "%.0f img/s");
-    ImGui::SliderFloat("Resolution interne", &r.render_scale, 0.25f, 1.0f, "x %.2f");
+    if (!r.fsr) ImGui::SliderFloat("Resolution interne", &r.render_scale, 0.25f, 1.0f, "x %.2f");
+    ImGui::Checkbox("AMD FSR 1 (dernier recours)", &r.fsr);
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Calcule l'image plus petite puis l'agrandit (EASU) et rend la nettete (RCAS).\n"
+                          "Remplace la resolution interne. L'interface reste a pleine resolution.\n"
+                          "Plus rapide, mais traits fins (lasers) et scintillement du sol plus doux.");
+    if (r.fsr) {
+        ImGui::SliderFloat("FSR : resolution divisee par", &r.fsr_div, 1.0f, 3.0f, "%.2f");
+        if (ImGui::Button("Qualite")) r.fsr_div = 1.5f;
+        ImGui::SameLine();
+        if (ImGui::Button("Equilibre")) r.fsr_div = 1.7f;
+        ImGui::SameLine();
+        if (ImGui::Button("Performance")) r.fsr_div = 2.0f;
+        ImGui::SameLine();
+        if (ImGui::Button("Ultra")) r.fsr_div = 3.0f;
+        ImGui::SliderFloat("FSR : nettete", &r.fsr_sharpness, 0.0f, 1.0f, "%.2f");
+        ImGui::TextDisabled("Rendu %d x %d -> ecran", s.internal_w, s.internal_h);
+    }
     ImGui::Checkbox("Taches de lumiere sur les surfaces", &r.surface_lights);
     ImGui::Checkbox("Reflets brillants", &r.specular);
     ImGui::Checkbox("Lyres tres douces (frost) eclairees a 1/4 de la resolution", &r.soft_lights);
     ImGui::SameLine();
     ImGui::TextDisabled("(%d)", s.soft_lights);
+    ImGui::SliderInt("Lyres superposees a 1/4 au-dela de", &r.crowd_soft, 0, 96, r.crowd_soft > 0 ? "%d lyres" : "jamais");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Case de l'ecran ou plus de N lyres sans gobo se superposent (convergence, grand zoom) :\n"
+                          "leur lumiere y est calculee a 1/4 de la resolution (relief du sol exact, reflets lisses).\n"
+                          "Seulement les lyres dont la tache a un bord large et flou (grand zoom, frost, hors mise au point).\n"
+                          "Jusqu'a 4 fois plus rapide sur une convergence. 0 : jamais.");
+    ImGui::SliderFloat("Scintillement des reflets a 1/4", &r.sparkle, 0.0f, 3.0f, "%.2f");
+    if (ImGui::IsItemHovered())
+        ImGui::SetTooltip("Lyres eclairees a 1/4 : le reflet est module pixel par pixel par le relief fin du sol.\n"
+                          "1,75 : autant de grains brillants qu'a pleine resolution. 0 : reflet lisse.");
     ImGui::Checkbox("Pre-passe de profondeur (plus rapide, meme image)", &r.depth_prepass);
     ImGui::Checkbox("Faisceaux dans la fumee", &r.volumetrics);
     ImGui::Checkbox("Fumee : calcul analytique (sans bruit, rapide)", &r.analytic_beams);
@@ -663,6 +691,12 @@ void render_ui() {
     ImGui::Checkbox("Lasers : arretes par les obstacles et le personnage", &app.lasers.collisions);
     ImGui::SameLine();
     ImGui::TextDisabled("(%d segments coupes)", app.lasers.cut_segments);
+    ImGui::SliderFloat("Lasers : blanchiment (0 = oeil, 1 = camera)", &r.laser_white, 0.0f, 1.5f, "%.2f");
+    ImGui::SliderFloat("Lasers : lueur de sortie", &r.laser_exit, 0.0f, 4.0f, "x %.2f");
+    ImGui::Checkbox("Lasers : cache des figures fixes (moteur CPU)", &app.lasers.figure_cache);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%d lasers repris ; moteur %.2f ms : morceaux %.2f, impacts %.2f)", app.lasers.cached_lasers,
+                        app.lasers.cpu_build_ms + app.lasers.cpu_hits_ms, app.lasers.cpu_build_ms, app.lasers.cpu_hits_ms);
     if (ImGui::Checkbox("Lasers : impacts sur les surfaces (points et lignes)", &r.laser_impacts)) app.lasers.impacts = r.laser_impacts;
     ImGui::SameLine();
     ImGui::TextDisabled("(%d)", s.laser_hits);
@@ -685,8 +719,9 @@ void ambiances_ui() {
     const float h = 3.2f * ImGui::GetTextLineHeightWithSpacing();
     ImDrawList* dl = ImGui::GetWindowDrawList();
     for (int i = 0; i < NUM_AMBIANCES; i++) {
+        if (i == NUM_BASE_AMBIANCES) ImGui::SeparatorText("Scenes du moteur de rendu (src/scenes)");
         if (i % AMBIANCE_COLS != 0) ImGui::SameLine();
-        const AmbianceInfo& a = AMBIANCES[i];
+        const AmbianceInfo& a = ambiance_info(i);
         const vec3 t = a.tint;
         const bool cur = i == app.ambiance;
         const float k = cur ? 0.5f : 0.18f;
@@ -703,7 +738,7 @@ void ambiances_ui() {
         if (cur) dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 230), ImGui::GetStyle().FrameRounding, 0, 2.0f);
     }
     ImGui::Spacing();
-    const AmbianceInfo& a = AMBIANCES[app.ambiance];
+    const AmbianceInfo& a = ambiance_info(app.ambiance);
     ImGui::SeparatorText("En cours");
     ImGui::Text("%d. %s", app.ambiance + 1, a.name);
     ImGui::TextWrapped("%s", a.desc);

@@ -1,12 +1,21 @@
 #include "lasers.h"
+#include "trace.h"
 #include <algorithm>
+#include <atomic>
+#include <chrono>
+#include <condition_variable>
+#include <cstring>
 #include <functional>
+#include <memory>
+#include <mutex>
+#include <thread>
 
 const char* LASER_PATTERN_NAMES[LP_COUNT] = {"eteints", "eventails 1000 traits (L1)", "cones 32 segments (L2)",
                                              "rideaux autour de la camera (L3)", "8 traits separes (L4)",
                                              "nappes fixes, gros plan (L5)", "vers le sol et les obstacles (L6)",
                                              "programmeur", "eventails en nappes continues (L1 ligne)"};
-const char* LASER_SHAPE_NAMES[LS_COUNT] = {"Eventail", "Double eventail", "Cone", "Tunnel", "Vague", "Grille de points"};
+const char* LASER_SHAPE_NAMES[LS_COUNT] = {"Eventail", "Double eventail", "Cone", "Tunnel", "Vague", "Grille de points",
+                                           "Carre", "Triangle", "Etoile", "Coeur"};
 const char* LASER_GRADIENT_NAMES[LG_COUNT] = {"Uni", "2 couleurs", "3 couleurs", "Defilant", "Arc-en-ciel", "Aleatoire par trait"};
 const char* LASER_EFFECT_NAMES[LFX_COUNT] = {"Vague pan", "Vague tilt", "Cercle (pan/tilt)", "Huit", "Balayage aleatoire",
                                              "Eventail des figures",
@@ -124,6 +133,16 @@ int box_section(const Occluder& b, vec3 S, vec3 ec, vec3 es, vec3 nrm, vec2* out
     return m;
 }
 
+// Un trait de figure du programmeur (Builder::figure) : courbe du plan de projection en points denses (fermee si le
+// dernier point est le premier), traits (0 : nappe continue), part de la puissance, couleur prof(t) de t0 a t1.
+struct FigRun {
+    std::vector<vec2> p;
+    std::vector<TracePrim> exact;   // morceaux deja exacts (droites, cercles, polygones) : pas d'ajustement, p ignore
+    int traits = 0;
+    bool closed = false;
+    float power = 1.0f, t0 = 0.0f, t1 = 1.0f;
+};
+
 struct Builder {
     std::vector<LaserSegment>& segs;
     vec3 mn, mx;
@@ -134,6 +153,8 @@ struct Builder {
     std::vector<const Occluder*> all;
     std::vector<float> rad;
     std::vector<int> all_idx, local;
+    std::vector<int> arc_near;   // arc en cours : paves dont l'ombre peut le toucher
+    std::vector<int> arc_bounds; // arc en cours : coupes (indices de traits), gardees d'un arc a l'autre (pas d'allocation)
     bool use_local = false;
 
     void set_obstacles(const std::vector<Occluder>& a, const std::vector<Occluder>& b) {
@@ -372,30 +393,12 @@ struct Builder {
         fan(S, ec, r0 * std::cos(roll) + r1 * std::sin(roll), ha, n, flux);
     }
 
-    // Ligne brisee de directions D[0..m] (traits regulierement repartis, aucun double aux jonctions) : un
-    // morceau plan par intervalle, n traits en tout, couleur prof aux points tt[i].
-    void polyline(vec3 S, const vec3* D, const float* tt, int m, int n, float P, const Profile& prof, bool flat) {
-        const int per = std::max(1, n / m);
-        for (int j = 0; j < m; j++) {
-            const vec3 d0 = D[j], d1 = D[j + 1];
-            const float ang = std::acos(clampf(dot(d0, d1), -1.0f, 1.0f));
-            const float half = 0.5f * ang * (float)(per - 1) / (float)per;
-            const float w = P / (float)m;
-            vec3 c0 = prof(tt[j]) * w, c1 = prof(tt[j + 1]) * w;
-            if (flat) c0 = c1 = prof(0.5f * (tt[j] + tt[j + 1])) * w;
-            const vec3 ec = normalize(d0 + d1);
-            const vec3 es = ang > 1e-6f ? normalize(d1 - d0) : any_perp(ec);
-            if (per == 1) seg(S, ec, es, 0.0f, 1, c0 * 0.5f + c1 * 0.5f, c0 * 0.5f + c1 * 0.5f);
-            else seg(S, ec, es, half, per, c0, c1);
-        }
-    }
-
     // Arc de cercle du plan de projection du scanner : nappe conique exacte (rendu : laser_arc). Repere : axe d,
     // rr, uu = d x rr ; cercle (cx, cy, rho) ; de l'angle th0 a th0 + dth autour du centre ; n traits (0 : nappe
     // continue), aux deux bouts compris ; puissance P, couleur prof(t) de t0 a t1. Morceaux de 90 deg au plus (et K au
     // moins, pour les degrades). Obstacles : chaque pave est projete dans le plan du scanner ; les angles ou le cercle
-    // entre dans son ombre et en sort (cercle contre les bords de son enveloppe) coupent l'arc ; les morceaux a l'ombre sont
-    // redecoupes (1 deg de direction au plus), chacun arrete a son pave.
+    // coupe ses 12 aretes (entree et sortie de son ombre, changement de face) coupent l'arc ; un morceau a l'ombre
+    // s'arrete exactement sur le plan de la face que touche son rayon du milieu (sb_laser.stop, teste dans le shader).
     void arc(vec3 S, vec3 d, vec3 rr, float cx, float cy, float rho, float th0, float dth, int n, float P, const Profile& prof,
              int K, float t0, float t1, bool flat) {
         const vec3 uu = cross(d, rr);
@@ -403,11 +406,26 @@ struct Builder {
         auto dirf = [&](float th) { return normalize(d + rr * (cx + rho * std::cos(th)) + uu * (cy + rho * std::sin(th))); };
         const float dt = dth / (float)(N - 1);   // ecart de deux traits (en theta)
         auto jof = [&](float th) { return std::clamp((int)std::floor((th - th0) / dt) + 1, 1, N - 1); };
-        std::vector<int> bounds = {0};
+        std::vector<int>& bounds = arc_bounds;
+        bounds.assign(1, 0);
         const int pieces = std::clamp(std::max(K, (int)std::ceil(dth / (0.5f * PI) - 1e-4f)), 1, std::max(1, N - 1));
         for (int k = 1; k < pieces; k++) bounds.push_back((int)((long long)k * (N - 1) / pieces) + 1);
-        // ombres des paves sur le cercle
+        // ombres des paves sur le cercle ; d'abord un tri : la sphere englobante du pave, projetee sur le plan du
+        // scanner, doit toucher le cercle (sinon le pave ne coupe aucune direction de l'arc)
+        std::vector<int>& near = arc_near;
+        near.clear();
         for (int bi : cand()) {
+            const vec3 X = all[bi]->c - S;
+            const float zd = dot(X, d), r = rad[bi];
+            if (zd + r <= 0.0f) continue;   // derriere la source
+            if (zd > 2.0f * r) {
+                const float px = dot(X, rr) / zd - cx, py = dot(X, uu) / zd - cy;
+                const float pr = r / (zd - r) * 1.2f;   // rayon apparent (majore)
+                if (std::fabs(std::sqrt(px * px + py * py) - rho) > pr) continue;
+            }
+            near.push_back(bi);
+        }
+        for (int bi : near) {
             const Occluder& o = *all[bi];
             vec2 pc[8];
             bool ok = true;
@@ -417,27 +435,12 @@ struct Builder {
                 if (zd <= 0.05f) ok = false;
                 else pc[k] = {dot(X, rr) / zd, dot(X, uu) / zd};
             }
-            // enveloppe convexe des 8 coins projetes (Jarvis), puis le cercle dedans ou dehors ; pave a cheval sur le
-            // plan de la source (projection impossible) : rayons lances (ray_box)
-            vec2 hull[8];
-            int nh = 0, start = 0;
-            for (int k = 1; k < 8 && ok; k++) if (pc[k].x < pc[start].x) start = k;
-            int cur = start;
-            for (int it = 0; it < 8 && ok; it++) {
-                hull[nh++] = pc[cur];
-                int nxt = (cur + 1) % 8;
-                for (int k = 0; k < 8; k++) {
-                    const float ax = pc[nxt].x - pc[cur].x, ay = pc[nxt].y - pc[cur].y, bx = pc[k].x - pc[cur].x, by = pc[k].y - pc[cur].y;
-                    if (ax * by - ay * bx < 0.0f) nxt = k;
-                }
-                cur = nxt;
-                if (cur == start) break;
-            }
-            if (ok && nh < 3) continue;
+            // les 12 aretes projetees (coins voisins : un seul bit de difference) : le cercle coupe chacune en 2 points au
+            // plus, angles exacts ; pave a cheval sur le plan de la source (projection impossible) : rayons lances (ray_box)
             if (ok) {
-                // le cercle coupe chaque bord de l'enveloppe en 2 points au plus : angles exacts d'entree et de sortie
-                for (int k = 0; k < nh; k++) {
-                    const vec2 p = hull[k], q = hull[(k + 1) % nh];
+                static const int EDGES[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7}, {0, 2}, {1, 3}, {4, 6}, {5, 7}, {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+                for (const auto& e : EDGES) {
+                    const vec2 p = pc[e[0]], q = pc[e[1]];
                     const float ex = q.x - p.x, ey = q.y - p.y, fx = p.x - cx, fy = p.y - cy;
                     const float A = ex * ex + ey * ey, B = fx * ex + fy * ey, Cq = fx * fx + fy * fy - rho * rho;
                     const float disc = B * B - A * Cq;
@@ -476,27 +479,33 @@ struct Builder {
         for (size_t k = 0; k + 1 < bounds.size(); k++) {
             const int j0 = bounds[k], j1 = bounds[k + 1] - 1;
             if (j1 < j0) continue;
-            // a l'ombre ? (rayon du milieu)
+            // a l'ombre ? pave le plus proche sur le rayon du milieu : arret sur le plan de la face touchee (entre deux aretes,
+            // tout le morceau touche cette face)
             const vec3 Dm = dirf(th0 + dt * 0.5f * (float)(j0 + j1));
-            const float em = exit_distance(S, Dm, mn, mx);
-            if (trait_range(S, Dm, em) < em - 1e-3f) {
-                // redecoupe : 1 deg de direction au plus par morceau
-                const float ang = std::acos(clampf(dot(dirf(th0 + dt * (float)j0), dirf(th0 + dt * (float)j1)), -1.0f, 1.0f));
-                const int m = std::clamp((int)std::ceil(ang / (1.0f * DEG)), 1, std::max(1, j1 - j0 + 1));
-                for (int q = 0; q < m; q++) {
-                    const int a0 = j0 + (int)((long long)q * (j1 - j0 + 1) / m), a1 = j0 + (int)((long long)(q + 1) * (j1 - j0 + 1) / m) - 1;
-                    if (a1 >= a0) emit_arc(S, d, rr, uu, cx, cy, rho, th0, dt, a0, a1, N, P, prof, t0, t1, flat, dirf, true);
+            float best = exit_distance(S, Dm, mn, mx);
+            const Occluder* hit = nullptr;
+            for (int bi : near) {
+                const float tb = ray_box(S, Dm, *all[bi]);
+                if (tb < best) {
+                    best = tb;
+                    hit = all[bi];
                 }
+            }
+            if (hit) {
+                const vec3 X = S + Dm * best;
+                const vec3 sn = box_normal(*hit, X) * -1.0f;   // vers l'interieur du pave
+                emit_arc(S, d, rr, uu, cx, cy, rho, th0, dt, j0, j1, N, P, prof, t0, t1, flat, dirf, sn, dot(sn, X - S));
+                cuts++;
             } else {
-                emit_arc(S, d, rr, uu, cx, cy, rho, th0, dt, j0, j1, N, P, prof, t0, t1, flat, dirf, false);
+                emit_arc(S, d, rr, uu, cx, cy, rho, th0, dt, j0, j1, N, P, prof, t0, t1, flat, dirf, vec3(), 1e30f);
             }
         }
     }
-    // Un morceau d'arc : traits j0 .. j1 ; portee : sortie du hangar (le plus loin de 9 rayons), ou a l'ombre le pave
-    // le plus proche (rayon du milieu).
+    // Un morceau d'arc : traits j0 .. j1 ; portee : sortie du hangar ou plan d'arret (sn, sd : voir LaserSegment), le
+    // plus loin de 9 rayons.
     template <typename F>
     void emit_arc(vec3 S, vec3 d, vec3 rr, vec3 uu, float cx, float cy, float rho, float th0, float dt, int j0, int j1, int N,
-                  float P, const Profile& prof, float t0, float t1, bool flat, const F& dirf, bool shadow) {
+                  float P, const Profile& prof, float t0, float t1, bool flat, const F& dirf, vec3 sn, float sd) {
         if (segs.size() >= LASER_MAX_SEGS) return;
         const int nk = j1 - j0 + 1;
         const float a0 = th0 + dt * (float)j0, da = dt * (float)(j1 - j0);
@@ -510,13 +519,14 @@ struct Builder {
             return;
         }
         float R = 0.0f;
-        if (shadow) {
-            const vec3 Dm = dirf(a0 + 0.5f * da);
-            R = trait_range(S, Dm, exit_distance(S, Dm, mn, mx));
-        } else {
-            for (int i = 0; i < 9; i++) R = std::max(R, exit_distance(S, dirf(a0 + da * (float)i * 0.125f), mn, mx));
-            R *= 1.05f;   // entre deux rayons : le sol arrete la nappe (profondeur), la portee ne doit pas la couper avant
+        for (int i = 0; i < 9; i++) {
+            const vec3 D = dirf(a0 + da * (float)i * 0.125f);
+            float e = exit_distance(S, D, mn, mx);
+            const float dn = dot(sn, D);
+            if (sd < 1e29f && dn > 1e-6f) e = std::min(e, sd / dn);
+            R = std::max(R, e);
         }
+        R *= 1.05f;   // entre deux rayons : le sol (ou la face) arrete la nappe, la portee ne doit pas la couper avant
         LaserSegment s;
         s.src = S;
         s.range = std::min(R, 160.0f);
@@ -535,8 +545,115 @@ struct Builder {
         s.rho = rho;
         s.th0 = a0;
         s.dth = da;
+        s.stop_n = sn;
+        s.stop_d = sd;
         segs.push_back(s);
         if (N < LASER_SHEET_TRAITS) traits += nk;
+    }
+
+    // Figure du programmeur (moteur de trace, PLAN-LASERS.md etape 9) : chaque trait de la figure est une courbe du plan
+    // de projection (repere d, rr, uu = d x rr, comme arc), en points denses, decoupee en arcs et droites exacts
+    // (trace_fit_curve), puis ses traits repartis le long (aux deux bouts compris si elle est ouverte ; 0 : nappe
+    // continue). Peu de traits (16 au plus) : un trait seul chacun (le chemin le moins cher). Degrades : morceaux de
+    // longueur 1 / K au plus (couleur lineaire dans chacun). Puissance P x part de chaque trait de figure.
+    void figure(vec3 S, vec3 d, vec3 rr, const std::vector<FigRun>& runs, float P, const Profile& prof, int K, bool flat) {
+        const vec3 uu = cross(d, rr);
+        auto dir_of = [&](vec2 q) { return normalize(d + rr * q.x + uu * q.y); };
+        std::vector<TracePrim> prims;
+        for (const FigRun& run : runs) {
+            if ((run.p.size() < 2 && run.exact.empty()) || run.power <= 0.0f) continue;
+            const float Pr = P * run.power;
+            if (!run.exact.empty()) prims = run.exact;
+            else trace_fit_curve(run.p, 2e-4f, prims);
+            // morceaux (droite ou arc), longueur, et decoupe pour les degrades
+            struct Pc { bool arc; vec2 p0, p1, c; float rho, a0, da, len; };
+            std::vector<Pc> pcs;
+            float L = 0.0f;
+            for (const TracePrim& t : prims) {
+                Pc q{t.kind == TP_ARC, t.p0, t.p1, t.c, t.rho, t.a0, t.da, 0.0f};
+                q.len = q.arc ? t.rho * std::fabs(t.da) : std::sqrt((t.p1.x - t.p0.x) * (t.p1.x - t.p0.x) + (t.p1.y - t.p0.y) * (t.p1.y - t.p0.y));
+                if (q.len <= 0.0f) continue;
+                pcs.push_back(q);
+                L += q.len;
+            }
+            if (L <= 0.0f) continue;
+            auto point_at = [&](const Pc& q, float sl) {   // a la distance sl du debut du morceau
+                if (!q.arc) return vec2{q.p0.x + (q.p1.x - q.p0.x) * sl / q.len, q.p0.y + (q.p1.y - q.p0.y) * sl / q.len};
+                const float a = q.a0 + (q.da >= 0.0f ? sl : -sl) / q.rho;
+                return vec2{q.c.x + q.rho * std::cos(a), q.c.y + q.rho * std::sin(a)};
+            };
+            auto t_at = [&](float s) { return run.t0 + (run.t1 - run.t0) * s / L; };
+            const int N = run.traits;
+            if (N > 0 && N <= 16) {
+                // traits seuls : positions le long de la courbe
+                for (int i = 0; i < N; i++) {
+                    const float sa = run.closed ? L * (float)i / (float)N : (N == 1 ? 0.5f * L : L * (float)i / (float)(N - 1));
+                    float s = sa;
+                    size_t k = 0;
+                    while (k + 1 < pcs.size() && s > pcs[k].len) {
+                        s -= pcs[k].len;
+                        k++;
+                    }
+                    const vec3 D = dir_of(point_at(pcs[k], std::min(s, pcs[k].len)));
+                    const vec3 f = prof(t_at(sa)) * (Pr / (float)N);
+                    seg(S, D, any_perp(D), 0.0f, 1, f, f);
+                }
+                continue;
+            }
+            const bool cont = N <= 0 || N >= LASER_SHEET_TRAITS;
+            const float sp = cont ? 0.0f : (run.closed ? L / (float)N : L / (float)std::max(N - 1, 1));
+            const float cut = L / (float)std::max(K, 1);   // decoupe des degrades
+            float s0 = 0.0f;
+            for (const Pc& q : pcs) {
+                // sous-morceaux : coupes aux multiples de L / K
+                std::vector<float> marks = {0.0f};
+                if (K > 1)
+                    for (float m = std::ceil(s0 / cut + 1e-4f) * cut; m < s0 + q.len - 1e-6f; m += cut) marks.push_back(m - s0);
+                marks.push_back(q.len);
+                for (size_t mi = 0; mi + 1 < marks.size(); mi++) {
+                    const float la = marks[mi], lb = marks[mi + 1];
+                    if (lb - la <= 0.0f) continue;
+                    // traits de [s0 + la, s0 + lb) : positions i x sp
+                    float sa = la, sb = lb, Pp;
+                    int nk;
+                    if (cont) {
+                        nk = 0;
+                        Pp = Pr * (lb - la) / L;
+                    } else {
+                        const int nmax = N - 1;
+                        const int i0 = std::max(0, (int)std::ceil((s0 + la) / sp - 1e-4f));
+                        const bool last = mi + 2 == marks.size() && &q == &pcs.back();
+                        int i1 = std::min(nmax, (int)std::ceil((s0 + lb) / sp - 1e-4f) - 1);
+                        if (last) i1 = std::min(nmax, (int)std::floor((s0 + lb) / sp + 1e-4f));
+                        nk = i1 - i0 + 1;
+                        if (nk <= 0) continue;
+                        sa = (float)i0 * sp - s0;
+                        sb = (float)i1 * sp - s0;
+                        Pp = Pr * (float)nk / (float)N;
+                    }
+                    float ta = t_at(s0 + sa), tb = t_at(s0 + sb);
+                    if (flat) ta = tb = 0.5f * (ta + tb);
+                    if (nk == 1) {
+                        const vec3 D = dir_of(point_at(q, sa)), f = prof(ta) * Pp;
+                        seg(S, D, any_perp(D), 0.0f, 1, f, f);
+                    } else if (q.arc) {
+                        float aa = q.a0 + (q.da >= 0.0f ? sa : -sa) / q.rho, ab = q.a0 + (q.da >= 0.0f ? sb : -sb) / q.rho;
+                        if (ab < aa) {
+                            std::swap(aa, ab);
+                            std::swap(ta, tb);
+                        }
+                        arc(S, d, rr, q.c.x, q.c.y, q.rho, aa, ab - aa, cont ? 0 : nk, Pp, prof, 1, ta, tb, flat);
+                    } else {
+                        const vec3 Da = dir_of(point_at(q, sa)), Db = dir_of(point_at(q, sb));
+                        const float half = 0.5f * std::acos(clampf(dot(Da, Db), -1.0f, 1.0f));
+                        const vec3 fa = prof(ta) * Pp, fb = prof(tb) * Pp;
+                        if (half < 1e-6f) seg(S, Da, any_perp(Da), 0.0f, 1, (fa + fb) * 0.5f, (fa + fb) * 0.5f);
+                        else seg(S, normalize(Da + Db), normalize(Db - Da), half, cont ? LASER_SHEET_TRAITS : nk, fa, fb);
+                    }
+                }
+                s0 += q.len;
+            }
+        }
     }
 
     // Cone de traits (cercle) : une nappe conique exacte autour de l'axe (arc de 360 deg, cercle centre).
@@ -557,33 +674,45 @@ struct Builder {
     }
 };
 
-// Primitives d'une image ILDA (coordonnees du fichier de -1 a 1) dans le champ du scanner : rotation 'roll',
-// angles = coordonnees x demi-ouverture (bornes au champ du scanner), direction = d + tan(ax) rr + tan(ay) uu.
-// Faisceau : un trait seul ; nappe : un segment d'eventail en nappe continue entre ses deux directions. Energie :
-// part du temps de l'image (deja dans les primitives) x puissance du boitier.
+// Morceaux d'une image ILDA (moteur de trace, coordonnees du fichier de -1 a 1) dans le champ du scanner : rotation
+// 'roll', puis pose sur le plan de projection a l'echelle tan(ha) (direction d + rr x + uu y) : une droite reste une
+// nappe plane, un arc une nappe conique exacte. Energie : part du temps de l'image (deja dans les morceaux) x
+// puissance du boitier.
 void emit_ilda(Builder& b, const IldaPrims& pr, vec3 S, vec3 d, vec3 rr, vec3 uu, float roll, float ha, float hmax, float P,
                const LaserParams& o) {
-    const float c = std::cos(roll), s = std::sin(roll);
-    auto dir = [&](float x, float y) {
-        const float ax = clampf((x * c - y * s) * ha, -hmax, hmax), ay = clampf((x * s + y * c) * ha, -hmax, hmax);
-        return normalize(d + rr * std::tan(ax) + uu * std::tan(ay));
+    const float c = std::cos(roll), s = std::sin(roll), k = std::tan(std::min(ha, hmax));
+    auto plane = [&](vec2 q) { return vec2{(q.x * c - q.y * s) * k, (q.x * s + q.y * c) * k}; };
+    auto dir = [&](vec2 q) {
+        const vec2 m = plane(q);
+        return normalize(d + rr * m.x + uu * m.y);
     };
-    auto flux = [&](const float* q) { return (o.ilda_colors ? vec3(q[0], q[1], q[2]) : o.color * q[3]) * P; };
-    for (size_t i = 0; i + 6 <= pr.beams.size(); i += 6) {
-        const float* q = &pr.beams[i];
-        const vec3 D = dir(q[0], q[1]), f = flux(q + 2);
-        b.seg(S, D, any_perp(D), 0.0f, 1, f, f);
-    }
-    for (size_t i = 0; i + 8 <= pr.sheets.size(); i += 8) {
-        const float* q = &pr.sheets[i];
-        const vec3 D0 = dir(q[0], q[1]), D1 = dir(q[2], q[3]), f = flux(q + 4);
-        const float cd = clampf(dot(D0, D1), -1.0f, 1.0f);
-        const float half = 0.5f * std::acos(cd);
-        if (half < 1e-6f) {
-            b.seg(S, D0, any_perp(D0), 0.0f, 1, f, f);
+    auto flux = [&](vec3 f) { return (o.ilda_colors ? f : o.color * std::max(f.x, std::max(f.y, f.z))) * P; };
+    for (const TracePrim& t : pr.prims) {
+        const vec3 F0 = flux(t.f0), F1 = flux(t.f1);
+        if (t.kind == TP_BEAM) {
+            const vec3 D = dir(t.p0);
+            b.seg(S, D, any_perp(D), 0.0f, 1, F0, F0);
             continue;
         }
-        b.seg(S, normalize(D0 + D1), normalize(D1 - D0), half, LASER_SHEET_TRAITS, f, f);
+        if (t.kind == TP_LINE) {
+            const vec3 D0 = dir(t.p0), D1 = dir(t.p1);
+            const float half = 0.5f * std::acos(clampf(dot(D0, D1), -1.0f, 1.0f));
+            if (half < 1e-6f) b.seg(S, D0, any_perp(D0), 0.0f, 1, (F0 + F1) * 0.5f, (F0 + F1) * 0.5f);
+            else b.seg(S, normalize(D0 + D1), normalize(D1 - D0), half, LASER_SHEET_TRAITS, F0, F1);
+            continue;
+        }
+        // arc : repere des nappes coniques (direction d + rr x + (d x rr) y, donc y retourne), angles tournes de roll
+        const vec2 C = plane(t.c);
+        float th0 = -(t.a0 + roll), dth = -t.da, t0 = 0.0f, t1 = 1.0f;
+        if (dth < 0.0f) {
+            th0 += dth;
+            dth = -dth;
+            t0 = 1.0f;
+            t1 = 0.0f;
+        }
+        const float Pm = std::max(1e-30f, std::max(std::max(std::max(F0.x, F0.y), F0.z), std::max(std::max(F1.x, F1.y), F1.z)));
+        const vec3 A = F0 * (1.0f / Pm), B = F1 * (1.0f / Pm);
+        b.arc(S, d, rr, C.x, -C.y, t.rho * k, th0, dth, 0, Pm, [A, B](float u) { return lerp(A, B, u); }, 1, t0, t1, false);
     }
 }
 
@@ -782,25 +911,187 @@ void LaserRig::housings(std::vector<Instance>& cubes) const {
 }
 
 // ---------------------------------------------------------------------------------------------
+//  Plusieurs coeurs (PLAN-LASERS.md, etape 9d) : chaque laser est construit a part (un Builder par fil, ses
+//  morceaux dans son propre tableau), puis les morceaux sont mis bout a bout dans l'ordre des lasers : le resultat
+//  est celui du calcul sur un seul coeur (sauf au plafond LASER_MAX_SEGS, ou ce ne sont pas les memes morceaux qui
+//  manquent).
+// ---------------------------------------------------------------------------------------------
+namespace {
+
+// Fils permanents (crees une fois) : run(f) appelle f(fil) sur chacun, le fil appelant compris (fil 0).
+class WorkPool {
+public:
+    explicit WorkPool(int n) {
+        for (int i = 0; i < n; i++) th_.emplace_back([this, i] { loop(i + 1); });
+    }
+    ~WorkPool() {
+        {
+            std::lock_guard<std::mutex> l(m_);
+            quit_ = true;
+        }
+        cv_.notify_all();
+        for (std::thread& t : th_) t.join();
+    }
+    int size() const { return (int)th_.size() + 1; }
+    void run(const std::function<void(int)>& f) {
+        {
+            std::lock_guard<std::mutex> l(m_);
+            job_ = &f;
+            pending_ = (int)th_.size();
+            gen_++;
+        }
+        cv_.notify_all();
+        f(0);
+        std::unique_lock<std::mutex> l(m_);
+        done_.wait(l, [this] { return pending_ == 0; });
+        job_ = nullptr;
+    }
+
+private:
+    void loop(int w) {
+        unsigned seen = 0;
+        for (;;) {
+            const std::function<void(int)>* job;
+            {
+                std::unique_lock<std::mutex> l(m_);
+                cv_.wait(l, [&] { return quit_ || gen_ != seen; });
+                if (quit_) return;
+                seen = gen_;
+                job = job_;
+            }
+            (*job)(w);
+            std::lock_guard<std::mutex> l(m_);
+            if (--pending_ == 0) done_.notify_one();
+        }
+    }
+    std::vector<std::thread> th_;
+    std::mutex m_;
+    std::condition_variable cv_, done_;
+    const std::function<void(int)>* job_ = nullptr;
+    unsigned gen_ = 0;
+    int pending_ = 0;
+    bool quit_ = false;
+};
+
+WorkPool& work_pool() {
+    static WorkPool pool(std::clamp((int)std::thread::hardware_concurrency() - 1, 0, 15));
+    return pool;
+}
+
+// ntask lasers : fn(tache, Builder du fil) ; morceaux mis bout a bout dans l'ordre des taches (segs), compteurs de
+// traits et de coupes additionnes ; ranges : plage de chaque tache dans segs (entiere ou coupee par le plafond).
+template <typename F>
+void build_parallel(int ntask, vec3 mn, vec3 mx, bool coll, const std::vector<Occluder>& obs, const std::vector<Occluder>& dyn,
+                    std::vector<LaserSegment>& segs, int& traits, int& cuts, std::vector<LaserRig::TaskRange>& ranges, F fn) {
+    WorkPool& pool = work_pool();
+    const int nw = pool.size();
+    static std::vector<std::vector<LaserSegment>> wsegs;
+    if ((int)wsegs.size() < nw) wsegs.resize(nw);
+    struct Rec { int w, a, b, traits, cuts; };
+    std::vector<Rec> rec(ntask);
+    std::atomic<int> next{0};
+    const std::function<void(int)> job = [&](int w) {
+        std::vector<LaserSegment>& out = wsegs[w];
+        out.clear();
+        Builder b{out, mn, mx};
+        if (coll) b.set_obstacles(obs, dyn);
+        for (int t; (t = next.fetch_add(1)) < ntask;) {
+            const int a = (int)out.size(), tr = b.traits, cu = b.cuts;
+            fn(t, b);
+            rec[t] = {w, a, (int)out.size(), b.traits - tr, b.cuts - cu};
+        }
+    };
+    if (ntask > 1 && nw > 1) pool.run(job);
+    else job(0);
+    size_t total = 0;
+    for (const Rec& r : rec) total += (size_t)(r.b - r.a);
+    segs.clear();
+    segs.reserve(std::min(total, (size_t)LASER_MAX_SEGS));
+    ranges.resize(ntask);
+    for (int t = 0; t < ntask; t++) {
+        const Rec& r = rec[t];
+        traits += r.traits;
+        cuts += r.cuts;
+        const size_t room = (size_t)LASER_MAX_SEGS - segs.size();
+        const size_t cnt = std::min((size_t)(r.b - r.a), room);
+        ranges[t].a = (int)segs.size();
+        ranges[t].b = (int)(segs.size() + cnt);
+        ranges[t].whole = cnt == (size_t)(r.b - r.a);
+        segs.insert(segs.end(), wsegs[r.w].begin() + r.a, wsegs[r.w].begin() + r.a + cnt);
+    }
+}
+
+// Cle du cache des figures fixes : tout ce que lit la construction d'une figure du programmeur (bits exacts).
+void push_bits(std::vector<float>& k, const void* p, size_t n) {
+    const size_t i = k.size();
+    k.resize(i + (n + 3) / 4, 0.0f);
+    std::memcpy(&k[i], p, n);
+}
+void push_vec(std::vector<float>& k, vec3 v) {
+    k.push_back(v.x);
+    k.push_back(v.y);
+    k.push_back(v.z);
+}
+void figure_key(std::vector<float>& k, const LaserFixture& f, float P, const IldaPrims* pr, double time) {
+    const LaserParams& o = f.out;
+    k.clear();
+    push_vec(k, f.mount.pos);
+    push_vec(k, f.aim);
+    push_vec(k, f.right);
+    push_vec(k, f.up);
+    for (float v : {f.pan, f.tilt, f.roll, f.roll_acc, f.opening, P, (float)o.source, (float)o.diffraction, o.diffraction_angle})
+        k.push_back(v);
+    push_bits(k, &pr, sizeof(pr));
+    push_vec(k, o.color);
+    if (pr) {
+        k.push_back(o.ilda_colors ? 1.0f : 0.0f);
+        return;
+    }
+    push_vec(k, o.color2);
+    push_vec(k, o.color3);
+    for (float v : {(float)o.gradient, (float)o.shape, (float)o.traits, o.shape_param, o.wave_cycles, (float)o.branches, o.chase_pos,
+                    o.chase_width})
+        k.push_back(v);
+    if (o.gradient == LG_SCROLL || o.gradient == LG_RAINBOW) k.push_back(f.scroll);
+    if (o.shape == LS_WAVE) push_bits(k, &time, sizeof(time));
+}
+
+double ms_since(std::chrono::steady_clock::time_point t) {
+    return std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t).count();
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------------------------------
 //  Figures : motifs du banc, ou programmeur
 // ---------------------------------------------------------------------------------------------
 void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
+    const auto t_start = std::chrono::steady_clock::now();
     segs.clear();
-    Builder b{segs, hall_min, hall_max};
-    if (collisions) b.set_obstacles(obstacles, dyn_obstacles);
     lit = 0;
     total_traits = 0;
-    ilda_points = ilda_beams = ilda_sheets = 0;
+    cut_segments = 0;
+    cpu_build_ms = cpu_hits_ms = 0.0f;
+    exits.clear();
+    ilda_points = ilda_beams = ilda_sheets = ilda_arcs = 0;
     time += dt;
     const int N = (int)mounts.size();
     const float TAU = 2 * PI;
     if (pattern == LP_OFF) return;
     if (pattern != LP_PROGRAM) {
         const int on = std::clamp(count, 0, N);
+        std::vector<int> todo;
         for (int i = 0; i < N && on > 0; i++) {
             // 'on' boitiers repartis regulierement sur les emplacements
             if ((long long)(i + 1) * on / N == (long long)i * on / N) continue;
-            lit++;
+            todo.push_back(i);
+        }
+        lit = (int)todo.size();
+        for (int i : todo) exits.push_back({mounts[i].pos + mounts[i].n * 0.12f, mounts[i].n, GROUP_COLORS[mounts[i].group] * power_w});
+        task_slot.assign(todo.size(), -1);
+        build_parallel((int)todo.size(), hall_min, hall_max, collisions, obstacles, dyn_obstacles, segs, total_traits, cut_segments,
+                       task_ranges, [&](int task, Builder& b) {
+            const int i = todo[task];
             const LaserMount& m = mounts[i];
             const float ph = i * 0.37f + m.group * 1.3f;
             const vec3 flux = GROUP_COLORS[m.group] * power_w;
@@ -875,10 +1166,11 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
                 }
                 default: break;
             }
-        }
-        total_traits = b.traits;
-        cut_segments = b.cuts;
+        });
+        cpu_build_ms = (float)ms_since(t_start);
+        const auto t_hits = std::chrono::steady_clock::now();
         build_hits(hall_min, hall_max);
+        cpu_hits_ms = (float)ms_since(t_hits);
         return;
     }
 
@@ -944,13 +1236,52 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
         f.scroll = fractf(f.scroll + o.gradient_speed * dt);
     }
 
-    for (const LaserFixture& f : fixtures) {
+    // boitiers allumes, et morceaux de leur image ILDA (calcules ici, sur un seul coeur : le cache de la bibliotheque
+    // se remplit a la demande)
+    struct Task { int f; float P; const IldaPrims* ilda; };
+    std::vector<Task> todo;
+    for (int fi = 0; fi < (int)fixtures.size(); fi++) {
+        const LaserFixture& f = fixtures[fi];
         const LaserParams& o = f.out;
         float gate = 1.0f;
         if (o.strobe > 0.05f) gate = fractf((float)time * o.strobe) < 0.2f ? 1.0f : 0.0f;
         const float P = power_w * master * clampf(o.dimmer, 0, 1) * gate;
         if (P <= 1e-6f) continue;
+        // fichier ILDA : morceaux de l'image affichee (en cache, niveau de tolerance le plus fin qui tient dans
+        // ILDA_MAX_PRIMS, releve si les segments depassent le budget)
+        const IldaPrims* ilda_pr = nullptr;
+        if (o.source == 1) {
+            IldaClip* clip = ilda.get(o.ilda_clip);
+            if (!clip) continue;
+            const int fr = ilda_frame_index((int)clip->frames.size(), o.ilda_fps, time, o.ilda_play, o.ilda_frame);
+            int level = std::clamp(ilda_bias, 0, ILDA_LEVELS - 1);
+            const float div = divergence_mrad * 1e-3f;
+            while (level < ILDA_LEVELS - 1 && ilda.prims(*clip, fr, level, div).over) level++;
+            ilda_pr = &ilda.prims(*clip, fr, level, div);
+            ilda_points += clip->frames[fr].size();
+            for (const TracePrim& tp : ilda_pr->prims) {
+                if (tp.kind == TP_BEAM) ilda_beams++;
+                else if (tp.kind == TP_ARC) ilda_arcs++;
+                else ilda_sheets++;
+            }
+        }
         lit++;
+        todo.push_back({fi, P, ilda_pr});
+        // couleur de la sortie : celle du laser, ou la moyenne des couleurs de l'image ILDA (ramenee a 1 au plus fort)
+        vec3 ecol = o.color;
+        if (ilda_pr && o.ilda_colors && !ilda_pr->prims.empty()) {
+            vec3 c;
+            for (const TracePrim& tp : ilda_pr->prims) c += tp.f0 + tp.f1;
+            const float m = std::max(c.x, std::max(c.y, c.z));
+            if (m > 0.0f) ecol = c * (1.0f / m);
+        }
+        exits.push_back({f.mount.pos + f.aim * 0.17f, f.aim, ecol * P});
+    }
+    auto build_figure = [&](int task, Builder& b) {
+        const LaserFixture& f = fixtures[todo[task].f];
+        const LaserParams& o = f.out;
+        const float P = todo[task].P;
+        const IldaPrims* ilda_pr = todo[task].ilda;
         // couleur le long de la figure, puis profil du chenillard de traits
         const vec3 c1 = o.color, c2 = o.color2, c3 = o.color3;
         const int grad = o.gradient;
@@ -994,21 +1325,6 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
         const vec3 r1 = normalize(f.right - d0 * dot(d0, f.right)), u1 = cross(r1, d0);
         const float roll = (f.roll + f.roll_acc) * DEG;
         const float ha = 0.5f * f.opening * DEG;
-        // fichier ILDA : primitives de l'image affichee (reduction en cache, niveau de tolerance le plus fin qui tient
-        // dans ILDA_MAX_PRIMS, releve si les segments depassent le budget)
-        const IldaPrims* ilda_pr = nullptr;
-        if (o.source == 1) {
-            IldaClip* clip = ilda.get(o.ilda_clip);
-            if (!clip) continue;
-            const int fi = ilda_frame_index((int)clip->frames.size(), o.ilda_fps, time, o.ilda_play, o.ilda_frame);
-            int level = std::clamp(ilda_bias, 0, ILDA_LEVELS - 1);
-            const float div = divergence_mrad * 1e-3f;
-            while (level < ILDA_LEVELS - 1 && ilda.prims(*clip, fi, level, div).over) level++;
-            ilda_pr = &ilda.prims(*clip, fi, level, div);
-            ilda_points += clip->frames[fi].size();
-            ilda_beams += (int)ilda_pr->beams.size() / 6;
-            ilda_sheets += (int)ilda_pr->sheets.size() / 8;
-        }
         // reseau de diffraction : copies decalees de la figure (puissance repartie)
         static const int OFF3[3][2] = {{-1, 0}, {0, 0}, {1, 0}};
         static const int OFF5[5][2] = {{0, 0}, {-1, 0}, {1, 0}, {0, -1}, {0, 1}};
@@ -1029,57 +1345,187 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
                 emit_ilda(b, *ilda_pr, S, d, rr, uu, roll, ha, 0.5f * max_angle * DEG, Pc, o);
                 continue;
             }
+            // figure : ses traits sont des courbes du plan de projection (direction d + w x + nf y), en points denses ;
+            // Builder::figure les decoupe en arcs et droites exacts et y repartit les traits. Ouverture nulle : tous les
+            // traits confondus (un trait).
+            const bool closed_shape = o.shape == LS_CONE || o.shape == LS_TUNNEL || o.shape >= LS_SQUARE;
+            if (ha <= 1e-6f && !closed_shape) {
+                b.fan(S, d, w, 0.0f, n, Pc, prof);
+                continue;
+            }
+            const float th = std::tan(ha), thc = std::tan(std::max(ha, 0.05f * DEG));
+            std::vector<FigRun> runs;
+            // droites, polygones et cercles : morceaux exacts donnes directement (pas d'ajustement)
+            auto seg_prim = [](vec2 p0, vec2 p1) {
+                TracePrim t;
+                t.kind = TP_LINE;
+                t.p0 = p0;
+                t.p1 = p1;
+                return t;
+            };
+            auto line = [&](vec2 p0, vec2 p1, int tr, float pw) {
+                FigRun r;
+                r.exact = {seg_prim(p0, p1)};
+                r.traits = tr;
+                r.power = pw;
+                runs.push_back(std::move(r));
+            };
+            auto polygon = [&](const std::vector<vec2>& c, int tr) {
+                FigRun r;
+                for (size_t k = 0; k < c.size(); k++) r.exact.push_back(seg_prim(c[k], c[(k + 1) % c.size()]));
+                r.traits = tr;
+                r.closed = true;
+                runs.push_back(std::move(r));
+            };
+            auto circle = [&](float rad, float a0, int tr, float pw) {
+                FigRun r;
+                TracePrim t;
+                t.kind = TP_ARC;
+                t.c = {0.0f, 0.0f};
+                t.rho = rad;
+                t.a0 = a0;
+                t.da = TAU;
+                t.p0 = t.p1 = {rad * std::cos(a0), rad * std::sin(a0)};
+                r.exact = {t};
+                r.traits = tr;
+                r.closed = true;
+                r.power = pw;
+                runs.push_back(std::move(r));
+            };
             switch (o.shape) {
                 case LS_DOUBLE_FAN: {
-                    const float g = 0.5f * o.shape_param * DEG;
-                    for (int s = -1; s <= 1; s += 2)
-                        b.fan(S, normalize(d * std::cos(g) + nf * (s * std::sin(g))), w, ha, std::max(1, n / 2), 0.5f * Pc, prof, K, 0, 1, flat);
+                    const float g = 0.5f * o.shape_param * DEG, x = th / std::cos(g);
+                    for (int sg = -1; sg <= 1; sg += 2) line({-x, sg * std::tan(g)}, {x, sg * std::tan(g)}, std::max(1, n / 2), 0.5f);
                     break;
                 }
-                case LS_CONE:
-                    b.cone(S, d, w, std::max(ha, 0.05f * DEG), std::min(32, n), n, 0.0f, Pc, prof, flat);
-                    break;
+                case LS_CONE: circle(thc, 0.0f, n, 1.0f); break;
                 case LS_TUNNEL:
-                    b.cone(S, d, w, std::max(ha, 0.05f * DEG), std::min(16, n), std::max(1, n / 2), 0.0f, 0.5f * Pc, prof, flat);
-                    b.cone(S, d, w, std::max(0.6f * ha, 0.05f * DEG), std::min(16, n), std::max(1, n / 2), PI / 16, 0.5f * Pc, prof, flat);
+                    circle(thc, 0.0f, std::max(1, n / 2), 0.5f);
+                    circle(std::tan(std::max(0.6f * ha, 0.05f * DEG)), PI / 16, std::max(1, n / 2), 0.5f);
                     break;
                 case LS_WAVE: {
-                    // traits qui ondulent hors du plan : ligne brisee de directions (8 morceaux par ondulation)
-                    const int m = std::clamp((int)(8.0f * o.wave_cycles), 8, 48);
+                    // traits qui ondulent hors du plan : direction (d cos a + w sin a) cos b + nf sin b
                     const float amp = o.shape_param * DEG;
-                    vec3 D[49];
-                    float tt[49];
-                    for (int j = 0; j <= m; j++) {
-                        const float u = (float)j / (float)m;
-                        const float a = -ha + 2.0f * ha * u;
+                    const int m = std::clamp((int)(64.0f * o.wave_cycles), 64, 512);
+                    FigRun r;
+                    for (int k = 0; k <= m; k++) {
+                        const float u = (float)k / (float)m, a = -ha + 2.0f * ha * u;
                         const float beta = amp * std::sin(TAU * (o.wave_cycles * u - 0.5f * (float)time));
-                        D[j] = normalize((d * std::cos(a) + w * std::sin(a)) * std::cos(beta) + nf * std::sin(beta));
-                        tt[j] = u;
+                        r.p.push_back({std::tan(a), std::tan(beta) / std::cos(a)});
                     }
-                    if (ha > 0.0f) b.polyline(S, D, tt, m, n, Pc, prof, flat);
-                    else b.fan(S, d, w, 0.0f, n, Pc, prof);
+                    r.traits = n;
+                    runs.push_back(std::move(r));
                     break;
                 }
                 case LS_GRID: {
-                    // plusieurs eventails paralleles : une grille de points sur une surface
+                    // eventails paralleles : une grille de points sur une surface
                     const int rows = std::clamp((int)std::lround(o.shape_param), 2, 16);
                     for (int r = 0; r < rows; r++) {
-                        const float g = ha * (2.0f * (float)r / (float)(rows - 1) - 1.0f);
-                        b.fan(S, normalize(d + nf * std::tan(g)), w, ha, std::max(1, n / rows), Pc / rows, prof, K, 0, 1, flat);
+                        const float g = ha * (2.0f * (float)r / (float)(rows - 1) - 1.0f), x = th / std::cos(g);
+                        line({-x, std::tan(g)}, {x, std::tan(g)}, std::max(1, n / rows), 1.0f / (float)rows);
                     }
                     break;
                 }
-                default:
-                    b.fan(S, d, w, ha, n, Pc, prof, K, 0, 1, flat);
+                case LS_SQUARE: {
+                    const float h = thc * 0.70710678f;
+                    polygon({{-h, -h}, {h, -h}, {h, h}, {-h, h}}, n);
                     break;
+                }
+                case LS_TRIANGLE:
+                    polygon({{0.0f, thc}, {-0.8660254f * thc, -0.5f * thc}, {0.8660254f * thc, -0.5f * thc}}, n);
+                    break;
+                case LS_STAR: {
+                    const int nb = std::clamp(o.branches, 3, 12);
+                    std::vector<vec2> c;
+                    for (int k = 0; k < 2 * nb; k++) {
+                        const float a = PI * 0.5f + PI * (float)k / (float)nb, rr2 = (k & 1) ? 0.42f * thc : thc;
+                        c.push_back({rr2 * std::cos(a), rr2 * std::sin(a)});
+                    }
+                    polygon(c, n);
+                    break;
+                }
+                case LS_HEART: {
+                    // courbe du coeur (pointes en haut au centre et en bas : deux traits qui se rejoignent)
+                    FigRun r;
+                    const float sc = thc / 17.0f;
+                    for (int k = 0; k <= 256; k++) {
+                        const float t2 = TAU * (float)k / 256.0f, st = std::sin(t2);
+                        r.p.push_back({sc * 16.0f * st * st * st,
+                                       sc * (13.0f * std::cos(t2) - 5.0f * std::cos(2 * t2) - 2.0f * std::cos(3 * t2) - std::cos(4 * t2) + 2.5f)});
+                    }
+                    r.traits = n;
+                    r.closed = true;
+                    runs.push_back(std::move(r));
+                    break;
+                }
+                default: line({-th, 0.0f}, {th, 0.0f}, n, 1.0f); break;
             }
+            b.figure(S, d, w, runs, Pc, prof, K, flat);
+        }
+    };
+    // cache des figures fixes : entrees communes (hangar, obstacles, champ), puis celles de chaque figure ; une figure dont
+    // rien n'a change reprend ses morceaux (et ses impacts, build_hits) de l'image precedente
+    {
+        std::vector<float> sk;
+        push_vec(sk, hall_min);
+        push_vec(sk, hall_max);
+        sk.push_back(max_angle);
+        sk.push_back(collisions ? 1.0f : 0.0f);
+        sk.push_back((float)obstacles.size());
+        if (!obstacles.empty()) push_bits(sk, obstacles.data(), obstacles.size() * sizeof(Occluder));
+        if (!dyn_obstacles.empty()) push_bits(sk, dyn_obstacles.data(), dyn_obstacles.size() * sizeof(Occluder));
+        const bool same = figure_cache && sk.size() == cache_scene.size() && fig_cache.size() == fixtures.size() &&
+                          std::memcmp(sk.data(), cache_scene.data(), sk.size() * sizeof(float)) == 0;
+        if (!same) {
+            fig_cache.assign(fixtures.size(), FigCache());
+            cache_scene = sk;
         }
     }
-    total_traits = b.traits;
-    cut_segments = b.cuts;
+    cached_lasers = 0;
+    task_slot.resize(todo.size());
+    std::vector<char> reuse(todo.size(), 0);
+    {
+        std::vector<float> key;
+        for (size_t i = 0; i < todo.size(); i++) {
+            const int fi = todo[i].f;
+            FigCache& c = fig_cache[fi];
+            figure_key(key, fixtures[fi], todo[i].P, todo[i].ilda, time);
+            reuse[i] = figure_cache && c.valid && key.size() == c.key.size() &&
+                       std::memcmp(key.data(), c.key.data(), key.size() * sizeof(float)) == 0;
+            if (!reuse[i]) {
+                c.key = key;
+                c.valid = false;
+                c.hits_valid = false;
+            }
+            cached_lasers += reuse[i];
+            task_slot[i] = figure_cache ? fi : -1;
+        }
+    }
+    build_parallel((int)todo.size(), hall_min, hall_max, collisions, obstacles, dyn_obstacles, segs, total_traits, cut_segments,
+                   task_ranges, [&](int task, Builder& b) {
+        FigCache& cache = fig_cache[todo[task].f];
+        if (reuse[task]) {
+            b.segs.insert(b.segs.end(), cache.segs.begin(), cache.segs.end());
+            b.traits += cache.traits;
+            b.cuts += cache.cuts;
+            return;
+        }
+        const size_t seg0 = b.segs.size();
+        const int traits0 = b.traits, cuts0 = b.cuts;
+        build_figure(task, b);
+        if (figure_cache) {
+            cache.segs.assign(b.segs.begin() + seg0, b.segs.end());
+            cache.traits = b.traits - traits0;
+            cache.cuts = b.cuts - cuts0;
+            cache.valid = true;
+        }
+    });
+    cpu_build_ms = (float)ms_since(t_start);
+    const auto t_hits = std::chrono::steady_clock::now();
     build_hits(hall_min, hall_max);
+    cpu_hits_ms = (float)ms_since(t_hits);
     // budget global (LASER_MAX_SEGS) : primitives ILDA regroupees plus largement quand il est presque atteint
-    if (ilda_beams + ilda_sheets > 0) {
+    if (ilda_beams + ilda_sheets + ilda_arcs > 0) {
         if (segs.size() >= (size_t)LASER_MAX_SEGS * 95 / 100 && ilda_bias < ILDA_LEVELS - 1) ilda_bias++;
         else if (segs.size() < (size_t)LASER_MAX_SEGS * 35 / 100 && ilda_bias > 0) ilda_bias--;
     }
@@ -1114,175 +1560,224 @@ void LaserRig::build_hits(vec3 mn, vec3 mx) {
         return best;
     };
     static const vec3 FACE_N[6] = {{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}, {0, 0, 1}, {0, 0, -1}};   // vers l'interieur
-    for (const LaserSegment& g : segs) {
-        if ((int)hits.size() >= LASER_MAX_SEGS * 2) break;
-        if (g.arc) {
-            // arc : morceaux de la courbe (meme face de sortie, 4 deg de direction et 22,5 deg d'arc au plus) ; le
-            // dessin teste la distance exacte au cone (kind 2) : courbe exacte, bouts fondus en angle (sans trou aux
-            // jonctions). L'arc couvre ses traits plus un demi-ecart de chaque cote (les morceaux se touchent).
-            const vec3 d = g.ec, rr = g.es, uu = g.uu;
-            const float nk = std::max(g.traits, 2.0f);
-            auto dirf = [&](float th) {
-                return normalize(d + rr * (g.cx + g.rho * std::cos(th)) + uu * (g.cy + g.rho * std::sin(th)));
-            };
-            const float dt = g.dth / (nk - 1.0f);
-            const float ta = g.th0 - 0.5f * dt, span = g.dth + dt;
-            if (span <= 1e-7f) continue;
-            const vec3 fa = g.flux / span, fb = g.flux1 / span;   // puissance par radian de theta
-            LaserHit h = {};
-            h.kind = 2;
-            h.src = g.src;
-            h.nrm = d;
-            h.pad0 = g.rho;
-            h.pad1 = rr.x;
-            h.pad2 = g.cx;
-            h.pad3 = rr.y;
-            h.pad4 = rr.z;
-            h.pad5 = g.cy;
-            auto push = [&](float t0, float t1, float e0, float e1, vec3 sn) {
-                if ((int)hits.size() >= LASER_MAX_SEGS * 2) return;
-                LaserHit q = h;
-                q.a = g.src + dirf(t0) * e0;
-                q.b = g.src + dirf(t1) * e1;
-                q.f0 = fa + (fb - fa) * ((t0 - ta) / span);
-                q.f1 = fa + (fb - fa) * ((t1 - ta) / span);
-                q.surf = sn;
-                hits.push_back(q);
-            };
-            const vec3 Dm = dirf(ta + 0.5f * span);
-            if (g.range < exit_distance(g.src, Dm, mn, mx) - 0.01f) {
-                // a l'ombre d'un obstacle (morceau de 1 deg au plus) : sur sa face
-                vec3 sn = {0, 1, 0};
-                all_obs(g.src + Dm * g.range, sn);
-                push(ta, ta + span, g.range, g.range, sn);
-                continue;
+    // un morceau : ses impacts dans 'out'
+    auto one = [&](const LaserSegment& g, std::vector<LaserHit>& out) {
+            if (g.arc) {
+                // arc : morceaux de la courbe (meme face de sortie, 4 deg de direction et 22,5 deg d'arc au plus) ; le
+                // dessin teste la distance exacte au cone (kind 2) : courbe exacte, bouts fondus en angle (sans trou aux
+                // jonctions). L'arc couvre ses traits plus un demi-ecart de chaque cote (les morceaux se touchent).
+                const vec3 d = g.ec, rr = g.es, uu = g.uu;
+                const float nk = std::max(g.traits, 2.0f);
+                auto dirf = [&](float th) {
+                    return normalize(d + rr * (g.cx + g.rho * std::cos(th)) + uu * (g.cy + g.rho * std::sin(th)));
+                };
+                const float dt = g.dth / (nk - 1.0f);
+                const float ta = g.th0 - 0.5f * dt, span = g.dth + dt;
+                if (span <= 1e-7f) return;
+                const vec3 fa = g.flux / span, fb = g.flux1 / span;   // puissance par radian de theta
+                LaserHit h = {};
+                h.kind = 2;
+                h.src = g.src;
+                h.nrm = d;
+                h.pad0 = g.rho;
+                h.pad1 = rr.x;
+                h.pad2 = g.cx;
+                h.pad3 = rr.y;
+                h.pad4 = rr.z;
+                h.pad5 = g.cy;
+                auto push = [&](float t0, float t1, float e0, float e1, vec3 sn) {
+                    if ((int)out.size() >= LASER_MAX_SEGS * 2) return;
+                    LaserHit q = h;
+                    q.a = g.src + dirf(t0) * e0;
+                    q.b = g.src + dirf(t1) * e1;
+                    q.f0 = fa + (fb - fa) * ((t0 - ta) / span);
+                    q.f1 = fa + (fb - fa) * ((t1 - ta) / span);
+                    q.surf = sn;
+                    out.push_back(q);
+                };
+                if (g.stop_d < 1e29f) {
+                    // arrete sur la face d'un obstacle (plan stop) : la courbe exacte sur cette face, en morceaux recoupes tant
+                    // qu'elle s'ecarte de sa corde de plus de 4 % de sa longueur (+ 5 mm), comme sur les parois
+                    auto facep = [&](float t, float& e) {
+                        const vec3 D = dirf(t);
+                        e = exit_distance(g.src, D, mn, mx);
+                        const float dn = dot(g.stop_n, D);
+                        if (dn > 1e-6f) e = std::min(e, g.stop_d / dn);
+                        return g.src + D * e;
+                    };
+                    struct Ch { float t0, t1; int depth; };
+                    Ch cs[16];
+                    int nc = 0;
+                    cs[nc++] = {ta, ta + span, 0};
+                    while (nc > 0) {
+                        const Ch q = cs[--nc];
+                        float e0, e1, em;
+                        const vec3 Pa = facep(q.t0, e0), Pb = facep(q.t1, e1), Pm = facep(0.5f * (q.t0 + q.t1), em);
+                        if (q.depth < 7 && nc + 2 <= 16 && length(Pm - (Pa + Pb) * 0.5f) > 0.04f * length(Pb - Pa) + 0.005f) {
+                            cs[nc++] = {0.5f * (q.t0 + q.t1), q.t1, q.depth + 1};
+                            cs[nc++] = {q.t0, 0.5f * (q.t0 + q.t1), q.depth + 1};
+                            continue;
+                        }
+                        push(q.t0, q.t1, e0, e1, g.stop_n * -1.0f);
+                    }
+                    return;
+                }
+                struct Piece { float t0, t1; };
+                Piece st[8];
+                int ns = 0;
+                st[ns++] = {ta, ta + span};
+                int guard = 0;
+                while (ns > 0 && guard++ < 16) {
+                    const Piece p = st[--ns];
+                    int f0i, f1i;
+                    exit_face(g.src, dirf(p.t0), mn, mx, f0i);
+                    exit_face(g.src, dirf(p.t1), mn, mx, f1i);
+                    if (f0i == f1i || p.t1 - p.t0 < 1e-5f) {
+                        // morceaux de 22,5 deg d'arc au plus, recoupes en deux tant que la courbe s'ecarte de sa corde de plus
+                        // de 4 % de sa longueur (+ 5 mm) : le dessin n'ajoute que cette marge (vs_laser_hit)
+                        auto exitp = [&](float t) {
+                            int fc;
+                            const vec3 D = dirf(t);
+                            return g.src + D * exit_face(g.src, D, mn, mx, fc);
+                        };
+                        const int m = std::clamp((int)std::ceil((p.t1 - p.t0) / (22.5f * DEG)), 1, 64);
+                        vec3 Pc = exitp(p.t0);
+                        for (int c = 0; c < m; c++) {
+                            struct Ch { float t0, t1; vec3 Pa, Pb; int depth; };
+                            Ch cs[16];
+                            int nc = 0;
+                            const float c1 = p.t0 + (p.t1 - p.t0) * (float)(c + 1) / (float)m;
+                            const vec3 Pn = exitp(c1);
+                            cs[nc++] = {p.t0 + (p.t1 - p.t0) * (float)c / (float)m, c1, Pc, Pn, 0};
+                            Pc = Pn;
+                            while (nc > 0) {
+                                const Ch q = cs[--nc];
+                                const float tm = 0.5f * (q.t0 + q.t1);
+                                const vec3 Pm = exitp(tm);
+                                if (q.depth < 7 && nc + 2 <= 16 && length(Pm - (q.Pa + q.Pb) * 0.5f) > 0.04f * length(q.Pb - q.Pa) + 0.005f) {
+                                    cs[nc++] = {tm, q.t1, Pm, q.Pb, q.depth + 1};
+                                    cs[nc++] = {q.t0, tm, q.Pa, Pm, q.depth + 1};
+                                    continue;
+                                }
+                                push(q.t0, q.t1, length(q.Pa - g.src), length(q.Pb - g.src), FACE_N[f0i]);
+                            }
+                        }
+                        continue;
+                    }
+                    float lo = p.t0, hi = p.t1;
+                    for (int it = 0; it < 14; it++) {
+                        const float mid = 0.5f * (lo + hi);
+                        int fm;
+                        exit_face(g.src, dirf(mid), mn, mx, fm);
+                        if (fm == f0i) lo = mid; else hi = mid;
+                    }
+                    if (ns + 2 <= 8) {
+                        // les deux cotes du coin se touchent (meme angle) : pas de trou
+                        st[ns++] = {0.5f * (lo + hi), p.t1};
+                        st[ns++] = {p.t0, 0.5f * (lo + hi)};
+                    }
+                }
+                return;
             }
+            const bool fan = g.traits > 1.5f && g.half_angle > 1e-6f;
+            LaserHit h = {};
+            h.src = g.src;
+            if (!fan) {
+                // trait : point d'arrivee
+                h.kind = 1;
+                h.a = g.src + g.ec * g.range;
+                h.b = h.a;
+                h.nrm = g.ec;
+                h.f0 = g.flux;
+                int face;
+                const float tw = exit_face(g.src, g.ec, mn, mx, face);
+                vec3 sn = FACE_N[face];
+                if (g.range < tw - 0.01f) all_obs(h.a, sn);
+                h.surf = sn;
+                out.push_back(h);
+                return;
+            }
+            const vec3 nrm = normalize(cross(g.ec, g.es));
+            const float ha = g.half_angle;
+            const vec3 f0 = g.flux / (2.0f * ha), f1 = g.flux1 / (2.0f * ha);   // puissance par radian aux bords
+            auto dir = [&](float th) { return g.ec * std::cos(th) + g.es * std::sin(th); };
+            h.kind = 0;
+            h.nrm = nrm;
+            if (g.range1 > 0.0f) {
+                // coupe : ligne sur la face de l'obstacle
+                h.a = g.src + dir(-ha) * g.range;
+                h.b = g.src + dir(ha) * g.range1;
+                h.f0 = f0;
+                h.f1 = f1;
+                vec3 sn = {0, 1, 0};
+                all_obs((h.a + h.b) * 0.5f, sn);
+                h.surf = sn;
+                out.push_back(h);
+                return;
+            }
+            // parois du hangar : morceaux d'angle qui sortent par la meme face
             struct Piece { float t0, t1; };
             Piece st[8];
             int ns = 0;
-            st[ns++] = {ta, ta + span};
+            st[ns++] = {-ha, ha};
             int guard = 0;
             while (ns > 0 && guard++ < 16) {
                 const Piece p = st[--ns];
-                int f0i, f1i;
-                exit_face(g.src, dirf(p.t0), mn, mx, f0i);
-                exit_face(g.src, dirf(p.t1), mn, mx, f1i);
-                if (f0i == f1i || p.t1 - p.t0 < 1e-5f) {
-                    // morceaux de 22,5 deg d'arc au plus, recoupes en deux tant que la courbe s'ecarte de sa corde de plus
-                    // de 4 % de sa longueur (+ 5 mm) : le dessin n'ajoute que cette marge (vs_laser_hit)
-                    auto exitp = [&](float t) {
-                        int fc;
-                        const vec3 D = dirf(t);
-                        return g.src + D * exit_face(g.src, D, mn, mx, fc);
-                    };
-                    const int m = std::clamp((int)std::ceil((p.t1 - p.t0) / (22.5f * DEG)), 1, 64);
-                    vec3 Pc = exitp(p.t0);
-                    for (int c = 0; c < m; c++) {
-                        struct Ch { float t0, t1; vec3 Pa, Pb; int depth; };
-                        Ch cs[16];
-                        int nc = 0;
-                        const float c1 = p.t0 + (p.t1 - p.t0) * (float)(c + 1) / (float)m;
-                        const vec3 Pn = exitp(c1);
-                        cs[nc++] = {p.t0 + (p.t1 - p.t0) * (float)c / (float)m, c1, Pc, Pn, 0};
-                        Pc = Pn;
-                        while (nc > 0) {
-                            const Ch q = cs[--nc];
-                            const float tm = 0.5f * (q.t0 + q.t1);
-                            const vec3 Pm = exitp(tm);
-                            if (q.depth < 7 && nc + 2 <= 16 && length(Pm - (q.Pa + q.Pb) * 0.5f) > 0.04f * length(q.Pb - q.Pa) + 0.005f) {
-                                cs[nc++] = {tm, q.t1, Pm, q.Pb, q.depth + 1};
-                                cs[nc++] = {q.t0, tm, q.Pa, Pm, q.depth + 1};
-                                continue;
-                            }
-                            push(q.t0, q.t1, length(q.Pa - g.src), length(q.Pb - g.src), FACE_N[f0i]);
-                        }
-                    }
+                int fa, fb;
+                const float ta = exit_face(g.src, dir(p.t0), mn, mx, fa), tb = exit_face(g.src, dir(p.t1), mn, mx, fb);
+                if (fa == fb || p.t1 - p.t0 < 1e-5f) {
+                    const float u0 = (p.t0 + ha) / (2.0f * ha), u1 = (p.t1 + ha) / (2.0f * ha);
+                    LaserHit q = h;
+                    q.a = g.src + dir(p.t0) * ta;
+                    q.b = g.src + dir(p.t1) * tb;
+                    q.f0 = f0 + (f1 - f0) * u0;
+                    q.f1 = f0 + (f1 - f0) * u1;
+                    q.surf = FACE_N[fa];
+                    out.push_back(q);
                     continue;
                 }
+                // coin : angle ou la face de sortie change (dichotomie)
                 float lo = p.t0, hi = p.t1;
                 for (int it = 0; it < 14; it++) {
-                    const float mid = 0.5f * (lo + hi);
+                    const float m = 0.5f * (lo + hi);
                     int fm;
-                    exit_face(g.src, dirf(mid), mn, mx, fm);
-                    if (fm == f0i) lo = mid; else hi = mid;
+                    exit_face(g.src, dir(m), mn, mx, fm);
+                    if (fm == fa) lo = m; else hi = m;
                 }
                 if (ns + 2 <= 8) {
-                    // les deux cotes du coin se touchent (meme angle) : pas de trou
-                    st[ns++] = {0.5f * (lo + hi), p.t1};
-                    st[ns++] = {p.t0, 0.5f * (lo + hi)};
+                    st[ns++] = {hi, p.t1};
+                    st[ns++] = {p.t0, lo};
                 }
             }
-            continue;
-        }
-        const bool fan = g.traits > 1.5f && g.half_angle > 1e-6f;
-        LaserHit h = {};
-        h.src = g.src;
-        if (!fan) {
-            // trait : point d'arrivee
-            h.kind = 1;
-            h.a = g.src + g.ec * g.range;
-            h.b = h.a;
-            h.nrm = g.ec;
-            h.f0 = g.flux;
-            int face;
-            const float tw = exit_face(g.src, g.ec, mn, mx, face);
-            vec3 sn = FACE_N[face];
-            if (g.range < tw - 0.01f) all_obs(h.a, sn);
-            h.surf = sn;
-            hits.push_back(h);
-            continue;
-        }
-        const vec3 nrm = normalize(cross(g.ec, g.es));
-        const float ha = g.half_angle;
-        const vec3 f0 = g.flux / (2.0f * ha), f1 = g.flux1 / (2.0f * ha);   // puissance par radian aux bords
-        auto dir = [&](float th) { return g.ec * std::cos(th) + g.es * std::sin(th); };
-        h.kind = 0;
-        h.nrm = nrm;
-        if (g.range1 > 0.0f) {
-            // coupe : ligne sur la face de l'obstacle
-            h.a = g.src + dir(-ha) * g.range;
-            h.b = g.src + dir(ha) * g.range1;
-            h.f0 = f0;
-            h.f1 = f1;
-            vec3 sn = {0, 1, 0};
-            all_obs((h.a + h.b) * 0.5f, sn);
-            h.surf = sn;
-            hits.push_back(h);
-            continue;
-        }
-        // parois du hangar : morceaux d'angle qui sortent par la meme face
-        struct Piece { float t0, t1; };
-        Piece st[8];
-        int ns = 0;
-        st[ns++] = {-ha, ha};
-        int guard = 0;
-        while (ns > 0 && guard++ < 16) {
-            const Piece p = st[--ns];
-            int fa, fb;
-            const float ta = exit_face(g.src, dir(p.t0), mn, mx, fa), tb = exit_face(g.src, dir(p.t1), mn, mx, fb);
-            if (fa == fb || p.t1 - p.t0 < 1e-5f) {
-                const float u0 = (p.t0 + ha) / (2.0f * ha), u1 = (p.t1 + ha) / (2.0f * ha);
-                LaserHit q = h;
-                q.a = g.src + dir(p.t0) * ta;
-                q.b = g.src + dir(p.t1) * tb;
-                q.f0 = f0 + (f1 - f0) * u0;
-                q.f1 = f0 + (f1 - f0) * u1;
-                q.surf = FACE_N[fa];
-                hits.push_back(q);
-                continue;
-            }
-            // coin : angle ou la face de sortie change (dichotomie)
-            float lo = p.t0, hi = p.t1;
-            for (int it = 0; it < 14; it++) {
-                const float m = 0.5f * (lo + hi);
-                int fm;
-                exit_face(g.src, dir(m), mn, mx, fm);
-                if (fm == fa) lo = m; else hi = m;
-            }
-            if (ns + 2 <= 8) {
-                st[ns++] = {hi, p.t1};
-                st[ns++] = {p.t0, lo};
+    };
+    // plusieurs coeurs : un laser par tache (plages de update), impacts mis bout a bout dans l'ordre (meme resultat que
+    // sur un seul coeur) ; une figure fixe (cache, morceaux entiers) reprend ses impacts
+    const int nt = (int)task_ranges.size();
+    static std::vector<std::vector<LaserHit>> parts;
+    if ((int)parts.size() < nt) parts.resize(nt);
+    std::atomic<int> next{0};
+    const std::function<void(int)> job = [&](int) {
+        for (int t; (t = next.fetch_add(1)) < nt;) {
+            const TaskRange& r = task_ranges[t];
+            const int slot = t < (int)task_slot.size() ? task_slot[t] : -1;
+            FigCache* c = slot >= 0 && slot < (int)fig_cache.size() && r.whole ? &fig_cache[slot] : nullptr;
+            parts[t].clear();
+            if (c && c->hits_valid) continue;
+            for (int i = r.a; i < r.b; i++) one(segs[i], parts[t]);
+            if (c) {
+                c->hits = parts[t];
+                c->hits_valid = true;
             }
         }
+    };
+    if (nt > 1) work_pool().run(job);
+    else job(0);
+    for (int t = 0; t < nt && (int)hits.size() < LASER_MAX_SEGS * 2; t++) {
+        const TaskRange& r = task_ranges[t];
+        const int slot = t < (int)task_slot.size() ? task_slot[t] : -1;
+        const std::vector<LaserHit>& src =
+            slot >= 0 && slot < (int)fig_cache.size() && r.whole && fig_cache[slot].hits_valid ? fig_cache[slot].hits : parts[t];
+        const size_t cnt = std::min(src.size(), (size_t)(LASER_MAX_SEGS * 2) - hits.size());
+        hits.insert(hits.end(), src.begin(), src.begin() + cnt);
     }
 }
