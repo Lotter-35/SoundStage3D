@@ -558,6 +558,7 @@ Historique 21 et 22 (banc rapide, immobile, 19 cas).
 
 - **Collisions** (`--set lasercoll=0/1`, case de l'onglet Lasers) : les traits s'arrêtent sur les pavés du décor, des mannequins et du personnage ; les nappes y sont coupées exactement (trou d'ombre à bord net). Calcul sur le CPU, à la construction des segments : coût GPU dans le bruit.
 - **Impacts sur les surfaces** (`--set laserimpacts=0/1`, case de l'onglet Rendu) : passe « lasers : impacts », lignes et points là où les lasers touchent sol, murs, plafond et obstacles. Coût (image, GPU) : +0,5 à +2 ms sur L1 à L6, +2,8 ms sur L7, +5 à +6 ms sur les fichiers ILDA chargés (I1, I3, I4).
+- **Traits au sol continus au loin** (toujours actif, choix de l'utilisateur) : la largeur minimale des impacts (0,6 pixel de sigma) est comptée à l'écran sur la surface touchée, énergie conservée, et non plus en travers du faisceau ; vu en rasant, un trait au sol plus fin qu'un pixel devenait des pointillés qui scintillent. Seulement en travers des lignes (les points d'un motif restent séparés). Coût de la passe « lasers : impacts » (banc rapide, immobile, `adaptive=0`) : L7 0,27 → 0,46 ms, I3 1,76 → 2,50 ms, P3 2,03 → 2,82 ms ; image entière dans le bruit. Historique 50.
 
 ### Nappes coniques exactes (cônes, tunnels) (15 octobre 2026)
 

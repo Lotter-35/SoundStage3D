@@ -4571,7 +4571,8 @@ layout(binding=0) uniform hit_vs_params {
     mat4 view_proj;
     vec4 cam_pos;   // w : angle d'un pixel (rad)
     vec4 cam_fwd;
-    vec4 beam;      // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels)
+    vec4 beam;      // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels, a l'ecran : voir
+                    // hit_px_steps)
     vec4 res;       // xy : taille du rendu, z : convergence RGB (rad, voir ledge.w des lasers)
 };
 layout(binding=25) readonly buffer hits_vs { sb_hit hits[]; };
@@ -4685,6 +4686,13 @@ void main() {
     ea = dot(ea, ea) > 1e-6 ? normalize(ea) : (atB ? dd : -dd);
     eb = dot(eb, eb) > 1e-6 ? normalize(eb) : vec2(-ea.y, ea.x) * (((corner & 1) == 0) ? -1.0 : 1.0);
     p += 3.0 * (ea + eb);
+    // largeur minimale a l'ecran : la bande fait au moins beam.z pixels de sigma en travers de la ligne a l'ecran ; vu en
+    // rasant, eb peut etre presque parallele a la ligne (ligne en biais sur le sol) : marge en travers d'elle (seulement ce
+    // qui manque aux 3 pixels deja ajoutes le long de eb)
+    vec2 nd = vec2(-ea.y, ea.x);
+    float sd = dot(eb, nd);
+    float side = abs(sd) > 1e-3 ? sign(sd) : (((corner & 1) == 0) ? -1.0 : 1.0);
+    p += nd * (side * max(4.0 * beam.z + 1.0 - 3.0 * abs(sd), 0.0));
     vec2 ndc = p / res.xy * 2.0 - 1.0;
     gl_Position = vec4(ndc, 0.5, 1.0);
 }
@@ -4708,6 +4716,32 @@ const vec3 HIT_CONV_Y = vec3(0.6, 0.0, -0.5);
 // meme fondu que laser_conv_fade (LASER_CONV_MIN = 0,25)
 float laser_hit_fade(float sh, float sig) {
     return clamp(sh / (0.25 * max(sig, 1e-9)) - 1.0, 0.0, 1.0);
+}
+// Largeur minimale a l'ecran : la largeur minimale px (beam.z pixels a la distance t) est comptee en travers du
+// faisceau ; vu en rasant, un pixel couvre beaucoup plus de surface en profondeur (sol au loin : 15 a 50 fois plus), et le
+// trait, plus fin qu'un pixel a l'ecran, n'allume que les pixels dont le centre tombe dedans : pointilles qui scintillent.
+// Ici, le deplacement sur la surface touchee (normale du point d'impact, sans le relief du sol) pour un pixel vers la droite
+// et vers le haut ; la variance d'un pixel de beam.z de sigma a l'ecran s'en deduit, dans les coordonnees de la gaussienne.
+// Elle ne fait qu'elargir (jamais moins que px) et l'energie est conservee : le trait reste continu et s'eteint au loin.
+// Seulement en travers : le long de la ligne, les bouts ne bougent pas (traits separes, points d'un motif : pas relies).
+// Seulement sur la surface touchee (normale du pixel proche de sn, relief du sol tolere : hit_on) : sur un objet devant la
+// ligne (pied d'un pave), l'etirement du sol allumerait une bande. La normale n'est lue qu'apres le test de la bande (fait
+// avec hit_on = 1, borne haute) : la plupart des pixels du quadrilatere sont jetes avant.
+void hit_px_steps(vec3 dir, vec3 sn, float pt, out vec3 dx, out vec3 dy) {
+    float dn = dot(dir, sn);
+    float inv = 1.0 / (dn >= 0.0 ? max(dn, 0.02) : min(dn, -0.02));   // au plus 50 x plus large qu'en face
+    dx = pt * (cam_right.xyz - dir * (dot(cam_right.xyz, sn) * inv));
+    dy = pt * (cam_up.xyz - dir * (dot(cam_up.xyz, sn) * inv));
+}
+float hit_on(vec3 N, vec3 sn) {
+    float on = smoothstep(0.8, 0.9, abs(dot(N, sn)) * inversesqrt(max(dot(N, N), 1e-12)));
+    return on * on;
+}
+// variance d'un pixel a l'ecran le long de z (gradient monde gz unitaire), multipliee par beam.z^2 ; la largeur d'une ligne
+// est alors sig2 + max(on2 x m2 - px^2, 0)
+float hit_px_var(vec3 gz, vec3 dx, vec3 dy) {
+    float gx = dot(gz, dx), gy = dot(gz, dy);
+    return beam.z * beam.z * (gx * gx + gy * gy);
 }
 layout(binding=29) readonly buffer hits_fs { sb_hit hitsf[]; };
 layout(binding=26) uniform texture2D hit_depth;
@@ -4773,6 +4807,9 @@ void main() {
     float r2 = dot(rel, rel), r = sqrt(r2);
     float px = beam.z * res.z * t;
     float sig2 = beam.x + beam.y * r2 + px * px;
+    // largeur minimale a l'ecran (hit_px_steps) : sz2, sigma^2 en travers de la ligne ; sig2 reste celui des bouts
+    vec3 sdx, sdy;
+    hit_px_steps(dir, H.surf.xyz, res.z * t, sdx, sdy);
     vec3 E;
     if (H.a.w > 1.5) {
         // arc : distance au cone (F / |grad F|, exacte a l'echelle du faisceau), puis position en angle sur l'arc ; bouts
@@ -4781,10 +4818,13 @@ void main() {
         vec3 f = hit_arc_frame(H, rel, g);
         float g2 = max(dot(g, g), 1e-30);
         float z = (f.y * f.y + f.z * f.z - H.b.w * H.b.w * f.x * f.x) * 0.5 * inversesqrt(g2);
+        float m2 = hit_px_var(g * inversesqrt(g2), sdx, sdy);
+        float sz2 = sig2 + max(m2 - px * px, 0.0);
         float zm0 = max(abs(z) - 0.6 * v_conv * r, 0.0);
-        if (f.x <= 0.0 || zm0 * zm0 > 16.0 * sig2) {
+        if (f.x <= 0.0 || zm0 * zm0 > 16.0 * sz2) {
             discard;
         }
+        sz2 = sig2 + max(hit_on(texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz, H.surf.xyz) * m2 - px * px, 0.0);
         vec3 fa = hit_arc_frame(H, H.a.xyz - H.src.xyz, gd), fb = hit_arc_frame(H, H.b.xyz - H.src.xyz, gd);
         float tha = atan(fa.z, fa.y);
         float span = atan(fb.z, fb.y) - tha;
@@ -4799,29 +4839,32 @@ void main() {
         float e = 2.0 * sqrt(sig2) / (max(r, 0.05) * rate);   // demi-largeur du fondu (rad de theta)
         // bouts : difference des deux marches (comme les nappes). Convergence RGB : le cone de chaque couleur est un peu
         // decale (courbe deplacee en travers de HIT_CONV_Y x ecart x r, et le long de l'arc de HIT_CONV_X x ecart / rate)
-        float csh = v_conv * r * laser_hit_fade(1.2 * v_conv * r, sqrt(sig2));
+        float csh = v_conv * r * laser_hit_fade(1.2 * v_conv * r, sqrt(sz2));
         vec3 zc = z - HIT_CONV_Y * csh, duc = du - HIT_CONV_X * (csh / (max(r, 0.05) * rate));
         vec3 w = max(smoothstep(vec3(-e), vec3(e), duc) + smoothstep(vec3(-e), vec3(e), span - duc) - 1.0, vec3(0.0));
         E = mix(H.f0.rgb, H.f1.rgb, clamp(du / max(span, 1e-6), 0.0, 1.0))
-            * (w * exp(-0.5 * zc * zc / sig2) * (0.39894228 * inversesqrt(sig2) / (max(r, 0.05) * rate)));
+            * (w * exp(-0.5 * zc * zc / sz2) * (0.39894228 * inversesqrt(sz2) / (max(r, 0.05) * rate)));
     } else if (H.a.w < 0.5) {
         // nappe : distance au plan, puis position le long de la ligne (bouts adoucis : difference des deux marches, comme
         // les nappes). Convergence RGB : le plan de chaque couleur est un peu tourne (ligne decalee en travers, de
         // HIT_CONV_Y x ecart x r) et l'eventail tourne dans son plan (bouts decales le long de la ligne)
         float z = dot(rel, H.nrm.xyz);
+        float m2 = hit_px_var(H.nrm.xyz, sdx, sdy);
+        float sz2 = sig2 + max(m2 - px * px, 0.0);
         float csh = v_conv * r;
         float zm = max(abs(z) - 0.6 * csh, 0.0);
-        if (zm * zm > 16.0 * sig2) {
+        if (zm * zm > 16.0 * sz2) {
             discard;
         }
+        sz2 = sig2 + max(hit_on(texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz, H.surf.xyz) * m2 - px * px, 0.0);
         vec3 ab = H.b.xyz - H.a.xyz;
         float l2 = max(dot(ab, ab), 1e-8);
         float u = dot(X - H.a.xyz, ab) / l2;
         float e = 2.0 * sqrt(sig2 / l2);
-        csh *= laser_hit_fade(1.2 * csh, sqrt(sig2));
+        csh *= laser_hit_fade(1.2 * csh, sqrt(sz2));
         vec3 zc = z - HIT_CONV_Y * csh, uc = u - HIT_CONV_X * (csh * inversesqrt(l2));
         vec3 w = max(smoothstep(vec3(-e), vec3(e), uc) + smoothstep(vec3(-e), vec3(e), 1.0 - uc) - 1.0, vec3(0.0));
-        E = mix(H.f0.rgb, H.f1.rgb, clamp(u, 0.0, 1.0)) * (w * exp(-0.5 * zc * zc / sig2) * (0.39894228 * inversesqrt(sig2) / max(r, 0.05)));
+        E = mix(H.f0.rgb, H.f1.rgb, clamp(u, 0.0, 1.0)) * (w * exp(-0.5 * zc * zc / sz2) * (0.39894228 * inversesqrt(sz2) / max(r, 0.05)));
     } else {
         // trait : distance a son axe, jusqu'a son point d'arret ; convergence RGB : chaque couleur un peu a cote de l'axe
         float s = dot(rel, H.nrm.xyz);
@@ -4829,16 +4872,37 @@ void main() {
         float d2 = max(r2 - s * s, 0.0);
         float csh = v_conv * s;
         float dm = max(sqrt(d2) - 1.2 * csh, 0.0);
-        if (dm * dm > 16.0 * sig2 || s < 0.0 || s > R + 4.0 * sqrt(sig2)) {
-            discard;
-        }
-        csh *= laser_hit_fade(1.2 * csh, sqrt(sig2));
-        vec3 pr = rel - H.nrm.xyz * s;   // de l'axe au point
         vec3 e1 = cross(H.nrm.xyz, abs(H.nrm.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0));
         e1 = normalize(e1);
         vec3 e2 = cross(H.nrm.xyz, e1);
+        // largeur minimale a l'ecran : covariance de la tache dans (e1, e2) ; celle d'un pixel a l'ecran (M), sa partie
+        // au-dela de px ajoutee par axe propre (q1 le grand, q2 le petit) : la tache reste un point, jamais reliee a une autre
+        float s11 = sig2, s12 = 0.0, s22 = sig2;
+        vec2 jx = vec2(dot(sdx, e1), dot(sdx, e2)), jy = vec2(dot(sdy, e1), dot(sdy, e2));
+        float bz2 = beam.z * beam.z;
+        float ma = bz2 * (jx.x * jx.x + jy.x * jy.x);
+        float mb = bz2 * (jx.x * jx.y + jy.x * jy.y);
+        float mc = bz2 * (jx.y * jx.y + jy.y * jy.y);
+        float mm = 0.5 * (ma + mc);
+        float md = sqrt(0.25 * (ma - mc) * (ma - mc) + mb * mb);
+        if (dm * dm > 16.0 * (sig2 + max(mm + md - px * px, 0.0)) || s < 0.0 || s > R + 4.0 * sqrt(sig2)) {
+            discard;
+        }
+        // M x on2 : memes axes propres, valeurs propres x on2
+        float on2 = hit_on(texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz, H.surf.xyz);
+        float q1 = max(on2 * (mm + md) - px * px, 0.0), q2 = max(on2 * (mm - md) - px * px, 0.0);
+        // projecteur sur le grand axe : (M - l2 I) / (l1 - l2), l1 - l2 = 2 md
+        bool aniso = md > 1e-6 * mm;
+        float k = aniso ? 0.5 / md : 0.0;
+        float dq = q1 - q2;
+        s11 += q2 + dq * (aniso ? (ma - mm + md) * k : 0.5);
+        s12 += dq * mb * k;
+        s22 += q2 + dq * (aniso ? (mc - mm + md) * k : 0.5);
+        csh *= laser_hit_fade(1.2 * csh, sqrt(sig2));
+        vec3 pr = rel - H.nrm.xyz * s;   // de l'axe au point
         vec3 p1 = dot(pr, e1) - HIT_CONV_X * csh, p2 = dot(pr, e2) - HIT_CONV_Y * csh;
-        E = H.f0.rgb * (exp(-0.5 * (p1 * p1 + p2 * p2) / sig2) * (0.15915494 / sig2));
+        float det = max(s11 * s22 - s12 * s12, 1e-30);
+        E = H.f0.rgb * (exp(-0.5 * (s22 * p1 * p1 - 2.0 * s12 * p1 * p2 + s11 * p2 * p2) / det) * (0.15915494 * inversesqrt(det)));
     }
     vec3 N = normalize(texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz);   // longueur : 1 + eau au sol
     vec3 alb = texelFetch(sampler2D(hit_albedo, hit_smp), pix, 0).rgb;
