@@ -463,7 +463,7 @@ function playbackPosition(room) {
 
 /** Écriture atomique du monde d'une salle (permanente, ou temporaire pour la reconnexion) */
 function saveWorldNow(room) {
-    if (!room.saveFile) return;
+    if (!room.saveFile || room.persistent === 'STRESSTEST') return;
     if (room.worldSaveTimer) { clearTimeout(room.worldSaveTimer); room.worldSaveTimer = null; }
     try {
         const file = room.saveFile;
@@ -505,7 +505,7 @@ function mergeDspState(saved) {
 
 /** Sauvegarde groupée (au plus une écriture par seconde pendant les modifications) */
 function scheduleWorldSave(room) {
-    if (!room.saveFile || room.worldSaveTimer) return;
+    if (!room.saveFile || room.worldSaveTimer || room.persistent === 'STRESSTEST') return;
     room.worldSaveTimer = setTimeout(() => saveWorldNow(room), WORLD_SAVE_DELAY_MS);
 }
 
@@ -605,6 +605,7 @@ function defaultLightingState() {
             fogEnabled: false,
             fogDensity: 0.005,
             fogColor: '#111122',
+            laserHaze: 0.015,   // fumée des lasers ILDA (m⁻¹)
         },
         lights: {},
         // Doit correspondre aux lasers posés au spawn dans src/main.js (ids 0 et 1) : params vides
@@ -1644,7 +1645,27 @@ wss.on('connection', (ws) => {
             // ─── JOIN_ROOM ────────────────────────────────────────────────
             case 'JOIN_ROOM': {
                 const roomId = String(msg.roomId || '').toUpperCase();
-                const room = rooms.get(roomId);
+                let room = rooms.get(roomId);
+                if (roomId === 'STRESSTEST') {
+                    // Pour STRESSTEST, rafraîchir la page doit toujours revenir à la scène de base
+                    let activeCount = 0;
+                    if (room && room.clients) {
+                        for (const [cid, cws] of room.clients) {
+                            if (cws.readyState === WebSocket.OPEN) activeCount++;
+                            else room.clients.delete(cid);
+                        }
+                    }
+                    if (activeCount === 0 && room) {
+                        rooms.delete(roomId);
+                        room = null;
+                    } else if (room) {
+                        const fresh = loadWorld('STRESSTEST');
+                        if (fresh && fresh.lightingState) {
+                            room.lightingState = { ...defaultLightingState(), ...fresh.lightingState };
+                            room.lightingVersion = (room.lightingVersion || 1) + 1;
+                        }
+                    }
+                }
                 if (!room) {
                     // Salle permanente : (re)créée depuis son monde sauvegardé (ou le monde par défaut) ;
                     // salle temporaire d'avant un redémarrage du serveur : reprise de son fichier

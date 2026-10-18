@@ -1,0 +1,727 @@
+[
+  {
+    "name": "Symétrie Ligne (x8 Radial (45°))",
+    "layer_data": {
+      "id": 3,
+      "name": "Symétrie Ligne (x8 Radial (45°))",
+      "shape_type": "group",
+      "x": 0.0,
+      "y": 0.0,
+      "scale_x": 1.0,
+      "scale_y": 1.0,
+      "rotation": 0.0,
+      "color": [
+        0,
+        255,
+        128
+      ],
+      "enabled": true,
+      "locked": true,
+      "is_closed": false,
+      "is_expanded": true,
+      "local_points": [],
+      "children": [
+        {
+          "id": 4,
+          "name": "Ligne 4",
+          "shape_type": "line",
+          "x": -0.9,
+          "y": 0.0,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": 90.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 5,
+          "name": "Ligne 5",
+          "shape_type": "line",
+          "x": -0.636396,
+          "y": -0.636396,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": 135.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 6,
+          "name": "Ligne 6",
+          "shape_type": "line",
+          "x": -0.0,
+          "y": -0.9,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": 180.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 7,
+          "name": "Ligne 7",
+          "shape_type": "line",
+          "x": 0.636396,
+          "y": -0.636396,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": -135.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 8,
+          "name": "Ligne 8",
+          "shape_type": "line",
+          "x": 0.9,
+          "y": -0.0,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": -90.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 9,
+          "name": "Ligne 9",
+          "shape_type": "line",
+          "x": 0.636396,
+          "y": 0.636396,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": -45.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 10,
+          "name": "Ligne 10",
+          "shape_type": "line",
+          "x": 0.0,
+          "y": 0.9,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": 0.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 11,
+          "name": "Ligne 11",
+          "shape_type": "line",
+          "x": -0.636396,
+          "y": 0.636396,
+          "scale_x": 0.363636,
+          "scale_y": 1.0,
+          "rotation": 45.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": true,
+          "local_points": [
+            [
+              -0.55,
+              0.0
+            ],
+            [
+              0.55,
+              0.0
+            ]
+          ],
+          "children": []
+        },
+        {
+          "id": 12,
+          "name": "Symétrie Point (x8 Radial (45°))",
+          "shape_type": "group",
+          "x": 0.0,
+          "y": 0.0,
+          "scale_x": 1.0,
+          "scale_y": 1.0,
+          "rotation": 0.0,
+          "color": [
+            0,
+            255,
+            128
+          ],
+          "enabled": true,
+          "locked": false,
+          "is_closed": false,
+          "is_expanded": false,
+          "local_points": [],
+          "children": [
+            {
+              "id": 13,
+              "name": "Point 13",
+              "shape_type": "point",
+              "x": -0.894545,
+              "y": 0.236364,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 14,
+              "name": "Point 14",
+              "shape_type": "point",
+              "x": -0.799673,
+              "y": -0.465405,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 15,
+              "name": "Point 15",
+              "shape_type": "point",
+              "x": -0.236364,
+              "y": -0.894545,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 16,
+              "name": "Point 16",
+              "shape_type": "point",
+              "x": 0.465405,
+              "y": -0.799673,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 17,
+              "name": "Point 17",
+              "shape_type": "point",
+              "x": 0.894545,
+              "y": -0.236364,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 18,
+              "name": "Point 18",
+              "shape_type": "point",
+              "x": 0.799673,
+              "y": 0.465405,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 19,
+              "name": "Point 19",
+              "shape_type": "point",
+              "x": 0.236364,
+              "y": 0.894545,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 20,
+              "name": "Point 20",
+              "shape_type": "point",
+              "x": -0.465405,
+              "y": 0.799673,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": true,
+              "local_points": [
+                [
+                  0.0,
+                  0.0
+                ]
+              ],
+              "children": []
+            },
+            {
+              "id": 21,
+              "name": "Symétrie Point (x8 Radial (45°))",
+              "shape_type": "group",
+              "x": 0.0,
+              "y": 0.0,
+              "scale_x": 1.0,
+              "scale_y": 1.0,
+              "rotation": 0.0,
+              "color": [
+                0,
+                255,
+                128
+              ],
+              "enabled": true,
+              "locked": false,
+              "is_closed": false,
+              "is_expanded": false,
+              "local_points": [],
+              "children": [
+                {
+                  "id": 22,
+                  "name": "Point 22",
+                  "shape_type": "point",
+                  "x": -0.894545,
+                  "y": -0.247273,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                },
+                {
+                  "id": 23,
+                  "name": "Point 23",
+                  "shape_type": "point",
+                  "x": -0.457691,
+                  "y": -0.807387,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                },
+                {
+                  "id": 24,
+                  "name": "Point 24",
+                  "shape_type": "point",
+                  "x": 0.247273,
+                  "y": -0.894545,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                },
+                {
+                  "id": 25,
+                  "name": "Point 25",
+                  "shape_type": "point",
+                  "x": 0.807387,
+                  "y": -0.457691,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                },
+                {
+                  "id": 26,
+                  "name": "Point 26",
+                  "shape_type": "point",
+                  "x": 0.894545,
+                  "y": 0.247273,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                },
+                {
+                  "id": 27,
+                  "name": "Point 27",
+                  "shape_type": "point",
+                  "x": 0.457691,
+                  "y": 0.807387,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                },
+                {
+                  "id": 28,
+                  "name": "Point 28",
+                  "shape_type": "point",
+                  "x": -0.247273,
+                  "y": 0.894545,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                },
+                {
+                  "id": 29,
+                  "name": "Point 29",
+                  "shape_type": "point",
+                  "x": -0.807387,
+                  "y": 0.457691,
+                  "scale_x": 1.0,
+                  "scale_y": 1.0,
+                  "rotation": 0.0,
+                  "color": [
+                    0,
+                    255,
+                    128
+                  ],
+                  "enabled": true,
+                  "locked": false,
+                  "is_closed": false,
+                  "is_expanded": true,
+                  "local_points": [
+                    [
+                      0.0,
+                      0.0
+                    ]
+                  ],
+                  "children": []
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+]
