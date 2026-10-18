@@ -4,7 +4,9 @@
 // =====================================================================================
 #include "ambiances.h"
 #include "app.h"
+#include "bench_explore.h"
 #include "gpu_profiler.h"
+#include "spectacles.h"
 #include "sokol_app.h"
 #include "sokol_gfx.h"
 #include "sokol_glue.h"
@@ -54,6 +56,7 @@ static void setup_demo_laser();
 static int g_ambiance = -1;       // --ambiance N : demarre sur l'ambiance N (1 a 60 ; 21 a 60 : scenes, src/scenes)
 static std::string g_shot_path;
 static bool g_stats = false;      // --stats : compte les couples (pixel, faisceau) de la fumee et des lasers
+static bool set_render_option(RenderSettings& r, const char* kv);
 
 // ---------------------------------------------------------------------------------------------
 //  Banc d'essai (--bench) : vues et scenarios fixes, pas de temps constant (resultats
@@ -113,6 +116,7 @@ struct Case {
     // banc des lyres (--bench-lyres) : programmation des lyres apres le scenario, et lyres en mouvement meme avec --static
     void (*lyres_setup)() = nullptr;
     bool moving = false;
+    int explore = -1;        // banc d'exploration (--bench-explore) : indice dans explore_cfgs
 };
 std::vector<Case> cases;
 bool active = false;
@@ -120,6 +124,14 @@ bool quick = false;
 std::vector<int> only;     // --cases 3,14 : seulement ces cas (numeros de la liste complete)
 bool laser_bench = false;   // --bench-lasers : cas L1 a L6 et M1 (PLAN-LASERS.md, section 10)
 bool lyre_bench = false;    // --bench-lyres : lyres qui visent toutes le meme point, zoom, mouvement (lasers eteints)
+// --bench-explore : d'ou vient le lag des lasers (src/bench_explore.h) ; --nosweep : sans le balayage, --random N :
+// N programmations au hasard (graine --seed), --shots : enregistrer l'image de chaque cas (25 Mo chacune en 4K)
+bool explore_bench = false, explore_sweep = true, shots = true;
+int explore_random = 120;
+unsigned explore_seed = 1;
+std::vector<explore::Config> explore_cfgs;
+FILE* explore_csv = nullptr;
+bool laser_coll_default = true, laser_cache_default = true, laser_impacts_default = true;
 FogSettings fog_defaults;
 bool frozen = false;   // --static : lyres et fumee immobiles (comparaison d'images sans mouvement)
 std::string dir = "bench";
@@ -250,7 +262,24 @@ void build_lyre_cases() {
     C("K4 Couronne zoom 45 / vers le point", V_FOCUS, couronne_program<45>, true);
 }
 
+// Banc d'exploration des lasers : balayage reglage par reglage, puis programmations au hasard (lyres eteintes).
+void build_explore_cases() {
+    explore_cfgs = explore::build(explore_sweep, explore_random, explore_seed);
+    for (size_t i = 0; i < explore_cfgs.size(); i++) {
+        Case c{explore::name(explore_cfgs[i]), explore_cfgs[i].view, SC_DEFAULT, nullptr};
+        c.lyres = 0;
+        c.lasers = LP_PROGRAM;
+        c.fog = explore_cfgs[i].fog;
+        c.explore = (int)i;
+        cases.push_back(c);
+    }
+}
+
 void build_cases() {
+    if (explore_bench) {
+        build_explore_cases();
+        return;
+    }
     if (laser_bench) {
         build_laser_cases();
         return;
@@ -276,6 +305,13 @@ void build_cases() {
 void start_case() {
     const Case& c = cases[index];
     app.rs = defaults;
+    app.fog_settings = fog_defaults;
+    app.fog_settings.density *= c.fog;
+    app.lasers.collisions = laser_coll_default;
+    app.lasers.figure_cache = laser_cache_default;
+    app.lasers.impacts = laser_impacts_default;
+    if (c.explore >= 0)
+        for (const std::string& kv : explore_cfgs[c.explore].sets) set_render_option(app.rs, kv.c_str());
     if (c.opts) c.opts(app.rs);
     apply_scenario(c.scenario);
     if (c.lyres_setup) c.lyres_setup();
@@ -285,14 +321,13 @@ void start_case() {
             if (c.lyres <= 0 || (i & 1)) app.rig.fixtures[i].base.dimmer = 0;
     app.lasers.pattern = c.lasers;
     app.lasers.count = c.laser_count;
-    if (c.lasers == LP_PROGRAM) {
+    if (c.explore >= 0) explore::program(explore_cfgs[c.explore]);
+    else if (c.lasers == LP_PROGRAM) {
         if (c.ilda) app.lasers.program_ilda(c.ilda);
         else app.lasers.program_showcase();
     }
     app.lasers.time = 0;
     app.lasers.update(0.0f, 0.0f, app.scene.bounds_min, app.scene.bounds_max);   // galvos en place
-    app.fog_settings = fog_defaults;
-    app.fog_settings.density *= c.fog;
     app.rig.instant_moves = true;
     app.rig.update(0);
     app.rig.update(0);   // 2e fois : la visee (aim_angles) part de la tete, placee par la 1re
@@ -340,6 +375,9 @@ void begin() {
     active = true;
     defaults = app.rs;
     fog_defaults = app.fog_settings;
+    laser_coll_default = app.lasers.collisions;
+    laser_cache_default = app.lasers.figure_cache;
+    laser_impacts_default = app.lasers.impacts;
     app.show_ui = false;
     build_cases();
     if (!only.empty()) {
@@ -357,6 +395,15 @@ void begin() {
     out = std::fopen((dir + "/resultats.txt").c_str(), "w");
     frames_csv = std::fopen((dir + "/images.csv").c_str(), "w");
     if (frames_csv) std::fprintf(frames_csv, "cas;image;duree_ms;cpu_ms;attente_gpu_ms;gpu_ms\n");
+    if (explore_bench) {
+        explore_csv = std::fopen((dir + "/exploration.csv").c_str(), "w");
+        if (explore_csv)
+            std::fprintf(explore_csv, "cas;%s;image_ms;gpu_ms;gpu_mediane_ms;lasers_gpu_ms;las_impacts;las_tri;las_arcs;las_nappes;"
+                         "las_sorties;composition;surfaces;fumee_lyres;reflet;bloom;image_finale;autres_gpu;cpu_ms;cpu_laser_ms;"
+                         "cpu_morceaux_ms;cpu_impacts_ms;attente_gpu_ms;allumes;segments;traits_total;impacts;variante_fumee;"
+                         "ilda_faisceaux;ilda_droites;ilda_arcs;en_cache;couples_M;tuiles;seg_par_tuile;seg_par_tuile_max\n",
+                         explore::csv_header().c_str());
+    }
     index = 0;
     start_case();
 }
@@ -410,19 +457,49 @@ void after_frame(int w, int h) {
     const Case& c = cases[index];
     char shot[32];
     std::snprintf(shot, sizeof(shot), "/%02d.bmp", index + 1);
-    gpuprof::save_backbuffer_bmp(dir + shot);
+    if (shots) gpuprof::save_backbuffer_bmp(dir + shot);
     auto mean = [](const std::vector<float>& v) {
         double s = 0;
         for (float x : v) s += x;
         return v.empty() ? 0.0 : s / v.size();
     };
+    if (explore_csv && c.explore >= 0) {
+        // temps GPU moyens par passe (ils s'additionnent jusqu'au total), compteurs de la derniere image
+        auto sec = [&](const char* n) {
+            auto it = samples.find(n);
+            return it == samples.end() ? 0.0 : mean(it->second);
+        };
+        double las = 0, refl = 0;
+        for (const std::string& n : order) {
+            if (n.rfind("lasers", 0) == 0) las += mean(samples[n]);
+            if (n.rfind("reflet", 0) == 0) refl += mean(samples[n]);
+        }
+        const double surf = sec("scene (surfaces)") + sec("lyres douces (1/4)");
+        const double fum = sec("fumee : faisceaux") + sec("fumee : faisceaux 1/2 et 1/4") + sec("fumee : faisceaux pleine res.") +
+                           sec("fumee : accumulation");
+        const double fin = sec("image finale + interface") + sec("image finale (FSR)") + sec("FSR : agrandissement (EASU)") +
+                           sec("FSR : nettete (RCAS) + interface");
+        const double listed = las + refl + surf + fum + fin + sec("composition") + sec("bloom");
+        const RenderStats& st = app.renderer.stats;
+        std::fprintf(explore_csv, "%d;%s;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;"
+                     "%.3f;%.3f;%.3f;%.3f;%.3f;%d;%d;%d;%d;%d;%d;%d;%d;%d;%.2f;%.0f;%.2f;%.0f\n",
+                     index + 1, explore::csv_row(explore_cfgs[c.explore], VIEWS[c.view].name).c_str(), mean(cpu_frames), mean(totals),
+                     median(totals), las, sec("lasers : impacts"), sec("lasers : tri par tuiles"), sec("lasers : arcs"),
+                     sec("lasers : fumee"), sec("lasers : sorties"), sec("composition"), surf, fum, refl, sec("bloom"), fin,
+                     mean(totals) - listed, mean(cpu_total), mean(cpu_laser), mean(cpu_laser_build), mean(cpu_laser_hits),
+                     mean(cpu_wait), app.lasers.lit, st.laser_segments, app.lasers.total_traits, st.laser_hits, st.laser_fog_variant,
+                     app.lasers.ilda_beams, app.lasers.ilda_sheets, app.lasers.ilda_arcs, app.lasers.cached_lasers,
+                     g_stats ? median(laser_pairs) / 1e6 : -1.0, g_stats ? (double)median(laser_tiles_hit) : -1.0,
+                     g_stats ? (double)median(laser_tile_avg) : -1.0, g_stats ? (double)median(laser_tile_max) : -1.0);
+        std::fflush(explore_csv);
+    }
     // duree d'image : moyenne (= vraies images par seconde ; la mediane trompe quand les images
     // alternent entre tres courtes et tres longues). GPU : moyenne, et mediane (moins sensible
     // aux autres programmes qui utilisent la carte).
     const double frame_ms = mean(cpu_frames);
     const double gpu_ms = mean(totals);
     if (index == 0) {
-        if (laser_bench) {
+        if (laser_bench || explore_bench) {
             log("LyreViz banc d'essai lasers : %d x %d, %d emplacements de lasers\n", w, h, (int)app.lasers.mounts.size());
             log("Volutes fines : generees en %.0f ms ; ecart type par niveau de mip :", app.renderer.volutes_build_ms);
             for (float s : app.renderer.volutes_sd) log(" %.4f", s);
@@ -441,7 +518,7 @@ void after_frame(int w, int h) {
     log("  Fumee : %.1f millions de couples (pixel, faisceau) calcules ; faisceaux par niveau %d / %d / %d ; tables : %d lignes, %.2f millions de cases, echelle %.2f\n",
         median(beam_frags) / 1e6, app.renderer.stats.tier_count[0], app.renderer.stats.tier_count[1], app.renderer.stats.tier_count[2],
         app.renderer.stats.table_rows, app.renderer.stats.table_cells / 1e6, app.renderer.stats.table_scale);
-    if (laser_bench) {
+    if (laser_bench || explore_bench) {
         log("  Lasers : %d boitiers, %d segments, %d traits, %d impacts ; moteur CPU %.3f ms (morceaux %.3f, impacts %.3f) ; fumee : "
             "variante %d\n", app.lasers.lit, app.renderer.stats.laser_segments, app.lasers.total_traits, app.renderer.stats.laser_hits,
             mean(cpu_laser), mean(cpu_laser_build), mean(cpu_laser_hits), app.renderer.stats.laser_fog_variant);
@@ -460,6 +537,8 @@ void after_frame(int w, int h) {
         out = nullptr;
         if (frames_csv) std::fclose(frames_csv);
         frames_csv = nullptr;
+        if (explore_csv) std::fclose(explore_csv);
+        explore_csv = nullptr;
         active = false;
         sapp_request_quit();
         return;
@@ -493,7 +572,7 @@ static void init() {
     desc.environment = sglue_environment();
     desc.logger.func = slog_func;
     desc.uniform_buffer_size = 4 * 1024 * 1024;
-    desc.shader_pool_size = 64;   // 32 par defaut : depasse avec les variantes des lasers (les dernieres n'etaient pas creees)
+    desc.shader_pool_size = 96;   // 32 par defaut : depasse avec les variantes des lasers (les dernieres n'etaient pas creees)
     desc.pipeline_pool_size = 128;   // 64 par defaut : depasse avec les variantes de la fumee des lasers (idem, sans message)
     sg_setup(&desc);
     stm_setup();
@@ -527,6 +606,7 @@ static void init() {
     if (g_ambiance >= 0) apply_ambiance(g_ambiance);
     if (g_demo >= 0) setup_demo();
     if (g_demo_laser >= 0) setup_demo_laser();
+    spectacle_start(app.lasers);   // --set spectacle=N : la scene programme les lasers
     if (g_play) app.paused = false;
     if (g_cam_set) {
         app.cam.pos = {g_cam[0], g_cam[1], g_cam[2]};
@@ -631,6 +711,7 @@ static void frame() {
     app.timings.fog_ms = (float)stm_ms(stm_since(tf));
 
     const uint64_t tl = stm_now();
+    spectacle_update(app.lasers, app.paused ? 0.0f : dt);   // horloge du spectacle, enchainement des scenes
     app.lasers.update(app.time, app.paused ? 0.0f : dt, app.scene.bounds_min, app.scene.bounds_max);
     app.lasers.housings(app.renderer.dyn_cubes);
     app.timings.laser_ms = (float)stm_ms(stm_since(tl));
@@ -689,7 +770,18 @@ static void event(const sapp_event* ev) {
                 if (ev->key_code == SAPP_KEYCODE_RIGHT) d = 1;
                 if (ev->key_code == SAPP_KEYCODE_UP) d = -AMBIANCE_COLS;
                 if (ev->key_code == SAPP_KEYCODE_DOWN) d = AMBIANCE_COLS;
-                if (d != 0) apply_ambiance((app.ambiance + d + NUM_AMBIANCES) % NUM_AMBIANCES);
+                if (d != 0) {
+                    // les scenes des spectacles suivent les ambiances dans la meme grille (cases 60 a 89)
+                    const int total = NUM_AMBIANCES + SPECTACLE_SCENES;
+                    const int cur = g_spectacle.running ? NUM_AMBIANCES + g_spectacle.scene : app.ambiance;
+                    const int next = ((cur + d) % total + total) % total;
+                    if (next < NUM_AMBIANCES) {
+                        apply_ambiance(next);
+                    } else {
+                        g_spectacle.scene = next - NUM_AMBIANCES;
+                        spectacle_apply(app.lasers, true);
+                    }
+                }
             }
             if (ev->key_code == SAPP_KEYCODE_ESCAPE) { app.looking = false; sapp_lock_mouse(false); app.pick_aim = -1; app.sel_drag = false; }
             break;
@@ -868,7 +960,9 @@ static void setup_demo() {
 //   3 un eventail vert vu de pres, en biais, fumee epaisse : volutes (comparer a la photo 5 des references) ;
 //   4 fichiers ILDA : 7 lasers du pont de scene, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, coeur,
 //     eventail multicolore), vus depuis le public ;
-//   5 une personne dans une nappe : nappe verte a hauteur de poitrine a travers les mannequins et le personnage (mode F).
+//   5 une personne dans une nappe : nappe verte a hauteur de poitrine a travers les mannequins et le personnage (mode F) ;
+//   8 rendu « photo » : 2 eventails verts continus du pont qui se croisent, vus du public, fumee lisse (sans volutes).
+//   9 convergence RGB : 2 eventails blancs (nappe continue, 8 traits) vers le sol devant le public (reglage « Convergence RGB »).
 //   10 fumee des lasers (image 09 de docs/references-lasers/fumee-v2) : un eventail vert continu du nez de scene, vu de
 //      dessous depuis le public (camera de l'image 09).
 static void setup_demo_laser() {
@@ -992,6 +1086,33 @@ static void setup_demo_laser() {
             app.cam.yaw = std::atan2(d.z, d.x);
             app.cam.pitch = std::asin(d.y);
         }
+    } else if (g_demo_laser == 9) {
+        // convergence RGB : 2 eventails blancs du pont (une nappe continue, 8 traits separes), vers le sol devant le public,
+        // vus du public ; franges rouges et bleues sur les bords, les traits et les impacts au sol avec « Convergence RGB » (onglet
+        // Lasers, « Rendu photo »)
+        lr.effects.clear();
+        for (LaserFixture& f : lr.fixtures) {
+            f.base = LaserParams();
+            f.base.dimmer = 0;
+        }
+        std::vector<int> pont;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++)
+            if (lr.fixtures[i].mount.group == 4) pont.push_back(i);
+        for (int k = 0; k < 2; k++) {
+            LaserParams& p = lr.fixtures[pont[k == 0 ? 5 : 10]].base;
+            p.dimmer = 1;
+            p.color = {1, 1, 1};
+            p.shape = LS_FAN;
+            p.opening = 40;
+            p.traits = k == 0 ? 0 : 8;
+            p.tilt = -2;
+            p.pan = k == 0 ? 5.0f : -5.0f;
+        }
+        app.rs.laser_volutes = false;
+        app.rs.laser_room_fog = false;
+        app.cam.pos = {8, 2.5f, 0};
+        app.cam.yaw = PI;
+        app.cam.pitch = 0.02f;
     } else if (g_demo_laser == 10) {
         lr.effects.clear();
         int pick = -1;
@@ -1009,6 +1130,33 @@ static void setup_demo_laser() {
         app.cam.pos = {7.14f, 0.36f, 2.84f};
         app.cam.yaw = 189.3f * DEG;
         app.cam.pitch = 23.5f * DEG;
+    } else if (g_demo_laser == 8) {
+        // rendu « photo » : 2 eventails verts continus du pont de scene, inclines en sens contraires (ils se croisent),
+        // vus depuis le public ; fumee lisse (uniforme, sans volutes). Reglages a essayer : onglet Lasers, « Rendu photo ».
+        lr.effects.clear();
+        for (LaserFixture& f : lr.fixtures) {
+            f.base = LaserParams();
+            f.base.dimmer = 0;
+        }
+        std::vector<int> pont;
+        for (int i = 0; i < (int)lr.fixtures.size(); i++)
+            if (lr.fixtures[i].mount.group == 4) pont.push_back(i);
+        for (int k = 0; k < 2; k++) {
+            LaserParams& p = lr.fixtures[pont[k == 0 ? 4 : 11]].base;
+            p.dimmer = 1;
+            p.color = {0, 1, 0};
+            p.shape = LS_FAN;
+            p.opening = 45;
+            p.traits = 0;   // nappe continue
+            p.tilt = 7;
+            p.pan = k == 0 ? 6.0f : -6.0f;
+            p.roll = k == 0 ? 28.0f : -28.0f;
+        }
+        app.rs.laser_volutes = false;
+        app.rs.laser_room_fog = false;
+        app.cam.pos = {2, 1.7f, 0};
+        app.cam.yaw = PI;
+        app.cam.pitch = 0.16f;
     } else {
         lr.effects.clear();
         for (LaserFixture& f : lr.fixtures) {
@@ -1103,6 +1251,14 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "laserhitgain") r.laser_hit_gain = v;
     else if (k == "laserphase") r.laser_fwd_lobe = v != 0;
     else if (k == "laserfwd") r.laser_fwd_weight = v;
+    else if (k == "exposure") r.exposure = v;
+    else if (k == "bloomforce") r.bloom_strength = v;
+    else if (k == "laseredge") r.laser_edge = v;
+    else if (k == "laseredgew") r.laser_edge_w = v;
+    else if (k == "laserhalo") r.laser_halo = v;
+    else if (k == "laserhalosize") r.laser_halo_size = v;
+    else if (k == "laserconv") r.laser_conv = v;
+    else if (k == "laserlensca") r.laser_lens_ca = v;
     else if (k == "laserg") r.laser_g_fwd = v;
     else if (k == "laserg2") r.laser_g_soft = v;
     else if (k == "volutes") r.laser_volutes = v != 0;
@@ -1113,6 +1269,7 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "volfinelod") r.laser_vol_fine_lod = v;
     else if (k == "volfinepoids") r.laser_vol_fine_weight = v;
     else if (spatial_fog_set(r.sfog, k, v)) {}   // fumee spatiale des lasers : laserfogmodel, sf...
+    else if (spectacle_set(k, eq + 1)) {}        // spectacles laser : spectacle, sp... (src/spectacles.cpp)
     else if (k == "laserpattern") app.lasers.pattern = (int)v;
     else if (k == "lasercount") app.lasers.count = (int)v;
     else if (k == "laserpower") app.lasers.power_w = v;
@@ -1138,6 +1295,22 @@ sapp_desc sokol_main(int argc, char* argv[]) {
         else if (!std::strcmp(argv[i], "--bench")) { g_bench_requested = true; g_novsync = true; }
         else if (!std::strcmp(argv[i], "--bench-lasers")) { g_bench_requested = true; g_novsync = true; bench::laser_bench = true; }
         else if (!std::strcmp(argv[i], "--bench-lyres")) { g_bench_requested = true; g_novsync = true; bench::lyre_bench = true; }
+        else if (!std::strcmp(argv[i], "--bench-explore")) {
+            g_bench_requested = true;
+            g_novsync = true;
+            bench::explore_bench = true;
+            bench::shots = false;
+            bench::WARMUP = 30;
+            bench::MEASURE = 60;
+        }
+        else if (!std::strcmp(argv[i], "--nosweep")) bench::explore_sweep = false;
+        else if (!std::strcmp(argv[i], "--random") && i + 1 < argc) bench::explore_random = std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--seed") && i + 1 < argc) bench::explore_seed = (unsigned)std::atoi(argv[++i]);
+        else if (!std::strcmp(argv[i], "--shots")) bench::shots = true;
+        else if (!std::strcmp(argv[i], "--measure") && i + 1 < argc) {
+            // --measure chauffe,mesure : images de chauffe et images mesurees par cas
+            if (std::sscanf(argv[++i], "%d,%d", &bench::WARMUP, &bench::MEASURE) != 2) std::printf("--measure chauffe,mesure\n");
+        }
         else if (!std::strcmp(argv[i], "--quick")) bench::quick = true;
         else if (!std::strcmp(argv[i], "--cases") && i + 1 < argc) {
             for (const char* c = argv[++i]; *c;) {

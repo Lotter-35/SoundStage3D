@@ -88,6 +88,19 @@ struct RenderSettings {
     bool laser_vol_fine = true;       // 2e octave (0,44 m, texels de 7 mm), de pres seulement
     float laser_vol_fine_lod = -1.0f; // ... lue tant qu'un pixel couvre moins de 2^x de ses texels (-1 : pixel < 3,5 mm, a moins de ~7 m)
     float laser_vol_fine_weight = 0.6f;   // son poids
+    // rendu « photo » des lasers (regle a l'oeil par l'utilisateur, vue --demo-laser 8, 16 octobre 2026) :
+    // bords brillants : un scanner ralentit au bout de chaque aller-retour, la lumiere s'y attarde (balayage sinusoidal :
+    // densite en 1 / sqrt(1 - u^2), u de -1 a 1 en travers de l'eventail) ; 0 : nappe uniforme (balayage triangulaire ideal)
+    float laser_edge = 1.0f;
+    float laser_edge_w = 0.025f;      // largeur de la bande brillante des bords (part de la demi-ouverture)
+    // halo des lasers : lumiere des nappes diffusee une 2e fois par la brume (et lueur de l'objectif), large et douce
+    float laser_halo = 0.1f;          // force (0 : aucun)
+    float laser_halo_size = 0.5f;     // etendue (poids de chaque niveau plus large : 0,5 serre, 1,5 tres large)
+    // convergence RGB : ecart d'angle des diodes rouge et bleue au vert (mrad ; 0 : parfaitement alignees). Bords de nappes,
+    // traits et impacts frangés de rouge et de bleu (vrai defaut des projecteurs RGB, qui grandit avec la distance)
+    float laser_conv = 0.3f;          // regle par l'utilisateur (vue --demo-laser 9, 16 octobre 2026)
+    // aberration chromatique de l'objectif sur les lasers (%, grandissement du rouge en plus et du bleu en moins ; 0 : aucune)
+    float laser_lens_ca = 0.2f;
     // (laterale, prisme, axiale, active) pour les shaders : voir beam_pattern_rgb
     void chroma_params(float out[4]) const {
         const float k = chroma ? chroma_strength : 0.0f;
@@ -276,6 +289,10 @@ class Renderer {
     Target bloom[BLOOM_LEVELS];
     int bloom_w[BLOOM_LEVELS] = {}, bloom_h[BLOOM_LEVELS] = {};
     int num_bloom = 0;
+    // halo des lasers : meme pyramide que le bloom, sur l'image des lasers seule (ajoutee par la composition)
+    Target lhalo[BLOOM_LEVELS];
+    int lhalo_w[BLOOM_LEVELS] = {}, lhalo_h[BLOOM_LEVELS] = {};
+    int num_lhalo = 0;
     int iw = 0, ih = 0, vw = 0, vh = 0;
     int hist_index = 0;
     bool hist_valid = false;
@@ -330,6 +347,7 @@ class Renderer {
     std::vector<float> laser_exit_data;
     // [sans, avec degrades (couleur au bord 1)][fumee uniforme, de la piece, avec volutes, et leur 2e octave, fumee spatiale, avec ses filaments]
     sg_pipeline pip_laser_shade[2][6][2] = {};   // [...][...][sans, avec nappes coniques (arcs)]
+    sg_pipeline pip_laser_shade_c[2][6] = {};   // passe principale avec la convergence RGB (LASER_CONV)
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;

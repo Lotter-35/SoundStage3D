@@ -5,7 +5,8 @@ const char* PRISM_NAMES[PRISM_COUNT] = {"Aucun", "3 facettes", "6 facettes", "8 
 const char* GOBO_NAMES[NUM_GOBOS] = {"Ouvert", "Points", "Etoile", "Anneaux", "Rayons", "Fleur", "Breakup", "Triangles",
                                      "Barres", "Cercle de points", "Spirale", "Feuillage", "Galaxie", "Croix"};
 const char* EFFECT_NAMES[FX_COUNT] = {"Cercle (pan/tilt)", "Vague pan", "Vague tilt", "Huit", "Eventail", "Chenillard dimmer",
-                                      "Arc-en-ciel", "Alternance 2 couleurs", "Pulsation zoom"};
+                                      "Arc-en-ciel", "Alternance 2 couleurs", "Pulsation zoom",
+                                      "Couleurs de la palette"};
 const char* WAVE_NAMES[WAVE_COUNT] = {"Sinus", "Triangle", "Carre", "Dent de scie"};
 
 vec3 fixture_dir(const Fixture& f, float pan_deg, float tilt_deg) {
@@ -100,6 +101,7 @@ void Rig::add_effect(int type) {
         case FX_RAINBOW: e.speed = 0.1f; e.size = 1; break;
         case FX_COLOR_ALT: e.speed = 0.5f; e.wave = WAVE_SQUARE; break;
         case FX_ZOOM_PULSE: e.size = 0.6f; e.speed = 0.5f; break;
+        case FX_PALETTE: e.size = 1; e.speed = 0.1f; e.wave = WAVE_SQUARE; break;
     }
     effects.push_back(e);
 }
@@ -184,6 +186,20 @@ void Rig::update(float dt) {
                 case FX_RAINBOW: o.color = hsv2rgb(ph, clampf(e.size, 0, 1), 1); break;
                 case FX_COLOR_ALT: o.color = w > 0 ? e.color_a : e.color_b; break;
                 case FX_ZOOM_PULSE: o.zoom = clampf(o.zoom * (1.0f + e.size * w), 1.5f, 55); break;
+                case FX_PALETTE: {
+                    // palette du rig (pas a pas ; en fondu avec la forme sinus) ; vide : rien
+                    const int np = (int)palette.size();
+                    if (np == 0) break;
+                    const float x = fractf(ph) * (float)np;
+                    const int j0 = std::min((int)x, np - 1);
+                    if (e.wave == WAVE_SINE) {
+                        const float t = x - (float)j0;
+                        o.color = lerp(palette[(size_t)j0], palette[(size_t)((j0 + 1) % np)], t * t * (3.0f - 2.0f * t));
+                    } else {
+                        o.color = palette[(size_t)j0];
+                    }
+                    break;
+                }
             }
         }
     }

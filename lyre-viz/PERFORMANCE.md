@@ -660,6 +660,16 @@ Banc complet en mouvement, banc rapide, 2 lancements chacun, contre `bench\ref\a
 8. Fichiers ILDA : les figures planes découpées en dizaines de nappes depuis la même sortie sont le pire cas (I3 : 1 milliard de couples). Pistes : rejet plus tôt des pixels hors du coin de chaque nappe (test des deux bords à l'écran, comme pour les cônes, piste 2) ; grosses tuiles plus fines près des sorties.
 7. Volutes : un cas de banc « L1 sans volutes » mesurerait leur coût dans le même lancement (moins de bruit) ; la 2e octave est choisie dans tous les cas du banc (il y a toujours une nappe à moins de 7 m de la caméra) : un test par segment plus fin (part de l'écran à moins de 7 m) la couperait plus souvent.
 
+## Lasers : d'où vient le lag (16 octobre 2026)
+
+Banc d'exploration `--bench-explore` (216 cas, lasers seuls) : résultats et tableau récapitulatif dans `docs/analyse-lag-lasers.md` (mesures `bench\explore_t2`, compteurs `bench\explore_s1`).
+
+- Temps des lasers ≈ 0,074 ms par million de couples (pixel, nappe) + 0,56 ms par millier de segments + 0,2 ms (R² 0,89) ; nappes courbes (arcs) ~117 ps par couple contre ~73 ps.
+- Base (50 éventails de 40°, vue du public) : 3,25 ms de lasers, 8,2 ms à l'image, juste à 120 img/s. Coût fixe des lasers allumés ~0,7 ms.
+- Plus grosses sources : fichiers ILDA et figures courbes (×4,5 à ×8,4), diffraction (×2,4 / ×3,8 / ×6,5), figures à plusieurs nappes (grille ×4,3), nombre de lasers et ouverture (proportionnels), impacts (jusqu'à 8 ms ; ×5 sur sol mouillé), moteur CPU des vagues et de l'ILDA avec diffraction (jusqu'à 7,4 ms).
+- Sans effet : densité de fumée, puissance, largeur des traits, mouvement, vue (pour des éventails).
+- Passe des arcs, essais exacts (16 octobre 2026, rien de gardé) : au mieux −1,4 % ; détail, découpage du temps et comptages dans `docs/optimisations-lasers.md`, « Passe des arcs : essais exacts ». Pour comparer deux variantes d'une passe longue, mesurer dans un même lancement : d'un lancement à l'autre, la passe des arcs dérive de 10 à 20 % (puissance et chaleur de la carte) alors que les autres passes ne bougent pas.
+
 ## Lasers : fumée spatiale v2 (16 octobre 2026)
 
 Mesures rapides seulement (banc des lasers `-Fast`, immobile), pour l'ordre de grandeur : l'utilisateur choisit d'abord le rendu ; banc complet et optimisation viendront après (étape 5 de `PLAN-FUMEE-LASERS-V2.md`, où chaque mesure est détaillée ; historique 33 à 36).
@@ -669,6 +679,70 @@ Mesures rapides seulement (banc des lasers `-Fast`, immobile), pour l'ordre de g
 - Passe des lasers, contre le Classique (volutes et 2e octave), après la correction des bancs (seuil par pixel, bords nuageux ; historique 37) : Concert sans filaments (variante 4) +0,3 à +1,0 ms (L1 9,7 → 10,6, L3 9,6 → 10,7, L4 3,0 → 3,7, M1 5,6 → 5,9, arcs 14,0 → 14,3) ; filaments de près (variante 5) encore +0,75 à +1,1 ms dès qu'un éventail passe à moins de ~7 m de la caméra, même pour peu de pixels (registres de la variante). Les mesures « sans filaments » de l'historique 35 sont fausses (mauvaise variante, voir `PLAN-FUMEE-LASERS-V2.md`).
 - Salle composée et filaments de l'utilisateur (force 1, 2 m, portée 1) : historique 38, +2,3 à +5,7 ms contre le Classique ; après le fondu des deux ambiances (historique 39) : L1 10,5 → 15,3, L3 9,7 → 15,0, L4 3,0 → 6,2, M1 5,6 → 8,6, arcs 14,3 → 18,4 ms, dont les filaments, lus presque partout, +1,1 à +2,8 ms.
 - Pistes : variante 5 seulement pour les tuiles proches, portée des filaments plus courte, lecture des nuages lancée avant la déformation, saut du calcul dans les trous (densité nulle), fondu des ambiances seulement dans une variante à part (salle composée), transitions plus courtes ou calcul partagé entre les deux ambiances (la lecture et la déformation sont déjà communes).
+
+## Lasers : rendu « photo » (16 octobre 2026)
+
+Bords brillants des éventails (rebroussement du scanner, `laseredge` 1, largeur 0,025), halo des lasers (`laserhalo` 0,1, étendue 0,5), réglés à l'œil par l'utilisateur dans la vue `--demo-laser 8`, et corrections des coupes par les obstacles (bords adoucis en différence de marches au lieu d'un produit ; portée d'un morceau coupé = la plus grande de ses deux bords). Banc laser rapide, immobile, 5 cas, 2 lancements en alternance (`bench
+endu_photo_*`, historique 30). Pas encore optimisé.
+
+| Cas | Avant (`avant_arcs.exe`) | Après (réglages par défaut) | Bords et halo coupés |
+|---|---|---|---|
+| L1 éventails / public | 13,4 ms (passe des nappes 8,3) | 14,8 ms (nappes 9,3, halo 0,47) | 14,4 ms (nappes 8,8) |
+| L2 cônes / public | 19,3 ms | 19,6 ms | 19,5 ms |
+| L3 caméra dans les nappes | 12,4 ms (nappes 8,1) | 13,4 ms (nappes 8,7) | 12,7 ms |
+| L4 traits séparés | 7,0 ms | 6,5 ms (bruit) | 6,7 ms |
+| M1 lyres + lasers | 10,9 ms (nappes 4,8) | 11,4 ms (nappes 5,1) | 10,9 ms |
+
+- **Halo** : passe « lasers : halo » de 0,47 à 0,50 ms, constante (pyramide du bloom sur l'image des lasers en 4K, dès qu'un laser est allumé).
+- **Bords brillants** : passe des nappes +0,3 à +0,5 ms (+4 à +9 %) sur les éventails ; rien sur les traits séparés et les arcs.
+- **Code présent, effets coupés** : passe des nappes encore +0,4 à +0,6 ms (+5 à +7 %) contre avant (registres : le code ajouté coûte même coupé). À reprendre à l'optimisation : variante du shader sans bords brillants, première réduction du halo à moindre coût.
+- Banc des lyres inchangé (+0,3 à +0,8 %, images identiques).
+
+## Lasers : convergence RGB et aberration de l'objectif (16 octobre 2026)
+
+Convergence RGB (`laserconv` 0,3 mrad : les diodes rouge et bleue partent avec un petit écart d'angle ; franges sur les traits, les bords des nappes et les impacts) et aberration de l'objectif sur l'image des lasers (`laserlensca` 0,2 %), réglées à l'œil dans la vue `--demo-laser 9`. Banc laser rapide, immobile, 5 cas, 2 lancements (`bench\conv_*`, historique 31). Pas encore optimisé.
+
+| Cas | Avant la journée (`avant_arcs.exe`) | Maintenant (tout actif) | Convergence et objectif coupés → actifs |
+|---|---|---|---|
+| L1 éventails | 14,8 ms | 17,5 ms (+18 %) | 15,3 → 15,7 ms (nappes 9,0 → 9,5 ; impacts 0,8 → 1,35) |
+| L2 cônes | 21,5 ms | 22,1 ms (+3 %) | 19,6 → 19,6 ms |
+| L3 caméra dans les nappes | 13,0 ms | 15,0 ms (+15 %) | dans le bruit |
+| L4 200 × 8 traits séparés | 5,6 ms | 9,9 ms (+78 %) | 6,8 → 10,4 ms (traits 1,7 → 3,8 ; impacts 0,01 → 1,13) |
+| M1 lyres + lasers | 12,0 ms | 13,7 ms (+14 %) | 11,7 → 12,8 ms (nappes 5,0 → 5,8 ; impacts 0,35 → 0,79) |
+
+- Le plus cher : les **traits séparés**, calculés 3 fois (un trait par couleur, chacun avec son point le plus proche du rayon : vu dans son axe, celui du vert ne convient pas aux autres), et les **impacts** (bandes élargies de l'écart des couleurs, 3 gaussiennes par pixel). Le bord des nappes ne coûte presque rien (3 marches au lieu d'une, seulement près des bords).
+- **Gaspillage à corriger à l'optimisation** : le calcul par couleur est fait aussi pour les lasers d'une seule couleur (L4 : rouge, vert, bleu purs), qui n'ont pas de franges. Un test par segment (couleur pure : un seul calcul) devrait ramener L4 et la plupart des programmations à leur coût d'avant.
+- Aberration de l'objectif : 2 lectures de plus par pixel dans la composition (+0,03 à +0,1 ms).
+- **Couleurs pures : un seul calcul** (historique 32) : un segment ou un impact dont un seul canal est allumé (une seule diode) n'a pas de franges ; le calcul par couleur est sauté (image identique pour les lasers blancs, PSNR infini sur la vue 9 ; les lasers de couleur pure ne sont plus décalés de 0,3 mrad, invisible). L4 : traits 3,75 → 3,04 ms, peu de gain car ses couleurs sont presque toutes mélangées (une petite part d'une 2e couleur suffit).
+- **Scène multicolore (L7 : 194 lasers, dégradés, arc-en-ciel, grilles en diffraction ; 3 lancements)** : avant la journée 34,5 ms (29 img/s) → maintenant 42,8 ms (23 img/s). Convergence et objectif seuls : 36,0 → 42,8 ms (+6,7 ms : passe des nappes et traits 11,2 → 16,6 ms, impacts 2,1 → 3,1 ms) ; bords brillants, halo et code présent : +1,5 ms.
+- Piste pour l'optimisation : l'écart des couleurs ne se voit qu'à plus d'environ un demi-pixel à l'écran (loin de la source, ou de près). Ailleurs (la plupart des couples), un seul calcul suffirait : test par couple (écart x distance / taille du pixel).
+
+**Optimisation (18 octobre 2026, historique 41)** ; banc laser rapide, immobile, 2 lancements, contre `bench
+efvant_conv_opt.exe` (fumée v2 par défaut : tous les temps sont plus hauts qu'avant) :
+
+1. Traits séparés : point le plus proche du rayon calculé une fois ; distance de chaque couleur sur la normale commune du rayon et du trait (exacte pour des droites infinies). Calcul complet par couleur seulement pour un trait vu presque dans son axe (sinus < 0,1).
+2. Impacts : convergence seulement pour un impact multicolore, devant la caméra, dont les couleurs s'écartent d'au moins 0,3 pixel ; élargissement de la bande plafonné à 64 pixels. Sans plafond, quelques bandes aberrantes couvraient l'écran sans rien éclairer : L4 impacts 1,09 → 0,014 ms, image identique au pixel près.
+3. Variantes du shader avec la convergence (`LASER_CONV`, 12 de plus ; réserve de shaders portée à 96), choisies seulement si l'écart est réglé et qu'un éventail ou un trait allumé a des couleurs mélangées.
+4. Halo : pyramide à partir du quart (première réduction 4 x 4 en 4 lectures bilinéaires) : 0,50 → 0,32 ms.
+5. Franges invisibles sautées : écart des couleurs sous 0,25 fois la largeur du faisceau (pixel compris), fondu jusqu'à 0,5 : un seul calcul. Concerne les lasers lointains qui ne visent pas la caméra ; un laser qui la vise garde ses franges.
+6. Nouveau : franges sur les impacts des nappes courbes (cônes, tunnels, fichiers ILDA) au sol et sur les surfaces. Pas encore dans la fumée des nappes courbes (passe des arcs, la plus chère).
+
+| Cas | Avant | Après | Convergence coupée → active (après) |
+|---|---|---|---|
+| L4 traits séparés | 11,3 ms (82 img/s) | 6,8 ms (117 img/s) | 6,5 → 7,0 ms (+8 %) |
+| L7 multicolore | 52,1 ms (19 img/s) | 45,3 ms (22 img/s) | 39,8 → 44,3 ms (+11 %) |
+| I1 ILDA nappes | 63,9 ms | 65,7 ms (bruit) | 61,7 → 62,1 ms (+1 %) |
+| L1, L2, L3, M1 | | dans le bruit (−1 à +2 %) | |
+
+- Images : vues 0, 4, 8, 9 (`bench\conv_opt_vues2`) : PSNR 47 à 68 dB, différences seulement dans l'image d'écart x8 (bords des franges, halo), sauf la nouveauté 6 (impacts des formes courbes frangés).
+
+**Impacts en quadrilatère exact, bords des nappes au plus près (18 octobre 2026, historique 42)** ; contre `bench\ref\avant_impacts_cap.exe`, banc laser rapide, 2 lancements :
+
+- Chaque impact était dessiné en carrés de marge autour de ses bouts (la plus grande marge, dans tous les sens) : dans les vues obliques, des milliers de pixels sans lumière. Il est maintenant dessiné en quadrilatère : les 4 coins de la bande éclairée sur la surface (en travers de la ligne : 4 sigma / pente ; le long de la ligne : 8 sigma ; sigma lu au bout et au coin, le plus grand gardé), projetés à l'écran, plus 3 pixels dans leurs deux directions. Un plafond fixe des marges (64 pixels, essayé) gagnait autant sur L7 mais coupait les vrais gros plans (caméra à 35 cm d'une ligne au sol) : écarté.
+- Passe des impacts : L1 0,80 → 0,14 ms ; L2 0,52 → 0,25 ; M1 0,36 → 0,07 ; L7 2,16 → 0,26 ; I1 1,98 → 0,85 ; I3 4,99 → 1,75 ms. Image entière : L1 −7 %, L7 −5 %, M1 −4 %, autres dans le bruit.
+- Images (10 vues, dont gros plans au sol, `bench\ab_final_vues`) : au plus 0,005 % de pixels changés, quelques pixels au bout de lignes d'impact et sur des points d'impact lointains.
+- Bords des nappes : l'écart des couleurs (et son fondu) n'est calculé que près d'un bord. Coût de la convergence sur L7 mesuré avant (6 tours, passe des nappes et traits) : coupée 15,7 ms, active 18,8 ms, dont traits 1,5, bords 0,4 et présence du code 1,2 ms.
+- Banc des lyres inchangé (−0,6 %, images identiques).
 
 ## Lyres superposées (16 octobre 2026)
 

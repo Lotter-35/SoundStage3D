@@ -4,6 +4,7 @@
 #include "ambiances.h"
 #include "app.h"
 #include "scenes/scenes.h"
+#include "spectacles.h"
 #include <algorithm>
 
 static_assert(NUM_AMBIANCES == NUM_BASE_AMBIANCES + scenes::NUM_SCENES, "nombre d'ambiances");
@@ -145,9 +146,12 @@ const AmbianceInfo& ambiance_info(int i) {
     return i < NUM_BASE_AMBIANCES ? AMBIANCES[i] : scenes::INFO[i - NUM_BASE_AMBIANCES];
 }
 
+void ambiance_reset() { reset_all(); }
+
 void apply_ambiance(int index) {
     if (index < 0 || index >= NUM_AMBIANCES) return;
     reset_all();
+    g_spectacle.running = false;   // une ambiance remplace le spectacle en cours
     app.ambiance = index;
     if (index >= NUM_BASE_AMBIANCES) {
         scenes::apply(index - NUM_BASE_AMBIANCES);

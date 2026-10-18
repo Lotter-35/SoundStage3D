@@ -47,10 +47,11 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `--bench` | Banc d'essai (voir plus bas). |
   | `--bench-lasers` | Banc d'essai des lasers (voir plus bas). Mêmes options que `--bench`. |
   | `--bench-lyres` | Banc d'essai des lyres qui visent toutes le même point (voir plus bas). Mêmes options que `--bench`. |
+  | `--bench-explore` | Banc d'exploration des lasers : d'où vient le lag (voir plus bas). Options `--random N`, `--seed N`, `--nosweep`, `--measure chauffe,mesure`, `--shots`. |
   | `--fast` | Banc rapide : 30 images de chauffe et 60 mesurées par cas (au lieu de 60 et 150). |
   | `--behind` | La fenêtre s'ouvre derrière les autres sans prendre le clavier. Attention : le GPU est alors 5 à 15 % plus lent (Windows donne la priorité à la fenêtre active). |
   | `--demo [0..5]` | Vue d'essai des gobos au sol (aberration chromatique) : 3 lyres en blanc, gobo étoile, prisme 8. Variantes : 1 hors de la mise au point, 2 frost 0,4, 3 iris 0,6 et zoom plus large, 4 pont de scène en orange (gobo barres, zoom 2,2°, tilt 69°) : taches très allongées vues en rasant ; 5 eau au sol (6 taches blanches larges, avec `--set wet=...`). |
-  | `--demo-laser [0..5, 10]` | Vue d'essai des lasers, lyres éteintes, effets figés : 0 les formes (éventail, double éventail, cône, tunnel, vague, grille, diffraction ×9) sur le pont de scène ; 1 les dégradés (aucun, 2 et 3 couleurs, défilant, arc-en-ciel, au hasard) ; 2 la programmation de démonstration sur les 200 lasers (cas L7 du banc), vue du public ; 3 un éventail vert vu de près, en biais, dans une fumée épaisse : les volutes (à comparer à la photo 5 de `docs/references-lasers/`) ; 4 des fichiers ILDA : 7 lasers du pont, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, cœur, éventail), vus du public (dans l'axe : `--cam -44.5,11.8,0,0,-12`) ; 5 une nappe verte à hauteur de poitrine à travers les mannequins et le personnage (trous d'ombre, étape 5) ; 6 la sortie d'un éventail du pont vue de près (point chaud, lueur) ; 7 la programmation de départ, dimmers montés ; 10 un éventail vert continu du nez de scène vu de dessous depuis le public (vue de l'image 09 de `docs/references-lasers/fumee-v2/`, fumée des lasers v2). |
+  | `--demo-laser [0..10]` | Vue d'essai des lasers, lyres éteintes, effets figés : 0 les formes (éventail, double éventail, cône, tunnel, vague, grille, diffraction ×9) sur le pont de scène ; 1 les dégradés (aucun, 2 et 3 couleurs, défilant, arc-en-ciel, au hasard) ; 2 la programmation de démonstration sur les 200 lasers (cas L7 du banc), vue du public ; 3 un éventail vert vu de près, en biais, dans une fumée épaisse : les volutes (à comparer à la photo 5 de `docs/references-lasers/`) ; 4 des fichiers ILDA : 7 lasers du pont, un fichier chacun (nappe, faisceaux, cube, tunnel, texte, cœur, éventail), vus du public (dans l'axe : `--cam -44.5,11.8,0,0,-12`) ; 5 une nappe verte à hauteur de poitrine à travers les mannequins et le personnage (trous d'ombre, étape 5) ; 6 la sortie d'un éventail du pont vue de près (point chaud, lueur) ; 7 la programmation de départ, dimmers montés ; 8 rendu « photo » : 2 éventails verts continus du pont qui se croisent, vus du public, fumée lisse (uniforme, sans volutes), pour régler les bords brillants et le halo ; 9 deux éventails blancs (nappe continue, 8 traits) vers le sol devant le public, pour régler la convergence RGB ; 10 un éventail vert continu du nez de scène vu de dessous depuis le public (vue de l'image 09 de `docs/references-lasers/fumee-v2/`, fumée des lasers v2). |
   | `--ilda dossier` | Bibliothèque ILDA (par défaut `server/storage/ilda`, cherchée en remontant depuis l'exécutable ; un sous-dossier = une banque). |
   | `--ambiance N` | Démarre sur l'ambiance N (1 à 60 ; 21 à 60 : scènes de `src/scenes`) de l'onglet Ambiances. Captures : `--ambiance 15 --frames 300 --noui --shot a15.bmp`. |
   | `--play` | Les vues d'essai (`--demo`, `--demo-laser`) démarrent sans pause, avec un pas de 1/60 s : images en mouvement reproductibles (`--frames 30` = 0,5 s). |
@@ -84,6 +85,10 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `laserwhite`, `laserexit` | Lasers : blanchiment des lumières très intenses, comme une caméra (0,6 par défaut ; 0 : couleurs pures, comme l'œil) ; lueur de sortie (point chaud et halo, ×1 par défaut ; 0 : aucune). |
   | `lasercoll`, `laserimpacts`, `lasercache` | Lasers : arrêtés par les obstacles, impacts sur les surfaces, cache des figures fixes du moteur CPU (1 par défaut ; 0 pour couper). |
   | `laserphase`, `laserfwd`, `laserg`, `laserg2` | Lasers : diffusion vers l'avant à deux lobes (1 par défaut) ou un seul comme les lyres (0) ; part du lobe très avant (0,42), son g (0,88), g du lobe doux (0,35). |
+  | `laseredge`, `laseredgew` | Lasers : bords brillants des éventails (1 par défaut : balayage sinusoïdal, le scanner ralentit au bout de chaque aller-retour et la lumière s'y concentre ; 0 : nappe uniforme) ; largeur de la bande brillante (part de la demi-ouverture, 0,025). Même lumière en tout, répartie autrement. |
+  | `laserhalo`, `laserhalosize` | Lasers : halo (0,1 par défaut ; 0 : aucun) : la lumière des nappes diffusée une 2e fois par la brume et la lueur de l'objectif, large et douce (pyramide du bloom sur l'image des lasers seule) ; étendue (0,5 par défaut : serré ; 1,5 très large). |
+  | `laserconv`, `laserlensca` | Lasers : convergence RGB (0,3 mrad par défaut ; 0 : diodes alignées) : les diodes rouge et bleue d'un projecteur RGB partent avec un petit écart d'angle par rapport à la verte ; franges rouges et bleues sur les bords des nappes, les traits et les impacts, qui grandissent avec la distance (couleurs mélangées seulement). Aberration chromatique de l'objectif sur l'image des lasers (0,2 % par défaut ; 0 : aucune : grandissement du rouge en plus, du bleu en moins ; un défaut de l'appareil photo). |
+  | `exposure`, `bloomforce` | Exposition de l'image (1,2) et force du bloom (0,02). |
   | `volutes`, `volforce`, `voltaille`, `volperiode` | Lasers : volutes fines dans les nappes (1 par défaut), contraste (0,6), taille d'un motif (1,6 m), durée de la boucle d'évolution (16 s). |
   | `volfine`, `volfinelod`, `volfinepoids` | Volutes : 2e octave de près (1 par défaut), sa portée (niveau −1 : pixel de moins de 3,5 mm, soit à moins de ~7 m) et son poids (0,6). |
   | `laserfogmodel` | Lasers : modèle de fumée, Spatiale v2 (1, par défaut, préréglage « Nuages larges et doux » ; `PLAN-FUMEE-LASERS-V2.md`) ou Classique (0 : fumée de la pièce et volutes). |
@@ -99,6 +104,12 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `sferode`, `sfcloudsize`, `sfcloudcover`, `sfcloudrag`, `sfcloudsoft`, `sfcloudcore`, `sfcloudevol`, `sfcloudlod` | Fumée v2, nuages qui rongent les bancs et les amas : force de l'érosion (1 ; 0 : la carte seule, nappe lisse), taille du motif (11 m), part des nuages au cœur des bancs (0,55 ; le reste : trous), bords des bancs rongés (0,8 écart type), douceur du bord des nuages (0,25), cœurs plus denses (0,7), durée d'une évolution (20 s), niveau de détail où l'érosion s'efface (5). |
   | `sfswirl`, `sfswirlsize`, `sfswirlspeed` | Fumée v2, mouvement de fluide sans simulation : amplitude des tourbillons (0,4 m ; 0 : aucun), leur taille (4 m), leur vitesse (0,35 rad/s). Des tourbillons 3,3 fois plus petits et 2,5 fois plus rapides déforment en plus les filaments. |
   | `sffil`, `sffilsize`, `sffillod`, `sffilevol` | Fumée v2, filaments de près (texture des volutes, marbré) : force (1 ; 0 : aucun), taille du motif (2 m), portée (niveau 1 : pixel de moins de ~6 cm, lus presque partout ; −1 : seulement de près), durée d'une évolution (60 s) ; réglage de l'utilisateur. Seulement dans les bancs et les amas (structure). |
+  | `spectacle` | Spectacles (lyres + lasers) : lance la scène N (1 à 30, voir « Spectacles ») au démarrage, avec les réglages `sp...` ci-dessous (dans n'importe quel ordre). Exemple : `--set spectacle=8 --set spenergie=0.7 --set sppalette=1`. |
+  | `spenergie`, `sptempo` | Spectacles : énergie (0 fixe … 1 très dynamique ; 0,5 par défaut) ; tempo en temps par minute (0 par défaut : selon l'énergie, de 72 à 140). |
+  | `spcouleurs`, `sptirage`, `sppalette`, `spperso` | Spectacles, couleurs : tirées au hasard (0) ou palette (1) ; graine du tirage (passe en tirage) ; palette n° N de la liste (1 à 31 dans l'ordre de la liste, 32 : personnalisée ; passe en palette) ; palette personnalisée `r,g,b/r,g,b/…` (1 à 6 couleurs, de 0 à 1). |
+  | `spgraine`, `spaleatoire` | Spectacles : graine des variantes des scènes (positions au hasard…) ; `spaleatoire=n` tire tout (scène, énergie, couleurs) avec la graine n, comme le bouton « Aléatoire » (les clés `sp...` suivantes s'appliquent par-dessus). |
+  | `spauto`, `spmesures` | Spectacles : enchaîner les scènes (1), durée d'une scène (8 mesures de 4 temps). |
+  | `spjournal` | Spectacles : `spjournal=fichier` ajoute au fichier une ligne par lancement : scène, énergie, temps réel moyen d'une image, temps GPU de chaque image (moyenne, médiane, 90e centile, maximum des images 120 à 420, en ms ; Direct3D 11), lasers allumés, segments, effets. À lancer en plein écran avec `--novsync --frames 460` (coût d'une scène). |
 
 ### Banc d'essai
 
@@ -140,6 +151,17 @@ LyreViz.exe --bench-lasers --fullscreen
 - `--quick` : 5 cas (L1, L2 et M1 vus du public, L3, L4). Les autres options sont celles du banc des lyres ; `--stats` compte aussi les couples (pixel, segment) des lasers et les segments par tuile.
 - Même format de sortie que le banc des lyres, avec une ligne « Lasers » par cas : boîtiers, segments, traits, temps CPU du moteur laser (dont morceaux et impacts).
 - Scripts : option `-Lasers` de `tools\perf_ab.ps1` et `tools\set_ab.ps1` (voir `PERFORMANCE.md`).
+
+### Banc d'exploration des lasers
+
+```bat
+LyreViz.exe --bench-explore --fullscreen --random 120 --seed 1
+python tools\explore_report.py bench --out bench\rapport.md
+```
+
+- Lasers seuls (lyres éteintes). Un cas de base (50 lasers, éventails de 1 000 traits, 40°, vue du public), puis chaque réglage changé seul (nombre, emplacement, forme, traits, ouverture, diffraction, dégradé, visée, mouvement, banques ILDA, vue, fumée, options du rendu, eau au sol, FSR), puis des programmations tirées au hasard.
+- Sortie `exploration.csv` (réglages, temps de chaque passe, compteurs ; avec `--stats` : couples (pixel, segment)), analysée par `tools/explore_report.py`.
+- Résultats et tableau des sources de lag : `docs/analyse-lag-lasers.md`.
 
 ### Banc d'essai des lyres superposées
 
@@ -192,7 +214,7 @@ Chaque lyre a les canaux d'une vraie lyre :
 
 ### Ambiances
 
-Premier onglet du panneau : une grille de 20 boutons, une ambiance par bouton (programmation des lyres, des lasers, de la fumée, de l'eau au sol et de l'aberration chromatique). À tout moment (menu fermé ou autre onglet), les **flèches du clavier** passent d'une case à l'autre (la caméra se déplace avec Z Q S D). Les lyres rejoignent leur nouvelle position à leur vitesse ; les onglets Lyres, Effets, Lasers et Fumée montrent la programmation, qu'on peut retoucher. Code : `src/ambiances.cpp`. **Ambiances 21 à 60 : les 40 scènes du moteur de rendu** (univers très différents : nappes en plafond, couronnes de faisceaux, fichiers ILDA, sol inondé, désert, abysses, synthwave…), dans le dossier `src/scenes/` avec leurs images d'inspiration et un aperçu de chacune (voir `src/scenes/README.md`).
+Premier onglet du panneau : une grille de 20 boutons, une ambiance par bouton (programmation des lyres, des lasers, de la fumée, de l'eau au sol et de l'aberration chromatique). À tout moment (menu fermé ou autre onglet), les **flèches du clavier** passent d'une case à l'autre (la caméra se déplace avec Z Q S D). Les lyres rejoignent leur nouvelle position à leur vitesse ; les onglets Lyres, Effets, Lasers et Fumée montrent la programmation, qu'on peut retoucher. Code : `src/ambiances.cpp`. **Ambiances 21 à 60 : les 40 scènes du moteur de rendu** (univers très différents : nappes en plafond, couronnes de faisceaux, fichiers ILDA, sol inondé, désert, abysses, synthwave…), dans le dossier `src/scenes/` avec leurs images d'inspiration et un aperçu de chacune (voir `src/scenes/README.md`). **Sous les ambiances : la catégorie « Spectacles »**, 30 scènes générées (lyres + lasers) réglées par une énergie et des couleurs (voir « Spectacles » plus bas).
 
 1. Démarrage (lyres du lancement, lasers éteints) ; 2. Lasers simples (verts, au-dessus du public : nappes pleines et éventails de quelques traits) ; 3. Ballet blanc ; 4. Gobos au sol ; 5. Prismes ; 6. Arc-en-ciel ; 7. Sol mouillé ; 8. Cathédrale ; 9. Couronne (toutes les lyres visent un point) ; 10. Techno strobe ; 11. Aube pastel ; 12. Brasier ; 13. Optique nette (aberration chromatique) ; 14. Tunnel laser ; 15. Plafond laser ; 16. Rideaux laser ; 17. Constellation (grilles en diffraction) ; 18. Océan ; 19. Galaxie ; 20. Grand final (toutes les formes laser + lyres). Le grand final reprend la démonstration des lasers (cas L7 du banc) : au-dessus du budget.
 
@@ -208,7 +230,7 @@ Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionn
   - intensité : dimmer, strobe ; couleur (nuancier) et **dégradé le long de la figure** : aucun, 2 ou 3 couleurs, défilant, arc-en-ciel, au hasard par trait ;
   - **figure** : éventail, double éventail, cône, tunnel, vague, grille de points, carré, triangle, étoile (nombre de branches), cœur ; toutes passent par le moteur de tracé (droites et arcs de cercle exacts, aucune courbe faite de traits droits) ; ouverture (0 = un point, jusqu'à l'angle maximal), nombre de traits (1 à 2 000), écart, amplitude, rangées ; **réseau de diffraction** ×3, ×5, ×9 avec l'écart des copies ;
   - position : pan, tilt, roulis, rotation continue ;
-  - **effets** sur la sélection (même moteur que les lyres : forme d'onde, vitesse, amplitude, décalage, ailes) : vagues pan et tilt, cercle, huit, éventail, roulis, pulsation de l'ouverture, chenillard de traits, chenillard d'intensité, arc-en-ciel, alternance de deux couleurs ;
+  - **effets** sur la sélection (même moteur que les lyres : forme d'onde, vitesse, amplitude, décalage, ailes) : vagues pan et tilt, cercle, huit, éventail, roulis, pulsation de l'ouverture, chenillard de traits, chenillard d'intensité, arc-en-ciel, alternance de deux couleurs ; et ceux des spectacles : ciseaux, miroir, éventail en tilt, éventail de roulis, chenillard aller-retour, scintillement, sauts, couleurs de la palette, rotation par pas, convergence vers un point (voir « Spectacles ») ;
   - réglages des boîtiers : pilotage (programmeur ou motifs d'essai du banc), programmation de départ, démonstration, grand master, puissance, angle maximal, inertie des galvos, diamètre de sortie, divergence ; dans la fumée : intensité, largeur minimale d'un trait, diffusion de l'air.
 - Au lancement : tous les lasers éteints (le pont et le nez de scène sont prêts en éventails qui balaient lentement : monter leur dimmer). Ambiance 2 pour les voir.
 - **Fichiers ILDA** (comme le laser 2 du simulateur web) : source « Fichier ILDA » dans l'onglet Lasers ; bibliothèque `server/storage/ilda` (une banque par sous-dossier) ; lecture en boucle, aller-retour ou image fixe, cadence, couleurs du fichier ou couleur du laser ; la taille (ouverture), le pan, le tilt, le roulis, la rotation, la diffraction et les effets s'appliquent comme aux formes. Voir « Lasers : fichiers ILDA » plus bas.
@@ -354,6 +376,35 @@ Un laser est un seul faisceau renvoyé par deux miroirs. Chaque image ILDA passe
 - **Tolérance** : 4 niveaux (×2 chacun) ; une image de plus de 700 morceaux passe au suivant, et le niveau monte pour tous quand les segments approchent du plafond (16 384).
 - **Coût** : celui de la surface couverte. 200 lasers en faisceaux (I2) : 2 ms ; 200 lasers qui jouent des nappes, des figures, des tunnels, des dessins ou des sinus : 30 à 85 ms pour la passe des arcs (un point de nappe conique coûte environ 2 fois un point de nappe plane). Détail : `PERFORMANCE.md`, « Étape 9 ».
 
+### Spectacles (générateur de scènes, lyres + lasers)
+
+Onglet Ambiances, catégorie « Spectacles », sous les ambiances : mêmes gros boutons teintés. Comme une ambiance, une scène change toutes les lumières d'un coup : elle repart des réglages de départ (fumée, sol, visée, tout éteint), puis programme les **lyres et les lasers** ensemble. Code : `src/spectacles.cpp` ; les effets ajoutés pour composer les scènes sont dans `src/lasers.cpp` (lasers) et `src/fixtures.cpp` (lyres : couleurs de la palette), avec les autres, et servent aussi à la main. Planche des 30 scènes : `docs/spectacles/`.
+
+- **30 scènes nommées** (survoler un bouton : sa description) : 1 Horizon, 2 Plafond, 3 Cathédrale, 4 Rideaux, 5 Portiques, 6 Pluie, 7 Convergence, 8 Ciseaux, 9 Rencontre, 10 Balayage, 11 Radar, 12 Kaléidoscope, 13 Hélice, 14 Tunnel, 15 Vortex, 16 Rosace, 17 Spirale, 18 Étoiles, 19 Géométrie, 20 Constellation, 21 Diamants, 22 Vague, 23 Ressac, 24 Aurore, 25 Chenillard, 26 Pulsation, 27 Étincelles, 28 Mur de lumière, 29 Toile, 30 Grand final. Lasers : nappes, éventails de traits, faisceaux, cônes, tunnels, étoiles, grilles en diffraction, du pont, du nez et du sol de scène, et des trusses. Lyres qui les accompagnent dans la même palette : faisceaux serrés en mouvement (cercles, huit, ciseaux, éventails, vagues), lavages doux du sol, gobos au sol qui tournent (barres, gouttes, étoiles, spirales…), prismes du pont qui tournent, couronnes qui visent le point de convergence des lasers. L'infobulle d'un bouton décrit les lasers et les lyres.
+- **Énergie** (curseur de 0 à 1), la même règle pour toutes les scènes :
+  - 0 : figures fixes, aucun effet, aucun clignotement ;
+  - jusqu'à 0,3 (calme) : petits mouvements lents, couleurs fixes ;
+  - 0,3 à 0,55 (doux) : mouvements plus amples, effets doux (fondus de couleur, respiration de l'intensité, chenillards lents, couches qui s'écartent) ;
+  - 0,55 à 0,8 (rythmé) : chenillards et clignotements sur le temps, couleurs pas à pas, rotations, sources en plus (le nez de scène répond au pont…) ;
+  - 0,8 à 1 (dynamique) : flashs, sauts, scintillement, diffraction, rotations rapides dans tous les sens, décalages entre lasers.
+- **Tempo** : 72 à 140 temps par minute selon l'énergie, ou choisi. Chaque effet dure un nombre de temps (en puissance de 2 au-dessus de 0,4) et sa phase suit l'horloge du spectacle : tout reste calé sur le temps, et changer l'énergie ou les couleurs refait la scène sans la faire sauter.
+- **Couleurs** :
+  - « Couleurs au hasard » : le tirage choisit 1 couleur, 2 (complémentaires, voisines, ou une couleur et du blanc), 3 (triade, voisines, complémentaires partagées), 4 (carré, rectangle, voisines) ou l'arc-en-ciel (toutes les teintes) ; « Nouveau tirage » ;
+  - « Palette » : 31 palettes qui vont ensemble (9 couleurs seules, 10 paires comme orange + bleu ou rose + violet, 8 trios comme Feu ou Néon, 3 quatuors comme Synthwave, l'arc-en-ciel) et une palette personnalisée (1 à 6 couleurs) ;
+  - chaque scène répartit la palette à sa façon (un laser sur deux, deux moitiés, une couleur par ligne de trusses, dégradé le long des figures…) ; avec l'énergie, toute la palette tourne (fondu lent, puis pas à pas sur le temps).
+- **Aléatoire** : tire une scène, une énergie et des couleurs (tirage ou palette), puis lance la scène. Aussi : « < Précédente », « Suivante > », « Relancer », « Noir ».
+- **Enchaîner les scènes** : une autre scène au hasard toutes les N mesures, avec un nouveau tirage des couleurs en mode hasard ; s'arrête si le programme des lasers change (ambiance, effets).
+- Une scène est une programmation ordinaire : ses réglages et ses effets apparaissent dans les onglets Lyres, Effets et Lasers et se retouchent (bouger l'énergie ou les couleurs refait la scène). Choisir une ambiance arrête le spectacle.
+- **Effets ajoutés** (liste « Effets des lasers ») :
+  - ciseaux : pan en sens opposés un laser sur deux ; miroir : les deux moitiés de la sélection balaient en sens opposés et se rejoignent au centre ;
+  - éventail en tilt, éventail de roulis (chaque figure tournée d'un angle différent) : fixes à vitesse 0, sinon ils s'ouvrent et se ferment ;
+  - chenillard aller-retour ; scintillement aléatoire (une part des lasers, tirée à chaque cycle) ; sauts aléatoires (positions tirées à chaque cycle) ;
+  - couleurs de la palette (pas à pas, ou en fondu avec la forme sinus) ; rotation par pas ;
+  - convergence vers un point : chaque laser vise le point (réglable) ; il tourne sur un cercle (rayon) ; avec un décalage, chaque laser vise son propre point du cercle (couronne, rosace). Remplace pan et tilt : à placer avant les autres effets de mouvement.
+  - figure « Vague » : défilement réglable (`wave_speed`, 0 : vague fixe ; 0,5 avant).
+- **Captures** : `LyreViz.exe --noui --play --frames 240 --cam 5,2.5,0,180,12 --set spectacle=8 --set spenergie=0.7 --set sppalette=1 --shot ciseaux.bmp`.
+- **Coût** (GTX 1080, 4K, lyres + lasers, vue du public, énergie 0,65, temps GPU moyen, un lancement par scène ; tableau dans `docs/spectacles/README.md`, mesure avec `--set spjournal=...`) : salle seule 3,3 ms ; 13 scènes tiennent le budget (5,2 à 8,1 ms), les autres vont de 9 à 20 ms (cônes, tunnels, vagues, diffraction, gobos et prismes ; les plus chères : Vague 19,9, Rosace 16,3, Tunnel 16,0). Le moteur de rendu ne change pas : banc des lasers identique (modification 40 de l'historique).
+
 ### Ombres des obstacles
 
 Les obstacles fixes font de l'ombre aux faisceaux, sur les surfaces et dans la fumée : scène, mur LED, stacks, régie, décor, cube suspendu, mannequins (2 pavés chacun). Les parois du hangar, elles, reçoivent la lumière sans faire d'ombre. Onglet Rendu : « Ombres des obstacles », `--set shadows=0/1`.
@@ -466,6 +517,7 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 | `src/volutes.cpp` | Lasers : texture 3D des volutes fines (génération au lancement, mipmaps, compression BC5). |
 | `src/ilda.cpp` | Lasers : fichiers ILDA (lecture, bibliothèque, banques générées, complément des traits, morceaux de chaque image en cache). |
 | `src/trace.cpp` | Lasers : moteur de tracé (miroirs, faisceaux, ajustement en droites et arcs de cercle). |
+| `src/spectacles.cpp` | Spectacles (onglet Ambiances) : générateur de scènes lyres + lasers (30 scènes, énergie, tempo, couleurs, bouton « Aléatoire », clés `--set sp...`). |
 | `assets/Concrete031/` | Texture du sol (ambientCG, CC0). |
 | `shaders/lyreviz.glsl` | Tous les shaders (passes ci-dessus). |
 | `tools/compare_bench.py` | Compare deux résultats du banc d'essai (temps et images). |

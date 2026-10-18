@@ -42,6 +42,10 @@ struct LaserSegment {
     // dot(stop_n, P - src) <= stop_d (1e30 : aucun arret)
     vec3 stop_n;
     float stop_d = 1e30f;
+    // eventail : position de ses bords 0 et 1 dans toute la figure (-1 a 1, d'un bout du balayage a l'autre), pour les
+    // bords brillants (rebroussement du scanner) ; un morceau coupe par un obstacle ou un degrade n'a pas ses propres bords
+    // brillants. eu0 >= eu1 : pas de bords brillants (figures fermees, courbes, traces).
+    float eu0 = 0, eu1 = 0;
 };
 
 // Impact d'un laser sur une surface (etape 5) : la ligne d'arrivee d'un morceau d'eventail (de a a b, sur le sol, un
@@ -110,9 +114,22 @@ enum LaserEffectType {
     LFX_DIMMER_CHASE, // chenillard d'intensite d'un boitier a l'autre
     LFX_RAINBOW,      // arc-en-ciel d'un boitier a l'autre
     LFX_COLOR_ALT,    // alternance de deux couleurs
+    // effets prerenregistres des spectacles (src/spectacles.cpp), utilisables comme les autres
+    LFX_SCISSORS,     // ciseaux : pan en sens opposes un laser sur deux (les figures se croisent)
+    LFX_MIRROR,       // miroir : les deux moities de la selection balaient en sens opposes et se rejoignent au centre
+    LFX_TILT_SPREAD,  // eventail en tilt : tilt reparti sur la selection (fixe a vitesse 0, sinon s'ouvre et se ferme)
+    LFX_ROLL_SPREAD,  // eventail de roulis : chaque figure tournee d'un angle different (kaleidoscope)
+    LFX_BOUNCE,       // chenillard aller-retour : quelques lasers allumes parcourent la selection et reviennent
+    LFX_SPARKLE,      // scintillement : a chaque cycle, une part des lasers (tiree au hasard) s'allume
+    LFX_JUMP,         // sauts : a chaque cycle, chaque figure saute a une position tiree au hasard
+    LFX_PALETTE,      // couleurs de la palette (LaserRig::palette) : pas a pas, ou en fondu (forme sinus)
+    LFX_ROLL_STEP,    // rotation par pas : la figure tourne de 'amplitude' degres a chaque cycle
+    LFX_CONVERGE,     // convergence : les lasers visent un point (color_a, en m) qui tourne sur un cercle (rayon : size)
     LFX_COUNT
 };
 extern const char* LASER_EFFECT_NAMES[LFX_COUNT];
+// Amplitude maximale (deg) d'un effet de mouvement pour l'interface ; 0 : pas un angle.
+float laser_effect_angle_max(int type);
 
 // Valeurs du programmeur d'un boitier (ce que regle l'utilisateur).
 struct LaserParams {
@@ -133,6 +150,7 @@ struct LaserParams {
     float diffraction_angle = 8;   // deg entre deux copies
     float shape_param = 10;    // double eventail : ecart (deg) ; vague : amplitude (deg) ; grille : rangees
     float wave_cycles = 3;     // vague : ondulations le long de l'eventail
+    float wave_speed = 0.5f;   // vague : defilement des ondulations (cycles/s ; 0 : vague fixe)
     int branches = 5;          // etoile : nombre de branches
     // source : la figure du programmeur (0) ou un fichier ILDA (1, bibliotheque server/storage/ilda)
     int source = 0;
@@ -160,6 +178,7 @@ struct LaserRig {
     std::vector<LaserMount> mounts;
     std::vector<LaserFixture> fixtures;
     std::vector<Effect> effects;     // type : LaserEffectType
+    std::vector<vec3> palette;       // couleurs de l'effet LFX_PALETTE (spectacles) ; vide : les 3 couleurs de chaque laser
     std::vector<LaserSegment> segs;
     std::vector<LaserHit> hits;      // impacts sur les surfaces (calcules apres les segments)
     std::vector<std::string> group_names;

@@ -21,3 +21,6 @@ const AmbianceInfo& ambiance_info(int i);
 // Retient les reglages de depart (apres les options de la ligne de commande) : chaque ambiance repart d'eux.
 void ambiance_capture_defaults();
 void apply_ambiance(int index);
+// Tout eteint, effets supprimes, fumee / sol / aberration / visee aux reglages de depart (debut de chaque ambiance ;
+// les spectacles, src/spectacles.cpp, repartent aussi de la).
+void ambiance_reset();

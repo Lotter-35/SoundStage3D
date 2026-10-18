@@ -65,6 +65,7 @@ enum EffectType {
     FX_RAINBOW,
     FX_COLOR_ALT,
     FX_ZOOM_PULSE,
+    FX_PALETTE,       // couleurs de la palette (Rig::palette, spectacles) : pas a pas, ou en fondu (forme sinus)
     FX_COUNT
 };
 extern const char* EFFECT_NAMES[FX_COUNT];
@@ -90,6 +91,7 @@ struct Effect {
 struct Rig {
     std::vector<Fixture> fixtures;
     std::vector<Effect> effects;
+    std::vector<vec3> palette;    // couleurs de l'effet FX_PALETTE (spectacles) ; vide : rien
     vec3 aim_points[4] = {{-20, 0, 0}, {0, 0, 0}, {20, 0, 0}, {-40, 1.6f, 0}};
     float master = 1.0f;
     float power = 1.0f;           // puissance des lyres (multiplicateur)

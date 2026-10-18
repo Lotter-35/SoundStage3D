@@ -2334,8 +2334,11 @@ layout(binding=5) uniform composite_params {
                        // w : scintillement des reflets des lyres douces (0 : reflet lisse du bloc)
     vec4 grid;         // cases des lyres (comme cull_params) : lyres douces de la case du pixel
     vec4 grid2;
+    vec4 lhalo;        // x : force du halo des lasers (divisee par la somme des poids des niveaux ; 0 : aucun) ; y : aberration de
+                       // l'objectif sur les lasers (grandissement du rouge en plus, du bleu en moins ; 0 : aucune)
 };
 layout(binding=1) readonly buffer clusters_ro { sb_index clusters[]; };
+layout(binding=14) uniform texture2D laser_halo_tex;   // halo des lasers (pyramide du bloom sur l'image des lasers, 1/2)
 layout(binding=6) uniform texture2D depth_tex;
 layout(binding=13) uniform texture2D laser_tex;    // lasers dans la fumee (cs_laser_shade)
 layout(binding=10) uniform texture2D vol_hist_tex;
@@ -2529,8 +2532,19 @@ void main() {
         // parts egales sur les deux autres canaux : les couleurs ordinaires restent pures, le coeur des traits et la
         // sortie (tres intenses) virent au blanc, l'eventail (lumiere etalee) beaucoup moins.
         vec3 Lz = texelFetch(sampler2D(laser_tex, point_smp), p, 0).rgb;
+        // Aberration chromatique laterale de l'objectif (photos) : le rouge et le bleu sont un peu plus et un peu moins
+        // agrandis que le vert depuis le centre de l'image : franges colorees aux bords des faisceaux et des nappes intenses
+        if (lhalo.y != 0.0) {
+            vec2 cuv = uv - 0.5;
+            Lz.r = textureLod(sampler2D(laser_tex, lin_clamp_smp), 0.5 + cuv * (1.0 + lhalo.y), 0.0).r;
+            Lz.b = textureLod(sampler2D(laser_tex, lin_clamp_smp), 0.5 + cuv * (1.0 - lhalo.y), 0.0).b;
+        }
         vec3 ov = max(Lz * laser.y - 1.0, 0.0);
         color += Lz + (vec3(ov.r + ov.g + ov.b) - ov) * (0.5 * laser.z / laser.y);
+        // halo : la lumiere des nappes diffusee une 2e fois par la brume, et la lueur de l'objectif (large et douce)
+        if (lhalo.x > 0.0) {
+            color += texture(sampler2D(laser_halo_tex, lin_clamp_smp), uv).rgb * lhalo.x;
+        }
     }
     frag_color = vec4(color, 1.0);
 }
@@ -2541,7 +2555,7 @@ void main() {
 // -------------------------------------------------------------------------------------
 @fs fs_bloom_down
 layout(binding=6) uniform bloom_params {
-    vec4 texel;        // xy : 1 / taille de la source, z : 1 = premiere passe (anti-luciole)
+    vec4 texel;        // xy : 1 / taille de la source, z : 1 = premiere passe (anti-luciole), 2 = reduction au quart (halo)
 };
 layout(binding=12) uniform texture2D src_tex;
 layout(binding=2) uniform sampler lin_clamp_smp;
@@ -2554,9 +2568,18 @@ float karis(vec3 c) {
     return 1.0 / (1.0 + max(max(c.r, c.g), c.b) * 0.25);
 }
 void main() {
+    vec2 t = texel.xy;
+    if (texel.z > 1.5) {
+        // 1re reduction au quart (halo des lasers) : 4 lectures bilineaires au milieu de carres de 2 x 2 texels (moyenne de
+        // 4 x 4 texels), ponderees contre les lucioles comme la 1re passe du bloom
+        vec2 uq = (floor(gl_FragCoord.xy) + 0.5) * texel.xy * 4.0;
+        vec3 q0 = tap(uq + t * vec2(-1, -1)), q1 = tap(uq + t * vec2(1, -1)), q2 = tap(uq + t * vec2(-1, 1)), q3 = tap(uq + t * vec2(1, 1));
+        float k0 = karis(q0), k1 = karis(q1), k2 = karis(q2), k3 = karis(q3);
+        frag_color = vec4((q0 * k0 + q1 * k1 + q2 * k2 + q3 * k3) / (k0 + k1 + k2 + k3), 1.0);
+        return;
+    }
     // la cible fait la moitie de la source : uv du pixel cible = uv dans la source
     vec2 uv = (floor(gl_FragCoord.xy) + 0.5) * texel.xy * 2.0;
-    vec2 t = texel.xy;
     vec3 a = tap(uv + t * vec2(-2, -2)), b = tap(uv + t * vec2(0, -2)), c = tap(uv + t * vec2(2, -2));
     vec3 d = tap(uv + t * vec2(-1, -1)), e = tap(uv + t * vec2(1, -1));
     vec3 f = tap(uv + t * vec2(-2, 0)), g = tap(uv), h = tap(uv + t * vec2(2, 0));
@@ -2876,6 +2899,9 @@ layout(binding=0) uniform laser_cs_params {
     vec4 lvol4;       // x : log2(texels par metre) de la 2e octave, y : niveau ou elle s'efface, z : son poids
     vec4 lphase0;     // lobe doux : 1 + g^2, 2 g, poids x (1 - g^2) / 4 pi
     vec4 lphase1;     // lobe tres avant : idem (poids 0 : un seul lobe, comme les lyres)
+    vec4 ledge;       // bords brillants des eventails (rebroussement du scanner) : x part (0 : nappe uniforme), y : plancher de
+                      // 1 - u^2 (largeur de la bande des bords), z : normalisation (moyenne 1 en travers de l'eventail) ;
+                      // w : convergence RGB (ecart angulaire des diodes rouge et bleue au vert, rad ; voir LASER_CONV_X)
     // fumee spatiale (LASER_FOG 4, 5) : tourbillons (laser_swirl) et filaments de pres
     vec4 lswirl;      // grands tourbillons (nuages et filaments) : x nombre d'onde (rad/m), y amplitude (m), z phase (rad)
     vec4 lswirl2;     // petits tourbillons (filaments seuls) : idem, plus petits et plus rapides
@@ -2892,6 +2918,26 @@ layout(binding=0) uniform laser_cs_params {
     vec4 lmixb2;      // douceur du bord des nuages, relief des nuages (a, b), 1 / moyenne du masque
     vec4 lmixb3;      // x : force de l'erosion
 };
+// Convergence RGB : dans un projecteur RGB, les diodes rouge, verte et bleue sont reunies par des miroirs dichroiques, jamais
+// parfaitement alignees : chaque couleur part avec un petit ecart d'angle (dixiemes de mrad), qui grandit avec la distance.
+// Ecart de chaque canal (r, g, b), en unites de ledge.w : dans le plan de l'eventail (le long de es) et hors du plan (le
+// long de la normale) ; le vert sert de reference.
+const vec3 LASER_CONV_X = vec3(1.0, 0.0, -0.8);
+const vec3 LASER_CONV_Y = vec3(0.6, 0.0, -0.5);
+// Ecart des couleurs invisible : moins de LASER_CONV_MIN fois la largeur du faisceau (sigma, largeur d'un pixel comprise) :
+// un seul calcul, comme une couleur pure. Fondu jusqu'a l'ecart entier a 2 x LASER_CONV_MIN (aucun saut). C'est le cas des
+// lasers lointains qui ne visent pas la camera (le pixel y est large) ; un laser qui vise la camera garde ses franges.
+const float LASER_CONV_MIN = 0.25;
+// part de l'ecart gardee pour un ecart 'sh' (m) et une largeur 'sig' (m) : 0 sous LASER_CONV_MIN sig, 1 au-dela du double
+float laser_conv_fade(float sh, float sig) {
+    return clamp(sh / (LASER_CONV_MIN * max(sig, 1e-9)) - 1.0, 0.0, 1.0);
+}
+// Ecart des couleurs d'un segment (rad) : 0 pour un laser d'une seule couleur (une seule diode : pas de franges, un seul
+// calcul), ledge.w si au moins deux canaux sont allumes (a l'un des deux bouts du degrade).
+float laser_conv_of(vec3 c0, vec3 c1) {
+    vec3 on = step(vec3(1e-20), c0 + c1);
+    return on.r + on.g + on.b >= 1.5 ? ledge.w : 0.0;
+}
 @end
 
 // Lumiere d'un segment dans un rayon de la camera. Necessite laser_uniforms_cs.
@@ -3113,14 +3159,15 @@ float laser_phase(float b) {
 // t <= tMax) : noyau gaussien a la distance des deux droites, divise par le sinus de leur angle (formule des
 // photon beams, Jarosz 2011), diffusion vers l'avant et attenuation. Le 1 / sin est plafonne par la longueur
 // du trait (trait vu dans son axe).
-float laser_trait(vec3 q, vec3 dv, vec3 vw, float R, float tMax) {
-    float b = dv.x, d = dot(dv, q), ee = q.x;
+// Un trait d'axe 'ax' (unitaire, dans le repere du segment).
+float laser_trait1(vec3 q, vec3 dv, vec3 vw, float R, float tMax, vec3 ax) {
+    float b = dot(dv, ax), d = dot(dv, q), ee = dot(q, ax);
     float s2 = max(1.0 - b * b, 1e-7);
     // points les plus proches du rayon (t dans [0, tMax]) et du trait (s dans [0, R])
     float t = clamp((b * ee - d) / s2, 0.0, tMax);
     float s = clamp(ee + b * t, 0.0, R);
     t = clamp(s * b - d, 0.0, tMax);
-    vec3 w = q + dv * t - vec3(s, 0.0, 0.0);
+    vec3 w = q + dv * t - ax * s;
     float u2 = dot(w, w);
     float sig2 = laser_sig2(s, t);
     if (u2 > 16.0 * sig2) {
@@ -3130,6 +3177,59 @@ float laser_trait(vec3 q, vec3 dv, vec3 vw, float R, float tMax) {
     float inv_sin = min(inversesqrt(s2), 0.4 * max(R, 1.0) * isig);
     return exp(-0.5 * u2 * isig * isig) * isig * 0.39894228 * inv_sin * laser_phase(b) * exp(-cam_fwd.w * (t + s))
          * laser_sigma(cam_pos.xyz + vw * t, res.w * t);
+}
+// Convergence RGB (ledge.w ; variantes LASER_CONV seulement) : chaque couleur est un trait d'axe un peu tourne
+// (LASER_CONV_X le long de es, LASER_CONV_Y le long de la normale). Le point le plus proche du rayon est calcule une fois
+// (axe du vert) ; la distance de chaque couleur se lit sur la normale commune du rayon et du trait (exacte pour des droites
+// infinies : le decalage dans leur plan commun ne change pas leur distance). Trait vu presque dans son axe (sinus < 0,1) :
+// cette normale n'est plus fiable, calcul complet par couleur (laser_trait1). Ecart invisible (voir LASER_CONV_MIN) : un
+// seul calcul.
+vec3 laser_trait(vec3 q, vec3 dv, vec3 vw, float R, float tMax, float conv) {
+#ifdef LASER_CONV
+    if (conv > 0.0 && dv.y * dv.y + dv.z * dv.z < 0.01) {
+        vec3 r;
+        for (int c = 0; c < 3; c++) {
+            vec3 ax = normalize(vec3(1.0, LASER_CONV_X[c] * conv, LASER_CONV_Y[c] * conv));
+            r[c] = laser_trait1(q, dv, vw, R, tMax, ax);
+        }
+        return r;
+    }
+#endif
+    float b = dv.x, d = dot(dv, q), ee = q.x;
+    float s2 = max(1.0 - b * b, 1e-7);
+    // points les plus proches du rayon (t dans [0, tMax]) et du trait (s dans [0, R])
+    float t = clamp((b * ee - d) / s2, 0.0, tMax);
+    float s = clamp(ee + b * t, 0.0, R);
+    t = clamp(s * b - d, 0.0, tMax);
+    vec3 w = q + dv * t - vec3(s, 0.0, 0.0);
+    float u2 = dot(w, w);
+    float sig2 = laser_sig2(s, t);
+#ifdef LASER_CONV
+    vec3 u2c = vec3(u2);
+    if (conv > 0.0) {
+        float sh = conv * s * laser_conv_fade(1.2 * conv * s, sqrt(sig2));
+        if (sh > 0.0) {
+            vec2 nn = vec2(dv.z, -dv.y) * inversesqrt(dv.y * dv.y + dv.z * dv.z);   // normale commune (sans composante x)
+            float d0 = w.y * nn.x + w.z * nn.y;
+            vec3 dc = d0 - sh * (LASER_CONV_X * nn.x + LASER_CONV_Y * nn.y);
+            u2c = max(u2 - d0 * d0, 0.0) + dc * dc;
+        }
+    }
+    if (min(u2c.x, min(u2c.y, u2c.z)) > 16.0 * sig2) {
+        return vec3(0.0);
+    }
+    float isig = inversesqrt(sig2);
+    vec3 g = exp(-0.5 * u2c * isig * isig);
+#else
+    if (u2 > 16.0 * sig2) {
+        return vec3(0.0);
+    }
+    float isig = inversesqrt(sig2);
+    vec3 g = vec3(exp(-0.5 * u2 * isig * isig));
+#endif
+    float inv_sin = min(inversesqrt(s2), 0.4 * max(R, 1.0) * isig);
+    return g * (isig * 0.39894228 * inv_sin * laser_phase(b) * exp(-cam_fwd.w * (t + s))
+                * laser_sigma(cam_pos.xyz + vw * t, res.w * t));
 }
 
 // Segment d'eventail de 2 traits ou plus (L0..L4 : sb_laser) dans le rayon de direction v (t <= tMax). Les
@@ -3147,7 +3247,7 @@ float laser_trait(vec3 q, vec3 dv, vec3 vw, float R, float tMax) {
 // Le cout vient surtout des operations speciales (divisions, racines, exponentielles, cosinus). La nappe lisse
 // (cas le plus courant) n'en demande que 4 : Q et f y sont compares au carre, et les bords sont testes avec le
 // sinus de l'angle vu de la source (juste pres des bords, la ou il sert) au lieu de l'arc tangente.
-vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, vec3 v, float tMax) {
+vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec4 cut, vec3 v, float tMax) {
     float R = L2.w, nb = L1.w;
     float ia = 1.0 / dot(v, L2.xyz);   // rayon dans le repere de l'eventail : composante sur la normale
     float tP = -L3.z * ia;
@@ -3160,7 +3260,7 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, 
     float r2 = dot(p2, p2);
     // coupe par un obstacle : seulement du cote de la source de la droite d'arret (exacte pour une face plane : sa coupe
     // par le plan est une droite) ; sans obstacle, a = b = 0 : toujours vrai (2 operations, sans branchement)
-    if (r2 > R * R || p2.x <= 0.0 || dot(p2, cut) > 1.0) {
+    if (r2 > R * R || p2.x <= 0.0 || dot(p2, cut.xy) > 1.0) {
         return vec3(0.0);
     }
     float irP = inversesqrt(r2);
@@ -3194,12 +3294,21 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, 
     float Q2 = sig2 * idu2;             // (largeur d'un trait / ecart)^2
     float pt = res.w * tP;
     float f2 = pt * pt * idu2;          // (pixel / ecart)^2
-    // hors de l'eventail, a plus de max(1,5 ; 4 Q) traits d'un bord
+    // hors de l'eventail, a plus de max(1,5 ; 4 Q) traits d'un bord (convergence RGB : la couleur la plus decalee, csh traits)
+#ifdef LASER_CONV
+    // ecart maximal des couleurs (traits) : seulement pour les tests de distance aux bords ; l'ecart reel (fondu) n'est
+    // calcule que pres d'un bord (nappe lisse, plus bas)
+    float csh = laser_conv_of(L4.rgb, L5.rgb) * L4.w;
+#else
+    const float csh = 0.0;
+#endif
     float emin = min(e0, e1);
-    if (emin < 0.0 && emin * emin > max(2.25, 16.0 * Q2)) {
+    float eout = emin + csh;
+    if (eout < 0.0 && eout * eout > max(2.25, 16.0 * Q2)) {
         return vec3(0.0);
     }
     float S;
+    vec3 Sc = vec3(1.0);   // convergence RGB : bords de chaque couleur (nappe lisse)
     float tc = 0.0;   // position le long de l'eventail (0 au bord 0, 1 au bord 1) : couleur du degrade
     if (Q2 >= 0.5625 || f2 >= 0.25) {
 #ifdef LASER_GRADIENT
@@ -3207,9 +3316,19 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, 
 #endif
         // nappe lisse (traits confondus) : 1, sauf a moins de 2 largeurs de trait d'un bord
         S = 1.0;
-        if (emin < 0.0 || emin * emin < 4.0 * Q2) {
+        float ein = emin - csh;
+        if (ein < 0.0 || ein * ein < 4.0 * Q2) {
             float iq = inversesqrt(Q2);
-            S = smoothstep(-2.0, 2.0, e0 * iq) * smoothstep(-2.0, 2.0, e1 * iq);
+            // bords adoucis : flou de l'intervalle (difference des deux marches, pas leur produit) ; deux morceaux voisins
+            // (coupe par un obstacle, degrade) font 1 en tout meme quand l'un est plus etroit que le flou (sinon : trait clair).
+            // Convergence RGB : l'eventail de chaque couleur est tourne dans son plan (bords decales de LASER_CONV_X x csh traits) ;
+            // ecart invisible devant la largeur du bord adouci (Q traits) : fondu jusqu'a 0 (LASER_CONV_MIN)
+#ifdef LASER_CONV
+            vec3 sx = LASER_CONV_X * (csh * laser_conv_fade(csh, Q2 * iq));
+#else
+            const vec3 sx = vec3(0.0);
+#endif
+            Sc = max(smoothstep(vec3(-2.0), vec3(2.0), (e0 - sx) * iq) + smoothstep(vec3(-2.0), vec3(2.0), (e1 + sx) * iq) - 1.0, vec3(0.0));
         }
     } else {
         // sans racine pour f, une seule pour Q (1 / Q)
@@ -3250,7 +3369,7 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, 
             // des traits, effacee quand leur ecart a l'ecran passe de 4 a 2 pixels (f de 0,25 a 0,5)
             float edge = 1.0;
             if (min(x + 0.5, nb - 0.5 - x) < 2.0 * Q) {
-                edge = smoothstep(-2.0, 2.0, (x + 0.5) * iq) * smoothstep(-2.0, 2.0, (nb - 0.5 - x) * iq);
+                edge = max(smoothstep(-2.0, 2.0, (x + 0.5) * iq) + smoothstep(-2.0, 2.0, (nb - 0.5 - x) * iq) - 1.0, 0.0);
             }
             float rip = 2.0 * exp(-19.739209 * Q2) * clamp((0.25 - f2) * 5.3333333, 0.0, 1.0) * cos(LASER_TWO_PI * fract(x));
             S += (1.0 + rip) * edge * wp;
@@ -3259,12 +3378,22 @@ vec3 laser_eval(vec4 L0, vec4 L1, vec4 L2, vec4 L3, vec4 L4, vec4 L5, vec2 cut, 
             return vec3(0.0);   // entre deux traits separes
         }
     }
+    // Bords brillants : un scanner ralentit pour rebrousser chemin au bout de chaque balayage, le faisceau s'attarde
+    // pres des bords (balayage sinusoidal : temps passe en 1 / sqrt(1 - u^2), u de -1 a 1 en travers de toute la
+    // figure). cut.zw : position des bords de ce morceau dans la figure (un morceau coupe par un obstacle ou un degrade
+    // n'a pas ses propres bords brillants) ; dans le morceau, par le rapport des sinus des angles aux deux bords (proche
+    // du rapport des angles). Plancher : largeur de la bande brillante ; normalise : meme lumiere en tout, repartie
+    // autrement.
+    if (ledge.x > 0.0 && cut.w > cut.z) {
+        float u = mix(cut.z, cut.w, u0 / max(u0 + u1, 1e-12));
+        S *= 1.0 - ledge.x + ledge.x * ledge.z * inversesqrt(max(1.0 - u * u, ledge.y));
+    }
 #ifdef LASER_GRADIENT
     vec3 col = mix(L4.rgb, L5.rgb, tc);
 #else
     vec3 col = L4.rgb;
 #endif
-    return col * (S * laser_phase(bP) * exp(-cam_fwd.w * (tP + rP)) * L4.w * irP * iaa
+    return col * Sc * (S * laser_phase(bP) * exp(-cam_fwd.w * (tP + rP)) * L4.w * irP * iaa
 #if LASER_FOG >= 1
                * laser_sigma_of(fog, fog2, lfoot));
 #else
@@ -3294,7 +3423,9 @@ float laser_traits_sum(float Q2, float f2, float x, float nb) {
         float S = 1.0;
         if (emin < 0.0 || emin * emin < 4.0 * Q2) {
             float iq = inversesqrt(Q2);
-            S = smoothstep(-2.0, 2.0, e0 * iq) * smoothstep(-2.0, 2.0, e1 * iq);
+            // bords adoucis : flou de l'intervalle (difference des deux marches, pas leur produit) ; deux morceaux voisins
+            // (coupe par un obstacle, degrade) font 1 en tout meme quand l'un est plus etroit que le flou (sinon : trait clair)
+            S = max(smoothstep(-2.0, 2.0, e0 * iq) + smoothstep(-2.0, 2.0, e1 * iq) - 1.0, 0.0);
         }
         return S;
     }
@@ -3320,7 +3451,7 @@ float laser_traits_sum(float Q2, float f2, float x, float nb) {
     if (wp > 0.0) {
         float edge = 1.0;
         if (min(e0, e1) < 2.0 * Q) {
-            edge = smoothstep(-2.0, 2.0, e0 * iq) * smoothstep(-2.0, 2.0, e1 * iq);
+            edge = max(smoothstep(-2.0, 2.0, e0 * iq) + smoothstep(-2.0, 2.0, e1 * iq) - 1.0, 0.0);
         }
         float rip = 2.0 * exp(-19.739209 * Q2) * clamp((0.25 - f2) * 5.3333333, 0.0, 1.0) * cos(LASER_TWO_PI * fract(x));
         S += (1.0 + rip) * edge * wp;
@@ -3655,7 +3786,7 @@ void main() {
         vec4 P = va[k];
         pp[k] = uv_from_ndc(vec2(P.x / (P.z * cam_right.w), P.y / (P.z * cam_up.w))) * res.xy;
         float sp = sqrt(beam.x + beam.y * P.w * P.w) / (P.z * res.w);
-        pm[k] = 3.5 * sqrt(sp * sp + beam.z * beam.z) + 1.0;
+        pm[k] = 3.5 * sqrt(sp * sp + beam.z * beam.z) + 1.0 + 1.2 * ledge.w * P.w / (P.z * res.w);
         lo = min(lo, pp[k]);
         hi = max(hi, pp[k]);
         mmax = max(mmax, pm[k]);
@@ -3783,7 +3914,7 @@ void main() {
             }
             vec4 P = va[k];
             float sp = sqrt(beam.x + beam.y * P.w * P.w) / (P.z * res.w);
-            mline = max(mline, 4.0 * sqrt(sp * sp + beam.z * beam.z) + 1.0);
+            mline = max(mline, 4.0 * sqrt(sp * sp + beam.z * beam.z) + 1.0 + 1.2 * ledge.w * P.w / (P.z * res.w));
         }
         if (far2 > 1.0) {
             vec2 nl = vec2(b.y - a.y, a.x - b.x) * inversesqrt(far2);
@@ -3964,7 +4095,8 @@ void main() {
             uint so = s_idx[lid] * 9u;
             // traits seuls : leur droite a l'ecran ; eventails : leur portee au bord 1 (x, coupe par un obstacle)
             s_line[lid] = (L.es_n.w < 1.5 && L.es_n.w > -0.5) ? vec4(scr[so + 1u].v.w, scr[so + 2u].v.w, scr[so + 3u].v.w, scr[so + 4u].v.w)
-                                                           : L.cut;   // eventails : droite d'arret ; arcs : cercle
+                        : (L.es_n.w < -0.5 ? L.cut                        // arcs : cercle
+                                           : vec4(L.cut.xy, L.stop.xy));  // eventails : droite d'arret, bords dans la figure
 #ifdef LASER_ARCS
             // arcs : direction du milieu du morceau (autour du centre du cercle), en 2 demi-flottants dans w
             float thm = L.ec_half.w + 0.5 * L.cam_rel.w;
@@ -4007,13 +4139,15 @@ void main() {
                 // trait seul : rien a calculer hors de sa bande a l'ecran
                 vec4 ln = s_line[j];
                 if (abs(dot(fpA, ln.xy) + ln.z) <= ln.w) {
-                    accA += L4.rgb * laser_trait(L3.xyz, vec3(dot(va, L0.xyz), dot(va, L1.xyz), dot(va, L2.xyz)), va, L2.w, tMaxA);
+                    accA += L4.rgb * laser_trait(L3.xyz, vec3(dot(va, L0.xyz), dot(va, L1.xyz), dot(va, L2.xyz)), va, L2.w, tMaxA,
+                                                 laser_conv_of(L4.rgb, L4.rgb));
                 }
                 if (abs(dot(fpB, ln.xy) + ln.z) <= ln.w) {
-                    accB += L4.rgb * laser_trait(L3.xyz, vec3(dot(vb, L0.xyz), dot(vb, L1.xyz), dot(vb, L2.xyz)), vb, L2.w, tMaxB);
+                    accB += L4.rgb * laser_trait(L3.xyz, vec3(dot(vb, L0.xyz), dot(vb, L1.xyz), dot(vb, L2.xyz)), vb, L2.w, tMaxB,
+                                                 laser_conv_of(L4.rgb, L4.rgb));
                 }
             } else {
-                vec2 cut = s_line[j].xy;
+                vec4 cut = s_line[j];
                 accA += laser_eval(L0, L1, L2, L3, L4, L5, cut, va, tMaxA);
                 accB += laser_eval(L0, L1, L2, L3, L4, L5, cut, vb, tMaxB);
             }
@@ -4214,6 +4348,11 @@ void main() {
 //      Largeur : faisceau physique (sortie + divergence) et largeur minimale en pixels, energie conservee. Diffusion de
 //      la surface (couleur x cos / pi), attenuation par la fumee. Ajoute a l'image de la scene (avant la fumee).
 @block laser_hit_data
+// Convergence RGB : un impact d'une seule couleur (une seule diode) n'a pas de franges (voir laser_conv_of)
+bool hit_mixed(vec3 c0, vec3 c1) {
+    vec3 on = step(vec3(1e-20), c0 + c1);
+    return on.r + on.g + on.b >= 1.5;
+}
 struct sb_hit {
     vec4 a;      // xyz, w : 0 ligne, 1 point, 2 arc, 3 sortie (lueur)
     vec4 b;      // arc : w = rho
@@ -4243,36 +4382,44 @@ layout(binding=0) uniform hit_vs_params {
     vec4 cam_pos;   // w : angle d'un pixel (rad)
     vec4 cam_fwd;
     vec4 beam;      // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels)
-    vec4 res;       // xy : taille du rendu
+    vec4 res;       // xy : taille du rendu, z : convergence RGB (rad, voir ledge.w des lasers)
 };
 layout(binding=25) readonly buffer hits_vs { sb_hit hits[]; };
 flat out int v_hit;
+flat out float v_conv;   // ecart des couleurs de cet impact (rad ; 0 : un seul calcul)
 
 vec2 hit_screen(vec3 p) {
     vec4 c = view_proj * vec4(p, 1.0);
     return (c.xy / max(c.w, 1e-4) * 0.5 + 0.5) * res.xy;
 }
-// Marge d'un bout (pixels) : la bande allumee est |z| < 4 largeurs de faisceau (z : distance au plan de la nappe, ou a
-// l'axe du trait) ; sur la surface, on s'en eloigne le long de w (dans la surface, en travers de la ligne) : la
-// distance a parcourir est 4 sigma / |w.n| ; projetee a l'ecran, plus 1,5 pixel. Exact, meme vu en rasant.
-float hit_margin(vec3 p, vec3 src, vec3 w, float rate, vec2 sp) {
+// Bande allumee d'un impact : |z| < 4 largeurs de faisceau (z : distance au plan de la nappe, ou a l'axe du trait). Sur la
+// surface, en travers de la ligne (le long de w), elle s'etend de 4 sigma / |w.n| ; le long de la ligne, ses bouts adoucis
+// depassent de 2 sigma (4 sigma gardes). Le quadrilatere dessine est celui de ses 4 coins projetes a l'ecran (plus 1,5
+// pixel) : exact, meme vu en rasant ou de tres pres. Les carres de marge d'avant (la plus grande marge, dans tous les sens)
+// couvraient souvent des milliers de pixels sans lumiere (L7 : impacts 2,15 ms).
+// Demi-largeur (m) a un bout p, pour une pente 'rate' (1 : sans etirement) ; conv : ecart des couleurs (rad).
+float hit_half(vec3 p, vec3 src, float rate, float conv) {
     vec3 rel = p - src;
     float t = max(dot(p - cam_pos.xyz, cam_fwd.xyz), 0.05);
     float px = beam.z * cam_pos.w * t;
-    float sig = sqrt(beam.x + beam.y * dot(rel, rel) + px * px);
-    float dl = 4.0 * sig / max(rate, 0.02);
-    // le point decale reste devant la camera (a la moitie de la profondeur de p au moins) : pres de la camera, sa
-    // projection exploserait (bande de tout l'ecran)
-    float wz = dot(w, cam_fwd.xyz);
-    if (wz < 0.0 && t + wz * dl < 0.5 * t) {
-        dl = -0.5 * t / wz;
+    float sig = sqrt(beam.x + beam.y * dot(rel, rel) + px * px) + 0.3 * conv * length(rel);
+    return 4.0 * sig / max(rate, 0.02);
+}
+// p + dir d, garde devant la camera (a la moitie de la profondeur de p au moins : pres de la camera, la projection
+// exploserait)
+vec3 hit_front(vec3 p, vec3 dir, float d) {
+    float t = max(dot(p - cam_pos.xyz, cam_fwd.xyz), 0.05);
+    float dz = dot(dir, cam_fwd.xyz);
+    if (dz < 0.0 && t + dz * d < 0.5 * t) {
+        d = -0.5 * t / dz;
     }
-    return length(hit_screen(p + w * dl) - sp) + 1.5;
+    return p + dir * d;
 }
 
 void main() {
     int i = gl_InstanceIndex;
     v_hit = i;
+    v_conv = 0.0;
     vec4 A = hits[i].a, B = hits[i].b;
     vec3 src = hits[i].src.xyz, sn = hits[i].surf.xyz;
     vec2 sa = hit_screen(A.xyz), sb = hit_screen(B.xyz);
@@ -4292,7 +4439,7 @@ void main() {
     float sag = 0.0;   // arc : ecart de la courbe a sa corde (m)
     if (A.w > 1.5) {
         // arc : la normale du cone au milieu de la corde ; la courbe s'ecarte de sa corde de 4 % de sa longueur au plus
-        // (LaserRig::build_hits) : marge de 8 % (en metres, projetee a la profondeur de chaque bout)
+        // (LaserRig::build_hits) : marge de 8 %
         vec3 g;
         hit_arc_frame(hits[i], 0.5 * (A.xyz + B.xyz) - src, g);
         nr = normalize(g);
@@ -4313,17 +4460,41 @@ void main() {
         w = dot(lay, lay) > 1e-8 ? normalize(lay) : normalize(cross(sn, abs(sn.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0)));
         rate = length(cross(w, nr));
     }
-    float ta = max(dot(A.xyz - cam_pos.xyz, cam_fwd.xyz), 0.05), tb = max(dot(B.xyz - cam_pos.xyz, cam_fwd.xyz), 0.05);
-    float ma = hit_margin(A.xyz, src, w, rate, sa) + sag / (ta * cam_pos.w), mb = hit_margin(B.xyz, src, w, rate, sb) + sag / (tb * cam_pos.w);
-    vec2 d = sb - sa;
-    float len = length(d);
-    d = len > 1e-3 ? d / len : vec2(1.0, 0.0);
-    vec2 n = vec2(-d.y, d.x);
+    // le long de la ligne (trait : en travers de sa tache, dans la surface)
+    vec3 ab = B.xyz - A.xyz;
+    vec3 u = dot(ab, ab) > 1e-12 ? normalize(ab) : normalize(cross(sn, w));
+    // Convergence RGB : impact multicolore, devant la camera, dont les couleurs s'ecartent d'au moins 0,3 pixel a un bout
+    // (ecart 1,2 x conv x r en travers, etire par la pente) : bande elargie et calcul par couleur ; sinon, rien de plus
+    // (impact lointain ou petit, couleur pure)
+    bool front = dot(A.xyz - cam_pos.xyz, cam_fwd.xyz) > 0.1 && dot(B.xyz - cam_pos.xyz, cam_fwd.xyz) > 0.1;
+    if (res.z > 0.0 && front && hit_mixed(hits[i].f0.rgb, hits[i].f1.rgb)) {
+        float ka = 1.2 * res.z * length(A.xyz - src) / max(rate, 0.02), kb = 1.2 * res.z * length(B.xyz - src) / max(rate, 0.02);
+        float pa = length(hit_screen(hit_front(A.xyz, w, ka)) - sa), pb = length(hit_screen(hit_front(B.xyz, w, kb)) - sb);
+        if (max(pa, pb) >= 0.3) {
+            v_conv = res.z;
+        }
+    }
+    // coins : bout A ou B, recule le long de la ligne, puis de part et d'autre le long de w ; marges de 25 % (sigma lu aux
+    // bouts, la bande est un peu plus large sur son cote loin de la camera)
     int c = gl_VertexIndex;   // 2 triangles : 0 1 2, 2 1 3
     int corner = c < 3 ? c : (c == 3 ? 2 : (c == 4 ? 1 : 3));
     bool atB = corner >= 2;
-    float m = atB ? mb : ma;
-    vec2 p = (atB ? sb + d * m : sa - d * m) + n * (((corner & 1) == 0) ? -m : m);
+    vec3 P = atB ? B.xyz : A.xyz;
+    vec3 du = atB ? u : -u, dw = ((corner & 1) == 0) ? -w : w;
+    // la largeur depend de la profondeur (largeur d'un pixel) : lue au bout, puis au coin trouve, la plus grande gardee
+    float hu = hit_half(P, src, 1.0, v_conv);
+    hu = max(hu, hit_half(hit_front(P, du, hu), src, 1.0, v_conv));
+    vec3 Pe = hit_front(P, du, 2.0 * hu);
+    float hw = hit_half(Pe, src, rate, v_conv);
+    hw = max(hw, hit_half(hit_front(Pe, dw, hw), src, rate, v_conv));
+    vec3 Q = hit_front(Pe, dw, 1.25 * hw + sag);
+    // 3 pixels vers l'exterieur dans les deux directions du coin a l'ecran (le long de la ligne, puis en travers)
+    vec2 pP = hit_screen(P), pE = hit_screen(Pe), p = hit_screen(Q);
+    vec2 dd = dot(sb - sa, sb - sa) > 1e-6 ? normalize(sb - sa) : vec2(1.0, 0.0);
+    vec2 ea = pE - pP, eb = p - pE;
+    ea = dot(ea, ea) > 1e-6 ? normalize(ea) : (atB ? dd : -dd);
+    eb = dot(eb, eb) > 1e-6 ? normalize(eb) : vec2(-ea.y, ea.x) * (((corner & 1) == 0) ? -1.0 : 1.0);
+    p += 3.0 * (ea + eb);
     vec2 ndc = p / res.xy * 2.0 - 1.0;
     gl_Position = vec4(ndc, 0.5, 1.0);
 }
@@ -4339,8 +4510,15 @@ layout(binding=1) uniform hit_fs_params {
     vec4 cam_fwd;     // w : intensite (reglage)
     vec4 res;         // xy : taille du rendu, z : angle d'un pixel
     vec4 beam;        // x : sigma^2 a la sortie, y : (divergence / 4)^2, z : largeur minimale (sigma, pixels) ; w : blanchiment
+    vec4 conv;        // x : convergence RGB (rad) : chaque couleur touche la surface un peu a cote (LASER_CONV_X, LASER_CONV_Y)
 };
 // res.w : exposition
+const vec3 HIT_CONV_X = vec3(1.0, 0.0, -0.8);   // memes ecarts que LASER_CONV_X, LASER_CONV_Y
+const vec3 HIT_CONV_Y = vec3(0.6, 0.0, -0.5);
+// meme fondu que laser_conv_fade (LASER_CONV_MIN = 0,25)
+float laser_hit_fade(float sh, float sig) {
+    return clamp(sh / (0.25 * max(sig, 1e-9)) - 1.0, 0.0, 1.0);
+}
 layout(binding=29) readonly buffer hits_fs { sb_hit hitsf[]; };
 layout(binding=26) uniform texture2D hit_depth;
 layout(binding=27) uniform texture2D hit_normal;
@@ -4351,6 +4529,7 @@ layout(binding=1) uniform sampler hit_smp;
 @image_sample_type hit_albedo unfilterable_float
 @sampler_type hit_smp nonfiltering
 flat in int v_hit;
+flat in float v_conv;
 out vec4 frag_color;
 
 void main() {
@@ -4412,7 +4591,8 @@ void main() {
         vec3 f = hit_arc_frame(H, rel, g);
         float g2 = max(dot(g, g), 1e-30);
         float z = (f.y * f.y + f.z * f.z - H.b.w * H.b.w * f.x * f.x) * 0.5 * inversesqrt(g2);
-        if (f.x <= 0.0 || z * z > 16.0 * sig2) {
+        float zm0 = max(abs(z) - 0.6 * v_conv * r, 0.0);
+        if (f.x <= 0.0 || zm0 * zm0 > 16.0 * sig2) {
             discard;
         }
         vec3 fa = hit_arc_frame(H, H.a.xyz - H.src.xyz, gd), fb = hit_arc_frame(H, H.b.xyz - H.src.xyz, gd);
@@ -4427,30 +4607,48 @@ void main() {
         vec3 dir = rel / max(r, 1e-6);
         float rate = max(length(dY - dir * dot(dir, dY)) * f.x / max(r, 1e-6), 1e-6);
         float e = 2.0 * sqrt(sig2) / (max(r, 0.05) * rate);   // demi-largeur du fondu (rad de theta)
-        float w = smoothstep(-e, e, du) * smoothstep(-e, e, span - du);
+        // bouts : difference des deux marches (comme les nappes). Convergence RGB : le cone de chaque couleur est un peu
+        // decale (courbe deplacee en travers de HIT_CONV_Y x ecart x r, et le long de l'arc de HIT_CONV_X x ecart / rate)
+        float csh = v_conv * r * laser_hit_fade(1.2 * v_conv * r, sqrt(sig2));
+        vec3 zc = z - HIT_CONV_Y * csh, duc = du - HIT_CONV_X * (csh / (max(r, 0.05) * rate));
+        vec3 w = max(smoothstep(vec3(-e), vec3(e), duc) + smoothstep(vec3(-e), vec3(e), span - duc) - 1.0, vec3(0.0));
         E = mix(H.f0.rgb, H.f1.rgb, clamp(du / max(span, 1e-6), 0.0, 1.0))
-            * (w * exp(-0.5 * z * z / sig2) * 0.39894228 * inversesqrt(sig2) / (max(r, 0.05) * rate));
+            * (w * exp(-0.5 * zc * zc / sig2) * (0.39894228 * inversesqrt(sig2) / (max(r, 0.05) * rate)));
     } else if (H.a.w < 0.5) {
-        // nappe : distance au plan, puis position le long de la ligne (bouts adoucis)
+        // nappe : distance au plan, puis position le long de la ligne (bouts adoucis : difference des deux marches, comme
+        // les nappes). Convergence RGB : le plan de chaque couleur est un peu tourne (ligne decalee en travers, de
+        // HIT_CONV_Y x ecart x r) et l'eventail tourne dans son plan (bouts decales le long de la ligne)
         float z = dot(rel, H.nrm.xyz);
-        if (z * z > 16.0 * sig2) {
+        float csh = v_conv * r;
+        float zm = max(abs(z) - 0.6 * csh, 0.0);
+        if (zm * zm > 16.0 * sig2) {
             discard;
         }
         vec3 ab = H.b.xyz - H.a.xyz;
         float l2 = max(dot(ab, ab), 1e-8);
         float u = dot(X - H.a.xyz, ab) / l2;
         float e = 2.0 * sqrt(sig2 / l2);
-        float w = smoothstep(-e, e, u) * smoothstep(-e, e, 1.0 - u);
-        E = mix(H.f0.rgb, H.f1.rgb, clamp(u, 0.0, 1.0)) * (w * exp(-0.5 * z * z / sig2) * 0.39894228 * inversesqrt(sig2) / max(r, 0.05));
+        csh *= laser_hit_fade(1.2 * csh, sqrt(sig2));
+        vec3 zc = z - HIT_CONV_Y * csh, uc = u - HIT_CONV_X * (csh * inversesqrt(l2));
+        vec3 w = max(smoothstep(vec3(-e), vec3(e), uc) + smoothstep(vec3(-e), vec3(e), 1.0 - uc) - 1.0, vec3(0.0));
+        E = mix(H.f0.rgb, H.f1.rgb, clamp(u, 0.0, 1.0)) * (w * exp(-0.5 * zc * zc / sig2) * (0.39894228 * inversesqrt(sig2) / max(r, 0.05)));
     } else {
-        // trait : distance a son axe, jusqu'a son point d'arret
+        // trait : distance a son axe, jusqu'a son point d'arret ; convergence RGB : chaque couleur un peu a cote de l'axe
         float s = dot(rel, H.nrm.xyz);
         float R = length(H.a.xyz - H.src.xyz);
         float d2 = max(r2 - s * s, 0.0);
-        if (d2 > 16.0 * sig2 || s < 0.0 || s > R + 4.0 * sqrt(sig2)) {
+        float csh = v_conv * s;
+        float dm = max(sqrt(d2) - 1.2 * csh, 0.0);
+        if (dm * dm > 16.0 * sig2 || s < 0.0 || s > R + 4.0 * sqrt(sig2)) {
             discard;
         }
-        E = H.f0.rgb * (exp(-0.5 * d2 / sig2) * 0.15915494 / sig2);
+        csh *= laser_hit_fade(1.2 * csh, sqrt(sig2));
+        vec3 pr = rel - H.nrm.xyz * s;   // de l'axe au point
+        vec3 e1 = cross(H.nrm.xyz, abs(H.nrm.y) < 0.9 ? vec3(0, 1, 0) : vec3(1, 0, 0));
+        e1 = normalize(e1);
+        vec3 e2 = cross(H.nrm.xyz, e1);
+        vec3 p1 = dot(pr, e1) - HIT_CONV_X * csh, p2 = dot(pr, e2) - HIT_CONV_Y * csh;
+        E = H.f0.rgb * (exp(-0.5 * (p1 * p1 + p2 * p2) / sig2) * (0.15915494 / sig2));
     }
     vec3 N = normalize(texelFetch(sampler2D(hit_normal, hit_smp), pix, 0).xyz);   // longueur : 1 + eau au sol
     vec3 alb = texelFetch(sampler2D(hit_albedo, hit_smp), pix, 0).rgb;
@@ -4458,6 +4656,85 @@ void main() {
     vec3 L = E * cosi * alb * 0.31830989 * exp(-cam_pos.w * (r + t)) * cam_fwd.w;
     frag_color = vec4(min(L, vec3(60000.0)), 0.0);
 }
+@end
+
+
+// Variantes avec la convergence RGB (LASER_CONV) : choisies quand l'ecart est regle et qu'un segment allume a des couleurs
+// melangees ; sinon, le code de la convergence n'est pas dans le shader.
+@cs cs_laser_shade_c
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f1_c
+#define LASER_FOG 1
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f2_c
+#define LASER_FOG 2
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f3_c
+#define LASER_FOG 3
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f4_c
+#define LASER_FOG 4
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_f5_c
+#define LASER_FOG 5
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_c
+#define LASER_GRADIENT 1
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f1_c
+#define LASER_GRADIENT 1
+#define LASER_FOG 1
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f2_c
+#define LASER_GRADIENT 1
+#define LASER_FOG 2
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f3_c
+#define LASER_GRADIENT 1
+#define LASER_FOG 3
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f4_c
+#define LASER_GRADIENT 1
+#define LASER_FOG 4
+#define LASER_CONV 1
+@include_block laser_shade_body
+@end
+
+@cs cs_laser_shade_grad_f5_c
+#define LASER_GRADIENT 1
+#define LASER_FOG 5
+#define LASER_CONV 1
+@include_block laser_shade_body
 @end
 
 // -------------------------------------------------------------------------------------
@@ -4500,6 +4777,18 @@ void main() {
 @program laser_shade_grad_f1 cs_laser_shade_grad_f1
 @program laser_shade_grad_f2 cs_laser_shade_grad_f2
 @program laser_shade_grad_f3 cs_laser_shade_grad_f3
+@program laser_shade_c cs_laser_shade_c
+@program laser_shade_f1_c cs_laser_shade_f1_c
+@program laser_shade_f2_c cs_laser_shade_f2_c
+@program laser_shade_f3_c cs_laser_shade_f3_c
+@program laser_shade_f4_c cs_laser_shade_f4_c
+@program laser_shade_f5_c cs_laser_shade_f5_c
+@program laser_shade_grad_c cs_laser_shade_grad_c
+@program laser_shade_grad_f1_c cs_laser_shade_grad_f1_c
+@program laser_shade_grad_f2_c cs_laser_shade_grad_f2_c
+@program laser_shade_grad_f3_c cs_laser_shade_grad_f3_c
+@program laser_shade_grad_f4_c cs_laser_shade_grad_f4_c
+@program laser_shade_grad_f5_c cs_laser_shade_grad_f5_c
 @program laser_shade_a cs_laser_shade_a
 @program laser_shade_f1_a cs_laser_shade_f1_a
 @program laser_shade_f2_a cs_laser_shade_f2_a

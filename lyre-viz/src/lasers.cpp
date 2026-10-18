@@ -20,7 +20,20 @@ const char* LASER_GRADIENT_NAMES[LG_COUNT] = {"Uni", "2 couleurs", "3 couleurs",
 const char* LASER_EFFECT_NAMES[LFX_COUNT] = {"Vague pan", "Vague tilt", "Cercle (pan/tilt)", "Huit", "Balayage aleatoire",
                                              "Eventail des figures",
                                              "Roulis", "Pulsation de l'ouverture", "Chenillard de traits",
-                                             "Chenillard d'intensite", "Arc-en-ciel", "Alternance de couleurs"};
+                                             "Chenillard d'intensite", "Arc-en-ciel", "Alternance de couleurs",
+                                             "Ciseaux (un sur deux en miroir)", "Miroir (deux moities)", "Eventail en tilt",
+                                             "Eventail de roulis", "Chenillard aller-retour", "Scintillement aleatoire",
+                                             "Sauts aleatoires", "Couleurs de la palette", "Rotation par pas",
+                                             "Convergence vers un point"};
+
+float laser_effect_angle_max(int type) {
+    switch (type) {
+        case LFX_ROLL: case LFX_ROLL_SPREAD: case LFX_ROLL_STEP: return 180.0f;
+        case LFX_PAN_WAVE: case LFX_TILT_WAVE: case LFX_CIRCLE: case LFX_FIGURE8: case LFX_RANDOM: case LFX_SPREAD:
+        case LFX_SCISSORS: case LFX_MIRROR: case LFX_TILT_SPREAD: case LFX_JUMP: return 60.0f;
+        default: return 0.0f;
+    }
+}
 
 namespace {
 
@@ -156,6 +169,8 @@ struct Builder {
     std::vector<int> arc_near;   // arc en cours : paves dont l'ombre peut le toucher
     std::vector<int> arc_bounds; // arc en cours : coupes (indices de traits), gardees d'un arc a l'autre (pas d'allocation)
     bool use_local = false;
+    // morceau d'eventail en cours (seg, seg_raw) : position de ses bords dans toute la figure (voir LaserSegment::eu0)
+    float cur_eu0 = 0, cur_eu1 = 0;
 
     void set_obstacles(const std::vector<Occluder>& a, const std::vector<Occluder>& b) {
         for (const std::vector<Occluder>* L : {&a, &b})
@@ -267,6 +282,11 @@ struct Builder {
             const float g = -ha + da * 0.5f * (float)(j0 + j1), h = da * 0.5f * (float)(j1 - j0);
             const float cg = std::cos(g), sg = std::sin(g);
             const vec3 ec2 = ec * cg + es * sg, es2 = es * cg - ec * sg;
+            // bords de ce morceau dans toute la figure (le morceau parent va de cur_eu0 a cur_eu1)
+            const float pe0 = cur_eu0, pe1 = cur_eu1;
+            struct EuRestore { Builder* b; float e0, e1; ~EuRestore() { b->cur_eu0 = e0; b->cur_eu1 = e1; } } eu_restore{this, pe0, pe1};
+            cur_eu0 = pe0 + (pe1 - pe0) * (g - h + ha) / (2.0f * ha);
+            cur_eu1 = pe0 + (pe1 - pe0) * (g + h + ha) / (2.0f * ha);
             const bool cnt = N < LASER_SHEET_TRAITS;
             if (nk == 1) {
                 seg_raw(S, ec2, es2, 0.0f, 1, c0, c0, -2.0f, 0.0f, cnt);
@@ -344,6 +364,8 @@ struct Builder {
         s.flux1 = f1;
         s.range1 = R1;
         s.cut_a = s.cut_b = 0.0f;
+        s.eu0 = cur_eu0;
+        s.eu1 = cur_eu1;
         segs.push_back(s);
         if (count && n < LASER_SHEET_TRAITS) traits += std::max(n, 1);
     }
@@ -647,8 +669,14 @@ struct Builder {
                         const vec3 Da = dir_of(point_at(q, sa)), Db = dir_of(point_at(q, sb));
                         const float half = 0.5f * std::acos(clampf(dot(Da, Db), -1.0f, 1.0f));
                         const vec3 fa = prof(ta) * Pp, fb = prof(tb) * Pp;
+                        // eventail (une seule droite, ouverte) : le scanner rebrousse chemin a ses deux bouts (bords brillants)
+                        if (!run.closed && pcs.size() == 1) {
+                            cur_eu0 = 2.0f * (s0 + sa) / L - 1.0f;
+                            cur_eu1 = 2.0f * (s0 + sb) / L - 1.0f;
+                        }
                         if (half < 1e-6f) seg(S, Da, any_perp(Da), 0.0f, 1, (fa + fb) * 0.5f, (fa + fb) * 0.5f);
                         else seg(S, normalize(Da + Db), normalize(Db - Da), half, cont ? LASER_SHEET_TRAITS : nk, fa, fb);
+                        cur_eu0 = cur_eu1 = 0.0f;
                     }
                 }
                 s0 += q.len;
@@ -807,6 +835,15 @@ void LaserRig::add_effect(int type) {
         case LFX_DIMMER_CHASE: e.size = 1; e.speed = 1; e.wave = WAVE_SQUARE; e.duty = 0.3f; break;
         case LFX_RAINBOW: e.speed = 0.1f; e.size = 1; break;
         case LFX_COLOR_ALT: e.speed = 0.5f; e.wave = WAVE_SQUARE; e.color_a = {0, 1, 0}; e.color_b = {0, 0.3f, 1}; break;
+        case LFX_SCISSORS: case LFX_MIRROR: e.size = 15; e.speed = 0.2f; e.spread = 0; break;
+        case LFX_TILT_SPREAD: e.size = 10; e.speed = 0; e.spread = 0; break;
+        case LFX_ROLL_SPREAD: e.size = 90; e.speed = 0; e.spread = 0; break;
+        case LFX_BOUNCE: e.size = 0.2f; e.speed = 0.25f; e.spread = 0; break;
+        case LFX_SPARKLE: e.size = 0.35f; e.speed = 2; e.wave = WAVE_SQUARE; e.duty = 0.5f; e.spread = 0; break;
+        case LFX_JUMP: e.size = 10; e.speed = 1; e.spread = 0; break;
+        case LFX_PALETTE: e.size = 1; e.speed = 0.1f; e.wave = WAVE_SQUARE; break;
+        case LFX_ROLL_STEP: e.size = 45; e.speed = 1; e.spread = 0; break;
+        case LFX_CONVERGE: e.size = 0; e.speed = 0.1f; e.spread = 0; e.color_a = {-12, 7, 0}; break;
     }
     effects.push_back(e);
 }
@@ -1217,6 +1254,75 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
                 case LFX_DIMMER_CHASE: o.dimmer *= 1.0f - clampf(e.size, 0, 1) * (1.0f - w01); break;
                 case LFX_RAINBOW: o.color = hsv2rgb(ph, clampf(e.size, 0, 1), 1); break;
                 case LFX_COLOR_ALT: o.color = w > 0 ? e.color_a : e.color_b; break;
+                // effets des spectacles
+                case LFX_SCISSORS: o.pan += e.size * w * ((i & 1) ? -1.0f : 1.0f); break;
+                case LFX_MIRROR: {
+                    // moitie gauche et moitie droite de la selection en sens opposes (le laser du milieu ne bouge pas)
+                    const float side = 2.0f * (float)i - (float)(n - 1);
+                    o.pan += e.size * w * (side > 0.0f ? 1.0f : (side < 0.0f ? -1.0f : 0.0f));
+                    break;
+                }
+                case LFX_TILT_SPREAD:
+                case LFX_ROLL_SPREAD: {
+                    const float centered = n > 1 ? 2.0f * (float)i / (float)(n - 1) - 1.0f : 0.0f;
+                    const float amount = e.speed > 0 ? effect_wave(e.wave, e.phase, e.duty) : 1.0f;
+                    (e.type == LFX_TILT_SPREAD ? o.tilt : o.roll) += e.size * centered * amount;
+                    break;
+                }
+                case LFX_BOUNCE: {
+                    // position du groupe allume : aller-retour sur la selection (forme carre : bords nets)
+                    const float f = fractf(e.phase), pos = f < 0.5f ? 2.0f * f : 2.0f - 2.0f * f;
+                    const float d = std::fabs((n > 1 ? (float)i / (float)(n - 1) : 0.5f) - pos);
+                    const float wd = clampf(e.size, 0.02f, 1.0f);
+                    o.dimmer *= e.wave == WAVE_SQUARE ? (d <= 0.5f * wd ? 1.0f : 0.0f)
+                                                      : 0.5f + 0.5f * std::cos(PI * std::min(d / wd, 1.0f));
+                    break;
+                }
+                case LFX_SPARKLE: {
+                    const uint32_t k = (uint32_t)(int64_t)std::floor(ph);
+                    const bool on = hash01((int)((uint32_t)idx * 7919u + k * 104729u + 17u)) < e.size && fractf(ph) < e.duty;
+                    o.dimmer *= on ? 1.0f : 0.0f;
+                    break;
+                }
+                case LFX_JUMP: {
+                    const uint32_t k = (uint32_t)(int64_t)std::floor(ph);
+                    o.pan += e.size * (2.0f * hash01((int)((uint32_t)idx * 7919u + k * 104729u + 3u)) - 1.0f);
+                    o.tilt += 0.6f * e.size * (2.0f * hash01((int)((uint32_t)idx * 7919u + k * 104729u + 11u)) - 1.0f);
+                    break;
+                }
+                case LFX_PALETTE: {
+                    // palette du rig, sinon les 3 couleurs du laser ; les couleurs 2 et 3 suivent (degrades)
+                    const vec3 own[3] = {o.color, o.color2, o.color3};
+                    const int np = palette.empty() ? 3 : (int)palette.size();
+                    auto at = [&](int j) { j %= np; return palette.empty() ? own[j] : palette[j]; };
+                    const float x = fractf(ph) * (float)np;
+                    const int j0 = std::min((int)x, np - 1);
+                    if (e.wave == WAVE_SINE) {
+                        const float t = x - (float)j0, s = t * t * (3.0f - 2.0f * t);
+                        o.color = lerp(at(j0), at(j0 + 1), s);
+                        o.color2 = lerp(at(j0 + 1), at(j0 + 2), s);
+                        o.color3 = lerp(at(j0 + 2), at(j0 + 3), s);
+                    } else {
+                        o.color = at(j0);
+                        o.color2 = at(j0 + 1);
+                        o.color3 = at(j0 + 2);
+                    }
+                    break;
+                }
+                case LFX_ROLL_STEP: o.roll += std::fmod(e.size * std::floor(ph), 23040.0f); break;
+                case LFX_CONVERGE: {
+                    // pan et tilt qui envoient l'axe de la figure sur le point (remplacent ceux du programmeur : a placer
+                    // avant les autres effets de mouvement) ; le point tourne sur un cercle vertical face a la scene
+                    const LaserFixture& lf = fixtures[idx];
+                    const vec3 P = e.color_a + vec3(0.0f, e.size * std::sin(TAU * ph), e.size * std::cos(TAU * ph));
+                    const vec3 D = P - (lf.mount.pos + lf.aim * 0.17f);
+                    const float x = dot(D, lf.aim);
+                    if (x > 0.05f * length(D)) {
+                        o.pan = std::atan(dot(D, lf.right) / x) / DEG;
+                        o.tilt = std::atan(dot(D, lf.up) / x) / DEG;
+                    }
+                    break;
+                }
             }
         }
     }
@@ -1410,7 +1516,7 @@ void LaserRig::update(float t, float dt, vec3 hall_min, vec3 hall_max) {
                     FigRun r;
                     for (int k = 0; k <= m; k++) {
                         const float u = (float)k / (float)m, a = -ha + 2.0f * ha * u;
-                        const float beta = amp * std::sin(TAU * (o.wave_cycles * u - 0.5f * (float)time));
+                        const float beta = amp * std::sin(TAU * (o.wave_cycles * u - o.wave_speed * (float)time));
                         r.p.push_back({std::tan(a), std::tan(beta) / std::cos(a)});
                     }
                     r.traits = n;

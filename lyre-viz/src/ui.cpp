@@ -4,6 +4,7 @@
 #include "gpu_profiler.h"
 #include "imgui.h"
 #include "sokol_gfx.h"
+#include "spectacles.h"
 #include <algorithm>
 #include <cstdio>
 
@@ -531,13 +532,18 @@ void laser_effects_ui() {
             if (ImGui::Button("Supprimer")) remove = i;
             ImGui::Combo("Forme", &e.wave, WAVE_NAMES, WAVE_COUNT);
             ImGui::SliderFloat("Vitesse", &e.speed, 0, 3, "%.2f cycle/s");
-            const bool angle = e.type <= LFX_ROLL;
-            if (angle) ImGui::SliderFloat("Amplitude", &e.size, 0, e.type == LFX_ROLL ? 180.0f : 60.0f, "%.0f deg");
-            else if (e.type == LFX_TRAIT_CHASE) ImGui::SliderFloat("Largeur de la vague", &e.size, 0.02f, 1);
-            else if (e.type != LFX_COLOR_ALT) ImGui::SliderFloat("Amplitude", &e.size, 0, 1);
+            const float amax = laser_effect_angle_max(e.type);
+            if (amax > 0) ImGui::SliderFloat("Amplitude", &e.size, 0, amax, "%.0f deg");
+            else if (e.type == LFX_TRAIT_CHASE || e.type == LFX_BOUNCE) ImGui::SliderFloat("Largeur de la vague", &e.size, 0.02f, 1);
+            else if (e.type == LFX_SPARKLE) ImGui::SliderFloat("Part des lasers allumes", &e.size, 0, 1);
+            else if (e.type == LFX_CONVERGE) {
+                ImGui::SliderFloat("Rayon du cercle", &e.size, 0, 10, "%.1f m");
+                ImGui::DragFloat3("Point vise (m)", &e.color_a.x, 0.1f);
+            }
+            else if (e.type != LFX_COLOR_ALT && e.type != LFX_PALETTE) ImGui::SliderFloat("Amplitude", &e.size, 0, 1);
             ImGui::SliderFloat("Decalage", &e.spread, 0, 720, "%.0f deg");
             ImGui::SliderInt("Ailes", &e.wings, 1, 8);
-            if (e.wave == WAVE_SQUARE) ImGui::SliderFloat("Rapport cyclique", &e.duty, 0.05f, 0.95f);
+            if (e.wave == WAVE_SQUARE || e.type == LFX_SPARKLE) ImGui::SliderFloat("Rapport cyclique", &e.duty, 0.05f, 0.95f);
             if (e.type == LFX_COLOR_ALT) {
                 ImGui::ColorEdit3("Couleur A", &e.color_a.x);
                 ImGui::ColorEdit3("Couleur B", &e.color_b.x);
@@ -591,6 +597,30 @@ void laser_global_ui() {
             ImGui::SliderFloat("2e octave : portee (niveau)##l", &r.laser_vol_fine_lod, -2, 4, "%.1f");
             ImGui::SliderFloat("2e octave : poids##l", &r.laser_vol_fine_weight, 0, 1.5f, "%.2f");
         }
+    }
+    ImGui::SeparatorText("Rendu photo (essais)");
+    ImGui::SliderFloat("Bords brillants (scanner)##l", &r.laser_edge, 0, 1, "%.2f");
+    ImGui::SetItemTooltip("Le scanner ralentit au bout de chaque balayage : la lumiere se concentre sur les bords de l'eventail.\n0 : nappe uniforme, 1 : balayage sinusoidal.");
+    if (r.laser_edge > 0.0f) ImGui::SliderFloat("Largeur des bords##l", &r.laser_edge_w, 0.005f, 0.3f, "%.3f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderFloat("Halo des lasers##l", &r.laser_halo, 0, 3, "%.2f");
+    ImGui::SetItemTooltip("Lumiere des nappes diffusee une 2e fois par la brume, et lueur de l'objectif : halo large et doux autour des nappes.");
+    if (r.laser_halo > 0.0f) ImGui::SliderFloat("Etendue du halo##l", &r.laser_halo_size, 0.3f, 1.8f, "%.2f");
+    ImGui::SliderFloat("Convergence RGB##l", &r.laser_conv, 0, 3, "%.2f mrad");
+    ImGui::SetItemTooltip("Les diodes rouge, verte et bleue d'un projecteur RGB ne sont jamais parfaitement alignees :\nchaque couleur part avec un petit ecart d'angle. Bords colores sur les nappes, les traits et les impacts\n(seulement pour les couleurs melangees : un laser vert pur n'a pas de franges).");
+    ImGui::SliderFloat("Aberration de l'objectif##l", &r.laser_lens_ca, 0, 1, "%.2f %%");
+    ImGui::SetItemTooltip("Defaut de l'appareil photo (pas du laser) : franges rouges et bleues autour des lasers intenses, plus fortes au bord de l'image.");
+    ImGui::SliderFloat("Exposition##l", &r.exposure, 0.1f, 8.0f, "%.2f", ImGuiSliderFlags_Logarithmic);
+    ImGui::SliderFloat("Blanchiment##l", &r.laser_white, 0.0f, 1.5f, "%.2f");
+    // point de vue et reglages, a copier pour les retrouver (option --cam du lancement, cles --set)
+    {
+        const Camera& c = app.cam;
+        char buf[512];
+        std::snprintf(buf, sizeof(buf), "--cam %.2f,%.2f,%.2f,%.1f,%.1f --set laseredge=%.2f --set laseredgew=%.3f --set laserhalo=%.2f "
+                      "--set laserhalosize=%.2f --set laserconv=%.2f --set laserlensca=%.2f --set exposure=%.2f --set laserwhite=%.2f --set laserpower=%.2f",
+                      c.pos.x, c.pos.y, c.pos.z, c.yaw / DEG, c.pitch / DEG, r.laser_edge, r.laser_edge_w, r.laser_halo, r.laser_halo_size,
+                      r.laser_conv, r.laser_lens_ca, r.exposure, r.laser_white, app.lasers.power_w);
+        ImGui::TextWrapped("%s", buf);
+        if (ImGui::Button("Copier (vue et reglages)##l")) ImGui::SetClipboardText(buf);
     }
 }
 
@@ -725,7 +755,7 @@ void ambiances_ui() {
         if (i % AMBIANCE_COLS != 0) ImGui::SameLine();
         const AmbianceInfo& a = ambiance_info(i);
         const vec3 t = a.tint;
-        const bool cur = i == app.ambiance;
+        const bool cur = i == app.ambiance && !g_spectacle.running;
         const float k = cur ? 0.5f : 0.18f;
         ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.08f + t.x * k, 0.08f + t.y * k, 0.09f + t.z * k, 1));
         ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.1f + t.x * 0.4f, 0.1f + t.y * 0.4f, 0.11f + t.z * 0.4f, 1));
@@ -740,6 +770,8 @@ void ambiances_ui() {
         if (cur) dl->AddRect(mn, mx, IM_COL32(255, 255, 255, 230), ImGui::GetStyle().FrameRounding, 0, 2.0f);
     }
     ImGui::Spacing();
+    spectacle_ui(app.lasers);   // spectacles : generateur de scenes lasers + lyres (src/spectacles.cpp)
+    if (g_spectacle.running) return;   // le spectacle affiche lui-meme ce qui est en cours
     const AmbianceInfo& a = ambiance_info(app.ambiance);
     ImGui::SeparatorText("En cours");
     ImGui::Text("%d. %s", app.ambiance + 1, a.name);
