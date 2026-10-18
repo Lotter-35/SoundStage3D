@@ -27,10 +27,17 @@ if (Get-Process LyreViz -ErrorAction SilentlyContinue) {
     Write-Warning "Une instance de LyreViz est ouverte : elle partage la carte graphique et fausse les mesures."
 }
 $path = (Resolve-Path $Exe).Path
+# chauffe : un lancement court, jete (le premier lancement d'une serie est 10 a 15 % plus rapide, carte froide)
+Write-Host "Chauffe de la carte (lancement jete)"
+Remove-Item -Recurse -Force "bench\$Name`_chauffe" -ErrorAction SilentlyContinue
+Start-Process -FilePath $path -ArgumentList @($(if ($Lasers) { '--bench-lasers' } elseif ($Lyres) { '--bench-lyres' } else { '--bench' }), '--fullscreen', '--fast', '--quick', '--benchdir', "bench\$Name`_chauffe") -Wait | Out-Null
+Remove-Item -Recurse -Force "bench\$Name`_chauffe" -ErrorAction SilentlyContinue
 $listA = @()
 $listB = @()
 for ($i = 0; $i -lt $Rounds; $i++) {
-    foreach ($k in 'A', 'B') {
+    # ordre alterne d'un tour a l'autre : le premier lancement d'une serie est 10 a 15 % plus rapide (carte froide)
+    $order = if ($i % 2 -eq 0) { @('A', 'B') } else { @('B', 'A') }
+    foreach ($k in $order) {
         $sets = if ($k -eq 'A') { $SetA } else { $SetB }
         $dir = "bench\$Name`_$k$i"
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue

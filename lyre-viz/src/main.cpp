@@ -36,6 +36,7 @@ App app;
 
 static int g_quit_after_frames = 0;   // --frames N : quitte apres N images (tests)
 static bool g_novsync = false;
+static bool g_vsync = false;      // --vsync : synchro verticale meme au banc (apres --bench-lasers...)
 static bool g_fullscreen = true;    // plein ecran sans bordure au lancement (--windowed : fenetre ; F11 bascule)
 // --behind : la fenetre s'ouvre derriere les autres et rend le clavier a la fenetre active (bancs lances
 // pendant que l'on travaille a cote). Elle reste visible si on la ramene devant. Mais Windows donne la
@@ -117,11 +118,15 @@ struct Case {
     void (*lyres_setup)() = nullptr;
     bool moving = false;
     int explore = -1;        // banc d'exploration (--bench-explore) : indice dans explore_cfgs
+    std::string ab_set;      // --abset : reglage du passage A de ce cas (vide : B, reglages par defaut)
 };
 std::vector<Case> cases;
 bool active = false;
 bool quick = false;
 std::vector<int> only;     // --cases 3,14 : seulement ces cas (numeros de la liste complete)
+// --abset cle=valeur : chaque cas joue deux fois de suite, A avec ce reglage, puis B sans : une option comparee dans un meme
+// lancement (une passe longue derive de 10 a 20 % d'un lancement a l'autre)
+std::string ab_set;
 bool laser_bench = false;   // --bench-lasers : cas L1 a L6 et M1 (PLAN-LASERS.md, section 10)
 bool lyre_bench = false;    // --bench-lyres : lyres qui visent toutes le meme point, zoom, mouvement (lasers eteints)
 // --bench-explore : d'ou vient le lag des lasers (src/bench_explore.h) ; --nosweep : sans le balayage, --random N :
@@ -143,6 +148,7 @@ std::map<std::string, std::vector<float>> samples;
 std::vector<std::string> order;
 std::vector<float> totals, cpu_frames;
 std::vector<float> cpu_rig, cpu_fog, cpu_render, cpu_wait, cpu_total, beam_frags, gpu_gaps, outside;
+std::vector<float> present_ms, present_skip;   // duree du Present (image precedente), image non presentee (1)
 std::vector<float> cpu_laser, cpu_laser_build, cpu_laser_hits, laser_pairs, laser_tile_avg, laser_tile_max, laser_tiles_hit;
 FILE* frames_csv = nullptr;   // une ligne par image (diagnostic)
 unsigned last_id = 0;
@@ -313,6 +319,7 @@ void start_case() {
     if (c.explore >= 0)
         for (const std::string& kv : explore_cfgs[c.explore].sets) set_render_option(app.rs, kv.c_str());
     if (c.opts) c.opts(app.rs);
+    if (!c.ab_set.empty()) set_render_option(app.rs, c.ab_set.c_str());
     apply_scenario(c.scenario);
     if (c.lyres_setup) c.lyres_setup();
     // banc des lasers : lyres allumees (toutes, une sur deux ou aucune), motif des lasers, fumee
@@ -354,6 +361,8 @@ void start_case() {
     beam_frags.clear();
     gpu_gaps.clear();
     outside.clear();
+    present_ms.clear();
+    present_skip.clear();
     for (std::vector<float>* v : {&cpu_laser, &cpu_laser_build, &cpu_laser_hits, &laser_pairs, &laser_tile_avg, &laser_tile_max, &laser_tiles_hit}) v->clear();
 }
 
@@ -386,6 +395,18 @@ void begin() {
             if (k >= 1 && k <= (int)cases.size()) kept.push_back(cases[k - 1]);
         cases = kept;
     }
+    if (!ab_set.empty()) {
+        std::vector<Case> ab;
+        for (const Case& c : cases) {
+            Case a = c, b = c;
+            a.name += " [A " + ab_set + "]";
+            a.ab_set = ab_set;
+            b.name += " [B]";
+            ab.push_back(a);
+            ab.push_back(b);
+        }
+        cases = ab;
+    }
 #if defined(_WIN32)
     std::string cmd = "mkdir \"" + dir + "\" 2>nul";
 #else
@@ -394,7 +415,8 @@ void begin() {
     (void)std::system(cmd.c_str());
     out = std::fopen((dir + "/resultats.txt").c_str(), "w");
     frames_csv = std::fopen((dir + "/images.csv").c_str(), "w");
-    if (frames_csv) std::fprintf(frames_csv, "cas;image;duree_ms;cpu_ms;attente_gpu_ms;gpu_ms\n");
+    // fumee_ms : simulation de la fumee (CPU) ; present_ms, non_presentee : Present de l'image precedente (sokol_app.h)
+    if (frames_csv) std::fprintf(frames_csv, "cas;image;duree_ms;cpu_ms;attente_gpu_ms;gpu_ms;fumee_ms;lasers_cpu_ms;present_ms;non_presentee;lasers_echelle\n");
     if (explore_bench) {
         explore_csv = std::fopen((dir + "/exploration.csv").c_str(), "w");
         if (explore_csv)
@@ -423,8 +445,13 @@ void after_frame(int w, int h) {
     frame_in_case++;
     if (frame_in_case > WARMUP) {
         cpu_frames.push_back((float)frame_ms_now);
-        if (frames_csv) std::fprintf(frames_csv, "%d;%d;%.3f;%.3f;%.3f;%.3f\n", index + 1, frame_in_case, frame_ms_now, app.timings.cpu_ms,
-                                     gpuprof::last_wait_ms(), gpuprof::last_total_ms());
+        const float pres = sapp_d3d11_last_present_ms();
+        const bool skipped = sapp_d3d11_last_present_result() == (long)0x887A000A;   // DXGI_ERROR_WAS_STILL_DRAWING
+        present_ms.push_back(pres);
+        present_skip.push_back(skipped ? 1.0f : 0.0f);
+        if (frames_csv) std::fprintf(frames_csv, "%d;%d;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%.3f;%d;%.2f\n", index + 1, frame_in_case, frame_ms_now,
+                                     app.timings.cpu_ms, gpuprof::last_wait_ms(), gpuprof::last_total_ms(), app.timings.fog_ms,
+                                     app.timings.laser_ms, pres, skipped ? 1 : 0, app.renderer.stats.laser_scale);
         outside.push_back((float)frame_ms_now - app.timings.cpu_ms);
         cpu_rig.push_back(app.timings.rig_ms);
         cpu_fog.push_back(app.timings.fog_ms);
@@ -515,6 +542,12 @@ void after_frame(int w, int h) {
         app.renderer.stats.occluded_lights, app.renderer.stats.occ_pairs);
     log("  GPU entre deux images (presentation, autres programmes) : %.2f ms ; hors image (presentation, fenetre) : %.2f ms\n",
         median(gpu_gaps), median(outside));
+    {
+        float fog_max = 0;
+        for (float x : cpu_fog) fog_max = std::max(fog_max, x);
+        log("  Presentation : Present %.2f ms en moyenne, %.0f %% d'images non presentees ; fumee CPU : %.2f ms au plus\n",
+            mean(present_ms), 100.0 * mean(present_skip), fog_max);
+    }
     log("  Fumee : %.1f millions de couples (pixel, faisceau) calcules ; faisceaux par niveau %d / %d / %d ; tables : %d lignes, %.2f millions de cases, echelle %.2f\n",
         median(beam_frags) / 1e6, app.renderer.stats.tier_count[0], app.renderer.stats.tier_count[1], app.renderer.stats.tier_count[2],
         app.renderer.stats.table_rows, app.renderer.stats.table_cells / 1e6, app.renderer.stats.table_scale);
@@ -530,6 +563,20 @@ void after_frame(int w, int h) {
                 "%.1f millions de couples (pixel, segment) ; %d segments perdus (grosses tuiles pleines)\n",
                 median(laser_tiles_hit), app.renderer.stats.laser_tiles_x * app.renderer.stats.laser_tiles_y, median(laser_tile_avg),
                 median(laser_tile_max), median(laser_pairs) / 1e6, app.renderer.stats.laser_bin_overflow);
+        const RenderStats& rc = app.renderer.stats;
+        if (g_stats && rc.laser_counted && rc.laser_segments > 0) {
+            // etape 1 de PLAN-OPTIM-LASERS.md (derniere image lue) : lumiere noyee (1.3), lumiere lente interpolable (1.1)
+            auto pc = [](double a, double b) { return b > 0 ? 100.0 * a / b : 0.0; };
+            for (int k = 0; k < 2; k++)
+                if (rc.laser_lit[k] > 0)
+                    log("  Lasers (noyes, %s) : %.1f M couples qui eclairent ; pixel deja sature : %.1f %% (2 fois : %.1f %%) ; "
+                        "moins de 1 %% du pixel : %.1f %%\n", k ? "arcs" : "nappes et traits", rc.laser_lit[k] / 1e6,
+                        pc(rc.laser_drown1[k], rc.laser_lit[k]), pc(rc.laser_drown2[k], rc.laser_lit[k]), pc(rc.laser_small[k], rc.laser_lit[k]));
+            if (rc.laser_fan_lit > 0)
+                log("  Lasers (interpolation 1.1, eventails) : %.1f M couples ; interpolables %.1f %% ; ecart au pixel > 1 %% : %.2f %%, "
+                    "> 5 %% : %.3f %% des interpolables\n", rc.laser_fan_lit / 1e6, pc(rc.laser_fan_interp, rc.laser_fan_lit),
+                    pc(rc.laser_fan_err1, rc.laser_fan_interp), pc(rc.laser_fan_err5, rc.laser_fan_interp));
+        }
     }
     index++;
     if (index >= (int)cases.size()) {
@@ -1258,6 +1305,9 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "laserhalo") r.laser_halo = v;
     else if (k == "laserhalosize") r.laser_halo_size = v;
     else if (k == "laserconv") r.laser_conv = v;
+    else if (k == "laseradaptive") r.laser_adaptive = v != 0;
+    else if (k == "laserscale") r.laser_scale = v;
+    else if (k == "lasermerge") r.laser_merge = v != 0;
     else if (k == "laserlensca") r.laser_lens_ca = v;
     else if (k == "laserg") r.laser_g_fwd = v;
     else if (k == "laserg2") r.laser_g_soft = v;
@@ -1287,6 +1337,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
     for (int i = 1; i < argc; i++) {
         if (!std::strcmp(argv[i], "--frames") && i + 1 < argc) g_quit_after_frames = std::atoi(argv[++i]);
         else if (!std::strcmp(argv[i], "--novsync")) g_novsync = true;
+        else if (!std::strcmp(argv[i], "--vsync")) g_vsync = true;
         else if (!std::strcmp(argv[i], "--noui")) app.show_ui = false;
         else if (!std::strcmp(argv[i], "--nogi")) app.rs.gi = false;
         else if (!std::strcmp(argv[i], "--scale") && i + 1 < argc) app.rs.render_scale = (float)std::atof(argv[++i]);
@@ -1312,6 +1363,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
             if (std::sscanf(argv[++i], "%d,%d", &bench::WARMUP, &bench::MEASURE) != 2) std::printf("--measure chauffe,mesure\n");
         }
         else if (!std::strcmp(argv[i], "--quick")) bench::quick = true;
+        else if (!std::strcmp(argv[i], "--abset") && i + 1 < argc) bench::ab_set = argv[++i];
         else if (!std::strcmp(argv[i], "--cases") && i + 1 < argc) {
             for (const char* c = argv[++i]; *c;) {
                 bench::only.push_back(std::atoi(c));
@@ -1359,6 +1411,7 @@ sapp_desc sokol_main(int argc, char* argv[]) {
     d.high_dpi = true;
     d.fullscreen = g_fullscreen;
     d.swap_interval = 1;
+    if (g_vsync) g_novsync = false;   // --vsync : banc avec la synchro verticale (cadence du spectacle)
 #if defined(LYREVIZ_LEGACY_SAPP)
     if (g_novsync) d.swap_interval = 0;   // ancienne version de sokol_app (Mac avec un Xcode < 15)
 #else

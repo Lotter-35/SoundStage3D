@@ -1,6 +1,6 @@
 # Optimisation des lasers : plan
 
-Plan du 18 octobre 2026. **Rien n'est codé** : c'est une base de discussion avant de lancer une session de codage. Lasers seulement ; les lyres ne changent pas (sauf mention).
+Plan du 18 octobre 2026, validé le même jour. Session de codage en cours : avancement et mesures en section 8. Lasers seulement ; les lyres ne changent pas (sauf mention).
 
 - Objectif : 3840 × 2160 à 120 img/s sur la GTX 1080, soit **8,33 ms par image**.
 - Mesures de départ (état du dépôt au commit `4fc3f93`, réglages par défaut : fumée v2 « Nuages larges et doux », rendu photo, convergence RGB) :
@@ -291,3 +291,158 @@ Questions posées :
 2. **Niveau 1** (1.1 à 1.4) : accepté, à condition que les agrandissements avant / après ne montrent rien ?
 3. **Niveau 2** : quels paliers, et dans quel ordre ? Par exemple : filaments → convergence → 80 % → 70 % → 50 %, puis FSR.
 4. **Synchro verticale** pour le spectacle : à 120 Hz (images régulières), ou libre avec « tearing » (comme les bancs) ?
+
+## 8. Avancement
+
+### Étape 1 : mesures pour décider (18 octobre 2026, historique 43)
+
+Rien ne change à l'image ni aux variantes du shader (bytecode identique, vérifié ; seule la remise à zéro des compteurs, dans `cs_laser_setup`, passe de 4 à 16). Banc des lasers complet, en mouvement, rapide, 2 lancements contre `bench\ref\avant_mesures.exe` (`bench\e1_journal_*`) : images identiques (0 % de pixels changés), temps dans le bruit.
+
+**Ajouts :**
+
+- `images.csv` : colonnes `fumee_ms` (simulation de la fumée sur le CPU), `lasers_cpu_ms`, `present_ms` (durée du `Present` de l'image précédente) et `non_presentee` (`DXGI_ERROR_WAS_STILL_DRAWING`). Mesure du `Present` ajoutée dans `external/sokol/sokol_app.h` (`sapp_d3d11_last_present_ms`, `sapp_d3d11_last_present_result`).
+- `resultats.txt` : ligne « Presentation » (durée moyenne du `Present`, part d'images non présentées, pas de fumée le plus long).
+- `--stats` : variantes de mesure du shader (`LASER_STATS`, fumée spatiale 4 et 5 seulement, image identique) : lumière noyée (1.3), couples faibles, lumière lente interpolable (1.1). Lignes « Lasers (noyes, ...) » et « Lasers (interpolation 1.1, ...) » ; mesures dans `bench\e1_stats`.
+
+**Cadence d'affichage (journal par image) :**
+
+| Cas | Image | GPU | Image − GPU | CPU (hors attente) | dont fumée (moyenne / pas) |
+|---|---|---|---|---|---|
+| L1 / public | 22,1 ms | 21,3 | 0,8 | 2,8 | 2,0 / 5 à 8 ms |
+| M1 / public | 16,3 ms | 15,7 | 0,6 | 3,3 | 2,0 / 5 à 9 ms |
+| L4 traits séparés | 8,6 ms | 7,5 | 1,1 | 2,7 | 1,9 / 5 ms |
+| I2 ILDA faisceaux | 10,4 ms | 8,4 | 2,0 | 3,1 | 2,0 / 5 à 8 ms |
+| Scène seule | 5,2 ms | 3,0 | 2,1 | 2,3 | 1,9 / 5 à 6 ms |
+
+- **Le pas de la simulation de fumée règle tout le rythme** : au banc (pas fixe de 1/60 s, simulation à 20 pas par seconde), une image sur trois porte un pas de 5 à 8 ms (25 ms une fois, L6). Les durées d'image suivent ce cycle de 3 (L4 : 6,3 / 13,3 / 6,7 ms ; I2 : 6,2 / 2,0 / 22,9 ms).
+- **Le pas coûte aussi du temps GPU** : l'image qui le suit prend 1,8 à 2,7 ms de GPU de plus (L4 : 8,4 au lieu de 6,6 ms ; scène seule +0,9 ms), dans la passe « fumée : faisceaux » (L4 : médiane 0,55 ms, moyenne 1,22 ms) et les envois. Hypothèse : attente liée à l'envoi de la texture de la fumée (`fog.upload`, envoyée à chaque image) quand elle change. À vérifier à l'étape 2 (0.2). C'est une part de l'écart moyenne / médiane du GPU (L4 : 7,5 / 6,6 ms).
+- **Scène seule : le CPU est la limite** (2,3 ms par image, dont 1,9 ms de fumée en moyenne), pas le GPU (3,0 ms).
+- `Present` : 0,1 à 0,25 ms seulement, mais **55 à 66 % des images ne sont pas présentées** au banc (`DXGI_PRESENT_DO_NOT_WAIT` avec 2 tampons : la file est pleine, l'image est jetée). L'attente se fait dans notre limiteur de latence (`gpuprof::frame_begin`, 2 images d'avance).
+- Écart image − GPU : 0,4 à 0,8 ms dans les cas lourds, 1,1 à 2,1 ms dans les cas légers (moins que les 1,7 à 2,7 ms du plan : L4 est ici à 8,6 ms au lieu de 9,9).
+- Conséquence pour l'étape 2 : **0.2 (fumée en tâche de fond) est la partie la plus utile** ; 0.1 (tearing, 3 tampons) règle les images jetées et la latence. À 120 Hz en spectacle, le pas tomberait une image sur six.
+
+**Lumière noyée (1.3) : abandonnée.** Aucun couple ne tombe dans un pixel déjà saturé (0,0 % dans les 22 cas, couleur par couleur, 1 fois et 2 fois le seuil d'ACES). Les images le confirment : 0,05 à 0,3 % des pixels ont une seule couleur à 255 (sorties, impacts). Les nappes s'empilent, mais chacune est faible : la somme reste sous la saturation. Variante « couple de moins de 1 % de la lumière déjà dans le pixel » (piste 5 de `docs/optimisations-lasers.md`) : 2 à 28 % des couples dans les cas L et M1, 35 à 72 % en ILDA et L7 ; mais ce critère dépend de l'ordre des segments, et 50 couples de 1 % font la moitié du pixel : pas sûr d'être invisible. Non retenue sans autre étude.
+
+**Lumière lente interpolée (1.1), éventails** (contrôle au centre de la tuile de 16 px à 1 %) :
+
+| Cas | Couples interpolables | Écart au pixel > 1 % | > 5 % (des interpolables) |
+|---|---|---|---|
+| L1 / public, scène, trusses | 58 / 50 / 53 % | 8 / 11 / 9 % | 0,7 / 1,2 / 1,3 % |
+| L3 dans les nappes | 70 % | 4,5 % | 0,65 % |
+| L5 gros plan | 52 % | 10 % | 1,4 % |
+| L6 sol et obstacles | 66 % | 6 % | 0,45 % |
+| M1 public, scène | 65 / 42 % | 6 / 15 % | 0,55 / 1,5 % |
+| L7 | 76 % | 3,7 % | 0,44 % |
+| I1, I3 | 59 / 54 % | 8 / 8,6 % | 0,7 / 1,1 % |
+
+- Seulement **42 à 76 % des couples** passent le contrôle, au lieu de « presque tous » dans l'estimation de 1.1. Gain révisé pour les nappes planes : environ −20 à −25 % de la passe (au lieu de −25 à −35 %), si la part lente pèse la moitié du prix d'un couple.
+- Le contrôle au seul centre laisse passer des écarts : 0,4 à 1,8 % des couples interpolés s'écartent de plus de 5 % au pixel (bords des bancs, filaments). Pour l'étape 4 : contrôle plus serré (milieux des bords en plus du centre) ou demi-tuiles de 8 px là où le contrôle échoue, et agrandissements avant / après.
+- Arcs : pas encore mesuré (étape 4, après les nappes planes).
+
+### Étape 2 : cadence d'affichage (0.1) et fumée du CPU en tâche de fond (0.2) (18 octobre 2026, historique 44)
+
+Référence `bench\ref\avant_cadence.exe`. Bancs `bench\e2_final2_*` (complet, en mouvement, 2 lancements), `bench\e2_static_*` (images en scène immobile), `bench\e2_lyres_*`, `bench\e2_spect_{A,B,V}.tsv` (30 spectacles : avant, après sans synchro, après avec la synchro à 120 Hz), essais `bench\e2_pm_*`, `e2_buf*`, `e2_lat*`, `e2_vsync`.
+
+**Ce qui est fait :**
+
+- **0.2 Fumée** (`src/fog.cpp`, `fog.h`) : le pas de la simulation (advection sur 3 cœurs, champ des bancs de la fumée v2) tourne dans un fil lancé à la fin de `FogSim::update` et attendu au début de la suivante (et avant `init`, `clear`, `prefill`). La carte envoyée au GPU a une image de retard sur la simulation : même suite d'états. Images identiques en scène immobile ; en mouvement, PSNR 57 à 66 dB, au plus 0,01 % de pixels au-dessus de 4/255.
+- **0.1 Présentation** (`external/sokol/sokol_app.h`) : chaîne d'échange avec le drapeau de déchirure (retiré si le système le refuse), latence DXGI 2 ; **spectacle** (synchro) : 3 tampons ; **bancs** (sans synchro) : 2 tampons, `Present(0, ALLOW_TEARING | DO_NOT_WAIT)`.
+- Banc : option `--vsync` (banc avec la synchro, pour la cadence du spectacle).
+
+**Résultats :**
+
+- Fumée du CPU : **1,9 à 2,3 ms → 0,3 ms par image** ; plus de pas de 5 à 8 ms sur le fil principal. L'attente du GPU qui suivait chaque pas disparaît (scène seule, « fumée : accumulation » : moyenne 0,90 → 0,17 ms ; L4, « fumée : faisceaux » : 1,22 → 0,44 ms).
+- Images jetées au banc : 55 à 66 % → 0 % quand Windows laisse l'affichage direct à la fenêtre plein écran (déchirure), 9 à 20 % quand il compose l'image (fenêtre ou notification devant). La colonne `non_presentee` du journal dit dans quel cas on est.
+- **Le mode d'affichage de Windows change d'un lancement à l'autre.** Essayé et écarté : 3 tampons aux bancs (en mode composé, la passe finale attendait jusqu'à 6,7 ms : scène seule 5,2 → 8,8 ms) ; latence de 3 images dans `gpuprof` (aucun changement).
+- Banc des lasers, durée réelle d'une image (2 lancements, mode composé) : la plupart des cas gagnent 0,3 à 1,6 ms (L1 / public 22,5 → 20,9 ; L3 18,9 → 17,9 ; L5 21,4 → 20,2 ; I2 10,5 → 8,9 ; I4 65,5 → 60,6 ; P3 118,8 → 112,2) ; L4 8,2 → 8,3 (bruit) ; scène seule 3,4 → 5,2 ms (l'ancienne version jetait 67 % de ses images ; toujours au-dessus de 190 img/s). Avec l'affichage direct (`bench\e2_full_b`) : L4 7,7 ms (129 img/s), I2 9,3, M1 15,0.
+- Banc des lyres inchangé (−2,7 à +0,7 %, images identiques).
+- **Spectacles** (30 scènes, sans synchro, avant → après, en alternance scène par scène) : moyenne 10,80 → 10,27 ms ; 10 → 11 scènes sous 8,4 ms. Plus gros gains : Vortex 15,5 → 13,8, Rosace 17,2 → 15,1, Vague 19,8 → 17,7, Spirale 11,9 → 10,4, Aurore 11,7 → 10,3, Pulsation 12,2 → 10,7.
+- **Avec la synchro à 120 Hz (3 tampons)** : 6 scènes tiennent 120 img/s (Diamants, Ressac, Chenillard, Étincelles, Mur de lumière, Toile). Les scènes 2 à 10, à 7 à 8 ms sans synchro, plafonnent à 90 img/s.
+
+**Ce qui reste : la carte inactive entre deux images.** Elle reste inactive 1 à 1,6 ms entre la fin d'une image et le début de la suivante (« GPU entre deux images »), même quand le CPU a 19 ms d'avance (L1) et avec une latence de 3 images. Une image doit donc tenir en ~7 ms de GPU pour 120 img/s (L4 : 7,2 ms, tient ; I2 : ~7 ms, ne tient pas). Hypothèse : travail de composition de Windows (DWM) sur la carte, ou passage d'une image à l'autre. À confirmer avec PresentMon (mode de présentation par image). Gain estimé de 0.1 dans la section 4 (image = GPU + 0,3 ms) : pas atteint, image = GPU + 0,7 à 1,4 ms.
+
+### Étape 3 : tuiles vides (0.3), salle sans lyres (0.9), variante par grosse tuile (0.4) (18 octobre 2026, historique 45)
+
+Référence `bench\ref\avant_etape3.exe`. Bancs `bench\e3_*`.
+
+**Gardé : 0.9, passes de fumée des lyres sautées quand aucune lyre n'est allumée** (`src/renderer.cpp`). Sans lyre, la lumière indirecte de la fumée est nulle (ses sources, les VPL, viennent des lyres), et l'accumulation, bornée au voisinage de l'image courante, rend exactement (0, 0, 0, 1) dès la première image. Ce résultat est donc écrit directement (effacement de l'image). « fumée : faisceaux » 0,37 à 0,54 → 0,02 ms, et l'accumulation (0,13 ms) disparaît : **−0,4 à −0,65 ms par image** dans tous les cas sans lyre (L1 à L7, ILDA, scène seule). Images identiques (≥ 74 dB, 0 % de pixels changés). Banc rapide, ordre A B B A (`bench\e3_abba_*`) : L1 19,7 → 19,2 ms, L2 25,2 → 23,9, L3 18,8 → 17,8, L4 7,2 → 7,0, M1 (avec lyres, non concerné) 14,8 → 14,4. Banc des lyres inchangé (+0,7 à +1,6 %, images identiques).
+
+**Essayé, sans gain, retiré** (comparé dans un même lancement, option `--abset`, dans les deux ordres) :
+
+- **0.4, variante du shader par grosse tuile.** Le tri notait pour chaque tuile de 128 px les besoins de ses segments : détail de près (borne exacte de la distance dans le cône de la tuile), convergence, dégradé. La passe principale était lancée une fois par classe. Résultat : la passe principale prend 0,1 à 1,3 ms de plus (L1 +2 %, M1 / scène +6 %, P3 +0,8 ms). Chaque passe lancée de plus coûte ~0,1 ms (jusqu'à 8 classes), et le gain des tuiles en variante légère ne le compense pas.
+- **0.3, tuiles vides.** Passe des arcs sautée là où il n'y a pas d'arc, image des arcs lue seulement là où il y en a, sortie rapide des grosses tuiles sans éventail ni trait. Résultat : dans le bruit (L2 : passe principale 0,64 → 0,52 ms ; ailleurs −2 à +3 %).
+- Images identiques dans les deux cas : un découpage plus fin (classes calculées par tuile de 16 px, liste de tuiles et lancement indirect) pourrait être repris plus tard, mais le gain maximal reste faible (≈ 1 ms sur L1, coût de la variante des filaments).
+
+**Mesure : biais du premier lancement.** Le premier lancement d'une série est 10 à 15 % plus rapide que les suivants (carte froide ; L1 : 16,8 ms contre 18,6 à 19,5). `perf_ab.ps1` lançait toujours A en premier : les A/B des étapes 2 et 3 en étaient faussés en faveur de A. **`perf_ab.ps1` et `set_ab.ps1` alternent maintenant l'ordre** (A B, puis B A). Nouvelle option du banc : `--abset clé=valeur` (chaque cas joué deux fois de suite, A avec ce réglage, puis B sans ; à lancer aussi dans l'autre ordre, avec `--set clé=…` et `--abset` inversé).
+
+### Étape 4 : lumière lente interpolée par tuile (1.1), nappes planes (18 octobre 2026, historique 46) : essayée, pas gardée
+
+Référence `bench\ref\avant_interp.exe`. Bancs `bench\e4_*`. Décision de l'utilisateur : mettre 1.1 de côté et passer à 0.5, puis 2.1. Le code de l'essai n'est pas dans le dépôt ; la méthode est décrite ici pour le refaire.
+
+**Méthode.** Seule la diffusion de la fumée au point de la nappe (`laser_fetch`, `laser_sigma_of` : la part chère d'un couple) est interpolée. Tout le reste reste exact par pixel : diffusion vers l'avant, atténuation, position, traits, bords. Pour chaque éventail d'une tuile de 16 px, la diffusion est calculée en 9 points : 4 coins, puis 5 points de contrôle (centre et milieux des bords). Ce calcul est réparti sur les 128 fils du groupe, pendant le chargement des segments. Si l'interpolation bilinéaire s'écarte de plus de la tolérance en un point de contrôle, le segment garde le calcul par pixel dans cette tuile. Valeurs en demi-flottants en mémoire partagée (2,5 Ko). Réglage `laserinterp` (tolérance ; 0 : coupée).
+
+**Image : invisible.** Tolérance 2 % : écart au pixel au-delà de 5 % pour 0,006 à 0,017 % des couples interpolés (le contrôle au seul centre de l'étape 1 donnait 0,4 à 1,8 %). Images contre l'avant : PSNR 51 à 63 dB, au plus 0,004 % de pixels au-delà de 4/255 (L6 : une ligne au sol, 17/255 au plus). Agrandissements des pires zones : `bench\e4_agrandissements.png`.
+
+**Part interpolée** (couples des éventails) : à 1 %, 28 à 68 % ; à 2 %, 51 à 73 % ; à 3 %, 61 à 76 % (mais 0,06 % des couples au-delà de 5 %).
+
+**Temps.**
+
+- Dans un même lancement, interpolation à 2 % contre coupée : L1 −1,6 à −2,1 ms (−9 à −12 %), L3 −3,2 ms (−19 %), L5 −2,4, L6 −2,6, M1 −0,9, L7 −1,3, I1 −2,8, I3 −2,0 ms.
+- Mais **la présence du code coûte autant** : contre l'exécutable d'avant (chauffe, ordre A B B A), L1 16,5 → 16,4 ms, L3 15,3 → 14,1 (−7,6 %), M1 12,5 → 12,7, L4 (traits seuls, sans interpolation) 6,0 → 6,4 (+6 %), I1 57,3 → 56,6.
+- La passe est limitée par les registres et la mémoire partagée : le code ajouté (barrières, points de contrôle, branche autour de la lecture de la fumée) réduit le nombre de groupes actifs. En demi-flottants (4,6 → 2,5 Ko), le surcoût a baissé sans disparaître.
+
+**Pour y revenir.** Variante du shader séparée, choisie seulement quand des éventails sont à l'écran (plus de surcoût sur les traits seuls), puis chercher le surcoût restant (registres). Gain réaliste sur L1 : 5 à 10 %. Les estimations de la section 4 pour 1.1 (−25 à −35 %) ne tiennent pas.
+
+**Outils.** `perf_ab.ps1` et `set_ab.ps1` font un lancement de chauffe (jeté) avant la série : sans lui, le premier lancement de A gardait l'avantage de la carte froide, même avec l'ordre A B B A.
+
+### Étape 5 : cônes et cercles en moins de morceaux (0.5) (18 octobre 2026, historique 47)
+
+Référence `bench\ref\avant_cones.exe`. Bancs `bench\e5_*`.
+
+**Fait** (`src/renderer.cpp`, envoi des segments au GPU ; réglage `lasermerge`). Le moteur garde ses morceaux d'arc de 90° au plus : ses impacts en ont besoin. À l'envoi, les morceaux voisins d'un même cercle sont fusionnés en une seule nappe conique : même cercle, sans arrêt sur un obstacle, même écart des traits, à la suite, même puissance par trait, couleur unie. Jamais un tour complet : un cercle entier passe de 4 morceaux à 2 (270° + 90°). Dans la passe des arcs, un morceau de plus d'un demi-tour n'a plus de rejet de « l'autre côté » (direction du milieu mise à 0 au chargement ; rien de plus dans la boucle).
+
+**Résultats.**
+
+- L2 : 970 → 589 segments. Dans un même lancement, dans les deux ordres : passe des arcs 18,0 → 16,4 ms ; image L2 / public −8 %, L2 / scène −6 %, L7 −2,7 %.
+- Exécutables comparés, second tour : L2 21,7 → 20,1 ms, L2 / scène −5 %, L7 −1 %. Le reste est inchangé.
+- Fichiers ILDA et tracés : aucun morceau fusionné (arcs issus de courbes découpées, rarement deux morceaux d'un même cercle à la suite, souvent en dégradé). L'estimation de la section 3 pour I4 et P2 (−5 %) ne tient pas.
+- Images : identiques hors L2 ; L2 : PSNR 67 à 69 dB, 0,01 % de pixels au-delà de 4/255, des bouts de ligne fine le long de la silhouette de quelques cônes (jusqu'à 50/255 sur la partie blanchie), invisibles côte à côte (`bench\e5_agrandissements.png`). Banc des lyres inchangé.
+
+**Essayé, pas gardé : le cercle entier en un seul morceau.** L2 20,6 → 18,3 ms (−11 % contre sans fusion), mais l'image change à la jonction de chaque cercle (0,4 à 0,8 % de pixels au-delà de 4/255, jusqu'à 43/255 ; `bench\e5_tour_complet.png`). Cause : un défaut existant des cercles complets. Les traits y sont comptés « aux deux bouts compris », donc le premier et le dernier tombent au même endroit, et la ligne de la jonction est doublée (plus claire). Le morceau unique ne la double plus. **À décider avec l'utilisateur** : corriger ce défaut (cercle sans trait doublé) permettrait le morceau unique, mais change l'image (ligne de jonction moins claire).
+
+### Étape 7 : qualité adaptative des lasers (2.1) (18 octobre 2026, historique 48)
+
+Référence `bench\ref\avant_adapt.exe`. Bancs `bench\e7_*`. L'étape 6 (1.2, 1.3, 1.4) est sautée pour l'instant : 1.3 n'apporte rien (étape 1) ; 1.2 et 1.4 restent possibles.
+
+**Fait** (décision de l'utilisateur : paliers 80, 70, 50 %, seulement sous 60 img/s) :
+
+- Les passes des lasers (tri, arcs, nappes et traits) calculent dans le coin de leur image, à la résolution du palier. La profondeur est lue en pleine résolution, au centre de chaque pixel des lasers (`hall_min.w`, `hall_max.w` : pixels pleins par pixel des lasers). La largeur minimale des traits suit le pixel des lasers : les traits s'élargissent en gardant leur énergie.
+- Agrandissement (`fs_laser_up`, passe « lasers : agrandissement », 0,33 à 0,4 ms) : mélange bilinéaire des 4 pixels voisins, chacun pondéré par l'accord de sa profondeur avec celle du pixel (pas de débord d'un plan sur l'autre). Le halo et la composition lisent l'image agrandie.
+- Choix du palier (`Renderer::laser_scale_for`, Direct3D 11) : temps GPU lissé de l'image (sans la passe finale). Au-dessus de 16,7 ms (sous 60 img/s), 10 images de suite après le dernier changement : palier du dessous. Retour au palier du dessus quand le temps prévu y reste sous 90 % de 16,7 ms (passes laser en proportion des pixels), après 60 images au moins. Pas d'aller-retour.
+- Réglages : `laseradaptive` (case dans l'onglet Rendu, avec le palier affiché), `laserscale` (palier fixe sans adaptation, pour les mesures). Avec `adaptive=0` (bancs) : pleine résolution, images identiques et temps dans le bruit contre l'avant (`bench\e7_full100_*`).
+
+**Coût de chaque palier** (dans un même lancement, scène immobile ; image entière) :
+
+| Cas | 100 % | 80 % | 70 % | 50 % |
+|---|---|---|---|---|
+| L1 / public | 16,5 ms | 12,4 (−25 %) | −35 % | 7,0 (−58 %) |
+| L2 / public | 19,5 ms | 14,1 (−28 %) | −37 % | 7,9 (−60 %) |
+| L3 | 15,6 ms | 11,3 (−27 %) | −38 % | 6,7 (−58 %) |
+| M1 / public | 12,8 ms | 10,4 (−19 %) | −26 % | 7,6 (−41 %) |
+| L7 | 37,5 ms | 26,6 (−29 %) | −41 % | 14,2 (−63 %) |
+| I1 | 56,7 ms | 40,2 (−29 %) | −44 % | 21,0 (−65 %) |
+
+**Image** (contre 100 %) : à 80 %, PSNR 42 à 49 dB, 0,3 à 0,5 % de pixels au-delà de 4/255 (L2 : 6 %) ; à 50 %, PSNR 35 à 45 dB, 2 à 4 % (L2 : 14 %). Traits fins plus larges et plus doux, pointes des nappes adoucies ; la fumée des nappes ne change presque pas. Agrandissements : `bench\e7_agrandissements_0.8.png`, `_0.7`, `_0.5`.
+
+**Adaptation** (banc en mouvement, `adaptive=1`, `bench\e7_adapt`) : L1 et L2 passent à 80 % (69 et 75 img/s) ; L3 descend à 80 % au démarrage du cas puis revient à 100 % ; M1 reste à 100 % (68 img/s) ; L7 passe à 50 % (66 img/s) ; I1 à 50 % (48 img/s, sous 60 même ainsi).
+
+**Spectacles** (30 scènes, qualité adaptative, `bench\e7_spect_B.tsv` sans synchro, `_V.tsv` avec la synchro à 120 Hz) :
+
+| | Plan (18/10) | Maintenant |
+|---|---|---|
+| Moyenne sans synchro | 11,5 ms | 10,1 ms |
+| Scènes à 120 img/s sans synchro | 5 / 30 | 13 / 30 |
+| Scènes à 120 img/s avec la synchro | 6 / 30 (étape 2) | 12 / 30 |
+| Scènes à 60 img/s ou plus | 27 / 30 | 30 / 30 |
+
+Vague 22,3 → 14,7 ms ; Tunnel 17,1 → 15,2 ; Rosace 17,3 → 14,4. Avec la synchro, quelques scènes varient d'un lancement à l'autre (Spirale, Étoiles, Grand final), selon que Windows compose l'image ou non (étape 2).

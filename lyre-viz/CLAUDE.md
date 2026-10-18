@@ -22,6 +22,7 @@ Avant de garder une nouvelle fonctionnalité ou une optimisation, suivre la proc
    - Sans `-Fast` seulement pour une décision serrée ou les valeurs de référence.
    - Un ancien exécutable qui ne connaît pas `--fast` l'ignore et fait le banc normal : comparer alors sans `-Fast`.
    - Pas de `-Behind` pour des mesures à garder : derrière les autres fenêtres, le GPU est 5 à 15 % plus lent.
+   - Les deux scripts font un lancement de chauffe (jeté), puis alternent l'ordre (A B, puis B A) : le premier lancement d'une série est 10 à 15 % plus rapide (carte froide). Une option d'une passe longue se compare dans un même lancement : `--abset clé=valeur` (A avec le réglage, B sans), puis l'ordre inverse.
    - Lasers : ajouter `-Lasers` (banc `--bench-lasers`, cas L1 à L7 et M1 ; voir `PLAN-LASERS.md` et `PERFORMANCE.md`). Une modification des lasers se mesure sur ce banc, et sur celui des lyres pour vérifier qu'il ne change pas.
 4. Pour une fonctionnalité qui coûte du temps :
    - la rendre activable (case dans l'onglet Rendu et clé `--set`) ;

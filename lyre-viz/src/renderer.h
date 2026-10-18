@@ -99,6 +99,11 @@ struct RenderSettings {
     // convergence RGB : ecart d'angle des diodes rouge et bleue au vert (mrad ; 0 : parfaitement alignees). Bords de nappes,
     // traits et impacts frangés de rouge et de bleu (vrai defaut des projecteurs RGB, qui grandit avec la distance)
     float laser_conv = 0.3f;          // regle par l'utilisateur (vue --demo-laser 9, 16 octobre 2026)
+    // Resolution des lasers (PLAN-OPTIM-LASERS.md, 2.1) : adaptative (avec adaptive), paliers 100 / 80 / 70 / 50 % seulement
+    // quand l'image passe sous 60 img/s ; sinon laser_scale (fixe, 1 : pleine resolution). --set laseradaptive, laserscale
+    bool laser_adaptive = true;
+    float laser_scale = 1.0f;
+    bool laser_merge = true;          // morceaux voisins d'un meme cercle fusionnes (PLAN-OPTIM-LASERS.md, 0.5) ; --set lasermerge
     // aberration chromatique de l'objectif sur les lasers (%, grandissement du rouge en plus et du bleu en moins ; 0 : aucune)
     float laser_lens_ca = 0.2f;
     // (laterale, prisme, axiale, active) pour les shaders : voir beam_pattern_rgb
@@ -120,6 +125,7 @@ struct RenderStats {
     int soft_lights = 0;          // lyres eclairees a 1/4 sur les surfaces
     int pattern_images = 0;       // images projetees en cache (lyres a prisme)
     float quality = 1.0f;         // qualite adaptative (1 = pleine qualite)
+    float laser_scale = 1.0f;     // resolution des lasers (2.1)
     int table_rows = 0;           // fumee analytique : lignes de tables calculees
     double table_cells = 0;       // cases de tables
     float table_scale = 1;        // reduction de resolution (atlas plein)
@@ -135,6 +141,12 @@ struct RenderStats {
     int laser_tiles_hit = 0;      // tuiles touchees par au moins un segment
     int laser_hits = 0;           // impacts dessines
     int laser_bin_overflow = 0;   // segments perdus par les grosses tuiles pleines (plus de LASER_CAP)
+    // compteurs de mesure (variantes LASER_STATS, fumee spatiale) : passe principale [0] et des arcs [1] : couples (pixel,
+    // segment) qui eclairent, noyes (pixel deja sature avant eux : 1 et 2 fois le seuil d'ACES), faibles (moins de 1 % du
+    // pixel) ; eventails : qui eclairent, interpolables (piste 1.1), ecart de l'interpolation au pixel > 1 %, > 5 %
+    double laser_lit[2] = {}, laser_drown1[2] = {}, laser_drown2[2] = {}, laser_small[2] = {};
+    double laser_fan_lit = 0, laser_fan_interp = 0, laser_fan_err1 = 0, laser_fan_err5 = 0;
+    bool laser_counted = false;   // compteurs de mesure lus (variante LASER_STATS choisie)
     int laser_fog_variant = 0;    // variante de la fumee des lasers (0 a 3, voir LASER_FOG dans le shader)
 };
 
@@ -152,6 +164,9 @@ class Renderer {
     void reset_quality() {
         quality = 1.0f;
         quality_ms = 0;
+        laser_step = 0;
+        lscale_ms = lscale_las = 0;
+        lscale_hold = 0;
     }   // banc d'essai : chaque cas repart de la pleine qualite
     std::vector<Instance> dyn_cubes, dyn_cyls;   // remplis par l'appelant (avatar) + lyres
 
@@ -170,6 +185,11 @@ class Renderer {
     void build_beam_tables(const struct Camera& cam, float pixel_angle, bool mirror = false);
     void assign_beam_tiers(const struct Camera& cam, float pixel_angle, bool tiers, bool soft, int vol_div, bool crowd);
     void update_quality(const RenderSettings& rs);
+    float laser_scale_for(const RenderSettings& rs);   // resolution des lasers de cette image (2.1)
+    int laser_step = 0;            // palier : 100, 80, 70, 50 %
+    float lscale_ms = 0, lscale_las = 0;   // temps GPU lisses : image, passes des lasers
+    int lscale_hold = 0;           // images mesurees depuis le dernier changement de palier
+    unsigned lscale_last_id = 0;
     float quality = 1.0f;          // facteur de qualite adaptative (0.2 .. 1)
     float quality_ms = 0;          // temps GPU lisse
     unsigned quality_last_id = 0;
@@ -310,6 +330,8 @@ class Renderer {
     sg_pipeline pip_beam_tables = {}, pip_beams_an = {}, pip_vol_merge = {}, pip_pattern_images = {}, pip_pattern_images_rgb = {};
     sg_pipeline pip_vol_ambient = {}, pip_beams = {}, pip_temporal = {}, pip_composite = {};
     sg_pipeline pip_bloom_down = {}, pip_bloom_up = {}, pip_final = {};
+    sg_pipeline pip_laser_up = {};   // lasers a resolution reduite agrandis (2.1)
+    Target laser_up;                 // leur image agrandie, pleine resolution
     sg_pipeline pip_beams_m = {}, pip_beams_an_m = {}, pip_refl_compose = {}, pip_refl_mask = {}, pip_refl_block = {};   // passe miroir
 
     // lasers : segments d'eventail (voir shaders, section 10)
@@ -348,6 +370,7 @@ class Renderer {
     // [sans, avec degrades (couleur au bord 1)][fumee uniforme, de la piece, avec volutes, et leur 2e octave, fumee spatiale, avec ses filaments]
     sg_pipeline pip_laser_shade[2][6][2] = {};   // [...][...][sans, avec nappes coniques (arcs)]
     sg_pipeline pip_laser_shade_c[2][6] = {};   // passe principale avec la convergence RGB (LASER_CONV)
+    sg_pipeline pip_laser_shade_s[2][2][3] = {};   // mesure (--stats) : [degrade][fumee 4, 5][principale, convergence, arcs]
 
     // grilles
     static constexpr int CL_X = 32, CL_Y = 18, CL_Z = 24;

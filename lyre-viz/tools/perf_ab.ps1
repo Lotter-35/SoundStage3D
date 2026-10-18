@@ -48,10 +48,18 @@ if (Get-Process LyreViz -ErrorAction SilentlyContinue) {
 }
 $pathA = (Resolve-Path $ExeA).Path
 $pathB = (Resolve-Path $ExeB).Path
+# chauffe : un lancement court, jete (le premier lancement d'une serie est 10 a 15 % plus rapide, carte froide)
+Write-Host "Chauffe de la carte (lancement jete)"
+Remove-Item -Recurse -Force "bench\$Name`_chauffe" -ErrorAction SilentlyContinue
+Start-Process -FilePath $pathB -ArgumentList @($(if ($Lasers) { '--bench-lasers' } elseif ($Lyres) { '--bench-lyres' } else { '--bench' }), '--fullscreen', '--fast', '--quick', '--benchdir', "bench\$Name`_chauffe") -Wait | Out-Null
+Remove-Item -Recurse -Force "bench\$Name`_chauffe" -ErrorAction SilentlyContinue
 $listA = @()
 $listB = @()
 for ($i = 0; $i -lt $Rounds; $i++) {
-    foreach ($k in 'A', 'B') {
+    # ordre alterne d'un tour a l'autre (A B, puis B A) : le premier lancement d'une serie est 10 a 15 % plus rapide (carte
+    # encore froide, mesure du 18 octobre 2026) ; toujours A en premier favorisait A
+    $order = if ($i % 2 -eq 0) { @('A', 'B') } else { @('B', 'A') }
+    foreach ($k in $order) {
         $exe = if ($k -eq 'A') { $pathA } else { $pathB }
         $dir = "bench\$Name`_$k$i"
         Remove-Item -Recurse -Force $dir -ErrorAction SilentlyContinue

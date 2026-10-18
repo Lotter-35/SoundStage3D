@@ -4,6 +4,7 @@
 #include "fumee_spatiale.h"
 #include "mathx.h"
 #include <cstdint>
+#include <thread>
 #include <vector>
 
 struct SmokeMachine {
@@ -56,14 +57,23 @@ struct FogSim {
     float mean_smoke = 0;        // densite moyenne des amas (pour l'extinction globale)
     float accum = 0;
 
+    ~FogSim() { wait(); }
     void init(vec3 bmin, vec3 bmax);
     void prefill();   // remplit d'amas pour que la salle soit deja enfumee
     void clear();
     // sf : fumee des lasers (modele v2 : canal g selon les bancs, canal b) ; nul ou modele Classique : comme avant
     void update(float dt, const FogSettings& s, const SpatialFogSettings* sf = nullptr);
+    // Pas de la simulation en tache de fond (PLAN-OPTIM-LASERS.md, 0.2) : lance a la fin de update (pas et champ des
+    // bancs, sur plusieurs coeurs), attendu au debut de la suivante, et avant init, clear et prefill. Rien d'autre ne lit
+    // d, tmp, sim_time ni banks pendant le calcul. La carte envoyee au GPU a donc une image de retard sur la simulation
+    // (meme suite d'etats ; a 20 pas par seconde, invisible).
+    void wait();
+    float wait_ms = 0;   // attente du dernier pas, au debut de update (journal)
 
   private:
-    void step(float dt, const FogSettings& s);
+    std::thread job;
+    void fill(const FogSettings& s, const SpatialFogSettings* sf);   // carte envoyee au GPU (upload), depuis l'etat publie
+    void step(float dt, const FogSettings& s, const std::vector<SmokeMachine>& mach);
     void update_spatial(const FogSettings& s, const SpatialFogSettings& sf);
     float sample(float x, float y, float z) const;
 };

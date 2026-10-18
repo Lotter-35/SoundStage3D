@@ -1,5 +1,6 @@
 #include "fog.h"
 #include <algorithm>
+#include <chrono>
 
 namespace {
 
@@ -37,6 +38,7 @@ float worley3(float x, float y, float z, int per, uint32_t seed) {
 }  // namespace
 
 void FogSim::init(vec3 bmin, vec3 bmax) {
+    wait();
     origin = bmin;
     size = bmax - bmin;
     d.assign(NX * NY * NZ, 0.0f);
@@ -73,11 +75,13 @@ void FogSim::init(vec3 bmin, vec3 bmax) {
 }
 
 void FogSim::clear() {
+    wait();
     std::fill(d.begin(), d.end(), 0.0f);
     std::fill(upload.begin(), upload.end(), 0);   // la densite de la piece sera recalculee a la prochaine mise a jour
 }
 
 void FogSim::prefill() {
+    wait();
     for (int z = 0; z < NZ; z++)
         for (int y = 0; y < NY; y++)
             for (int x = 0; x < NX; x++) {
@@ -102,7 +106,7 @@ float FogSim::sample(float x, float y, float z) const {
     return lerpf(lerpf(x00, x10, fy), lerpf(x01, x11, fy), fz);
 }
 
-void FogSim::step(float dt, const FogSettings& s) {
+void FogSim::step(float dt, const FogSettings& s, const std::vector<SmokeMachine>& mach) {
     sim_time += dt;
     const float cx = size.x / NX, cy = size.y / NY, cz = size.z / NZ;  // taille des cellules (m)
     const float wa = s.wind_angle * DEG;
@@ -128,31 +132,38 @@ void FogSim::step(float dt, const FogSettings& s) {
         E[x] = std::sin(px * 0.2f + t * 0.09f + 0.5f);
     }
 
-    for (int z = 0; z < NZ; z++)
-        for (int y = 0; y < NY; y++)
-            for (int x = 0; x < NX; x++) {
-                vec3 p = {origin.x + (x + 0.5f) * cx, origin.y + (y + 0.5f) * cy, origin.z + (z + 0.5f) * cz};
-                // champ de vitesse : vent + tourbillons lents + montee + jets des machines
-                vec3 v = wind;
-                v.x += s.turbulence * A[y] * B[z];
-                v.y += s.turbulence * 0.5f * C[z] * D[x];
-                v.z += s.turbulence * E[x] * F[y];
-                v.y += s.rise;
-                for (const SmokeMachine& m : machines) {
-                    if (!m.on) continue;
-                    vec3 rel = p - m.pos;
-                    float along = dot(rel, m.dir);
-                    if (along < -1 || along > 14) continue;
-                    float off = length(rel - m.dir * along);
-                    float w = std::exp(-off * off / 4.0f) * (1.0f - along / 14.0f);
-                    v += m.dir * (5.0f * s.machine_output * w);
+    // advection par tranches de z, sur 3 coeurs (chaque case ne lit que d, n'ecrit que la sienne : meme resultat)
+    auto slab = [&](int z0, int z1) {
+        for (int z = z0; z < z1; z++)
+            for (int y = 0; y < NY; y++)
+                for (int x = 0; x < NX; x++) {
+                    vec3 p = {origin.x + (x + 0.5f) * cx, origin.y + (y + 0.5f) * cy, origin.z + (z + 0.5f) * cz};
+                    // champ de vitesse : vent + tourbillons lents + montee + jets des machines
+                    vec3 v = wind;
+                    v.x += s.turbulence * A[y] * B[z];
+                    v.y += s.turbulence * 0.5f * C[z] * D[x];
+                    v.z += s.turbulence * E[x] * F[y];
+                    v.y += s.rise;
+                    for (const SmokeMachine& m : mach) {
+                        if (!m.on) continue;
+                        vec3 rel = p - m.pos;
+                        float along = dot(rel, m.dir);
+                        if (along < -1 || along > 14) continue;
+                        float off = length(rel - m.dir * along);
+                        float w = std::exp(-off * off / 4.0f) * (1.0f - along / 14.0f);
+                        v += m.dir * (5.0f * s.machine_output * w);
+                    }
+                    // advection semi-lagrangienne : on remonte le courant
+                    float sx = x - v.x * dt / cx, sy = y - v.y * dt / cy, sz = z - v.z * dt / cz;
+                    tmp[(size_t)z * NX * NY + (size_t)y * NX + x] = sample(sx, sy, sz) * keep;
                 }
-                // advection semi-lagrangienne : on remonte le courant
-                float sx = x - v.x * dt / cx, sy = y - v.y * dt / cy, sz = z - v.z * dt / cz;
-                tmp[(size_t)z * NX * NY + (size_t)y * NX + x] = sample(sx, sy, sz) * keep;
-            }
+    };
+    std::thread t1(slab, NZ / 3, 2 * NZ / 3), t2(slab, 2 * NZ / 3, NZ);
+    slab(0, NZ / 3);
+    t1.join();
+    t2.join();
     // injection par les machines
-    for (const SmokeMachine& m : machines) {
+    for (const SmokeMachine& m : mach) {
         if (!m.on || s.machine_output <= 0) continue;
         vec3 src = m.pos + m.dir * 1.5f;
         float gx = (src.x - origin.x) / cx - 0.5f, gy = (src.y - origin.y) / cy - 0.5f, gz = (src.z - origin.z) / cz - 0.5f;
@@ -170,14 +181,46 @@ void FogSim::step(float dt, const FogSettings& s) {
     d.swap(tmp);
 }
 
+void FogSim::wait() {
+    if (!job.joinable()) {
+        wait_ms = 0;
+        return;
+    }
+    const auto t0 = std::chrono::steady_clock::now();
+    job.join();
+    wait_ms = (float)std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - t0).count();
+}
+
 void FogSim::update(float dt, const FogSettings& s, const SpatialFogSettings* sf) {
+    wait();
+    const float STEP = 1.0f / 20.0f;
+    int n = 0;
     if (s.animate) {
-        const float STEP = 1.0f / 20.0f;
         accum += std::min(dt, 0.25f);
-        int n = 0;
-        while (accum >= STEP && n < 3) { step(STEP, s); accum -= STEP; n++; }
+        while (accum >= STEP && n < 3) { accum -= STEP; n++; }
         if (n == 3) accum = 0;
     }
+    fill(s, sf);
+    if (n == 0) return;
+    // pas suivants en tache de fond, avec une copie des reglages et des machines (l'interface peut les changer) ; le champ
+    // des bancs (fumee v2) pour le nouvel instant aussi : update_spatial ne le recalcule plus (banks_time a jour)
+    const FogSettings sc = s;
+    const std::vector<SmokeMachine> mach = machines;
+    const bool spatial = sf && sf->model == 1;
+    const SpatialFogSettings sfc = sf ? *sf : SpatialFogSettings();
+    job = std::thread([this, n, STEP, sc, mach, spatial, sfc] {
+        for (int i = 0; i < n; i++) step(STEP, sc, mach);
+        if (spatial) {
+            const float wa = sc.wind_angle * DEG;
+            const float o[3] = {origin.x, origin.y, origin.z}, sz[3] = {size.x, size.y, size.z};
+            banks.field(NX, NY, NZ, o, sz, sim_time, std::cos(wa) * sc.wind_speed, std::sin(wa) * sc.wind_speed, sfc);
+            banks_time = sim_time;
+            banks_set = sfc;
+        }
+    });
+}
+
+void FogSim::fill(const FogSettings& s, const SpatialFogSettings* sf) {
     if (sf && sf->model == 1) {
         update_spatial(s, *sf);
         return;

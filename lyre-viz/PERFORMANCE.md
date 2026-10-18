@@ -682,8 +682,7 @@ Mesures rapides seulement (banc des lasers `-Fast`, immobile), pour l'ordre de g
 
 ## Lasers : rendu « photo » (16 octobre 2026)
 
-Bords brillants des éventails (rebroussement du scanner, `laseredge` 1, largeur 0,025), halo des lasers (`laserhalo` 0,1, étendue 0,5), réglés à l'œil par l'utilisateur dans la vue `--demo-laser 8`, et corrections des coupes par les obstacles (bords adoucis en différence de marches au lieu d'un produit ; portée d'un morceau coupé = la plus grande de ses deux bords). Banc laser rapide, immobile, 5 cas, 2 lancements en alternance (`bench
-endu_photo_*`, historique 30). Pas encore optimisé.
+Bords brillants des éventails (rebroussement du scanner, `laseredge` 1, largeur 0,025), halo des lasers (`laserhalo` 0,1, étendue 0,5), réglés à l'œil par l'utilisateur dans la vue `--demo-laser 8`, et corrections des coupes par les obstacles (bords adoucis en différence de marches au lieu d'un produit ; portée d'un morceau coupé = la plus grande de ses deux bords). Banc laser rapide, immobile, 5 cas, 2 lancements en alternance (`bench\rendu_photo_*`, historique 30). Pas encore optimisé.
 
 | Cas | Avant (`avant_arcs.exe`) | Après (réglages par défaut) | Bords et halo coupés |
 |---|---|---|---|
@@ -717,8 +716,7 @@ Convergence RGB (`laserconv` 0,3 mrad : les diodes rouge et bleue partent avec u
 - **Scène multicolore (L7 : 194 lasers, dégradés, arc-en-ciel, grilles en diffraction ; 3 lancements)** : avant la journée 34,5 ms (29 img/s) → maintenant 42,8 ms (23 img/s). Convergence et objectif seuls : 36,0 → 42,8 ms (+6,7 ms : passe des nappes et traits 11,2 → 16,6 ms, impacts 2,1 → 3,1 ms) ; bords brillants, halo et code présent : +1,5 ms.
 - Piste pour l'optimisation : l'écart des couleurs ne se voit qu'à plus d'environ un demi-pixel à l'écran (loin de la source, ou de près). Ailleurs (la plupart des couples), un seul calcul suffirait : test par couple (écart x distance / taille du pixel).
 
-**Optimisation (18 octobre 2026, historique 41)** ; banc laser rapide, immobile, 2 lancements, contre `bench
-efvant_conv_opt.exe` (fumée v2 par défaut : tous les temps sont plus hauts qu'avant) :
+**Optimisation (18 octobre 2026, historique 41)** ; banc laser rapide, immobile, 2 lancements, contre `bench\ref\avant_conv_opt.exe` (fumée v2 par défaut : tous les temps sont plus hauts qu'avant) :
 
 1. Traits séparés : point le plus proche du rayon calculé une fois ; distance de chaque couleur sur la normale commune du rayon et du trait (exacte pour des droites infinies). Calcul complet par couleur seulement pour un trait vu presque dans son axe (sinus < 0,1).
 2. Impacts : convergence seulement pour un impact multicolore, devant la caméra, dont les couleurs s'écartent d'au moins 0,3 pixel ; élargissement de la bande plafonné à 64 pixels. Sans plafond, quelques bandes aberrantes couvraient l'écran sans rien éclairer : L4 impacts 1,09 → 0,014 ms, image identique au pixel près.
@@ -743,6 +741,50 @@ efvant_conv_opt.exe` (fumée v2 par défaut : tous les temps sont plus hauts qu
 - Images (10 vues, dont gros plans au sol, `bench\ab_final_vues`) : au plus 0,005 % de pixels changés, quelques pixels au bout de lignes d'impact et sur des points d'impact lointains.
 - Bords des nappes : l'écart des couleurs (et son fondu) n'est calculé que près d'un bord. Coût de la convergence sur L7 mesuré avant (6 tours, passe des nappes et traits) : coupée 15,7 ms, active 18,8 ms, dont traits 1,5, bords 0,4 et présence du code 1,2 ms.
 - Banc des lyres inchangé (−0,6 %, images identiques).
+
+## Lasers : optimisation, étape 1 (18 octobre 2026, historique 43)
+
+Plan : `PLAN-OPTIM-LASERS.md` (détail des mesures en section 8). Mesures seulement, image et variantes du shader inchangées (bancs `bench\e1_journal_*`, `bench\e1_stats`).
+
+- `images.csv` a 4 colonnes de plus : `fumee_ms` (simulation de la fumée, CPU), `lasers_cpu_ms`, `present_ms` et `non_presentee` (`Present` de l'image précédente, mesuré dans `sokol_app.h`). `resultats.txt` : ligne « Presentation ».
+- `--stats` choisit des variantes de mesure de la passe des lasers (`LASER_STATS`, fumée spatiale seulement, image identique) : lumière noyée, couples faibles, lumière lente interpolable. Plus lentes (L1 21 → 39 ms) : ne pas s'en servir pour les temps.
+- Constats : le pas de la simulation de fumée (5 à 8 ms sur le CPU, une image sur trois au banc) règle le rythme des images et ajoute 1,8 à 2,7 ms de GPU à l'image qui le suit (passe « fumée : faisceaux ») ; au banc, 55 à 66 % des images ne sont pas présentées (`DO_NOT_WAIT`, 2 tampons) ; aucun couple ne tombe dans un pixel saturé (piste 1.3 abandonnée) ; 42 à 76 % des couples des éventails pourraient prendre la lumière lente interpolée (piste 1.1).
+- Banc des lyres inchangé.
+
+## Lasers : optimisation, étape 2 (18 octobre 2026, historique 44)
+
+Détail : `PLAN-OPTIM-LASERS.md`, section 8.
+
+- **Fumée du CPU en tâche de fond** (`src/fog.cpp`) : 1,9 à 2,3 ms → 0,3 ms par image sur le fil principal ; l'attente du GPU après chaque pas de la simulation disparaît. Images identiques en scène immobile.
+- **Présentation** (`sokol_app.h`) : drapeau de déchirure, latence DXGI 2 ; spectacle 3 tampons avec la synchro ; bancs 2 tampons, `ALLOW_TEARING | DO_NOT_WAIT`.
+- **Attention aux bancs** : Windows affiche la fenêtre directement (déchirure, 0 % d'images jetées) ou compose l'image (9 à 20 % d'images jetées, passe finale un peu plus longue), selon ce qui se passe à l'écran. Colonne `non_presentee` de `images.csv` ; comparer A et B lancés dans le même état.
+- `--vsync` : banc avec la synchro verticale (cadence du spectacle). À 120 Hz, une image doit tenir en ~7 ms de GPU : la carte reste inactive 1 à 1,6 ms entre deux images (cause à confirmer avec PresentMon).
+- Banc des lasers : la plupart des cas gagnent 0,3 à 1,6 ms par image ; spectacles sans synchro : moyenne 10,80 → 10,27 ms, 11 scènes sur 30 sous 8,4 ms ; avec la synchro, 6 scènes tiennent 120 img/s.
+
+## Lasers : optimisation, étape 3 (18 octobre 2026, historique 45)
+
+Détail : `PLAN-OPTIM-LASERS.md`, section 8.
+
+- **Passes de fumée des lyres sautées sans lyre allumée** : −0,4 à −0,65 ms par image dans les cas sans lyre, image identique.
+- Variante du shader par grosse tuile (0.4) et tuiles vides (0.3) : essayées, sans gain, retirées.
+- **Biais de mesure** : le premier lancement d'une série est 10 à 15 % plus rapide (carte froide). `perf_ab.ps1` et `set_ab.ps1` alternent maintenant l'ordre (A B, puis B A) ; les A/B faits avant en favorisaient A.
+- `--abset clé=valeur` : chaque cas du banc joué deux fois de suite (A avec le réglage, B sans), pour comparer une option dans un même lancement (lancer aussi l'ordre inverse).
+
+## Lasers : optimisation, étape 4 (18 octobre 2026, historique 46)
+
+- Lumière lente interpolée par tuile (1.1, nappes planes) : image invisible, mais le gain (−9 à −19 % dans un même lancement) est mangé par le coût de la présence du code (registres, mémoire partagée) : contre l'avant, L3 −7,6 %, L1 et M1 ±0, traits seuls +6 %. **Pas gardée** ; détail et méthode dans `PLAN-OPTIM-LASERS.md`, section 8.
+- `perf_ab.ps1` et `set_ab.ps1` : lancement de chauffe (jeté) avant la série.
+
+## Lasers : optimisation, étape 5 (18 octobre 2026, historique 47)
+
+- Morceaux voisins d'un même cercle fusionnés à l'envoi au GPU (`lasermerge`) : un cercle entier fait 2 morceaux au lieu de 4. L2 −5 à −8 %, L7 −1 à −3 %, ILDA et tracés inchangés (rien à fusionner). Image : L2 0,01 % de pixels au-delà de 4/255, invisible ; autres cas identiques.
+- Le cercle en un seul morceau gagnerait encore ~5 % sur L2, mais supprime la ligne doublée de la jonction des cercles complets (défaut existant) : à décider. Détail : `PLAN-OPTIM-LASERS.md`, section 8.
+
+## Lasers : optimisation, étape 7, résolution adaptative (18 octobre 2026, historique 48)
+
+- Passes des lasers à 80, 70 puis 50 % de la résolution, seulement quand l'image passe sous 60 img/s (`laseradaptive`, avec `adaptive`) ; agrandissement selon la profondeur (0,33 à 0,4 ms). Palier fixe pour les mesures : `laserscale`. Bancs (`adaptive=0`) : inchangés.
+- Gains, image entière : 80 % −19 à −29 %, 70 % −26 à −44 %, 50 % −41 à −65 % (L1 16,5 → 12,4 → 7,0 ms).
+- Spectacles : les 30 scènes au-dessus de 60 img/s ; 13 à 120 img/s sans synchro (5 au départ du plan). Détail : `PLAN-OPTIM-LASERS.md`, section 8.
 
 ## Lyres superposées (16 octobre 2026)
 

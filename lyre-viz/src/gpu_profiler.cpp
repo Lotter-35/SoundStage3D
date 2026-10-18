@@ -152,20 +152,20 @@ void stats_end() {
 
 // Compteurs ecrits par le GPU : copies dans 4 tampons de lecture tour a tour, lus 3 images plus tard
 // (sans attendre le GPU).
-bool readback_u32x4(sg_buffer buf, unsigned out[4]) {
+bool readback_u32x16(sg_buffer buf, unsigned out[16]) {
     static ID3D11Buffer* staging[4] = {};
-    static unsigned frame = 0, last[4] = {};
+    static unsigned frame = 0, last[16] = {};
     if (!g_ctx) return false;
     ID3D11Buffer* src = (ID3D11Buffer*)sg_d3d11_query_buffer_info(buf).buf;
     if (!src) return false;
     if (!staging[0]) {
         D3D11_BUFFER_DESC bd = {};
-        bd.ByteWidth = 16;
+        bd.ByteWidth = 64;
         bd.Usage = D3D11_USAGE_STAGING;
         bd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
         for (ID3D11Buffer*& b : staging) g_dev->CreateBuffer(&bd, nullptr, &b);
     }
-    D3D11_BOX box = {0, 0, 0, 16, 1, 1};
+    D3D11_BOX box = {0, 0, 0, 64, 1, 1};
     g_ctx->CopySubresourceRegion(staging[frame % 4], 0, 0, 0, 0, src, 0, &box);
     if (frame >= 3) {
         D3D11_MAPPED_SUBRESOURCE m;
@@ -276,8 +276,8 @@ void mark(const char*) {}
 void frame_end() {}
 void stats_begin() {}
 void stats_end() {}
-bool readback_u32x4(sg_buffer, unsigned out[4]) {
-    out[0] = out[1] = out[2] = out[3] = 0;
+bool readback_u32x16(sg_buffer, unsigned out[16]) {
+    for (int i = 0; i < 16; i++) out[i] = 0;
     return false;
 }
 bool save_backbuffer_bmp(const std::string&) { return false; }

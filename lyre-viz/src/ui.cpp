@@ -724,6 +724,9 @@ void render_ui() {
     ImGui::SameLine();
     ImGui::TextDisabled("(%d segments coupes)", app.lasers.cut_segments);
     ImGui::SliderFloat("Lasers : blanchiment (0 = oeil, 1 = camera)", &r.laser_white, 0.0f, 1.5f, "%.2f");
+    ImGui::Checkbox("Lasers : resolution adaptative (80, 70, 50 % sous 60 img/s)", &r.laser_adaptive);
+    ImGui::SameLine();
+    ImGui::TextDisabled("(%.0f %%)", app.renderer.stats.laser_scale * 100.0f);
     ImGui::SliderFloat("Lasers : lueur de sortie", &r.laser_exit, 0.0f, 4.0f, "x %.2f");
     ImGui::Checkbox("Lasers : cache des figures fixes (moteur CPU)", &app.lasers.figure_cache);
     ImGui::SameLine();

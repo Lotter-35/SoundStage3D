@@ -32,9 +32,9 @@ double last_fragments();
 // Le comptage des pixels calcules ralentit le GPU : desactive par defaut (--stats pour l'activer).
 void enable_stats(bool on);
 bool stats_enabled();
-// Lit les 4 premiers entiers d'un tampon du GPU (compteurs), sans attendre : valeurs d'il y a quelques
+// Lit les 16 premiers entiers d'un tampon du GPU (compteurs), sans attendre : valeurs d'il y a quelques
 // images. A appeler une fois par image, apres la passe qui les ecrit. Direct3D 11 seulement.
-bool readback_u32x4(sg_buffer buf, unsigned out[4]);
+bool readback_u32x16(sg_buffer buf, unsigned out[16]);
 // Temps GPU entre la fin d'une image et le debut de la suivante (presentation, autres programmes).
 float last_gap_ms();
 

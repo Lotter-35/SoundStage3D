@@ -2275,6 +2275,9 @@ SOKOL_APP_API_DECL const void* sapp_ios_get_window(void);
 
 /* D3D11: get pointer to IDXGISwapChain object */
 SOKOL_APP_API_DECL const void* sapp_d3d11_get_swap_chain(void);
+/* LyreViz (D3D11) : duree du dernier Present (ms) et son resultat (HRESULT ; DXGI_ERROR_WAS_STILL_DRAWING : image pas presentee) */
+SOKOL_APP_API_DECL float sapp_d3d11_last_present_ms(void);
+SOKOL_APP_API_DECL long sapp_d3d11_last_present_result(void);
 
 /* Win32: get the HWND window handle */
 SOKOL_APP_API_DECL const void* sapp_win32_get_hwnd(void);
@@ -2549,6 +2552,9 @@ inline void sapp_run(const sapp_desc& desc) { return sapp_run(&desc); }
         #include <dxgi.h>
         // DXGI_SWAP_EFFECT_FLIP_DISCARD is only defined in newer Windows SDKs, so don't depend on it
         #define _SAPP_DXGI_SWAP_EFFECT_FLIP_DISCARD (4)
+        // LyreViz : presentation sans attendre l'ecran, avec dechirure (dxgi1_5.h)
+        #define _SAPP_DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING (2048)
+        #define _SAPP_DXGI_PRESENT_ALLOW_TEARING (0x00000200UL)
     #endif
     #ifndef WM_MOUSEHWHEEL /* see https://github.com/floooh/sokol/issues/138 */
         #define WM_MOUSEHWHEEL (0x020E)
@@ -2927,6 +2933,8 @@ typedef struct {
     DXGI_SWAP_CHAIN_DESC swap_chain_desc;
     IDXGISwapChain* swap_chain;
     IDXGIDevice1* dxgi_device;
+    float present_ms;      // LyreViz : duree du dernier Present
+    HRESULT present_hr;    // LyreViz : son resultat
 } _sapp_d3d11_t;
 #endif
 
@@ -8932,8 +8940,13 @@ _SOKOL_PRIVATE void _sapp_d3d11_create_device_and_swapchain(void) {
     sc_desc->OutputWindow = _sapp.win32.hwnd;
     sc_desc->Windowed = true;
     if (_sapp.win32.is_win10_or_greater) {
-        sc_desc->BufferCount = 2;
+        // LyreViz (PLAN-OPTIM-LASERS.md, 0.1) : avec la synchro verticale (spectacle), 3 tampons au lieu de 2 (une image un peu
+        // en retard n'attend pas le rafraichissement suivant, l'affichage ne chute pas d'un coup) ; sans synchro (bancs), 2 :
+        // quand Windows compose l'image, 3 tampons faisaient attendre la carte dans la passe finale (scene seule 5,2 -> 8,8 ms,
+        // mesure). Drapeau de dechirure (sans synchro : presentation immediate), retire si le systeme le refuse
+        sc_desc->BufferCount = _sapp.desc.disable_vsync ? 2 : 3;
         sc_desc->SwapEffect = (DXGI_SWAP_EFFECT) _SAPP_DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        sc_desc->Flags = _SAPP_DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING;
     } else {
         sc_desc->BufferCount = 1;
         sc_desc->SwapEffect = DXGI_SWAP_EFFECT_DISCARD;
@@ -8989,12 +9002,19 @@ _SOKOL_PRIVATE void _sapp_d3d11_create_device_and_swapchain(void) {
             &_sapp.d3d11.device_context);   /* ppImmediateContext */
     }
     #endif
+    if (!SUCCEEDED(hr) && sc_desc->Flags != 0) {
+        // LyreViz : dechirure refusee (systeme ou pilote ancien) : comme avant
+        sc_desc->Flags = 0;
+        hr = D3D11CreateDeviceAndSwapChain(NULL, D3D_DRIVER_TYPE_HARDWARE, NULL, create_flags, requested_feature_levels, 2,
+            D3D11_SDK_VERSION, sc_desc, &_sapp.d3d11.swap_chain, &_sapp.d3d11.device, &result_feature_level,
+            &_sapp.d3d11.device_context);
+    }
     SOKOL_ASSERT(SUCCEEDED(hr) && _sapp.d3d11.swap_chain && _sapp.d3d11.device && _sapp.d3d11.device_context);
 
     // minimize frame latency, disable Alt-Enter
     hr = _sapp_d3d11_QueryInterface(_sapp.d3d11.device, _sapp_win32_refiid(_sapp_IID_IDXGIDevice1), (void**)&_sapp.d3d11.dxgi_device);
     if (SUCCEEDED(hr) && _sapp.d3d11.dxgi_device) {
-        _sapp_dxgi_SetMaximumFrameLatency(_sapp.d3d11.dxgi_device, 1);
+        _sapp_dxgi_SetMaximumFrameLatency(_sapp.d3d11.dxgi_device, 2);   // LyreViz : 2 (3 tampons) au lieu de 1
         IDXGIAdapter* dxgi_adapter = 0;
         hr = _sapp_dxgi_GetAdapter(_sapp.d3d11.dxgi_device, &dxgi_adapter);
         if (SUCCEEDED(hr) && dxgi_adapter) {
@@ -9095,7 +9115,7 @@ _SOKOL_PRIVATE void _sapp_d3d11_destroy_default_render_target(void) {
 _SOKOL_PRIVATE void _sapp_d3d11_resize_default_render_target(void) {
     if (_sapp.d3d11.swap_chain) {
         _sapp_d3d11_destroy_default_render_target();
-        _sapp_dxgi_ResizeBuffers(_sapp.d3d11.swap_chain, _sapp.d3d11.swap_chain_desc.BufferCount, (UINT)_sapp.framebuffer_width, (UINT)_sapp.framebuffer_height, DXGI_FORMAT_B8G8R8A8_UNORM, 0);
+        _sapp_dxgi_ResizeBuffers(_sapp.d3d11.swap_chain, _sapp.d3d11.swap_chain_desc.BufferCount, (UINT)_sapp.framebuffer_width, (UINT)_sapp.framebuffer_height, DXGI_FORMAT_B8G8R8A8_UNORM, _sapp.d3d11.swap_chain_desc.Flags);
         _sapp_d3d11_create_default_render_target();
     }
 }
@@ -9109,11 +9129,23 @@ _SOKOL_PRIVATE void _sapp_d3d11_present(bool from_winproc) {
             // NOTE: disabled vsync-throttling when called from the winproc modal window
             // resize/movement loop avoids window system stuttering on some drivers
             // (notably: NVIDIA)
+            // LyreViz : sans synchro (bancs), presentation immediate avec dechirure quand Windows laisse l'affichage direct a la
+            // fenetre plein ecran (toutes les images affichees) ; s'il compose l'image (fenetre ou notification devant), la file
+            // se remplit : DO_NOT_WAIT jette alors l'image au lieu de faire attendre la carte (passe finale bloquee jusqu'a
+            // 6,7 ms, mesure). Images jetees : colonne non_presentee du journal du banc.
             flags |= DXGI_PRESENT_DO_NOT_WAIT;
+            if (!from_winproc && (_sapp.d3d11.swap_chain_desc.Flags & _SAPP_DXGI_SWAP_CHAIN_FLAG_ALLOW_TEARING)) {
+                flags |= _SAPP_DXGI_PRESENT_ALLOW_TEARING;
+            }
             swap_interval = 0;
         }
     }
-    _sapp_dxgi_Present(_sapp.d3d11.swap_chain, swap_interval, flags);
+    LARGE_INTEGER qf, qa, qb;   // LyreViz : duree du Present (attente de l'ecran ou d'un tampon libre)
+    QueryPerformanceFrequency(&qf);
+    QueryPerformanceCounter(&qa);
+    _sapp.d3d11.present_hr = _sapp_dxgi_Present(_sapp.d3d11.swap_chain, swap_interval, flags);
+    QueryPerformanceCounter(&qb);
+    _sapp.d3d11.present_ms = (float)((double)(qb.QuadPart - qa.QuadPart) * 1000.0 / (double)qf.QuadPart);
 }
 
 #endif /* SOKOL_D3D11 */
@@ -15014,6 +15046,22 @@ SOKOL_API_IMPL const void* sapp_d3d11_get_swap_chain(void) {
     SOKOL_ASSERT(_sapp.valid);
 #if defined(SOKOL_D3D11)
     return _sapp.d3d11.swap_chain;
+#else
+    return 0;
+#endif
+}
+
+SOKOL_API_IMPL float sapp_d3d11_last_present_ms(void) {
+#if defined(SOKOL_D3D11)
+    return _sapp.d3d11.present_ms;
+#else
+    return 0.0f;
+#endif
+}
+
+SOKOL_API_IMPL long sapp_d3d11_last_present_result(void) {
+#if defined(SOKOL_D3D11)
+    return (long)_sapp.d3d11.present_hr;
 #else
     return 0;
 #endif
