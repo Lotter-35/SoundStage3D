@@ -1728,59 +1728,66 @@ void LaserRig::build_hits(vec3 mn, vec3 mx) {
                     }
                     return;
                 }
+                // tranches de 22,5 deg d'abord : la face de sortie n'est lue qu'aux bouts d'un morceau, et un cercle complet
+                // (ou un arc qui passe du mur au sol et revient au mur) a ses deux bouts sur la meme face ; toute la courbe
+                // prenait alors la normale de la face de son debut, qui tourne avec la figure (sol au loin sans largeur
+                // minimale a l'ecran : traits qui clignotent par morceaux)
                 struct Piece { float t0, t1; };
-                Piece st[8];
-                int ns = 0;
-                st[ns++] = {ta, ta + span};
-                int guard = 0;
-                while (ns > 0 && guard++ < 16) {
-                    const Piece p = st[--ns];
-                    int f0i, f1i;
-                    exit_face(g.src, dirf(p.t0), mn, mx, f0i);
-                    exit_face(g.src, dirf(p.t1), mn, mx, f1i);
-                    if (f0i == f1i || p.t1 - p.t0 < 1e-5f) {
-                        // morceaux de 22,5 deg d'arc au plus, recoupes en deux tant que la courbe s'ecarte de sa corde de plus
-                        // de 4 % de sa longueur (+ 5 mm) : le dessin n'ajoute que cette marge (vs_laser_hit)
-                        auto exitp = [&](float t) {
-                            int fc;
-                            const vec3 D = dirf(t);
-                            return g.src + D * exit_face(g.src, D, mn, mx, fc);
-                        };
-                        const int m = std::clamp((int)std::ceil((p.t1 - p.t0) / (22.5f * DEG)), 1, 64);
-                        vec3 Pc = exitp(p.t0);
-                        for (int c = 0; c < m; c++) {
-                            struct Ch { float t0, t1; vec3 Pa, Pb; int depth; };
-                            Ch cs[16];
-                            int nc = 0;
-                            const float c1 = p.t0 + (p.t1 - p.t0) * (float)(c + 1) / (float)m;
-                            const vec3 Pn = exitp(c1);
-                            cs[nc++] = {p.t0 + (p.t1 - p.t0) * (float)c / (float)m, c1, Pc, Pn, 0};
-                            Pc = Pn;
-                            while (nc > 0) {
-                                const Ch q = cs[--nc];
-                                const float tm = 0.5f * (q.t0 + q.t1);
-                                const vec3 Pm = exitp(tm);
-                                if (q.depth < 7 && nc + 2 <= 16 && length(Pm - (q.Pa + q.Pb) * 0.5f) > 0.04f * length(q.Pb - q.Pa) + 0.005f) {
-                                    cs[nc++] = {tm, q.t1, Pm, q.Pb, q.depth + 1};
-                                    cs[nc++] = {q.t0, tm, q.Pa, Pm, q.depth + 1};
-                                    continue;
+                const int m0 = std::clamp((int)std::ceil(span / (22.5f * DEG)), 1, 64);
+                for (int c0 = 0; c0 < m0; c0++) {
+                    Piece st[8];
+                    int ns = 0;
+                    st[ns++] = {ta + span * (float)c0 / (float)m0, c0 + 1 < m0 ? ta + span * (float)(c0 + 1) / (float)m0 : ta + span};
+                    int guard = 0;
+                    while (ns > 0 && guard++ < 16) {
+                        const Piece p = st[--ns];
+                        int f0i, f1i;
+                        exit_face(g.src, dirf(p.t0), mn, mx, f0i);
+                        exit_face(g.src, dirf(p.t1), mn, mx, f1i);
+                        if (f0i == f1i || p.t1 - p.t0 < 1e-5f) {
+                            // morceaux de 22,5 deg d'arc au plus, recoupes en deux tant que la courbe s'ecarte de sa corde de plus
+                            // de 4 % de sa longueur (+ 5 mm) : le dessin n'ajoute que cette marge (vs_laser_hit)
+                            auto exitp = [&](float t) {
+                                int fc;
+                                const vec3 D = dirf(t);
+                                return g.src + D * exit_face(g.src, D, mn, mx, fc);
+                            };
+                            const int m = std::clamp((int)std::ceil((p.t1 - p.t0) / (22.5f * DEG)), 1, 64);
+                            vec3 Pc = exitp(p.t0);
+                            for (int c = 0; c < m; c++) {
+                                struct Ch { float t0, t1; vec3 Pa, Pb; int depth; };
+                                Ch cs[16];
+                                int nc = 0;
+                                const float c1 = p.t0 + (p.t1 - p.t0) * (float)(c + 1) / (float)m;
+                                const vec3 Pn = exitp(c1);
+                                cs[nc++] = {p.t0 + (p.t1 - p.t0) * (float)c / (float)m, c1, Pc, Pn, 0};
+                                Pc = Pn;
+                                while (nc > 0) {
+                                    const Ch q = cs[--nc];
+                                    const float tm = 0.5f * (q.t0 + q.t1);
+                                    const vec3 Pm = exitp(tm);
+                                    if (q.depth < 7 && nc + 2 <= 16 && length(Pm - (q.Pa + q.Pb) * 0.5f) > 0.04f * length(q.Pb - q.Pa) + 0.005f) {
+                                        cs[nc++] = {tm, q.t1, Pm, q.Pb, q.depth + 1};
+                                        cs[nc++] = {q.t0, tm, q.Pa, Pm, q.depth + 1};
+                                        continue;
+                                    }
+                                    push(q.t0, q.t1, length(q.Pa - g.src), length(q.Pb - g.src), FACE_N[f0i]);
                                 }
-                                push(q.t0, q.t1, length(q.Pa - g.src), length(q.Pb - g.src), FACE_N[f0i]);
                             }
+                            continue;
                         }
-                        continue;
-                    }
-                    float lo = p.t0, hi = p.t1;
-                    for (int it = 0; it < 14; it++) {
-                        const float mid = 0.5f * (lo + hi);
-                        int fm;
-                        exit_face(g.src, dirf(mid), mn, mx, fm);
-                        if (fm == f0i) lo = mid; else hi = mid;
-                    }
-                    if (ns + 2 <= 8) {
-                        // les deux cotes du coin se touchent (meme angle) : pas de trou
-                        st[ns++] = {0.5f * (lo + hi), p.t1};
-                        st[ns++] = {p.t0, 0.5f * (lo + hi)};
+                        float lo = p.t0, hi = p.t1;
+                        for (int it = 0; it < 14; it++) {
+                            const float mid = 0.5f * (lo + hi);
+                            int fm;
+                            exit_face(g.src, dirf(mid), mn, mx, fm);
+                            if (fm == f0i) lo = mid; else hi = mid;
+                        }
+                        if (ns + 2 <= 8) {
+                            // les deux cotes du coin se touchent (meme angle) : pas de trou
+                            st[ns++] = {0.5f * (lo + hi), p.t1};
+                            st[ns++] = {p.t0, 0.5f * (lo + hi)};
+                        }
                     }
                 }
                 return;
