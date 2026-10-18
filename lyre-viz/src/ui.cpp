@@ -624,125 +624,170 @@ void laser_global_ui() {
     }
 }
 
+// Onglet Rendu : reglages ranges par categorie (repliables), du plus utile au plus technique. Les reglages propres aux
+// lasers (fumee, volutes, diffusion, blanchiment, rendu photo) sont dans l'onglet Lasers ; ici, seulement leur affichage
+// et ce qui joue sur la vitesse.
 void render_ui() {
     RenderSettings& r = app.rs;
     const Timings& t = app.timings;
     const RenderStats& s = app.renderer.stats;
-    ImGui::Text("%.1f images/s  (%.2f ms)", t.fps, t.frame_ms);
-    ImGui::Text("CPU : lyres %.2f ms, fumee %.2f ms, envoi GPU %.2f ms, UI %.2f ms", t.rig_ms, t.fog_ms, t.render_cpu_ms, t.ui_ms);
-    ImGui::Text("Rendu %d x %d, fumee %d x %d", s.internal_w, s.internal_h, s.vol_w, s.vol_h);
-    ImGui::Text("Faisceaux allumes : %d, lumieres indirectes : %d", s.lights, s.vpls);
-    const char* backends[] = {"OpenGL", "OpenGL ES", "Direct3D 11", "Metal (iOS)", "Metal (macOS)", "Metal (sim)", "WebGPU", "Vulkan", "aucun"};
-    int b = (int)sg_query_backend();
-    ImGui::Text("API graphique : %s", (b >= 0 && b < 9) ? backends[b] : "?");
+    ImGui::Text("%.1f images/s  (%.2f ms par image)", t.fps, t.frame_ms);
     if (gpuprof::available()) {
-        ImGui::SeparatorText("Temps GPU par passe");
-        // valeurs lissees pour qu'elles restent lisibles
-        static float smooth[32] = {};
-        static float smooth_total = 0;
-        const std::vector<gpuprof::Section>& secs = gpuprof::last();
-        for (size_t i = 0; i < secs.size() && i < 32; i++) {
-            smooth[i] = smooth[i] * 0.9f + secs[i].ms * 0.1f;
-            ImGui::Text("%-26s %6.2f ms", secs[i].name, smooth[i]);
+        ImGui::SameLine();
+        ImGui::TextDisabled("GPU %.2f ms", gpuprof::last_total_ms());
+    }
+    ImGui::TextDisabled("Image calculee en %d x %d", s.internal_w, s.internal_h);
+
+    if (ImGui::CollapsingHeader("Vitesse et qualite", ImGuiTreeNodeFlags_DefaultOpen)) {
+        ImGui::Checkbox("Qualite adaptative", &r.adaptive);
+        ImGui::SetItemTooltip("Allege le calcul dans les moments lourds pour tenir la cadence visee.\n"
+                              "Coupee : qualite toujours maximale (bancs d'essai).");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%.0f %%)", s.quality * 100.0f);
+        ImGui::BeginDisabled(!r.adaptive);
+        ImGui::SliderFloat("Cadence visee", &r.target_fps, 30, 240, "%.0f img/s");
+        ImGui::Checkbox("Lasers moins fins sous 60 img/s", &r.laser_adaptive);
+        ImGui::SetItemTooltip("Quand l'image passe sous 60 img/s, les lasers sont calcules a 80, 70 puis 50 %% de la resolution\n"
+                              "(traits un peu plus doux), et reviennent a 100 %% des qu'il y a de la marge.");
+        ImGui::SameLine();
+        ImGui::TextDisabled("(lasers a %.0f %%)", s.laser_scale * 100.0f);
+        ImGui::EndDisabled();
+        if (!r.fsr) {
+            ImGui::SliderFloat("Resolution de l'image", &r.render_scale, 0.25f, 1.0f, "x %.2f");
+            ImGui::SetItemTooltip("Toute l'image calculee plus petite puis agrandie (1 : pleine resolution).");
         }
-        smooth_total = smooth_total * 0.9f + gpuprof::last_total_ms() * 0.1f;
-        ImGui::Text("%-26s %6.2f ms", "total GPU", smooth_total);
-    } else {
-        ImGui::TextDisabled("Temps GPU par passe : Direct3D 11 seulement.");
+        ImGui::Checkbox("AMD FSR 1 (dernier recours)", &r.fsr);
+        ImGui::SetItemTooltip("Calcule l'image plus petite puis l'agrandit (EASU) et rend la nettete (RCAS).\n"
+                              "Remplace la resolution de l'image. L'interface reste a pleine resolution.\n"
+                              "Plus rapide, mais traits fins (lasers) et scintillement du sol plus doux.");
+        if (r.fsr) {
+            ImGui::SliderFloat("FSR : diviseur", &r.fsr_div, 1.0f, 3.0f, "/ %.2f");
+            if (ImGui::Button("Qualite##fsr")) r.fsr_div = 1.5f;
+            ImGui::SameLine();
+            if (ImGui::Button("Equilibre##fsr")) r.fsr_div = 1.7f;
+            ImGui::SameLine();
+            if (ImGui::Button("Performance##fsr")) r.fsr_div = 2.0f;
+            ImGui::SameLine();
+            if (ImGui::Button("Ultra##fsr")) r.fsr_div = 3.0f;
+            ImGui::SliderFloat("FSR : nettete", &r.fsr_sharpness, 0.0f, 1.0f, "%.2f");
+        }
     }
 
-    ImGui::SeparatorText("Qualite");
-    ImGui::Checkbox("Qualite adaptative (tient la cadence)", &r.adaptive);
-    ImGui::SameLine();
-    ImGui::TextDisabled("%.0f %%", s.quality * 100.0f);
-    ImGui::SliderFloat("Cadence visee", &r.target_fps, 30, 240, "%.0f img/s");
-    if (!r.fsr) ImGui::SliderFloat("Resolution interne", &r.render_scale, 0.25f, 1.0f, "x %.2f");
-    ImGui::Checkbox("AMD FSR 1 (dernier recours)", &r.fsr);
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Calcule l'image plus petite puis l'agrandit (EASU) et rend la nettete (RCAS).\n"
-                          "Remplace la resolution interne. L'interface reste a pleine resolution.\n"
-                          "Plus rapide, mais traits fins (lasers) et scintillement du sol plus doux.");
-    if (r.fsr) {
-        ImGui::SliderFloat("FSR : resolution divisee par", &r.fsr_div, 1.0f, 3.0f, "%.2f");
-        if (ImGui::Button("Qualite")) r.fsr_div = 1.5f;
-        ImGui::SameLine();
-        if (ImGui::Button("Equilibre")) r.fsr_div = 1.7f;
-        ImGui::SameLine();
-        if (ImGui::Button("Performance")) r.fsr_div = 2.0f;
-        ImGui::SameLine();
-        if (ImGui::Button("Ultra")) r.fsr_div = 3.0f;
-        ImGui::SliderFloat("FSR : nettete", &r.fsr_sharpness, 0.0f, 1.0f, "%.2f");
-        ImGui::TextDisabled("Rendu %d x %d -> ecran", s.internal_w, s.internal_h);
+    if (ImGui::CollapsingHeader("Image")) {
+        ImGui::SliderFloat("Exposition", &r.exposure, 0.05f, 8, "%.2f", ImGuiSliderFlags_Logarithmic);
+        ImGui::Checkbox("Halo des lumieres fortes (bloom)", &r.bloom);
+        if (r.bloom) ImGui::SliderFloat("Force du halo", &r.bloom_strength, 0, 0.3f);
+        ImGui::SliderFloat("Lumiere ambiante", &r.ambient, 0, 0.05f, "%.4f", ImGuiSliderFlags_Logarithmic);
     }
-    ImGui::Checkbox("Taches de lumiere sur les surfaces", &r.surface_lights);
-    ImGui::Checkbox("Reflets brillants", &r.specular);
-    ImGui::Checkbox("Lyres tres douces (frost) eclairees a 1/4 de la resolution", &r.soft_lights);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%d)", s.soft_lights);
-    ImGui::SliderInt("Lyres superposees a 1/4 au-dela de", &r.crowd_soft, 0, 96, r.crowd_soft > 0 ? "%d lyres" : "jamais");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Case de l'ecran ou plus de N lyres sans gobo se superposent (convergence, grand zoom) :\n"
-                          "leur lumiere y est calculee a 1/4 de la resolution (relief du sol exact, reflets lisses).\n"
-                          "Seulement les lyres dont la tache a un bord large et flou (grand zoom, frost, hors mise au point).\n"
-                          "Jusqu'a 4 fois plus rapide sur une convergence. 0 : jamais.");
-    ImGui::SliderFloat("Scintillement des reflets a 1/4", &r.sparkle, 0.0f, 3.0f, "%.2f");
-    if (ImGui::IsItemHovered())
-        ImGui::SetTooltip("Lyres eclairees a 1/4 : le reflet est module pixel par pixel par le relief fin du sol.\n"
-                          "1,75 : autant de grains brillants qu'a pleine resolution. 0 : reflet lisse.");
-    ImGui::Checkbox("Pre-passe de profondeur (plus rapide, meme image)", &r.depth_prepass);
-    ImGui::Checkbox("Faisceaux dans la fumee", &r.volumetrics);
-    ImGui::Checkbox("Fumee : calcul analytique (sans bruit, rapide)", &r.analytic_beams);
-    ImGui::Checkbox("Fumee : faisceaux doux a plus basse resolution", &r.beam_tiers);
-    ImGui::Text("Faisceaux par resolution : %d (1) / %d (1/2) / %d (1/4)", s.tier_count[0], s.tier_count[1], s.tier_count[2]);
-    ImGui::SliderInt("Fumee : diviseur de resolution", &r.vol_div, 1, 4);
-    ImGui::SliderInt("Fumee : echantillons par faisceau", &r.vol_samples, 2, 32);
-    ImGui::Checkbox("Accumulation temporelle", &r.temporal);
-    ImGui::SliderFloat("Poids de l'historique", &r.temporal_weight, 0, 0.97f);
-    ImGui::Checkbox("Lumiere indirecte (rebonds)", &r.gi);
-    ImGui::SliderFloat("Force des rebonds", &r.gi_strength, 0, 4);
-    ImGui::SliderFloat("Rebonds dans la fumee", &r.gi_fog, 0, 4);
-    ImGui::Checkbox("Bloom (halo)", &r.bloom);
-    ImGui::SliderFloat("Force du bloom", &r.bloom_strength, 0, 0.3f);
-    ImGui::Checkbox("Ombres des obstacles (exactes)", &r.shadows);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%d lyres)", s.occluded_lights);
-    ImGui::Checkbox("Aberration chromatique (franges des gobos)", &r.chroma);
-    ImGui::SliderFloat("Intensite de l'aberration", &r.chroma_strength, 0, 4, "%.2f");
-    ImGui::Checkbox("Sol en beton texture", &r.floor_texture);
-    if (!app.floor.ok) {
+
+    if (ImGui::CollapsingHeader("Lyres")) {
+        ImGui::Checkbox("Afficher les lyres", &r.show_fixtures);
+        ImGui::SliderFloat("Eclat des lentilles", &r.lens_glow, 0, 4);
+        ImGui::SliderFloat("Portee des faisceaux", &r.beam_range, 10, 160, "%.0f m");
+        ImGui::SeparatorText("Sur les surfaces");
+        ImGui::Checkbox("Taches de lumiere", &r.surface_lights);
+        ImGui::Checkbox("Reflets brillants", &r.specular);
+        ImGui::Checkbox("Ombres des obstacles", &r.shadows);
         ImGui::SameLine();
-        ImGui::TextDisabled("(texture absente)");
+        ImGui::TextDisabled("(%d lyres)", s.occluded_lights);
+        ImGui::Checkbox("Franges colorees des gobos", &r.chroma);
+        ImGui::SetItemTooltip("Aberration chromatique de l'optique : bords rouges et bleus des gobos au sol.");
+        if (r.chroma) ImGui::SliderFloat("Force des franges", &r.chroma_strength, 0, 4, "%.2f");
+        ImGui::Checkbox("Lumiere renvoyee par les surfaces", &r.gi);
+        ImGui::SetItemTooltip("Lumiere indirecte : le sol et les murs eclaires renvoient un peu de lumiere autour d'eux.");
+        if (r.gi) {
+            ImGui::SliderFloat("Force (surfaces)", &r.gi_strength, 0, 4);
+            ImGui::SliderFloat("Force (dans la fumee)", &r.gi_fog, 0, 4);
+        }
+        ImGui::SeparatorText("Dans la fumee");
+        ImGui::Checkbox("Faisceaux dans la fumee", &r.volumetrics);
+        if (r.volumetrics) {
+            ImGui::SliderInt("Resolution de la fumee", &r.vol_div, 1, 4, "/ %d");
+            ImGui::Checkbox("Lissage dans le temps", &r.temporal);
+            ImGui::SetItemTooltip("Melange chaque image avec les precedentes : enleve le grain de la fumee.");
+            if (r.temporal) ImGui::SliderFloat("Force du lissage", &r.temporal_weight, 0, 0.97f);
+        }
     }
-    ImGui::SliderFloat("Eau au sol", &r.floor_wet, 0, 1, r.floor_wet <= 0.001f ? "sec" : "%.2f");
-    ImGui::Checkbox("Afficher les lyres", &r.show_fixtures);
-    ImGui::SliderFloat("Eclat des lentilles", &r.lens_glow, 0, 4);
-    ImGui::Checkbox("Lasers dans la fumee (reglages : onglet Lasers)", &r.lasers);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%d segments, %d traits)", s.laser_segments, app.lasers.total_traits);
-    ImGui::Checkbox("Lasers : fumee de la piece (amas, brume ; sinon uniforme)", &r.laser_room_fog);
-    ImGui::Checkbox("Lasers : arretes par les obstacles et le personnage", &app.lasers.collisions);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%d segments coupes)", app.lasers.cut_segments);
-    ImGui::SliderFloat("Lasers : blanchiment (0 = oeil, 1 = camera)", &r.laser_white, 0.0f, 1.5f, "%.2f");
-    ImGui::Checkbox("Lasers : resolution adaptative (80, 70, 50 % sous 60 img/s)", &r.laser_adaptive);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%.0f %%)", app.renderer.stats.laser_scale * 100.0f);
-    ImGui::SliderFloat("Lasers : lueur de sortie", &r.laser_exit, 0.0f, 4.0f, "x %.2f");
-    ImGui::Checkbox("Lasers : cache des figures fixes (moteur CPU)", &app.lasers.figure_cache);
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%d lasers repris ; moteur %.2f ms : morceaux %.2f, impacts %.2f)", app.lasers.cached_lasers,
-                        app.lasers.cpu_build_ms + app.lasers.cpu_hits_ms, app.lasers.cpu_build_ms, app.lasers.cpu_hits_ms);
-    if (ImGui::Checkbox("Lasers : impacts sur les surfaces (points et lignes)", &r.laser_impacts)) app.lasers.impacts = r.laser_impacts;
-    ImGui::SameLine();
-    ImGui::TextDisabled("(%d)", s.laser_hits);
-    ImGui::SliderFloat("Intensite des impacts", &r.laser_hit_gain, 0.01f, 10, "x %.2f", ImGuiSliderFlags_Logarithmic);
-    ImGui::Checkbox("Lasers : diffusion tres avant (2 lobes ; sinon comme les lyres)", &r.laser_fwd_lobe);
-    ImGui::Checkbox("Lasers : volutes fines dans les nappes", &r.laser_volutes);
-    ImGui::Checkbox("Lasers : volutes, 2e octave de pres (detail de quelques mm)", &r.laser_vol_fine);
-    ImGui::SeparatorText("Image");
-    ImGui::SliderFloat("Exposition", &r.exposure, 0.05f, 8, "%.2f", ImGuiSliderFlags_Logarithmic);
-    ImGui::SliderFloat("Lumiere ambiante", &r.ambient, 0, 0.05f, "%.4f", ImGuiSliderFlags_Logarithmic);
-    ImGui::SliderFloat("Portee des faisceaux", &r.beam_range, 10, 160, "%.0f m");
+
+    if (ImGui::CollapsingHeader("Lasers")) {
+        ImGui::Checkbox("Lasers dans la fumee", &r.lasers);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d segments, %d traits)", s.laser_segments, app.lasers.total_traits);
+        if (ImGui::Checkbox("Impacts sur les surfaces", &r.laser_impacts)) app.lasers.impacts = r.laser_impacts;
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d)", s.laser_hits);
+        if (r.laser_impacts) ImGui::SliderFloat("Intensite des impacts", &r.laser_hit_gain, 0.01f, 10, "x %.2f", ImGuiSliderFlags_Logarithmic);
+        ImGui::SliderFloat("Lueur a la sortie", &r.laser_exit, 0.0f, 4.0f, "x %.2f");
+        ImGui::Checkbox("Arretes par les obstacles et le personnage", &app.lasers.collisions);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d segments coupes)", app.lasers.cut_segments);
+        ImGui::TextDisabled("Fumee, volutes, couleurs et rendu photo : onglet Lasers.");
+    }
+
+    if (ImGui::CollapsingHeader("Sol")) {
+        ImGui::Checkbox("Beton texture", &r.floor_texture);
+        if (!app.floor.ok) {
+            ImGui::SameLine();
+            ImGui::TextDisabled("(texture absente)");
+        }
+        ImGui::SliderFloat("Eau au sol", &r.floor_wet, 0, 1, r.floor_wet <= 0.001f ? "sec" : "%.2f");
+    }
+
+    if (ImGui::CollapsingHeader("Reglages techniques (vitesse)")) {
+        ImGui::TextDisabled("Raccourcis de calcul : l'image ne change pas, ou tres peu.");
+        ImGui::Checkbox("Pre-passe de profondeur", &r.depth_prepass);
+        ImGui::SetItemTooltip("Plus rapide, meme image.");
+        ImGui::SeparatorText("Lyres");
+        ImGui::Checkbox("Lyres tres douces (frost) a 1/4 de la resolution", &r.soft_lights);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d)", s.soft_lights);
+        ImGui::SliderInt("Superposees a 1/4 des", &r.crowd_soft, 0, 96, r.crowd_soft > 0 ? "%d lyres" : "jamais");
+        ImGui::SetItemTooltip("Case de l'ecran ou plus de N lyres sans gobo se superposent (convergence, grand zoom) :\n"
+                              "leur lumiere y est calculee a 1/4 de la resolution (relief du sol exact, reflets lisses).\n"
+                              "Seulement les lyres dont la tache a un bord large et flou (grand zoom, frost, hors mise au point).\n"
+                              "Jusqu'a 4 fois plus rapide sur une convergence. 0 : jamais.");
+        ImGui::SliderFloat("Scintillement a 1/4", &r.sparkle, 0.0f, 3.0f, "%.2f");
+        ImGui::SetItemTooltip("Lyres eclairees a 1/4 : le reflet est module pixel par pixel par le relief fin du sol.\n"
+                              "1,75 : autant de grains brillants qu'a pleine resolution. 0 : reflet lisse.");
+        ImGui::SeparatorText("Fumee des lyres");
+        ImGui::Checkbox("Calcul analytique (sans bruit, rapide)", &r.analytic_beams);
+        ImGui::Checkbox("Faisceaux doux a plus basse resolution", &r.beam_tiers);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d / %d / %d)", s.tier_count[0], s.tier_count[1], s.tier_count[2]);
+        ImGui::SetItemTooltip("Faisceaux a pleine resolution / 1/2 / 1/4.");
+        ImGui::SliderInt("Echantillons", &r.vol_samples, 2, 32);
+        ImGui::SetItemTooltip("Points de calcul le long de chaque faisceau (calcul non analytique).");
+        ImGui::SeparatorText("Lasers");
+        ImGui::Checkbox("Cache des figures fixes (moteur CPU)", &app.lasers.figure_cache);
+        ImGui::SameLine();
+        ImGui::TextDisabled("(%d repris)", app.lasers.cached_lasers);
+        ImGui::SetItemTooltip("Moteur %.2f ms : morceaux %.2f, impacts %.2f", app.lasers.cpu_build_ms + app.lasers.cpu_hits_ms,
+                              app.lasers.cpu_build_ms, app.lasers.cpu_hits_ms);
+    }
+
+    if (ImGui::CollapsingHeader("Mesures")) {
+        ImGui::Text("CPU : lyres %.2f ms, fumee %.2f ms, envoi GPU %.2f ms, interface %.2f ms", t.rig_ms, t.fog_ms, t.render_cpu_ms, t.ui_ms);
+        ImGui::Text("Fumee calculee en %d x %d", s.vol_w, s.vol_h);
+        ImGui::Text("Faisceaux allumes : %d, lumieres indirectes : %d", s.lights, s.vpls);
+        const char* backends[] = {"OpenGL", "OpenGL ES", "Direct3D 11", "Metal (iOS)", "Metal (macOS)", "Metal (sim)", "WebGPU", "Vulkan", "aucun"};
+        const int b = (int)sg_query_backend();
+        ImGui::Text("API graphique : %s", (b >= 0 && b < 9) ? backends[b] : "?");
+        if (gpuprof::available()) {
+            ImGui::SeparatorText("Temps GPU par passe");
+            // valeurs lissees pour qu'elles restent lisibles
+            static float smooth[32] = {};
+            static float smooth_total = 0;
+            const std::vector<gpuprof::Section>& secs = gpuprof::last();
+            for (size_t i = 0; i < secs.size() && i < 32; i++) {
+                smooth[i] = smooth[i] * 0.9f + secs[i].ms * 0.1f;
+                ImGui::Text("%-26s %6.2f ms", secs[i].name, smooth[i]);
+            }
+            smooth_total = smooth_total * 0.9f + gpuprof::last_total_ms() * 0.1f;
+            ImGui::Text("%-26s %6.2f ms", "total GPU", smooth_total);
+        } else {
+            ImGui::TextDisabled("Temps GPU par passe : Direct3D 11 seulement.");
+        }
+    }
 }
 
 // Grille des ambiances : un bouton par ambiance (bande de sa couleur en bas, cadre blanc sur celle en cours).
