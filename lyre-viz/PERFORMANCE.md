@@ -851,6 +851,10 @@ Dernier recours, **coupé par défaut** (onglet Rendu « AMD FSR 1 », `--set fs
 
 ## Pistes d'optimisation futures (pas encore essayées)
 
+### Lasers
+
+Liste à jour (18 octobre 2026) : `PLAN-OPTIM-LASERS.md`, section 9 (cercle en un seul morceau, carte inactive entre deux images, niveau de détail de la fumée, halo tiré du bloom, lumière lente interpolée en variante séparée, seuil de la qualité adaptative, tri plus fin, profondeur maximale par tuile, moteur CPU). Bilan avant / après du plan : section 8, « Bilan ».
+
 ### Faisceaux doux en 1/2 seulement (sans le 1/4)
 
 - **Constat** (16 octobre 2026, scène Contre-jour 57 vue du public) : petits blocs dans la fumée autour des lentilles et du truss, venant des faisceaux doux calculés à 1/2 et 1/4 (voir « Marches dans la fumée »). Les couper coûte ×3 à ×4 sur les faisceaux larges.

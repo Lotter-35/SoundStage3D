@@ -1,6 +1,6 @@
 # Optimisation des lasers : plan
 
-Plan du 18 octobre 2026, validé le même jour. Session de codage en cours : avancement et mesures en section 8. Lasers seulement ; les lyres ne changent pas (sauf mention).
+Plan du 18 octobre 2026, validé le même jour, codé le même jour (commit 98a11c9) : avancement, mesures et bilan en section 8, pistes pour plus tard en section 9. Lasers seulement ; les lyres ne changent pas (sauf mention).
 
 - Objectif : 3840 × 2160 à 120 img/s sur la GTX 1080, soit **8,33 ms par image**.
 - Mesures de départ (état du dépôt au commit `4fc3f93`, réglages par défaut : fumée v2 « Nuages larges et doux », rendu photo, convergence RGB) :
@@ -446,3 +446,47 @@ Référence `bench\ref\avant_adapt.exe`. Bancs `bench\e7_*`. L'étape 6 (1.2, 1.
 | Scènes à 60 img/s ou plus | 27 / 30 | 30 / 30 |
 
 Vague 22,3 → 14,7 ms ; Tunnel 17,1 → 15,2 ; Rosace 17,3 → 14,4. Avec la synchro, quelques scènes varient d'un lancement à l'autre (Spirale, Étoiles, Grand final), selon que Windows compose l'image ou non (étape 2).
+
+### Bilan (18 octobre 2026, commit 98a11c9)
+
+Banc des lasers en mouvement, banc rapide, 4K, GTX 1080, mesuré le même soir : version d'avant le plan (`bench\ref\avant_mesures.exe`) contre la version actuelle (`bench\bilan_avant`, `bilan_apres`, `bilan_adapt`). Images par seconde.
+
+| Cas | Avant | Après, pleine qualité | Après, qualité adaptative (palier) |
+|---|---|---|---|
+| L1 éventails / public | 42 | 50 | 67 (80 %) |
+| L1 / scène | 53 | 61 | 80 (80 %) |
+| L1 / sous les trusses | 53 | 60 | 61 (100 %) |
+| L2 cônes / public | 41 | 51 | 68 (80 %) |
+| L2 / scène | 42 | 48 | 66 (80 %) |
+| L3 caméra dans les nappes | 55 | 62 | 84 (80 %) |
+| L4 traits séparés | 121 | 128 | 129 (100 %) |
+| L5 gros plan | 53 | 55 | 73 (80 %) |
+| L6 sol et obstacles | 48 | 48 | 66 (80 %) |
+| M1 / public, scène, trusses | 67, 76, 78 | 67, 75, 82 | 67, 77, 79 (100 %) |
+| L7 programmeur | 22 | 24 | 61 (50 %) |
+| I1, I2, I3, I4 (ILDA) | 17, 96, 9, 16 | 17, 129, 9, 17 | 45, 128, 26, 49 |
+| P1, P2, P3 (tracés) | 8, 17, 9 | 9, 18, 9 | 24, 51, 26 |
+| Spectacles à 120 img/s | 5 / 30 | — | 13 / 30 |
+| Spectacles à 60 img/s ou plus | 27 / 30 | — | 30 / 30 |
+
+- Pleine qualité (image identique ou invisible) : +5 à +20 % selon les cas.
+- Qualité adaptative (sous 60 img/s seulement) : +30 à +190 % dans les cas lourds. L'objectif de 120 img/s n'est tenu que dans les cas légers (L4, I2, 13 spectacles). Pour les cas de 200 lasers, il faudrait aussi réduire la résolution des lasers au-dessus de 60 img/s, ce que l'utilisateur a refusé pour l'instant : c'est un seuil à changer dans `Renderer::laser_scale_for`.
+
+## 9. Pistes pour plus tard
+
+Décision de l'utilisateur (18 octobre 2026) : à faire plus tard, au besoin. Estimations ± 30 %.
+
+| Piste | En simple | Effort | Gain attendu | Image |
+|---|---|---|---|---|
+| **Cercle en un seul morceau** (suite de 0.5) | Dessiner chaque cercle complet d'un coup au lieu de 2 morceaux. Corriger d'abord le trait doublé à la jonction des cercles complets (premier et dernier trait au même endroit, `LaserRig::arc`), puis autoriser le tour complet dans la fusion (`renderer.cpp`, « jamais un tour complet ») | ~1 h | ~5 % de plus sur les cônes (L2 20,6 → 18,3 ms mesuré), scènes Tunnel, Vortex, Rosace | La ligne plus claire de la jonction disparaît (correction d'un défaut) : à valider par l'utilisateur |
+| **Carte inactive entre deux images** (suite de 0.1) | La carte attend 1 à 1,6 ms entre deux images, même quand le CPU a de l'avance. Installer PresentMon (mode de présentation par image) pour savoir si Windows compose l'image, puis corriger si possible | 1 à 2 h | Jusqu'à ~1 ms par image partout (~10 % sur les cas proches de 120 img/s), si la cause se corrige | Aucun changement |
+| **1.2 Niveau de détail de la fumée selon la distance** | Les filaments de la fumée v2 sur une portée plus courte (~5 m au lieu de ~7 m) ; au loin, nuages lus à un niveau plus grossier | 1 à 2 h | 3 à 8 % des passes laser | Invisible en principe : à vérifier sur agrandissements |
+| **1.4 Halo tiré de la pyramide du bloom** | Le halo des lasers calculé à partir de la réduction d'image déjà faite pour le bloom, au lieu de sa propre pyramide | ~1 h | ~0,3 ms par image dès qu'un laser est allumé | Très peu (halo un peu différent) |
+| **1.1 Lumière lente interpolée, en variante séparée** (étape 4) | Reprendre l'essai de l'étape 4 dans une variante du shader choisie seulement quand des éventails sont à l'écran, puis chercher le coût restant (registres) | 2 à 4 h | 5 à 10 % sur les éventails (L1, L3), incertain | Invisible (mesuré) |
+| **Seuil de la qualité adaptative** | Réduire aussi la résolution des lasers entre 60 et 120 img/s (aujourd'hui : seulement sous 60) | ~15 min | Les cas L et M1 vers 120 img/s (L1 : 80 % → ~80 img/s, 50 % → ~140) | Traits plus doux plus souvent : décision de l'utilisateur |
+| 0.6 Tri plus fin (bandes de 16 × 2 pixels) | Un groupe de pixels saute un segment dont la forme ne touche pas sa bande | 2 à 3 h | −2 à −5 % | Aucun changement |
+| 0.7 Profondeur maximale par tuile | Ignorer les nappes entièrement derrière les surfaces de la tuile | ~1 h | ~0 sur le banc, plus dans une vraie salle (scène, public, mur LED) | Aucun changement |
+| 0.8 Moteur CPU des lasers | Ajustement des tracés partagé entre copies de diffraction et lasers aux mêmes réglages | 2 à 3 h | CPU −1 à −5 ms dans les cas extrêmes (ILDA ou vagues avec diffraction) | Aucun changement |
+| 2.2 Résolution mixte, 2.3 FSR dynamique | Voir section 3 | Gros | −20 à −60 % | Visible : à décider |
+
+Écartés après mesure : 1.3 lumière noyée (aucun pixel saturé), 0.3 tuiles vides et 0.4 variante par grosse tuile (aucun gain).
