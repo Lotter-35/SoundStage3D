@@ -48,6 +48,8 @@ struct Fixture {
     FixtureParams out;          // apres effets (cibles)
     float pan = 0, tilt = 0;    // position physique actuelle
     float pan_vel = 0, tilt_vel = 0;
+    float pan_prev = 0, tilt_prev = 0;  // cibles de l'image precedente (interpolees pendant les sous-pas)
+    bool has_prev = false;
     float gobo_rot = 0, prism_rot = 0;  // angles courants (radians)
     bool selected = false;
     // valeurs derivees pour le rendu

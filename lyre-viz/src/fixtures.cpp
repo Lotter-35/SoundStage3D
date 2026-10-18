@@ -204,21 +204,31 @@ void Rig::update(float dt) {
         }
     }
     // 3. mouvements physiques et valeurs derivees
-    auto move = [&](float& pos, float& vel, float target, float vmax) {
-        if (instant_moves) { pos = target; vel = 0; return; }
-        float err = target - pos;
-        float vdes = (err > 0 ? 1.0f : -1.0f) * std::min(vmax, std::sqrt(2.0f * accel * std::fabs(err)));
-        float dv = clampf(vdes - vel, -accel * dt, accel * dt);
-        vel += dv;
-        pos += vel * dt;
-        if (std::fabs(target - pos) < 0.02f && std::fabs(vel) < 2.0f) { pos = target; vel = 0; }
+    // Integration en sous-pas fixes (~2 ms), cible interpolee entre l'image precedente et celle-ci : integree au pas de
+    // l'image, la commande (vitesse en racine de l'ecart) oscille autour de la cible d'environ accel * dt^2, ce qui fait
+    // des a-coups visibles des que les images ralentissent (2 a 5 degres sous 30 images/s).
+    const int nsub = dt > 0 ? std::min((int)std::ceil(dt * 480.0f), 240) : 0;
+    const float h = nsub > 0 ? dt / (float)nsub : 0.0f;
+    auto move = [&](float& pos, float& vel, float& prev, float target, float vmax) {
+        if (instant_moves) { pos = prev = target; vel = 0; return; }
+        for (int s = 1; s <= nsub; s++) {
+            const float tg = prev + (target - prev) * ((float)s / (float)nsub);
+            float err = tg - pos;
+            float vdes = (err > 0 ? 1.0f : -1.0f) * std::min(vmax, std::sqrt(2.0f * accel * std::fabs(err)));
+            float dv = clampf(vdes - vel, -accel * h, accel * h);
+            vel += dv;
+            pos += vel * h;
+            if (std::fabs(tg - pos) < 0.02f && std::fabs(vel) < 2.0f) { pos = tg; vel = 0; }
+        }
+        prev = target;
     };
     for (Fixture& f : fixtures) {
         FixtureParams& o = f.out;
         o.pan = clampf(o.pan, -270, 270);
         o.tilt = clampf(o.tilt, -135, 135);
-        move(f.pan, f.pan_vel, o.pan, pan_speed);
-        move(f.tilt, f.tilt_vel, o.tilt, tilt_speed);
+        if (!f.has_prev) { f.pan_prev = o.pan; f.tilt_prev = o.tilt; f.has_prev = true; }
+        move(f.pan, f.pan_vel, f.pan_prev, o.pan, pan_speed);
+        move(f.tilt, f.tilt_vel, f.tilt_prev, o.tilt, tilt_speed);
         f.gobo_rot += (o.gobo_speed * DEG) * dt;
         f.prism_rot += (o.prism_speed * DEG) * dt;
         f.gobo_rot = std::fmod(f.gobo_rot, 2 * PI);
