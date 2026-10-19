@@ -789,9 +789,10 @@ Détail : `PLAN-OPTIM-LASERS.md`, section 8.
 
 ## Lasers : lumière dans la pièce (19 octobre 2026, historique 51)
 
-- Lumières virtuelles des impacts et des nappes dans les sondes (`lasergi`, coupée par défaut ; `PLAN-LASERS.md`, « Étape 7 (en partie) »).
+- Lumières virtuelles des impacts et des nappes dans les sondes (`lasergi`, active par défaut depuis le 19 octobre 2026, choix de l'utilisateur ; `PLAN-LASERS.md`, « Étape 7 (en partie) »).
+- **Bancs des lasers depuis : option comprise** (lasers seuls +0,6 à +0,9 ms GPU) ; pour comparer à une mesure plus ancienne, `--set lasergi=0`.
 - Banc des lasers complet en mouvement, rapide, même exécutable (`set_ab.ps1 -SetA lasergi=0 -SetB lasergi=1`) : lasers seuls +0,6 à +0,9 ms GPU (fumée et accumulation, qui n'étaient plus calculées sans lyre, +0,55 ms) ; avec des lyres +0 à +0,2 ms ; CPU +0,35 à +1,3 ms (calcul sur tous les cœurs ; 5,5 ms sur un seul pour P1).
-- Banc des lyres (option coupée) : inchangé, images identiques.
+- Banc des lyres (lasers éteints : aucune lumière des lasers) : inchangé, images identiques.
 - À l'image entière, l'écart se perd dans le bruit des lancements (±1 ms) : coût mesuré sur la somme des passes touchées.
 
 ## Lyres superposées (16 octobre 2026)

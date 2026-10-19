@@ -85,7 +85,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `laserfog` | Lasers : fumée de la pièce (amas, brume plus dense en bas) au point de chaque nappe (1 par défaut) ou fumée uniforme (0). |
   | `laserwhite`, `laserexit` | Lasers : blanchiment des lumières très intenses, comme une caméra (0,6 par défaut ; 0 : couleurs pures, comme l'œil) ; lueur de sortie (point chaud et halo, ×1 par défaut ; 0 : aucune). |
   | `lasercoll`, `laserimpacts`, `lasercache` | Lasers : arrêtés par les obstacles, impacts sur les surfaces, cache des figures fixes du moteur CPU (1 par défaut ; 0 pour couper). |
-  | `lasergi`, `lasergiforce` | Lasers : lumière des lasers dans la pièce (0 par défaut ; 1 : les impacts et les nappes éclairent les murs, le sol, le décor et la fumée, par les sondes de lumière indirecte, avec `gi`) ; sa force (×1 par défaut). |
+  | `lasergi`, `lasergiforce` | Lasers : lumière des lasers dans la pièce (1 par défaut : les impacts et les nappes éclairent les murs, le sol, le décor et la fumée, par les sondes de lumière indirecte, avec `gi` ; 0 pour couper) ; sa force (×1 par défaut). |
   | `laserphase`, `laserfwd`, `laserg`, `laserg2` | Lasers : diffusion vers l'avant à deux lobes (1 par défaut) ou un seul comme les lyres (0) ; part du lobe très avant (0,42), son g (0,88), g du lobe doux (0,35). |
   | `laseredge`, `laseredgew` | Lasers : bords brillants des éventails (1 par défaut : balayage sinusoïdal, le scanner ralentit au bout de chaque aller-retour et la lumière s'y concentre ; 0 : nappe uniforme) ; largeur de la bande brillante (part de la demi-ouverture, 0,025). Même lumière en tout, répartie autrement. |
   | `laserhalo`, `laserhalosize` | Lasers : halo (0,1 par défaut ; 0 : aucun) : la lumière des nappes diffusée une 2e fois par la brume et la lueur de l'objectif, large et douce (pyramide du bloom sur l'image des lasers seule) ; étendue (0,5 par défaut : serré ; 1,5 très large). |
@@ -244,7 +244,7 @@ Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionn
 - **Moteur de tracé** (étape 9) : un laser projette un tracé de scanner, comme un fichier ILDA ; miroirs avec inertie (coins rapides un peu arrondis, tremblement lissé), faisceaux là où le point reste sur place, puis droites et arcs de cercle raccordés, rendus en nappes planes et en nappes coniques exactes. Voir « Lasers : fichiers ILDA » plus bas.
 - **Moteur CPU** : un laser par fil (tous les cœurs du processeur), même résultat que sur un seul cœur ; **cache des figures fixes** (case de l'onglet Rendu, `--set lasercache=0` pour couper) : une figure dont rien ne change reprend ses morceaux et ses impacts de l'image précédente.
 - **Blanc** (étape 4, en partie) : la lumière très intense déborde sur les autres couleurs, comme sur une caméra : la sortie et le cœur des traits virent au blanc, l'éventail garde sa couleur (`laserwhite`) ; **lueur de sortie** : point chaud blanc et halo de la couleur du laser à chaque sortie (`laserexit`, cachée par le boîtier vu de derrière). Cases de l'onglet Rendu.
-- **Lumière dans la pièce** (étape 7, case « Lumière des lasers dans la pièce » de l'onglet Rendu, `--set lasergi=1` ; coupée par défaut) : les impacts éclairent les murs, le sol et le décor autour d'eux, de la couleur du laser et de la surface ; la lumière diffusée par les nappes dans la fumée éclaire la salle. Lumières virtuelles dans les sondes, comme les lyres (voir « Lumière » plus bas).
+- **Lumière dans la pièce** (étape 7, case « Lumière des lasers dans la pièce » de l'onglet Rendu ; active par défaut depuis le 19 octobre 2026, `--set lasergi=0` pour couper) : les impacts éclairent les murs, le sol et le décor autour d'eux, de la couleur du laser et de la surface ; la lumière diffusée par les nappes dans la fumée éclaire la salle. Lumières virtuelles dans les sondes, comme les lyres (voir « Lumière » plus bas).
 - Pas encore : étoile à branches à la sortie, éblouissement.
 
 ### Panneau
@@ -273,7 +273,7 @@ Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionn
   - Chaque tache de lumière (sur le sol, les murs, le décor) renvoie sa couleur dans la pièce.
   - La lumière diffusée par la fumée éclaire aussi la salle.
   - Les deux sont réunis dans une grille 3D de sondes, qui éclaire les surfaces et la fumée.
-  - **Lasers** (`lasergi`, coupé par défaut) : leurs impacts et leurs nappes envoient aussi leur lumière dans les sondes.
+  - **Lasers** (`lasergi`, actif par défaut depuis le 19 octobre 2026) : leurs impacts et leurs nappes envoient aussi leur lumière dans les sondes.
     - Impacts : points répartis en angle le long de chaque ligne d'impact déjà calculée pour le dessin. Chacun porte la puissance du morceau, multipliée par la couleur de la surface (sol texturé et mouillé comme pour les lyres) et atténuée par la fumée.
     - Nappes et traits : quelques points le long de chaque nappe, comme les 3 points d'un faisceau de lyre (diffusion de l'air et de la fumée de la pièce).
     - Les points sont regroupés par case de la grille des sondes (et par face pour les surfaces), puis dans des cases 2 fois plus grandes tant qu'il y en a trop : au plus ~1 400 lumières, même avec 200 lasers.

@@ -76,8 +76,9 @@ struct RenderSettings {
     bool laser_impacts = true;    // impacts sur les surfaces (points et lignes la ou les lasers touchent)
     float laser_hit_gain = 1.0f;  // intensite des impacts
     // lumiere des lasers dans la piece (PLAN-LASERS.md, etape 7) : impacts et nappes envoyes dans les sondes de lumiere
-    // indirecte (avec rs.gi) ; murs, sol et decor autour des impacts prennent la couleur des lasers
-    bool laser_gi = false;
+    // indirecte (avec rs.gi) ; murs, sol et decor autour des impacts prennent la couleur des lasers (active par defaut :
+    // choix de l'utilisateur, 19 octobre 2026)
+    bool laser_gi = true;
     float laser_gi_strength = 1.0f;   // multiplicateur (1 : lumiere des impacts et des nappes, comme celle des lyres)
     float laser_exit = 1.0f;      // lueur de sortie des lasers (point chaud et halo ; 0 : aucune)
     float laser_white = 0.6f;     // blanchiment des lasers tres intenses (comme une camera ; 0 : couleurs pures, comme l'oeil)

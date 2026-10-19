@@ -237,7 +237,7 @@ C'est la méthode simple (celle du laser web et des photon beams), mais elle co�
   - points (traits) et lignes (nappes qui coupent un mur ou le sol), éclairés selon la couleur de la surface, avec le reflet du sol brillant ou mouillé ;
   - 200 000 petits points de quelques pixels : bon marché ;
   - le bloom fait leur halo.
-- **Lumière dans la pièce :** quelques lumières virtuelles par laser (impacts, et le long des nappes) envoyées dans les sondes existantes. Les murs et la fumée prennent la couleur des lasers. *(fait le 19 octobre 2026, option `lasergi`, coupée par défaut : voir « Étape 7 (en partie) » à la fin)*
+- **Lumière dans la pièce :** quelques lumières virtuelles par laser (impacts, et le long des nappes) envoyées dans les sondes existantes. Les murs et la fumée prennent la couleur des lasers. *(fait le 19 octobre 2026, option `lasergi`, active par défaut : voir « Étape 7 (en partie) » à la fin)*
 - **Plus tard :** reflet des lasers dans le sol mouillé (caméra miroir déjà en place), et miroirs.
 
 ## 8. Mouvements et réglages (onglet « Lasers »)
@@ -588,11 +588,11 @@ Historique 51. Images : `docs/lumiere-lasers/` (ambiance 16 « Rideaux laser » 
   - Calcul sur tous les cœurs (fils du moteur laser, `laser_parallel`), chaque fil dans sa propre grille.
   - Sans lyre allumée, la fumée est maintenant calculée (le raccourci de `PLAN-OPTIM-LASERS.md` 0.9 ne s'applique plus que sans lumière des lasers).
   - Aucun laser allumé : rien (le moteur garde les impacts de la dernière figure).
-- **Réglages** : case « Lumière des lasers dans la pièce » et sa force (onglet Rendu, catégorie Lasers), `--set lasergi=1`, `--set lasergiforce=x`. **Coupée par défaut** (à l'utilisateur de décider). Demande la lumière renvoyée (`gi`).
+- **Réglages** : case « Lumière des lasers dans la pièce » et sa force (onglet Rendu, catégorie Lasers), `--set lasergi=0` pour couper, `--set lasergiforce=x`. **Active par défaut** (choix de l'utilisateur, 19 octobre 2026, après la mesure du coût ci-dessous) : les bancs des lasers la comprennent depuis. Demande la lumière renvoyée (`gi`).
 - **Image** : murs, sol, décor et fumée prennent la couleur des lasers, en lumière douce et étendue (résolution des sondes) ; image moyenne +45 % (rideaux), +25 % (200 lasers). Pas de tache ni de scintillement. La lueur très locale autour d'une ligne d'impact (moins de 2 m) n'est pas rendue : plus fine que la grille des sondes.
 - **Coût** (banc des lasers complet, en mouvement, rapide ; même exécutable, option coupée puis active, en alternance) :
   - GPU, lasers seuls : **+0,6 à +0,9 ms** (fumée et son accumulation, maintenant calculées, +0,55 ms ; sondes et composition, le reste) ;
   - GPU, avec des lyres (M1) : +0 à +0,2 ms (sondes seulement) ; scène sans lasers : 0 ;
   - CPU : +0,35 à +0,65 ms ; ILDA et tracés (jusqu'à 28 000 impacts) +0,65 à +1,3 ms (5,5 ms avant le calcul sur tous les cœurs).
-- **Banc des lyres** (option coupée par défaut) : images identiques (PSNR 75 à 84 dB, aucun pixel au-delà de 4/255), temps dans le bruit.
+- **Banc des lyres** (lasers éteints : aucune lumière des lasers) : images identiques (PSNR 75 à 84 dB, aucun pixel au-delà de 4/255), temps dans le bruit.
 - **Pas encore** : flou de mouvement (persistance), reflet des lasers dans le sol mouillé.
