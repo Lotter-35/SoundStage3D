@@ -8,8 +8,14 @@
 #include "ilda.h"
 #include "mathx.h"
 #include "scene.h"
+#include <functional>
 #include <string>
 #include <vector>
+
+// Fils du moteur laser (tous les coeurs du processeur) : laser_parallel appelle f(fil) sur chacun (0 : l'appelant) et
+// attend qu'ils aient fini ; laser_workers en donne le nombre.
+int laser_workers();
+void laser_parallel(const std::function<void(int)>& f);
 
 // Un segment d'eventail : n traits dans un plan, repartis entre deux directions de bord. La couleur varie
 // lineairement d'un bord a l'autre (flux au bord 0, flux1 au bord 1) : degrades et profils le long d'une figure.
@@ -66,6 +72,9 @@ struct LaserHit {
     float pad4;         // arc : rr.z
     vec3 surf;          // normale de la surface touchee (marge du dessin, vu en rasant)
     float pad5;         // arc : cy
+    // etendue du morceau dans l'unite de f0 et f1 (radians d'eventail, ou de theta pour un arc ; 1 pour un point) : sa
+    // puissance est la moyenne de f0 et f1 fois span (lumiere renvoyee dans la piece, Renderer::build_laser_vpls)
+    float span = 1.0f;
 };
 
 // Emplacement d'un boitier : 168 sur les trusses (entre les lyres), 16 sur le pont de scene, 8 au sol de

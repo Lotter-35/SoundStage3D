@@ -718,6 +718,12 @@ void render_ui() {
         ImGui::TextDisabled("(%d)", s.laser_hits);
         if (r.laser_impacts) ImGui::SliderFloat("Intensite des impacts", &r.laser_hit_gain, 0.01f, 10, "x %.2f", ImGuiSliderFlags_Logarithmic);
         ImGui::SliderFloat("Lueur a la sortie", &r.laser_exit, 0.0f, 4.0f, "x %.2f");
+        ImGui::Checkbox("Lumiere des lasers dans la piece", &r.laser_gi);
+        ImGui::SameLine();
+        ImGui::TextDisabled(r.gi ? "(%d lumieres, %.2f ms CPU)" : "(sans la lumiere renvoyee : onglet Lyres)", s.laser_vpls, s.laser_vpl_ms);
+        ImGui::SetItemTooltip("Les impacts eclairent les murs, le sol et le decor autour d'eux, et la lumiere diffusee par les nappes\n"
+                              "dans la fumee eclaire la salle (lumiere renvoyee, comme celle des lyres).");
+        if (r.laser_gi) ImGui::SliderFloat("Force de la lumiere des lasers", &r.laser_gi_strength, 0.0f, 4.0f, "x %.2f");
         ImGui::Checkbox("Arretes par les obstacles et le personnage", &app.lasers.collisions);
         ImGui::SameLine();
         ImGui::TextDisabled("(%d segments coupes)", app.lasers.cut_segments);
@@ -731,6 +737,23 @@ void render_ui() {
             ImGui::TextDisabled("(texture absente)");
         }
         ImGui::SliderFloat("Eau au sol", &r.floor_wet, 0, 1, r.floor_wet <= 0.001f ? "sec" : "%.2f");
+        ImGui::SeparatorText("Reflet du sol mouille");
+        ImGui::Checkbox("Reflet flou sur le beton mouille", &r.refl_concrete);
+        ImGui::SetItemTooltip("Hors des flaques (film d'eau, bord detrempe des flaques) : reflet flou de tout ce qui est au-dessus\n"
+                              "(lyres, faisceaux, lasers), etire en trainees verticales vu en rasant. A partir d'environ 0,55 d'eau.\n"
+                              "Les flaques gardent un reflet net.");
+        if (r.refl_concrete) ImGui::SliderFloat("Flou du reflet", &r.refl_blur, 0.0f, 3.0f, "x %.2f");
+        ImGui::SetItemTooltip("1 : flou d'un beton mouille reel (rugosite du beton). 0 : net comme un miroir.");
+        {
+            const char* lv[] = {"non", "a 1/4 (rapide)", "a 1/2 (plus fin)"};
+            ImGui::Combo("Lasers dans le reflet", &r.refl_lasers, lv, 3);
+            ImGui::SetItemTooltip("Lasers (nappes, traits, lueur de sortie) vus dans le reflet, calcules depuis la camera miroir.\n"
+                                  "Resolution : 1/4 ou 1/2 de celle du reflet (lui-meme a 1/2 de l'image).");
+            if (s.mirror_lasers > 0) {
+                ImGui::SameLine();
+                ImGui::TextDisabled("(%d segments)", s.mirror_lasers);
+            }
+        }
     }
 
     if (ImGui::CollapsingHeader("Reglages techniques (vitesse)")) {
@@ -847,7 +870,17 @@ void help_ui() {
 void draw_ui() {
     ImGui::SetNextWindowPos(ImVec2(10, 10), ImGuiCond_FirstUseEver);
     ImGui::SetNextWindowSize(ImVec2(470, 760), ImGuiCond_FirstUseEver);
-    ImGui::Begin("LyreViz");
+    // le panneau tient toujours dans la fenetre (sinon son bas et sa barre de defilement sortent de l'ecran : taille
+    // enregistree trop grande, ou fenetre retrecie) ; barre de defilement toujours la
+    static ImVec2 panel_pos(10, 10);
+    const ImVec2 ds = ImGui::GetIO().DisplaySize;
+    if (panel_pos.y > ds.y - 210 || panel_pos.x > ds.x - 330) {
+        panel_pos = ImVec2(std::clamp(panel_pos.x, 0.0f, std::max(ds.x - 330, 0.0f)), std::clamp(panel_pos.y, 0.0f, std::max(ds.y - 210, 0.0f)));
+        ImGui::SetNextWindowPos(panel_pos);
+    }
+    ImGui::SetNextWindowSizeConstraints(ImVec2(320, 200), ImVec2(std::max(ds.x - panel_pos.x - 10, 320.0f), std::max(ds.y - panel_pos.y - 10, 200.0f)));
+    ImGui::Begin("LyreViz", nullptr, ImGuiWindowFlags_AlwaysVerticalScrollbar);
+    panel_pos = ImGui::GetWindowPos();
     ImGui::Text("%.0f img/s", app.timings.fps);
     ImGui::SameLine();
     ImGui::TextDisabled("| H : cacher | F : personnage | clic droit : regarder");

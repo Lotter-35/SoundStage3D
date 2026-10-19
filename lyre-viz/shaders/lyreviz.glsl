@@ -25,7 +25,7 @@ struct sb_light {
     vec4 pos_range;    // xyz : sommet du cone (derriere la lentille), w : longueur du faisceau depuis le sommet
     vec4 dir_tanenv;   // xyz : axe du faisceau, w : tan(demi-angle de l'enveloppe, prisme compris)
     vec4 up_tanbeam;   // xyz : "haut" du gobo, w : tan(demi-angle du faisceau, frost compris)
-    vec4 color_gobo;   // rgb : intensite (couleur * puissance), w : indice du gobo (+ 32 : lyre "douce", voir SOFT_FLAG)
+    vec4 color_gobo;   // rgb : intensite (couleur * puissance), w : indice du gobo (+ 64 : lyre "douce", voir SOFT_FLAG)
     vec4 prism;        // x : type de prisme, y : ecart des facettes (tan), z : rotation prisme, w : rotation gobo
     vec4 optics;       // x : frost, y : distance de nettete, z : iris, w : distance du sommet a la lentille
 };
@@ -65,7 +65,7 @@ struct sb_btab {
 const float BTAB_LOD_STEP = 2.0;
 // Lyre "douce" : sa tache sur les surfaces n'a pas de detail fin (frost, bord doux, grande a l'ecran).
 // Elle est eclairee a 1/4 de la resolution (passe soft_light). Marquee en ajoutant SOFT_FLAG au gobo.
-const float SOFT_FLAG = 32.0;
+const float SOFT_FLAG = 64.0;   // au-dessus du nombre de gobos (NUM_GOBOS)
 // Image projetee mise en cache (lyres a prisme) : 256 x 256 + 5 niveaux de flou (128 .. 8), rangees a
 // droite dans une case de 384 x 256 de l'atlas. Doit correspondre au code C (PIMG_*).
 const float PIMG_SIZE = 256.0;
@@ -1058,6 +1058,9 @@ void floor_tile(vec2 fw, out vec2 uv, out mat2 M) {
 // z film d'eau. Les niveaux suivent les repartitions de hF et hP : 2 % de flaques a 0,1, tout a 1.
 // Renvoie (flaque, bord detrempe, creux remplis), de 0 a 1. margin elargit l'eau (masque du reflet).
 // Profondeur des creux du beton (0 : fond d'un trou, 1 : surface).
+// Reflet flou du beton mouille (fs_refl_mask, fs_composite) : seulement au-dessus de ce niveau de film d'eau, puis fondu
+// jusqu'au double (pas de coupure nette quand l'eau monte).
+const float REFL_WET_MIN = 0.1;
 float floor_cavity(vec2 uv, mat2 M, vec2 gx, vec2 gy) {
     return textureGrad(sampler2D(floor_cav, floor_smp), uv, (M * gx) * 0.25, (M * gy) * 0.25).r;
 }
@@ -1124,6 +1127,9 @@ float floor_material(vec2 fw, vec2 gx, vec2 gy, inout vec3 N, inout vec3 albedo,
         water = max(puddle, holes);
         rough = mix(rough, 0.05, water);
         N = normalize(mix(N, vec3(0.0, 1.0, 0.0), water));
+#ifdef FLOOR_WET_OUT
+        g_floor_wet = wetAmt;   // beton mouille (composition : reflet flou)
+#endif
     }
 #endif
     return water;
@@ -1143,9 +1149,11 @@ layout(binding=2) uniform scene_fs_params {
     vec4 probe_min;   // w : indirect actif (0/1)
     vec4 probe_cell;
     vec4 probe_dims;
-    vec4 floor_p;     // sol texture : x : dalles par metre (4 / repetition), y : eau (0..1), w : actif
+    vec4 floor_p;     // sol texture : x : dalles par metre (4 / repetition), y : eau (0..1), w : actif ; z : 1 = reflet flou
+                      // du beton mouille (composition, masque du reflet ; 0 : reflet seulement dans l'eau)
     vec4 floor_q;     // rgb : couleur lineaire = R^2 * floor_q.rgb, w : 1 / R moyen
-    vec4 floor_w;     // eau au sol : x niveau des flaques, y niveau des creux, z film d'eau (voir floor_material)
+    vec4 floor_w;     // eau au sol : x niveau des flaques, y niveau des creux, z film d'eau (voir floor_material) ; w : flou du
+                      // reflet (composition)
     vec4 chroma;      // aberration chromatique : laterale, prisme, axiale, active (voir beam_pattern_rgb)
 };
 layout(binding=0) readonly buffer lights_ssbo { sb_light lights[]; };
@@ -2264,7 +2272,9 @@ void main() {
             mat2 M;
             floor_tile(fw, tuv, M);
             vec3 w = floor_water_at(floor_cavity(tuv, M, gx, gy), hB, gx, gy, 0.02);
-            wet = wet || max(w.x, w.z) > 0.0;
+            // eau (flaques, creux remplis) ; reflet flou du beton mouille (floor_p.z > 0) : film d'eau ou bord detrempe
+            // assez mouille (REFL_WET_MIN, comme la composition)
+            wet = wet || max(w.x, w.z) > 0.0 || (floor_p.z > 0.0 && max(floor_w.z, w.y) > REFL_WET_MIN);
         }
     }
     frag_wet = vec4(wet ? 1.0 : 0.0, 0.0, 0.0, 1.0);
@@ -2296,10 +2306,12 @@ layout(binding=5) uniform refl_params {
     vec4 cam_up;       // w : tan y
     vec4 cam_fwd;      // w : extinction moyenne de la fumee
     vec4 res;          // xy : taille du miroir, zw : taille de sa fumee
+    vec4 lasers;       // lasers du miroir (cs_laser_shade, camera miroir) : xy partie de leur image calculee (coin), z : 1 = presents
 };
 layout(binding=6) uniform texture2D depth_tex;
 layout(binding=11) uniform texture2D scene_tex;
 layout(binding=10) uniform texture2D vol_hist_tex;
+layout(binding=13) uniform texture2D laser_tex;
 layout(binding=1) uniform sampler point_smp;
 layout(binding=2) uniform sampler lin_clamp_smp;
 out vec4 frag_color;
@@ -2312,7 +2324,50 @@ void main() {
     vec3 dir = normalize(cam_fwd.xyz + cam_right.xyz * (ndc.x * cam_right.w) + cam_up.xyz * (ndc.y * cam_up.w));
     float t = viewZ / max(dot(dir, cam_fwd.xyz), 1e-3);
     vec3 c = scene * exp(-cam_fwd.w * t) + textureLod(sampler2D(vol_hist_tex, lin_clamp_smp), uv, 0.0).rgb;
+    if (lasers.z > 0.5) {
+        // lasers (deja attenues par la fumee) : image a 1/4 ou 1/2 de la resolution du miroir, dans son coin
+        vec2 lsz = vec2(textureSize(sampler2D(laser_tex, lin_clamp_smp), 0));
+        vec2 luv = min(uv * lasers.xy, lasers.xy - 0.5 / lsz);
+        c += textureLod(sampler2D(laser_tex, lin_clamp_smp), luv, 0.0).rgb;
+    }
     frag_color = vec4(c, 1.0);
+}
+@end
+
+// Reflet flou du beton mouille : pyramide du reflet (mipmaps), lue par la composition en filtrage anisotrope. Couleurs
+// multipliees par la part de pixels calcules (alpha) : les pixels du miroir hors du masque (non calcules) ne comptent pas,
+// la composition divise par alpha. Niveau 0 (texel.z = 1), depuis le reflet compose (demi-resolution) : 4 x 4 pixels
+// (poids 1 3 3 1). Niveaux suivants : 4 lectures bilineaires (4 x 4 texels du niveau au-dessus).
+@fs fs_refl_down
+layout(binding=6) uniform refl_down_params {
+    vec4 texel;        // xy : 1 / taille de la source, z : 1 = niveau 0 (depuis le reflet compose)
+};
+layout(binding=12) uniform texture2D src_tex;
+layout(binding=6) uniform texture2D depth_tex;   // profondeur lineaire du miroir : 0 hors du masque
+layout(binding=1) uniform sampler point_smp;
+layout(binding=2) uniform sampler lin_clamp_smp;
+out vec4 frag_color;
+void main() {
+    if (texel.z > 0.5) {
+        ivec2 b = ivec2(gl_FragCoord.xy) * 2 - 1;
+        ivec2 m = textureSize(sampler2D(src_tex, point_smp), 0) - 1;
+        vec4 acc = vec4(0.0);
+        for (int k = 0; k < 16; k++) {
+            ivec2 o = ivec2(k & 3, k >> 2);
+            ivec2 c = clamp(b + o, ivec2(0), m);
+            float w = (o.x == 0 || o.x == 3 ? 1.0 : 3.0) * (o.y == 0 || o.y == 3 ? 1.0 : 3.0);
+            w *= texelFetch(sampler2D(depth_tex, point_smp), c, 0).r > 0.0 ? 1.0 : 0.0;
+            acc += vec4(texelFetch(sampler2D(src_tex, point_smp), c, 0).rgb, 1.0) * w;
+        }
+        frag_color = acc * (1.0 / 64.0);
+        return;
+    }
+    vec2 uv = (floor(gl_FragCoord.xy) + 0.5) * texel.xy * 2.0;
+    vec2 t = texel.xy;
+    frag_color = (textureLod(sampler2D(src_tex, lin_clamp_smp), uv + vec2(-t.x, -t.y), 0.0) +
+                  textureLod(sampler2D(src_tex, lin_clamp_smp), uv + vec2(t.x, -t.y), 0.0) +
+                  textureLod(sampler2D(src_tex, lin_clamp_smp), uv + vec2(-t.x, t.y), 0.0) +
+                  textureLod(sampler2D(src_tex, lin_clamp_smp), uv + vec2(t.x, t.y), 0.0)) * 0.25;
 }
 @end
 
@@ -2327,7 +2382,7 @@ layout(binding=5) uniform composite_params {
     vec4 res;          // xy : rendu plein, zw : fumee
     vec4 opts;         // x : fumee active, y : lyres douces (1 : variante legere, 2 : par direction), zw : taille de leur passe
     vec4 cam_pos;      // xyz : camera, w : reflet du sol calcule (passe miroir)
-    vec4 floor_p;      // comme scene_fs_params (sol texture ; y : eau)
+    vec4 floor_p;      // comme scene_fs_params (sol texture ; y : eau ; z : 1 = reflet flou du beton mouille)
     vec4 floor_q;
     vec4 floor_w;
     vec4 laser;        // x : ajoute le calque des lasers (tuiles en calcul), y : exposition, z : blanchiment,
@@ -2352,10 +2407,12 @@ layout(binding=3) uniform texture2D soft_spec_tex;
 layout(binding=30) uniform texture2D floor_tex;
 layout(binding=28) uniform texture2D refl0_tex;
 layout(binding=9) uniform texture2D refl_mask_tex;   // profondeur lineaire du miroir : 0 hors de l'eau
+layout(binding=7) uniform texture2D refl_blur_tex;   // pyramide du reflet (fs_refl_down)
 layout(binding=31) uniform texture2D floor_cav;
 layout(binding=1) uniform sampler point_smp;
 layout(binding=2) uniform sampler lin_clamp_smp;
 layout(binding=4) uniform sampler floor_smp;
+layout(binding=3) uniform sampler refl_smp;          // trilineaire, anisotrope x 16
 @image_sample_type soft_r_tex unfilterable_float
 @image_sample_type soft_g_tex unfilterable_float
 @image_sample_type soft_b_tex unfilterable_float
@@ -2366,39 +2423,67 @@ out vec4 frag_color;
 @include_block ggx
 
 #define FLOOR_WET 1
+#define FLOOR_WET_OUT 1
+float g_floor_wet = 0.0;   // beton mouille au point du sol (floor_material)
+const float REFL_WATER_MIX = 0.35, REFL_WATER_PX = 3.0;   // flou de l'eau (voir floor_reflection)
 @include_block floor_material
 
 // Reflet du sol mouille (passe miroir, voir Renderer::render) : la scene vue d'une camera miroir sous
-// le sol, a la meme position a l'ecran. Seulement dans l'eau (flaques, creux remplis), et toujours net :
-// pas de reflet flou ou etire intermediaire (le beton mouille garde les reflets des lampes, rugueux, de la
-// passe des surfaces). Fresnel de l'eau (F0 = 0,02). Pas de decalage par le relief : l'eau est plate.
+// le sol, a la meme position a l'ecran. Fresnel de l'eau (F0 = 0,02). Pas de decalage par le relief : l'eau est plate.
+//  - dans l'eau (flaques, creux remplis) : net (le reflet des lentilles y est celui du miroir), avec un peu de lumiere
+//    etalee (eau jamais tout a fait calme, poussieres) : REFL_WATER_MIX de la lumiere lue dans la pyramide, en travers sur
+//    REFL_WATER_PX pixels x floor_w.w, etiree comme ci-dessous ;
+//  - sur le beton mouille (film d'eau, bord detrempe des flaques ; floor_p.z > 0) : flou, comme le reflet d'une surface
+//    rugueuse (lobe de GGX, alpha = rugosite^2 du beton mouille) : la pyramide du reflet (fs_refl_down) lue en filtrage
+//    anisotrope ; les lentilles y font des trainees, comme les lampes sur un sol mouille. Vu en rasant, le
+//    lobe s'etire dans la direction de la vue : trainees verticales (1 / cos de l'angle de vue). Rayon a l'ecran : alpha /
+//    2 radians (objet aussi loin derriere le sol que la camera devant), x floor_w.w (reglage du flou).
 vec3 floor_reflection(vec3 P, vec3 dir, vec2 fw, vec2 gx, vec2 gy, vec2 uv) {
     vec3 N = vec3(0.0, 1.0, 0.0);
     vec3 alb = vec3(0.0);
     float rough = 0.32;
+    g_floor_wet = 0.0;
     float water = floor_material(fw, gx, gy, N, alb, rough);
-    if (water <= 0.0) {
+    float film = floor_p.z > 0.0 ? (1.0 - water) * g_floor_wet * smoothstep(REFL_WET_MIN, 2.0 * REFL_WET_MIN, g_floor_wet) : 0.0;
+    if (water <= 0.0 && film <= 0.0) {
         return vec3(0.0);
     }
     float cosv = max(-dir.y, 0.02);                     // sol horizontal
     float F = 0.02 + 0.98 * pow(1.0 - cosv, 5.0);       // eau
-    // lecture bilineaire du reflet sans les pixels du miroir hors de l'eau (non calcules : masque), pour
-    // ne pas melanger du noir au bord d'une flaque ou d'un creux rempli
-    ivec2 rs = textureSize(sampler2D(refl0_tex, point_smp), 0);
-    vec2 mp = uv * vec2(rs) - 0.5;
-    ivec2 i0 = ivec2(floor(mp));
-    vec2 f = mp - vec2(i0);
-    vec3 acc = vec3(0.0);
-    float wsum = 0.0;
-    for (int k = 0; k < 4; k++) {
-        ivec2 o = ivec2(k & 1, k >> 1);
-        ivec2 c = clamp(i0 + o, ivec2(0), rs - 1);
-        float wb = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
-        wb *= texelFetch(sampler2D(refl_mask_tex, point_smp), c, 0).r > 0.0 ? 1.0 : 0.0;
-        acc += texelFetch(sampler2D(refl0_tex, point_smp), c, 0).rgb * wb;
-        wsum += wb;
+    vec3 r = vec3(0.0);
+    if (water > 0.0) {
+        // lecture bilineaire du reflet sans les pixels du miroir hors de l'eau (non calcules : masque), pour
+        // ne pas melanger du noir au bord d'une flaque ou d'un creux rempli
+        ivec2 rs = textureSize(sampler2D(refl0_tex, point_smp), 0);
+        vec2 mp = uv * vec2(rs) - 0.5;
+        ivec2 i0 = ivec2(floor(mp));
+        vec2 f = mp - vec2(i0);
+        vec3 acc = vec3(0.0);
+        float wsum = 0.0;
+        for (int k = 0; k < 4; k++) {
+            ivec2 o = ivec2(k & 1, k >> 1);
+            ivec2 c = clamp(i0 + o, ivec2(0), rs - 1);
+            float wb = (o.x == 1 ? f.x : 1.0 - f.x) * (o.y == 1 ? f.y : 1.0 - f.y);
+            wb *= texelFetch(sampler2D(refl_mask_tex, point_smp), c, 0).r > 0.0 ? 1.0 : 0.0;
+            acc += texelFetch(sampler2D(refl0_tex, point_smp), c, 0).rgb * wb;
+            wsum += wb;
+        }
+        vec3 sharp = acc / max(wsum, 1e-4);
+        if (floor_w.w > 0.0) {
+            float rh = REFL_WATER_PX * floor_w.w, rv = min(rh / max(cosv, 0.1), 64.0);
+            vec4 b = textureGrad(sampler2D(refl_blur_tex, refl_smp), uv, vec2(2.0 * rh / res.x, 0.0), vec2(0.0, 2.0 * rv / res.y));
+            sharp = mix(sharp, b.rgb / max(b.a, 1e-4), min(REFL_WATER_MIX * floor_w.w, 0.8));
+        }
+        r = sharp * (F * water);
     }
-    return acc / max(wsum, 1e-4) * (F * water);
+    if (film > 0.0) {
+        float a = rough * rough;
+        float rh = max(floor_w.w * 0.5 * a * res.y / (2.0 * cam_up.w), 0.5);   // pixels, en travers
+        float rv = rh / max(cosv, 0.1);                                         // dans la direction de la vue
+        vec4 b = textureGrad(sampler2D(refl_blur_tex, refl_smp), uv, vec2(2.0 * rh / res.x, 0.0), vec2(0.0, 2.0 * rv / res.y));
+        r += b.rgb / max(b.a, 1e-4) * (F * film);
+    }
+    return r;
 }
 
 void main() {
@@ -2930,9 +3015,9 @@ layout(binding=0) uniform laser_cs_params {
     vec4 fog_box_min;
     vec4 fog_box_inv;
     vec4 lfog;        // x : diffusion uniforme (air + fumee moyenne), y : 1 = fumee de la piece (laser_fog_tex),
-                      // z : force des volutes en fumee uniforme
+                      // z : force des volutes en fumee uniforme ; w : rectangle de tri, x min (cs_laser_bin, ecran normalise)
     vec4 lroom;       // x : air, y : densite x albedo x room_max, z, w : force des volutes (part fixe, part des amas)
-    vec4 lroom2;      // x : pente de la part des amas
+    vec4 lroom2;      // x : pente de la part des amas ; y, z, w : rectangle de tri, y min, x max, y max
     vec4 lvol;        // volutes fines : xyz decalage (vent), w : 1 / taille (0 : coupees)
     vec4 lvolw;       // poids des 2 instants (canaux r, g), divises par l'ecart type (contraste constant pendant le melange)
     vec4 lvol2;       // x : -0,5 x somme des poids, y : log2(texels par metre), z : niveau ou les volutes s'effacent
@@ -4003,7 +4088,11 @@ void main() {
         s_n = 0u;
     }
     barrier();
-    int n = int(res.z);
+    // rectangle de tri (ecran normalise : lfog.w, lroom2.yzw ; reflet du sol mouille : la partie de l'ecran ou le sol est vu) :
+    // une grosse tuile qui en sort n'a aucun segment
+    vec2 n0 = ndc_from_uv((c - 64.0) / res.xy), n1 = ndc_from_uv((c + 64.0) / res.xy);
+    bool inside = max(n0.x, n1.x) >= lfog.w && min(n0.x, n1.x) <= lroom2.z && max(n0.y, n1.y) >= lroom2.y && min(n0.y, n1.y) <= lroom2.w;
+    int n = inside ? int(res.z) : 0;
     for (int base = 0; base < n; base += 256) {
         uint i = uint(base) + lid;
         if (i < uint(n) && laser_tile_hit(i, c, vec2(64.0))) {
@@ -5106,6 +5195,7 @@ void main() {
 @program refl_mask vs_fullscreen fs_refl_mask
 @program refl_block vs_fullscreen fs_refl_block
 @program refl_compose vs_fullscreen fs_refl_compose
+@program refl_down vs_fullscreen fs_refl_down
 @program composite vs_fullscreen fs_composite
 @program bloom_down vs_fullscreen fs_bloom_down
 @program bloom_up vs_fullscreen fs_bloom_up

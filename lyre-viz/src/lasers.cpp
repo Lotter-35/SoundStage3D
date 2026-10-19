@@ -1099,6 +1099,12 @@ double ms_since(std::chrono::steady_clock::time_point t) {
 
 }  // namespace
 
+int laser_workers() { return work_pool().size(); }
+void laser_parallel(const std::function<void(int)>& f) {
+    if (work_pool().size() > 1) work_pool().run(f);
+    else f(0);
+}
+
 // ---------------------------------------------------------------------------------------------
 //  Figures : motifs du banc, ou programmeur
 // ---------------------------------------------------------------------------------------------
@@ -1698,6 +1704,7 @@ void LaserRig::build_hits(vec3 mn, vec3 mx) {
                     q.b = g.src + dirf(t1) * e1;
                     q.f0 = fa + (fb - fa) * ((t0 - ta) / span);
                     q.f1 = fa + (fb - fa) * ((t1 - ta) / span);
+                    q.span = t1 - t0;
                     q.surf = sn;
                     out.push_back(q);
                 };
@@ -1822,6 +1829,7 @@ void LaserRig::build_hits(vec3 mn, vec3 mx) {
                 h.b = g.src + dir(ha) * g.range1;
                 h.f0 = f0;
                 h.f1 = f1;
+                h.span = 2.0f * ha;
                 vec3 sn = {0, 1, 0};
                 all_obs((h.a + h.b) * 0.5f, sn);
                 h.surf = sn;
@@ -1845,6 +1853,7 @@ void LaserRig::build_hits(vec3 mn, vec3 mx) {
                     q.b = g.src + dir(p.t1) * tb;
                     q.f0 = f0 + (f1 - f0) * u0;
                     q.f1 = f0 + (f1 - f0) * u1;
+                    q.span = p.t1 - p.t0;
                     q.surf = FACE_N[fa];
                     out.push_back(q);
                     continue;

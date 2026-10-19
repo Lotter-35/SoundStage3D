@@ -24,7 +24,9 @@ const vec3 DEEP_BLUE = {0, 0, 1}, MAGENTA = {1, 0, 0.8f}, PINK = {1, 0.25f, 0.55
 const vec3 YELLOW = {1, 0.85f, 0}, ICE = {0.7f, 0.9f, 1}, UV = {0.3f, 0, 1};
 
 // Gobos (GOBO_NAMES) : 0 ouvert, 1 points, 2 etoile, 3 anneaux, 4 rayons, 5 fleur, 6 breakup, 7 triangles, 8 barres,
-// 9 cercle de points, 10 spirale, 11 feuillage, 12 galaxie, 13 croix.
+// 9 cercle de points, 10 spirale, 11 feuillage, 12 galaxie, 13 croix, 14 anneau, 15 helice, 16 soleil d'aiguilles,
+// 17 bulles, 18 triangle, 19 rosace, 20 eau, 21 flammes, 22 verre brise, 23 nuages, 24 nid d'abeille, 25 damier,
+// 26 vagues, 27 fenetre, 28 vitrail, 29 toile d'araignee, 30 flocon, 31 coeur, 32 lune et etoiles, 33 soleil.
 
 // Lyres des groupes 'mask' : fn(parametres, lyre, rang dans son groupe)
 template <typename F> void lyres(unsigned mask, F fn) {

@@ -18,7 +18,7 @@ enum PrismType {
 extern const char* PRISM_NAMES[PRISM_COUNT];
 
 // Nombre de gobos dans la roue (le 0 est "ouvert").
-static constexpr int NUM_GOBOS = 14;
+static constexpr int NUM_GOBOS = 34;
 extern const char* GOBO_NAMES[NUM_GOBOS];
 
 // Valeurs du "programmeur" d'une lyre (ce que regle l'utilisateur).

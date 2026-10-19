@@ -787,6 +787,13 @@ Détail : `PLAN-OPTIM-LASERS.md`, section 8.
 - Gains, image entière : 80 % −19 à −29 %, 70 % −26 à −44 %, 50 % −41 à −65 % (L1 16,5 → 12,4 → 7,0 ms).
 - Spectacles : les 30 scènes au-dessus de 60 img/s ; 13 à 120 img/s sans synchro (5 au départ du plan). Détail : `PLAN-OPTIM-LASERS.md`, section 8.
 
+## Lasers : lumière dans la pièce (19 octobre 2026, historique 51)
+
+- Lumières virtuelles des impacts et des nappes dans les sondes (`lasergi`, coupée par défaut ; `PLAN-LASERS.md`, « Étape 7 (en partie) »).
+- Banc des lasers complet en mouvement, rapide, même exécutable (`set_ab.ps1 -SetA lasergi=0 -SetB lasergi=1`) : lasers seuls +0,6 à +0,9 ms GPU (fumée et accumulation, qui n'étaient plus calculées sans lyre, +0,55 ms) ; avec des lyres +0 à +0,2 ms ; CPU +0,35 à +1,3 ms (calcul sur tous les cœurs ; 5,5 ms sur un seul pour P1).
+- Banc des lyres (option coupée) : inchangé, images identiques.
+- À l'image entière, l'écart se perd dans le bruit des lancements (±1 ms) : coût mesuré sur la somme des passes touchées.
+
 ## Lyres superposées (16 octobre 2026)
 
 Constat (banc `--bench-lyres`, historique n°26 et 27) : quand toutes les lyres visent le même point, chaque pixel du sol est éclairé par presque toutes les lyres : la passe des surfaces passe de 3,8 ms (zoom 3) à 38 ms (zoom 20) et 110 ms (zoom 50), alors que le sol n'y montre plus que du flou. Le mouvement des lyres ne coûte presque rien de plus : c'est la superposition qui coûte. Part du temps d'une lyre dans un pixel : tache (image projetée) ~55 %, ombres ~27 %, le reste (direction, reflet GGX ~2 %) ~20 %.

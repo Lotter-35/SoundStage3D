@@ -7,8 +7,10 @@
 #include "sokol_glue.h"
 #include "shaders/lyreviz.glsl.h"
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <cstdlib>
+#include <functional>
 
 // flottants par segment envoye au rendu (sb_laser du shader)
 static constexpr int LASER_FLOATS = (int)(sizeof(sb_laser_t) / sizeof(float));
@@ -90,6 +92,16 @@ constexpr float LASER_FLUX_PER_W = 20.0f;
 // sur les photos de reference : sortie blanche a 10 m, halo de la couleur du laser)
 constexpr float LASER_EXIT_SCATTER = 0.02f;
 constexpr int MAX_LASER_EXITS = 512;
+
+// Distance le long de d (unitaire) pour sortir de la boite [mn, mx], depuis p (dedans) : portee d'une nappe dans le hangar.
+float exit_box(vec3 p, vec3 d, vec3 mn, vec3 mx) {
+    float t = 1e30f;
+    for (int a = 0; a < 3; a++) {
+        if (d[a] > 1e-6f) t = std::min(t, (mx[a] - p[a]) / d[a]);
+        else if (d[a] < -1e-6f) t = std::min(t, (mn[a] - p[a]) / d[a]);
+    }
+    return std::max(t, 0.0f);
+}
 
 // Point du triangle (a, b, c) le plus proche de p (Ericson, Real-Time Collision Detection, 5.1.5).
 vec3 closest_on_triangle(vec3 p, vec3 a, vec3 b, vec3 c) {
@@ -477,6 +489,12 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         s.wrap_u = s.wrap_v = s.wrap_w = SG_WRAP_REPEAT;
         s.label = "lin-repeat";
         lin_repeat = sg_make_sampler(&s);
+        // reflet flou du beton mouille : pyramide lue en trilineaire anisotrope (trainees verticales)
+        s.mipmap_filter = SG_FILTER_LINEAR;
+        s.wrap_u = s.wrap_v = s.wrap_w = SG_WRAP_CLAMP_TO_EDGE;
+        s.max_anisotropy = 4;
+        s.label = "refl-smp";
+        refl_smp = sg_make_sampler(&s);
         s = {};
         s.min_filter = SG_FILTER_NEAREST;
         s.mag_filter = SG_FILTER_NEAREST;
@@ -595,6 +613,7 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
         pip_beams_an_m = sg_make_pipeline(&p);
     }
     pip_refl_compose = make_fullscreen_pipeline(refl_compose_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "refl-compose");
+    pip_refl_down = make_fullscreen_pipeline(refl_down_shader_desc(backend), SG_PIXELFORMAT_RGBA16F, false, "refl-down");
     {
         // masque du reflet : eau par pixel du miroir, puis par blocs : profondeur de la camera miroir (ecrite
         // par le shader) et profondeur lineaire
@@ -634,6 +653,11 @@ void Renderer::init(const Scene& scene, const GoboAtlas& gobos, const FogSim& fo
     // lasers (tuiles en calcul)
     laser_buf = make_storage(MAX_LASER_SEGS * sizeof(sb_laser_t), true, "laser-segments");
     laser_view = storage_view(laser_buf);
+    // reflet du sol mouille : memes segments, camera miroir (cam_rel), et lueurs de sortie vues du miroir
+    laser_buf_m = make_storage(MAX_LASER_SEGS * sizeof(sb_laser_t), true, "laser-segments-mirror");
+    laser_view_m = storage_view(laser_buf_m);
+    laser_exit_buf_m = make_storage((size_t)MAX_LASER_EXITS * sizeof(sb_hit_t), true, "laser-exits-mirror");
+    laser_exit_view_m = storage_view(laser_exit_buf_m);
     laser_scr_buf = make_storage((size_t)MAX_LASER_SEGS * 9 * sizeof(sb_vec4_t), false, "laser-screen");
     laser_scr_view = storage_view(laser_scr_buf);
     laser_stats_buf = make_storage(16 * sizeof(uint32_t), false, "laser-stats");
@@ -783,6 +807,61 @@ void Renderer::resize(int w, int h, int volw, int volh) {
         make_target(refl_depth, refl_w, refl_h, SG_PIXELFORMAT_DEPTH, "refl-depth");
         make_target(refl_vol, refl_vw, refl_vh, SG_PIXELFORMAT_RGBA16F, "refl-vol");
         make_target(refl_final, refl_w, refl_h, SG_PIXELFORMAT_RGBA16F, "refl-final");
+        // reflet flou du beton : pyramide a partir de 1/4 de la resolution (un niveau par vue d'ecriture et de lecture)
+        if (refl_blur_img.id) {
+            sg_destroy_view(refl_blur_tex);
+            for (int i = 0; i < refl_blur_n; i++) {
+                sg_destroy_view(refl_blur_att[i]);
+                sg_destroy_view(refl_blur_lvl[i]);
+            }
+            sg_destroy_image(refl_blur_img);
+        }
+        {
+            refl_blur_w = std::max(4, refl_w / 2);
+            refl_blur_h = std::max(4, refl_h / 2);
+            refl_blur_n = 1;
+            while (refl_blur_n < REFL_BLUR_LEVELS && std::min(refl_blur_w, refl_blur_h) >> refl_blur_n >= 4) refl_blur_n++;
+            sg_image_desc d = {};
+            d.width = refl_blur_w;
+            d.height = refl_blur_h;
+            d.num_mipmaps = refl_blur_n;
+            d.pixel_format = SG_PIXELFORMAT_RGBA16F;
+            d.sample_count = 1;
+            d.usage.color_attachment = true;
+            d.label = "refl-blur";
+            refl_blur_img = sg_make_image(&d);
+            refl_blur_tex = texture_view(refl_blur_img);
+            for (int i = 0; i < refl_blur_n; i++) {
+                sg_view_desc vd = {};
+                vd.color_attachment.image = refl_blur_img;
+                vd.color_attachment.mip_level = i;
+                refl_blur_att[i] = sg_make_view(&vd);
+                vd = {};
+                vd.texture.image = refl_blur_img;
+                vd.texture.mip_levels.base = i;
+                vd.texture.mip_levels.count = 1;
+                refl_blur_lvl[i] = sg_make_view(&vd);
+            }
+        }
+        // lasers du reflet (cs_laser_shade, camera miroir) : calcules dans le coin, a 1/2 ou 1/4 de la resolution du miroir
+        if (refl_laser_img.id) {
+            sg_destroy_view(refl_laser_store);
+            sg_destroy_view(refl_laser_tex);
+            sg_destroy_image(refl_laser_img);
+        }
+        {
+            sg_image_desc d = {};
+            d.width = refl_w;
+            d.height = refl_h;
+            d.pixel_format = SG_PIXELFORMAT_RGBA16F;
+            d.usage.storage_image = true;
+            d.label = "refl-lasers";
+            refl_laser_img = sg_make_image(&d);
+            sg_view_desc vd = {};
+            vd.storage_image.image = refl_laser_img;
+            refl_laser_store = sg_make_view(&vd);
+            refl_laser_tex = texture_view(refl_laser_img);
+        }
         num_bloom = 0;
         int bw = w, bh = h;
         for (int i = 0; i < BLOOM_LEVELS; i++) {
@@ -1158,7 +1237,8 @@ void Renderer::assign_beam_tiers(const Camera& cam, float pixel_angle, bool tier
         if (tiers) beam_tier[i] = detail_px >= 12.0f * quality ? 2 : (detail_px >= 6.0f * quality ? 1 : 0);
         // surfaces : la tache n'a pas de detail de moins de 16 pixels (plein ecran) -> passe a 1/4
         if (soft && (frost >= 0.35f * quality || quality <= 0.4f) && detail_px * (float)vol_div >= 16.0f * quality) {
-            L[i].color_gobo[3] += 32.0f;   // SOFT_FLAG du shader
+            static_assert(NUM_GOBOS < 64, "SOFT_FLAG du shader : au-dessus du nombre de gobos");
+            L[i].color_gobo[3] += 64.0f;   // SOFT_FLAG du shader (> NUM_GOBOS)
             num_soft++;
         } else if (crowd && l.color_gobo[3] < 0.5f && l.prism[0] < 0.5f) {
             // lyres superposees (cs_cull_clusters) : seulement une lyre sans gobo dont le bord de la tache, la ou
@@ -1340,7 +1420,7 @@ void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& g
         vec3 rt = cross(dir, up);
         vec3 col = {l.color_gobo[0], l.color_gobo[1], l.color_gobo[2]};
         float Tf = l.up_tanbeam[3];
-        int gobo = (int)l.color_gobo[3] % 32;   // sans le marqueur "lyre douce"
+        int gobo = (int)l.color_gobo[3] % 64;   // sans le marqueur "lyre douce"
         int prism = (int)(l.prism[0] + 0.5f);
         float spread = l.prism[1];
         float iris = l.optics[2];
@@ -1395,6 +1475,266 @@ void Renderer::build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& g
     }
     if (num_vpls == 0) std::memset(V, 0, sizeof(sb_vpl_t));
     stats.vpls = num_vpls;
+}
+
+// Lumiere des lasers dans la piece (PLAN-LASERS.md, etape 7) : lumieres virtuelles ajoutees a celles des lyres, dans les
+// memes sondes. Surfaces : les impacts (LaserRig::hits, deja calcules pour le dessin), echantillonnes en angle le long de
+// chaque morceau, puissance x couleur de la surface x attenuation par la fumee ; fumee : quelques points le long de chaque
+// nappe ou trait (comme les 3 points d'un faisceau de lyre), puissance x diffusion x longueur. Les points sont regroupes
+// par case de la grille des sondes (et par face pour les surfaces), puis par cases 2 fois plus grandes tant qu'il y en a
+// trop : le nombre de lumieres reste borne quel que soit le nombre de lasers ou de morceaux.
+void Renderer::build_laser_vpls(const Scene& scene, const LaserRig& las, const RenderSettings& rs, float sigma_ext, float sigma_scat) {
+    const uint64_t t_start = stm_now();
+    const int NF = 7;   // faces 0..5 : -x, +x, -y, +y, -z, +z (normale de la surface) ; 6 : fumee
+    const int ncells = PR_X * PR_Y * PR_Z * NF;
+    if ((int)lgi_index.size() != ncells) lgi_index.assign(ncells, -1);
+    lgi_bins.clear();
+    lgi_keys.clear();
+    const vec3 inv = {1.0f / probe_cell.x, 1.0f / probe_cell.y, 1.0f / probe_cell.z};
+    // groupes d'un fil : table case -> groupe (remise a -1 apres usage), groupes, cases touchees
+    struct Acc {
+        std::vector<int> index, keys;
+        std::vector<LgiBin> bins;
+    };
+    static std::vector<Acc> acc;
+    auto add = [&](Acc& A, vec3 P, vec3 n, int face, vec3 flux) {
+        const float wl = flux.x + flux.y + flux.z;
+        if (!(wl > 0.0f)) return;
+        // sonde la plus proche (bornee avant l'arrondi : la troncature vaut alors l'arrondi)
+        const int cx = (int)(std::clamp((P.x - probe_min.x) * inv.x, 0.0f, (float)(PR_X - 1)) + 0.5f);
+        const int cy = (int)(std::clamp((P.y - probe_min.y) * inv.y, 0.0f, (float)(PR_Y - 1)) + 0.5f);
+        const int cz = (int)(std::clamp((P.z - probe_min.z) * inv.z, 0.0f, (float)(PR_Z - 1)) + 0.5f);
+        const int key = ((cz * PR_Y + cy) * PR_X + cx) * NF + face;
+        int& bi = A.index[key];
+        if (bi < 0) {
+            bi = (int)A.bins.size();
+            LgiBin nb;
+            nb.cx = cx;
+            nb.cy = cy;
+            nb.cz = cz;
+            nb.face = face;
+            A.bins.push_back(nb);
+            A.keys.push_back(key);
+        }
+        LgiBin& b = A.bins[bi];
+        b.flux = b.flux + flux;
+        b.pos = b.pos + P * wl;
+        b.nrm = b.nrm + n * wl;
+        b.w += wl;
+    };
+    auto face_of = [](vec3 n) {
+        const float ax = std::fabs(n.x), ay = std::fabs(n.y), az = std::fabs(n.z);
+        const int a = ax >= ay && ax >= az ? 0 : ay >= az ? 1 : 2;
+        return 2 * a + (n[a] > 0.0f ? 1 : 0);
+    };
+    const float k = rs.laser_gain * LASER_FLUX_PER_W * rs.laser_gi_strength;
+    const float cell_len = std::max(probe_cell.x, std::max(probe_cell.y, probe_cell.z));
+
+    // impacts : lumiere renvoyee par la surface (meme puissance que le dessin des impacts, reglage compris)
+    const float kh = k * rs.laser_hit_gain;
+    const float step = cell_len;   // un point par case des sondes environ
+    auto one_hit = [&](Acc& A, const LaserHit& h) {
+        if (h.kind > 0.5f && h.kind < 1.5f) {   // trait : point d'arrivee, puissance f0
+            vec3 n = h.surf;
+            if (dot(n, h.src - h.a) < 0.0f) n = n * -1.0f;
+            add(A, h.a, n, face_of(n), h.f0 * (kh * std::exp(-sigma_ext * length(h.a - h.src))));
+            return;
+        }
+        // ligne ou arc : points repartis en angle de a a b, sur le plan de la surface touchee
+        vec3 n = h.surf;
+        if (dot(n, h.src - (h.a + h.b) * 0.5f) < 0.0f) n = n * -1.0f;
+        const int ns = std::clamp((int)std::ceil(length(h.b - h.a) / step), 1, 32);
+        const vec3 da = normalize(h.a - h.src), db = normalize(h.b - h.src);
+        const float an = dot(h.a - h.src, n);
+        const int face = face_of(n);
+        for (int j = 0; j < ns; j++) {
+            const float u = ((float)j + 0.5f) / (float)ns;
+            const vec3 D = normalize(da + (db - da) * u);
+            const float dn = dot(D, n);
+            float t = dn < -1e-3f ? an / dn : -1.0f;
+            vec3 P;
+            if (t > 0.0f && t < 400.0f) P = h.src + D * t;
+            else {
+                P = h.a + (h.b - h.a) * u;
+                t = length(P - h.src);
+            }
+            add(A, P, n, face, (h.f0 + (h.f1 - h.f0) * u) * (h.span / (float)ns * kh * std::exp(-sigma_ext * t)));
+        }
+    };
+    // fumee : lumiere diffusee le long des nappes et des traits (diffusion de l'air et de la fumee de la piece, uniforme)
+    const float sl = rs.laser_air + sigma_scat;
+    const vec3 up = {0, 1, 0};
+    auto along = [&](Acc& A, vec3 src, vec3 D, float r, vec3 P) {
+        r = std::min(r, 80.0f);
+        if (!(r > 0.05f)) return;
+        const int nt = std::clamp((int)std::ceil(r / (2.0f * cell_len)), 1, 3);
+        const float seg = r / (float)nt;
+        for (int j = 0; j < nt; j++) {
+            const float t = ((float)j + 0.5f) * seg;
+            add(A, src + D * t, up, 6, P * (k * sl * seg * std::exp(-sigma_ext * t)));
+        }
+    };
+    auto one_seg = [&](Acc& A, const LaserSegment& g) {
+        if (g.arc) {
+            const int m = std::clamp((int)std::ceil(g.dth / (30.0f * DEG)), 1, 8);
+            for (int j = 0; j < m; j++) {
+                const float u = ((float)j + 0.5f) / (float)m, th = g.th0 + g.dth * u;
+                const vec3 D = normalize(g.ec + g.es * (g.cx + g.rho * std::cos(th)) + g.uu * (g.cy + g.rho * std::sin(th)));
+                float r = std::min(g.range, exit_box(g.src, D, hall_min, hall_max));
+                if (g.stop_d < 1e29f) {
+                    const float dn = dot(g.stop_n, D);
+                    if (dn > 1e-6f) r = std::min(r, g.stop_d / dn);
+                }
+                along(A, g.src, D, r, (g.flux + (g.flux1 - g.flux) * u) * (1.0f / (float)m));
+            }
+        } else if (g.traits > 1.5f && g.half_angle > 1e-6f) {
+            const float ha = g.half_angle;
+            const int m = std::clamp((int)std::ceil(2.0f * ha / (20.0f * DEG)), 1, 6);
+            for (int j = 0; j < m; j++) {
+                const float u = ((float)j + 0.5f) / (float)m, th = -ha + 2.0f * ha * u;
+                const float c = std::cos(th), sn = std::sin(th);
+                const vec3 D = g.ec * c + g.es * sn;
+                float r = exit_box(g.src, D, hall_min, hall_max);
+                if (g.range1 > 0.0f) {   // coupe par un obstacle : droite d'arret a x + b y = 1
+                    const float cd = g.cut_a * c + g.cut_b * sn;
+                    if (cd > 1e-6f) r = std::min(r, 1.0f / cd);
+                } else r = std::min(r, g.range);
+                along(A, g.src, D, r, (g.flux + (g.flux1 - g.flux) * u) * (1.0f / (float)m));
+            }
+        } else {
+            along(A, g.src, g.ec, g.range, g.flux);
+        }
+    };
+    // Tous les coeurs (fils du moteur laser) : paquets d'impacts et de morceaux, chaque fil dans ses propres groupes,
+    // reunis ensuite. Aucun laser allume : rien (le moteur garde alors les impacts de la derniere figure).
+    const bool lit = !las.segs.empty();
+    const int nh = lit && rs.laser_impacts ? (int)las.hits.size() : 0;
+    const int nsg = lit && sl > 0.0f ? (int)las.segs.size() : 0;
+    const int HC = 256, SC = 128;
+    const int nhc = (nh + HC - 1) / HC, nsc = (nsg + SC - 1) / SC;
+    const int nw = laser_workers();
+    if ((int)acc.size() < nw) acc.resize(nw);
+    for (Acc& A : acc) A.bins.clear();   // un fil sans paquet garde sinon ceux de l'image d'avant
+    std::atomic<int> next{0};
+    const std::function<void(int)> job = [&](int w) {
+        Acc& A = acc[w];
+        if ((int)A.index.size() != ncells) A.index.assign(ncells, -1);
+        A.bins.clear();
+        A.keys.clear();
+        for (int c; (c = next.fetch_add(1)) < nhc + nsc;) {
+            if (c < nhc) {
+                for (int i = c * HC, e = std::min(nh, i + HC); i < e; i++) one_hit(A, las.hits[i]);
+            } else {
+                for (int i = (c - nhc) * SC, e = std::min(nsg, i + SC); i < e; i++) one_seg(A, las.segs[i]);
+            }
+        }
+        for (int key : A.keys) A.index[key] = -1;
+    };
+    if (nhc + nsc > 1) laser_parallel(job);
+    else job(0);
+    for (int w = 0; w < nw; w++)
+        for (const LgiBin& b : acc[w].bins) {
+            const int key = ((b.cz * PR_Y + b.cy) * PR_X + b.cx) * NF + b.face;
+            int& bi = lgi_index[key];
+            if (bi < 0) {
+                bi = (int)lgi_bins.size();
+                lgi_bins.push_back(b);
+                lgi_keys.push_back(key);
+            } else {
+                LgiBin& d = lgi_bins[bi];
+                d.flux = d.flux + b.flux;
+                d.pos = d.pos + b.pos;
+                d.nrm = d.nrm + b.nrm;
+                d.w += b.w;
+            }
+        }
+    for (int key : lgi_keys) lgi_index[key] = -1;
+
+    // trop de groupes : cases 2 fois plus grandes (surfaces et fumee separement), jusqu'a tenir dans le budget
+    const int avail = MAX_VPLS - num_vpls;
+    const size_t budget_surf = (size_t)std::max(0, std::min(1024, avail * 3 / 4));
+    const size_t budget_fog = (size_t)std::max(0, std::min(384, avail - (int)budget_surf));
+    // cases grossies : memes indices que les cases fines (coordonnees divisees par 2, toujours dans la grille), table
+    // lgi_index reprise puis remise a -1
+    auto reduce = [&](std::vector<LgiBin>& bins, size_t budget) {
+        int lvl = 0;
+        while (bins.size() > budget && lvl < 6) {
+            lgi_tmp.clear();
+            lgi_keys.clear();
+            for (const LgiBin& b : bins) {
+                const int cx = b.cx >> 1, cy = b.cy >> 1, cz = b.cz >> 1;
+                const int key = ((cz * PR_Y + cy) * PR_X + cx) * NF + b.face;
+                int& bi = lgi_index[key];
+                if (bi < 0) {
+                    bi = (int)lgi_tmp.size();
+                    lgi_keys.push_back(key);
+                    LgiBin c = b;
+                    c.cx = cx;
+                    c.cy = cy;
+                    c.cz = cz;
+                    lgi_tmp.push_back(c);
+                } else {
+                    LgiBin& d = lgi_tmp[bi];
+                    d.flux = d.flux + b.flux;
+                    d.pos = d.pos + b.pos;
+                    d.nrm = d.nrm + b.nrm;
+                    d.w += b.w;
+                }
+            }
+            for (int key : lgi_keys) lgi_index[key] = -1;
+            bins.swap(lgi_tmp);
+            lvl++;
+        }
+        if (bins.size() > budget) {   // encore trop (budget presque nul) : garde les plus lumineux
+            std::nth_element(bins.begin(), bins.begin() + budget, bins.end(), [](const LgiBin& a, const LgiBin& b) { return a.w > b.w; });
+            bins.resize(budget);
+        }
+        return lvl;
+    };
+    lgi_surf.clear();
+    lgi_fog.clear();
+    for (const LgiBin& b : lgi_bins) (b.face < 6 ? lgi_surf : lgi_fog).push_back(b);
+    const int lvl_s = reduce(lgi_surf, budget_surf), lvl_f = reduce(lgi_fog, budget_fog);
+
+    // couleur de la surface (comme build_vpls : sol texture sous le point, assombri par l'eau ; sinon celle du pave)
+    const bool tex_floor = floor_tex && rs.floor_texture;
+    float wl[4] = {-1.0f, -1.0f, 0.0f, 0.0f};
+    if (floor_tex) floor_tex->water_levels(rs.floor_wet, wl);
+    const float wet_factor = lerpf(1.0f, 0.45f, std::max(wl[2], std::min(1.0f, wl[3] * 1.3f)));
+    const float tile = std::max(rs.floor_tile, 0.25f);
+    sb_vpl_t* V = (sb_vpl_t*)vpl_data.data();
+    const int first = num_vpls;
+    const float rad_s = std::max(0.6f, 0.35f * cell_len * (float)(1 << lvl_s));
+    for (const LgiBin& b : lgi_surf) {
+        if (num_vpls >= MAX_VPLS) break;
+        vec3 P = b.pos * (1.0f / b.w);
+        vec3 n = b.nrm;
+        const float ln = length(n);
+        n = ln > 1e-6f ? n * (1.0f / ln) : vec3(0, 1, 0);
+        vec3 alb = {0.4f, 0.4f, 0.4f};
+        RayHit h;
+        if (scene.raycast(P + n * 0.3f, n * -1.0f, 1.5f, h)) {
+            alb = h.albedo;
+            P = h.pos;
+            if (tex_floor && h.normal.y > 0.5f && h.pos.y < 0.05f) alb = floor_tex->albedo_at(h.pos.x, h.pos.z, tile) * (floor_scale * wet_factor);
+        }
+        sb_vpl_t& v = V[num_vpls++];
+        set4(v.pos_radius, P + n * 0.1f, rad_s);
+        set4(v.normal_type, n, 0.0f);
+        set4(v.flux, b.flux * alb, 0.0f);
+    }
+    const float rad_f = std::max(1.0f, 0.5f * cell_len * (float)(1 << lvl_f));
+    for (const LgiBin& b : lgi_fog) {
+        if (num_vpls >= MAX_VPLS) break;
+        sb_vpl_t& v = V[num_vpls++];
+        set4(v.pos_radius, b.pos * (1.0f / b.w), rad_f);
+        set4(v.normal_type, 0, 1, 0, 1.0f);
+        set4(v.flux, b.flux, 0.0f);
+    }
+    if (num_vpls == 0) std::memset(V, 0, sizeof(sb_vpl_t));
+    stats.vpls = num_vpls;
+    stats.laser_vpls = num_vpls - first;
+    stats.laser_vpl_ms = (float)stm_ms(stm_since(t_start));
 }
 
 void Renderer::build_fixture_instances(const Rig& rig, const RenderSettings& rs) {
@@ -1601,12 +1941,15 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     const float sigma_scat = sigma_ext * fs.scattering;
 
     // sol texture (passe des surfaces et reflets des flaques dans la composition)
-    float floor_p[4] = {4.0f / std::max(rs.floor_tile, 0.25f), saturate(rs.floor_wet), 0, (floor_tex && rs.floor_texture) ? 1.0f : 0.0f};
+    // z : 1 = reflet flou du beton mouille (0 : reflet seulement dans l'eau)
+    float floor_p[4] = {4.0f / std::max(rs.floor_tile, 0.25f), saturate(rs.floor_wet), rs.refl_concrete ? 1.0f : 0.0f,
+                        (floor_tex && rs.floor_texture) ? 1.0f : 0.0f};
     float floor_q[4] = {};
     if (floor_tex) set4(floor_q, floor_tex->tint * floor_scale, 1.0f / std::max(std::sqrt(floor_tex->mean_lum), 0.01f));
     // niveaux d'eau : flaques, creux, film (voir FloorTexture::water_levels)
     float floor_w[4] = {-1.0f, -1.0f, 0.0f, 0.0f};
     if (floor_tex) floor_tex->water_levels(floor_p[1], floor_w);
+    floor_w[3] = std::max(rs.refl_blur, 0.0f);   // shaders : flou du reflet (la part de flaques ne sert qu'au CPU)
     // reflet du sol mouille : camera miroir sous le sol, seulement si de l'eau et du sol sont visibles
     float floor_rect[4] = {};
     bool mirror = floor_p[3] > 0.5f && floor_p[1] > 0.0f &&
@@ -1712,7 +2055,12 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         stats.mirror_beams = (int)beam_order_m.size();
     }
     if (mirror_an && !beam_order_m.empty()) build_beam_tables(mcam, 2.0f * tanY / (float)refl_vh, true);
-    if (rs.gi) build_vpls(scene, rig, gobos, rs, sigma_ext, sigma_scat);
+    stats.laser_vpls = 0;
+    stats.laser_vpl_ms = 0;
+    if (rs.gi) {
+        build_vpls(scene, rig, gobos, rs, sigma_ext, sigma_scat);
+        if (rs.laser_gi && rs.lasers && lasers) build_laser_vpls(scene, *lasers, rs, sigma_ext, sigma_scat);
+    }
     build_fixture_instances(rig, rs);
     // lasers : segments de l'image (puissance mise a l'echelle de la fumee)
     int nlas = 0;      // segments envoyes au GPU (morceaux d'arcs voisins fusionnes)
@@ -1805,6 +2153,18 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         }
     }
     stats.laser_segments = nlas;
+    // lasers dans le reflet du sol mouille : memes segments vus de la camera miroir. Seule la camera dans le repere de chaque
+    // nappe (cam_rel, flottants 12 a 14 : camera - source sur ec, es, normale ou uu) change : camera miroir = camera + delta.
+    const bool mirror_las = mirror && rs.refl_lasers > 0 && nlas > 0;
+    stats.mirror_lasers = mirror_las ? nlas : 0;
+    if (mirror_las) {
+        laser_data_m.assign(laser_data.begin(), laser_data.begin() + (size_t)nlas * LASER_FLOATS);
+        const vec3 delta = mcam.pos - cam.pos;
+        for (int i = 0; i < nlas; i++) {
+            float* d = &laser_data_m[(size_t)i * LASER_FLOATS];
+            for (int j = 0; j < 3; j++) d[12 + j] += delta.x * d[4 * j] + delta.y * d[4 * j + 1] + delta.z * d[4 * j + 2];
+        }
+    }
     // impacts : coupes au plan proche de la camera (bandes dessinees a l'ecran)
     laser_hit_data.clear();
     int nhits = 0;
@@ -1855,6 +2215,24 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             nexits++;
         }
     }
+    // ... et leur reflet dans le sol mouille (vues de la camera miroir)
+    laser_exit_data_m.clear();
+    int nexits_m = 0;
+    if (mirror_las && rs.laser_exit > 0.0f) {
+        const float k = rs.laser_gain * LASER_FLUX_PER_W * LASER_EXIT_SCATTER * rs.laser_exit;
+        for (const LaserRig::Exit& e : lasers->exits) {
+            if (nexits_m >= MAX_LASER_EXITS) break;
+            if (dot(e.pos - mcam.pos, mcam.fwd) < 0.1f) continue;
+            float d[28] = {};
+            set4(d, e.pos, 3.0f);
+            set4(d + 4, e.pos, 0.0f);
+            set4(d + 8, e.pos, 0.0f);
+            set4(d + 12, e.dir, 0.0f);
+            set4(d + 16, e.flux * k, 0.0f);
+            laser_exit_data_m.insert(laser_exit_data_m.end(), d, d + 28);
+            nexits_m++;
+        }
+    }
     stats.laser_hits = nhits;
     const bool hit_pass = nhits > 0;
     const bool laser_tiles = nlas > 0;
@@ -1885,15 +2263,16 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         set4(lp.fog_box_min, fog.origin.x / fog.size.x, fog.origin.y / fog.size.y, fog.origin.z / fog.size.z, 0.0f);
         set4(lp.fog_box_inv, 1.0f / fog.size.x, 1.0f / fog.size.y, 1.0f / fog.size.z, 0.0f);
         const bool sfog = rs.sfog.model == 1;   // fumee spatiale (v2) : toujours la fumee de la piece, sans les volutes
+        // w : rectangle de tri des grosses tuiles (cs_laser_bin), x min ; tout l'ecran (reflet : le sol a l'ecran)
         set4(lp.lfog, rs.laser_air + sigma_scat, (rs.laser_room_fog || sfog) ? 1.0f : 0.0f,
-             sfog ? 0.0f : volutes_force(rs, fs.haze * 0.7f, smoke_mean), 0.0f);
+             sfog ? 0.0f : volutes_force(rs, fs.haze * 0.7f, smoke_mean), -2.0f);
         // fumee de la piece (texture des amas, canal g : densite / room_max, voir FogSim::update) : air + densite x
         // albedo x densite ; force des volutes : rampe sur les amas (canal r = amas / 2), au plus fort quand ils valent
         // la brume moyenne
         {
             const float vs = (rs.laser_volutes && !sfog) ? rs.laser_vol_strength : 0.0f;
             set4(lp.lroom, rs.laser_air, fs.density * fs.scattering * fog.room_max, vs * 0.35f, vs * 0.65f);
-            set4(lp.lroom2, 0.65f * vs * 2.0f * fs.smoke / std::max(fs.haze * 0.7f, 0.01f), 0.0f, 0.0f, 0.0f);
+            set4(lp.lroom2, 0.65f * vs * 2.0f * fs.smoke / std::max(fs.haze * 0.7f, 0.01f), -2.0f, 2.0f, 2.0f);   // yzw : rectangle de tri
         }
         // volutes : vent (meme derive que le detail des lyres) et boucle d'evolution (2 instants melanges en aller-retour ;
         // divises par l'ecart type du melange : le contraste ne baisse pas entre les deux)
@@ -2087,6 +2466,16 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
     if (nlas > 0) {
         wb.src.data = {laser_data.data(), (size_t)nlas * sizeof(sb_laser_t)};
         wb.dst.buffer = laser_buf;
+        sg_write_buffer_transient(&wb);
+    }
+    if (mirror_las) {
+        wb.src.data = {laser_data_m.data(), (size_t)nlas * sizeof(sb_laser_t)};
+        wb.dst.buffer = laser_buf_m;
+        sg_write_buffer_transient(&wb);
+    }
+    if (nexits_m > 0) {
+        wb.src.data = {laser_exit_data_m.data(), (size_t)nexits_m * sizeof(sb_hit_t)};
+        wb.dst.buffer = laser_exit_buf_m;
         sg_write_buffer_transient(&wb);
     }
     if (hit_pass) {
@@ -2428,10 +2817,11 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
 
     // ---- 5-6 : fumee ------------------------------------------------------------------------
     const int cur = hist_index, prev = hist_index ^ 1;
-    if (rs.volumetrics && num_lights == 0) {
+    if (rs.volumetrics && num_lights == 0 && stats.laser_vpls == 0) {
         // Aucune lyre allumee (PLAN-OPTIM-LASERS.md, 0.9) : pas de faisceau, et la lumiere indirecte de la fumee est nulle (ses
-        // sources, les VPL, viennent des lyres) ; l'accumulation, bornee au voisinage de l'image courante, rendrait alors
-        // exactement (0, 0, 0, 1) des la premiere image. On l'ecrit directement (meme image, meme historique).
+        // sources, les VPL, viennent des lyres, ou des lasers avec laser_gi) ; l'accumulation, bornee au voisinage de l'image
+        // courante, rendrait alors exactement (0, 0, 0, 1) des la premiere image. On l'ecrit directement (meme image, meme
+        // historique).
         gpuprof::mark("fumee : faisceaux");
         sg_pass pass = {};
         pass.attachments.colors[0] = vol_hist[cur].att;
@@ -2955,6 +3345,77 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             }
             sg_end_pass();
         }
+        // Lasers du reflet : la passe des lasers (6a) refaite depuis la camera miroir, a 1/4 (ou 1/2) de la resolution du
+        // miroir, dans le coin de son image. Les grosses tuiles hors du sol a l'ecran n'ont aucun segment (rectangle de tri) ;
+        // hors de l'eau, la profondeur du miroir est 0 : rien n'y est ajoute. Memes tampons de tri (la passe principale est
+        // finie), sans la convergence RGB ni la 2e octave des volutes (reflet flou), image des arcs reprise.
+        const int mlw = rs.refl_lasers >= 2 ? refl_w : refl_vw, mlh = rs.refl_lasers >= 2 ? refl_h : refl_vh;
+        if (mirror_las) {
+            gpuprof::mark("reflet : lasers");
+            laser_cs_params_t lpm = lp;
+            set4(lpm.cam_pos, mcam.pos, laser_arcs ? 1.0f : 0.0f);
+            set4(lpm.cam_right, mcam.right, tanX);
+            set4(lpm.cam_up, mcam.up, tanY);
+            set4(lpm.cam_fwd, mcam.fwd, sigma_ext);
+            set4(lpm.res, (float)mlw, (float)mlh, (float)nlas, 2.0f * tanY / (float)mlh);
+            const int mtx = (mlw + 15) / 16, mty = (mlh + 15) / 16, mctx = (mlw + 127) / 128, mcty = (mlh + 127) / 128;
+            set4(lpm.tiles, (float)mtx, (float)mty, (float)mctx, 0.0f);
+            lpm.hall_min[3] = (float)refl_w / (float)mlw;   // profondeur du miroir (refl_w x refl_h) par pixel des lasers
+            lpm.hall_max[3] = (float)refl_h / (float)mlh;
+            lpm.lfog[3] = floor_rect[0];
+            lpm.lroom2[1] = floor_rect[1];
+            lpm.lroom2[2] = floor_rect[2];
+            lpm.lroom2[3] = floor_rect[3];
+            const int fogm = fogv == 3 ? 2 : (fogv == 5 ? 4 : fogv);
+            sg_pass pass = {};
+            pass.compute = true;
+            pass.label = "mirror-lasers";
+            sg_begin_pass(&pass);
+            sg_apply_pipeline(pip_laser_setup);
+            sg_bindings b = {};
+            b.views[VIEW_lasers_cs] = laser_view_m;
+            b.views[VIEW_laser_scr_rw] = laser_scr_view;
+            b.views[VIEW_laser_stats_rw] = laser_stats_view;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lpm));
+            sg_dispatch((nlas + 63) / 64, 1, 1);
+            sg_apply_pipeline(pip_laser_bin);
+            b = {};
+            b.views[VIEW_laser_scr_ro] = laser_scr_view;
+            b.views[VIEW_laser_stats_rw] = laser_stats_view;
+            b.views[VIEW_laser_ccount_rw] = laser_ccount_view;
+            b.views[VIEW_laser_clist_rw] = laser_clist_view;
+            sg_apply_bindings(&b);
+            sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lpm));
+            sg_dispatch(mctx, mcty, 1);
+            for (int pass_arcs = laser_arcs ? 1 : 0; pass_arcs >= 0; pass_arcs--) {
+                sg_apply_pipeline(pip_laser_shade[laser_grad ? 1 : 0][fogm][pass_arcs]);
+                b = {};
+                b.views[VIEW_lasers_cs] = laser_view_m;
+                b.views[VIEW_laser_scr_ro] = laser_scr_view;
+                b.views[VIEW_laser_stats_rw] = laser_stats_view;
+                b.views[VIEW_laser_ccount_ro] = laser_ccount_view;
+                b.views[VIEW_laser_clist_ro] = laser_clist_view;
+                b.views[VIEW_laser_depth_cs] = refl_depth_lin.tex;
+                if (fogm >= 1) b.views[VIEW_laser_fog_tex] = fog_view;
+                if (fogm >= 2) {
+                    b.views[VIEW_laser_vol_tex] = fogm >= 4 ? clouds_view : volutes_view;
+                    b.samplers[SMP_laser_vol_smp] = volutes_smp;
+                }
+                b.views[VIEW_laser_w] = pass_arcs ? laser_arc_store : refl_laser_store;
+                if (!pass_arcs) b.views[VIEW_laser_arc_in] = laser_arc_tex;
+                b.samplers[SMP_laser_smp_cs] = point_smp;
+                b.samplers[SMP_laser_lin_clamp] = lin_clamp;
+                sg_apply_bindings(&b);
+                sg_apply_uniforms(UB_laser_cs_params, SG_RANGE_REF(lpm));
+                sg_dispatch(mtx, mty, 1);
+                if (pass_arcs) {
+                    sg_end_pass();
+                    sg_begin_pass(&pass);
+                }
+            }
+            sg_end_pass();
+        }
         gpuprof::mark("reflet : composition");
         {
             sg_pass pass = {};
@@ -2970,16 +3431,74 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
             set4(rp.cam_up, mcam.up, tanY);
             set4(rp.cam_fwd, mcam.fwd, rs.volumetrics ? sigma_ext : 0.0f);
             set4(rp.res, (float)refl_w, (float)refl_h, (float)refl_vw, (float)refl_vh);
+            set4(rp.lasers, (float)mlw / (float)refl_w, (float)mlh / (float)refl_h, mirror_las ? 1.0f : 0.0f, 0.0f);
             sg_bindings b = {};
             b.views[VIEW_depth_tex] = refl_depth_lin.tex;
             b.views[VIEW_scene_tex] = refl_color.tex;
             b.views[VIEW_vol_hist_tex] = refl_vol.tex;
+            b.views[VIEW_laser_tex] = refl_laser_tex;
             b.samplers[SMP_point_smp] = point_smp;
             b.samplers[SMP_lin_clamp_smp] = lin_clamp;
             sg_apply_bindings(&b);
             sg_apply_uniforms(UB_refl_params, SG_RANGE_REF(rp));
             sg_draw(0, 3, 1);
+            // lueurs de sortie des lasers vues de la camera miroir (comme 7b : pas attenuees pixel par pixel, cachees par
+            // ce qui est devant la source dans le miroir)
+            if (nexits_m > 0) {
+                sg_apply_pipeline(pip_laser_hit);
+                hit_vs_params_t hv = {};
+                std::memcpy(hv.view_proj, view_proj_m.m, sizeof(hv.view_proj));
+                set4(hv.cam_pos, mcam.pos, 2.0f * tanY / (float)refl_h);
+                set4(hv.cam_fwd, mcam.fwd, 0.0f);
+                set4(hv.beam, lp.beam[0], lp.beam[1], lp.beam[2], 0.0f);
+                set4(hv.res, (float)refl_w, (float)refl_h, 0.0f, 0.0f);
+                hit_fs_params_t hf = {};
+                set4(hf.cam_pos, mcam.pos, rs.volumetrics ? sigma_ext : 0.0f);
+                set4(hf.cam_right, mcam.right, tanX);
+                set4(hf.cam_up, mcam.up, tanY);
+                set4(hf.cam_fwd, mcam.fwd, 1.0f);
+                set4(hf.res, (float)refl_w, (float)refl_h, 2.0f * tanY / (float)refl_h, std::max(rs.exposure, 1e-3f));
+                set4(hf.beam, lp.beam[0], lp.beam[1], lp.beam[2], std::max(rs.laser_white, 0.0f));
+                sg_bindings hb = {};
+                hb.views[VIEW_hits_vs] = laser_exit_view_m;
+                hb.views[VIEW_hits_fs] = laser_exit_view_m;
+                hb.views[VIEW_hit_depth] = refl_depth_lin.tex;
+                hb.views[VIEW_hit_normal] = scene_normal.tex;   // pas lues par les lueurs de sortie
+                hb.views[VIEW_hit_albedo] = scene_albedo.tex;
+                hb.samplers[SMP_hit_smp] = point_smp;
+                sg_apply_bindings(&hb);
+                sg_apply_uniforms(UB_hit_vs_params, SG_RANGE_REF(hv));
+                sg_apply_uniforms(UB_hit_fs_params, SG_RANGE_REF(hf));
+                sg_draw(0, 6, nexits_m);
+            }
             sg_end_pass();
+        }
+        // reflet flou du beton mouille : pyramide du reflet (fs_refl_down), seulement sous le sol a l'ecran
+        if (floor_p[2] > 0.0f || floor_w[3] > 0.0f) {
+            gpuprof::mark("reflet : flou");
+            for (int i = 0; i < refl_blur_n; i++) {
+                const int lw_ = std::max(1, refl_blur_w >> i), lh_ = std::max(1, refl_blur_h >> i);
+                sg_pass pass = {};
+                pass.attachments.colors[0] = refl_blur_att[i];
+                pass.action.colors[0].load_action = SG_LOADACTION_CLEAR;
+                pass.action.colors[0].clear_value = {0, 0, 0, 0};
+                pass.label = "mirror-blur";
+                sg_begin_pass(&pass);
+                sg_apply_pipeline(pip_refl_down);
+                scissor(lw_, lh_);
+                refl_down_params_t dp = {};
+                const int sw = i == 0 ? refl_w : std::max(1, refl_blur_w >> (i - 1)), sh = i == 0 ? refl_h : std::max(1, refl_blur_h >> (i - 1));
+                set4(dp.texel, 1.0f / sw, 1.0f / sh, i == 0 ? 1.0f : 0.0f, 0.0f);
+                sg_bindings b = {};
+                b.views[VIEW_src_tex] = i == 0 ? refl_final.tex : refl_blur_lvl[i - 1];
+                b.views[VIEW_depth_tex] = refl_depth_lin.tex;
+                b.samplers[SMP_point_smp] = point_smp;
+                b.samplers[SMP_lin_clamp_smp] = lin_clamp;
+                sg_apply_bindings(&b);
+                sg_apply_uniforms(UB_refl_down_params, SG_RANGE_REF(dp));
+                sg_draw(0, 3, 1);
+                sg_end_pass();
+            }
         }
     }
 
@@ -3029,10 +3548,12 @@ void Renderer::render(const Camera& cam, const Scene& scene, const Rig& rig, con
         b.views[VIEW_floor_tex] = floor_view;
         b.views[VIEW_refl0_tex] = refl_final.tex;
         b.views[VIEW_refl_mask_tex] = refl_depth_lin.tex;
+        b.views[VIEW_refl_blur_tex] = refl_blur_tex;
         b.views[VIEW_floor_cav] = floor_cav_view;
         b.samplers[SMP_point_smp] = point_smp;
         b.samplers[SMP_lin_clamp_smp] = lin_clamp;
         b.samplers[SMP_floor_smp] = floor_smp;
+        b.samplers[SMP_refl_smp] = refl_smp;
         sg_apply_bindings(&b);
         sg_apply_uniforms(UB_composite_params, SG_RANGE_REF(cpp));
         sg_draw(0, 3, 1);

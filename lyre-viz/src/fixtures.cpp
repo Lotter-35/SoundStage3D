@@ -3,7 +3,10 @@
 
 const char* PRISM_NAMES[PRISM_COUNT] = {"Aucun", "3 facettes", "6 facettes", "8 facettes", "9 (8 + centre)", "9 (grille 3x3)", "Lineaire 4"};
 const char* GOBO_NAMES[NUM_GOBOS] = {"Ouvert", "Points", "Etoile", "Anneaux", "Rayons", "Fleur", "Breakup", "Triangles",
-                                     "Barres", "Cercle de points", "Spirale", "Feuillage", "Galaxie", "Croix"};
+                                     "Barres", "Cercle de points", "Spirale", "Feuillage", "Galaxie", "Croix", "Anneau", "Helice",
+                                     "Soleil d'aiguilles", "Bulles", "Triangle", "Rosace", "Eau", "Flammes", "Verre brise",
+                                     "Nuages", "Nid d'abeille", "Damier", "Vagues", "Fenetre", "Vitrail", "Toile d'araignee",
+                                     "Flocon", "Coeur", "Lune et etoiles", "Soleil"};
 const char* EFFECT_NAMES[FX_COUNT] = {"Cercle (pan/tilt)", "Vague pan", "Vague tilt", "Huit", "Eventail", "Chenillard dimmer",
                                       "Arc-en-ciel", "Alternance 2 couleurs", "Pulsation zoom",
                                       "Couleurs de la palette"};

@@ -59,6 +59,12 @@ struct RenderSettings {
     bool floor_texture = true;    // sol en beton texture (Concrete031) : couleur, relief, rugosite, occlusion
     float floor_tile = 8.0f;      // taille de repetition de la texture du sol (m) : 4 x 4 dalles de 2 m
     float floor_wet = 0.0f;       // eau au sol : 0 sec, 0,1 creux remplis et quelques flaques, 1 inonde (voir floor_material)
+    // reflet du sol mouille (camera miroir) : lasers dans le reflet (0 : non, 1 : a 1/4 de la resolution, 2 : a 1/2), avec la
+    // lueur de leur sortie ; reflet flou sur le beton mouille hors des flaques (film d'eau, bords detrempes), et son flou
+    // (x 1 : rugosite du beton mouille ; 0 : net)
+    int refl_lasers = 1;
+    bool refl_concrete = true;
+    float refl_blur = 1.0f;
     int floor_aniso = 4;          // filtrage anisotrope du sol (1 a 16, fixe au lancement) : 4 = meme image que 16, 3 x moins cher
     bool chroma = true;           // aberration chromatique de l'optique : franges colorees au bord des taches et des gobos (+0,5 a +0,9 ms avec gobo + prisme)
     float chroma_strength = 1.0f; // intensite (1 = lyre courante)
@@ -69,6 +75,10 @@ struct RenderSettings {
     float laser_air = 0.0005f;    // diffusion de l'air (par m) : traits visibles meme sans fumee
     bool laser_impacts = true;    // impacts sur les surfaces (points et lignes la ou les lasers touchent)
     float laser_hit_gain = 1.0f;  // intensite des impacts
+    // lumiere des lasers dans la piece (PLAN-LASERS.md, etape 7) : impacts et nappes envoyes dans les sondes de lumiere
+    // indirecte (avec rs.gi) ; murs, sol et decor autour des impacts prennent la couleur des lasers
+    bool laser_gi = false;
+    float laser_gi_strength = 1.0f;   // multiplicateur (1 : lumiere des impacts et des nappes, comme celle des lyres)
     float laser_exit = 1.0f;      // lueur de sortie des lasers (point chaud et halo ; 0 : aucune)
     float laser_white = 0.6f;     // blanchiment des lasers tres intenses (comme une camera ; 0 : couleurs pures, comme l'oeil)
     bool laser_room_fog = true;   // fumee de la piece (amas, brume) lue au point de chaque nappe ; sinon uniforme
@@ -130,6 +140,7 @@ struct RenderStats {
     double table_cells = 0;       // cases de tables
     float table_scale = 1;        // reduction de resolution (atlas plein)
     int mirror_beams = 0;         // reflet du sol mouille : faisceaux visibles dans le reflet
+    int mirror_lasers = 0;        // ... segments de lasers calcules pour le reflet (0 : pas de lasers dans le reflet)
     int occluded_lights = 0;      // lyres avec un obstacle (ombre) dans leur cone
     int occ_pairs = 0;            // paires (lyre, pave) : volumes d'ombre
     // lasers
@@ -140,6 +151,8 @@ struct RenderStats {
     int laser_tile_max = 0;       // segments au plus dans une tuile
     int laser_tiles_hit = 0;      // tuiles touchees par au moins un segment
     int laser_hits = 0;           // impacts dessines
+    int laser_vpls = 0;           // lumieres virtuelles des lasers (impacts, nappes), comprises dans vpls
+    float laser_vpl_ms = 0;       // leur temps CPU
     int laser_bin_overflow = 0;   // segments perdus par les grosses tuiles pleines (plus de LASER_CAP)
     // compteurs de mesure (variantes LASER_STATS, fumee spatiale) : passe principale [0] et des arcs [1] : couples (pixel,
     // segment) qui eclairent, noyes (pixel deja sature avant eux : 1 et 2 fois le seuil d'ACES), faibles (moins de 1 % du
@@ -180,6 +193,16 @@ class Renderer {
     void resize(int iw, int ih, int vw, int vh);
     void build_lights(const Rig& rig, const RenderSettings& rs, const GoboAtlas& gobos, const Scene& scene);
     void build_vpls(const Scene& scene, const Rig& rig, const GoboAtlas& gobos, const RenderSettings& rs, float sigma_ext, float sigma_scat);
+    void build_laser_vpls(const Scene& scene, const LaserRig& lasers, const RenderSettings& rs, float sigma_ext, float sigma_scat);
+    // regroupement des lumieres virtuelles des lasers par case de la grille des sondes (et par face : 6 directions de
+    // surface, 7e pour la fumee) ; lgi_index : case -> groupe (-1 : aucun), remis a -1 apres usage (groupes touches)
+    struct LgiBin {
+        vec3 flux, pos, nrm;   // pos et nrm : sommes ponderees par la luminance
+        float w = 0;
+        int cx = 0, cy = 0, cz = 0, face = 0;
+    };
+    std::vector<int> lgi_index, lgi_keys;
+    std::vector<LgiBin> lgi_bins, lgi_tmp, lgi_surf, lgi_fog;
     void build_fixture_instances(const Rig& rig, const RenderSettings& rs);
     // mirror : tables de la camera miroir (reflet du sol mouille), dans leurs propres tampons
     void build_beam_tables(const struct Camera& cam, float pixel_angle, bool mirror = false);
@@ -301,6 +324,22 @@ class Renderer {
     Target refl_color, refl_depth_lin, refl_depth, refl_vol, refl_final;
     Target refl_beam_mask;   // reflet : eau sous chaque pixel du miroir (fs_refl_mask), lu par les faisceaux
     int refl_w = 0, refl_h = 0, refl_vw = 0, refl_vh = 0;
+    // reflet flou du beton mouille : pyramide (mipmaps) du reflet, a 1/4 de la resolution puis 1/8...
+    // (fs_refl_down), lue par la composition en filtrage anisotrope (trainees verticales)
+    static constexpr int REFL_BLUR_LEVELS = 6;
+    sg_image refl_blur_img = {};
+    sg_view refl_blur_tex = {};                           // tous les niveaux (composition)
+    sg_view refl_blur_att[REFL_BLUR_LEVELS] = {}, refl_blur_lvl[REFL_BLUR_LEVELS] = {};   // un niveau : ecriture, lecture
+    int refl_blur_n = 0, refl_blur_w = 0, refl_blur_h = 0;
+    sg_sampler refl_smp = {};
+    sg_pipeline pip_refl_down = {};
+    // lasers dans le reflet : leur image (camera miroir, a refl_w x refl_h au plus), segments avec la position de la camera
+    // miroir (cam_rel), lueurs de sortie vues de la camera miroir
+    sg_image refl_laser_img = {};
+    sg_view refl_laser_store = {}, refl_laser_tex = {};
+    sg_buffer laser_buf_m = {}, laser_exit_buf_m = {};
+    sg_view laser_view_m = {}, laser_exit_view_m = {};
+    std::vector<float> laser_data_m, laser_exit_data_m;
     int soft_w = 0, soft_h = 0;
     int num_soft = 0;
     int num_open = 0;   // lyres a grande tache floue sans gobo (lyres superposees : cs_cull_clusters)

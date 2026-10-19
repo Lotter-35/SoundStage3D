@@ -237,7 +237,7 @@ C'est la méthode simple (celle du laser web et des photon beams), mais elle co�
   - points (traits) et lignes (nappes qui coupent un mur ou le sol), éclairés selon la couleur de la surface, avec le reflet du sol brillant ou mouillé ;
   - 200 000 petits points de quelques pixels : bon marché ;
   - le bloom fait leur halo.
-- **Lumière dans la pièce :** quelques lumières virtuelles par laser (impacts, et le long des nappes) envoyées dans les sondes existantes. Les murs et la fumée prennent la couleur des lasers.
+- **Lumière dans la pièce :** quelques lumières virtuelles par laser (impacts, et le long des nappes) envoyées dans les sondes existantes. Les murs et la fumée prennent la couleur des lasers. *(fait le 19 octobre 2026, option `lasergi`, coupée par défaut : voir « Étape 7 (en partie) » à la fin)*
 - **Plus tard :** reflet des lasers dans le sol mouillé (caméra miroir déjà en place), et miroirs.
 
 ## 8. Mouvements et réglages (onglet « Lasers »)
@@ -380,7 +380,7 @@ Vidéo : « Royallaser | Depence R3 Showcase » (Syncronorm), https://youtu.be/M
 3 bis. **Lecture ILDA** (étape 8 avancée, demande de l'utilisateur du 15 octobre 2026 : « le but final, un laser qui lit de l'ILDA, le plus optimisé possible ») : voir la section « Étape 3 bis » à la fin.
 5. **Intersections.** *(collisions et impacts faits le 15 octobre 2026 : voir « Étape 5 » à la fin)* Portées par trait, ombres dans les nappes, impacts sur les surfaces, personnage. **Rappel de l'utilisateur (15 octobre 2026)** : gérer la collision avec tous les obstacles (joueur, décor, etc.), et **la nappe laser doit se couper au passage d'un joueur** (trou d'ombre à bord net, section 7).
 6. **Éblouissement.**
-7. **Persistance et lumière dans la pièce.** Flou de mouvement, lumières virtuelles dans les sondes, puis reflet dans le sol mouillé.
+7. **Persistance et lumière dans la pièce.** Flou de mouvement, lumières virtuelles dans les sondes, puis reflet dans le sol mouillé. *(lumières virtuelles faites le 19 octobre 2026 : voir « Étape 7 (en partie) » à la fin)*
 8. **Plus tard.** DMX, inertie complète des galvos (cahier laser2) ; l'ILDA est avancé en 3 bis.
 9. **Moteur de tracé unique** (demande de l'utilisateur du 15 octobre 2026) : toute figure devient un tracé de scanner (points ILDA), rendu en arcs et en droites raccordés ; remplace les formes codées une à une. *(9a à 9d faits le 15 octobre 2026 ; coût de la passe des arcs à décider avec l'utilisateur : voir « Étape 9 : résultats » à la fin)*
 
@@ -576,3 +576,23 @@ Demande de l'utilisateur (photo de référence : sorties blanches, halo vert, c�
 - **Lueur de sortie** : la fenêtre de sortie diffuse une petite part de la puissance (point source) ; point chaud (sigma 1 pixel, 88 %) et halo (sigma 6 pixels, 12 %), intensité réduite deux fois à la demande de l'utilisateur (lueur trop grosse), blanchis comme le calque des lasers, puis le bloom. Passe « lasers : sorties » après la composition (un éblouissement de l'optique : pas atténué par la fumée pixel par pixel, sinon le halo prenait la forme du truss derrière lui) ; visible si la source l'est (5 lectures de profondeur autour d'elle : le boîtier la cache vue de derrière) ; intensité constante sous 10 m (sinon un disque blanc de près). Couleur : celle du laser, ou la moyenne de l'image ILDA. `--set laserexit` (×1 par défaut), réglage de l'onglet Rendu.
 - **Coût** (banc rapide, immobile, 8 cas) : +1 à +3 % à l'image (passe des sorties ~0,25 ms pour 200 lasers) ; banc des lyres : images identiques.
 - **Pas encore** : étoile à branches (lamelles, rotation), puissance en watts par couleur, éblouissement d'un trait braqué sur la caméra.
+
+## Étape 7 (en partie) : lumière des lasers dans la pièce (19 octobre 2026)
+
+Historique 51. Images : `docs/lumiere-lasers/` (ambiance 16 « Rideaux laser » et vue `--demo-laser 2`, 200 lasers, lyres éteintes ; avant, après, et la différence ×4).
+
+- **Principe** (`Renderer::build_laser_vpls`) : des lumières virtuelles ajoutées à celles des lyres, dans les mêmes sondes (`cs_probes` inchangé).
+  - Impacts : points répartis en angle le long de chaque morceau d'impact déjà calculé pour le dessin (`LaserRig::hits`, nouveau champ `span` : étendue du morceau, d'où sa puissance), environ un par case des sondes. Puissance × réglage des impacts × couleur de la surface (sol texturé et mouillé comme pour les lyres, sinon celle du pavé, lue par un rayon court) × atténuation par la fumée.
+  - Fumée : 1 à 3 points le long de chaque nappe ou trait (quelques directions par nappe), puissance × diffusion (air + fumée de la pièce, uniforme) × longueur, comme les 3 points d'un faisceau de lyre.
+  - Regroupement par case de la grille des sondes (2,5 m), par face pour les surfaces ; cases 2 fois plus grandes tant qu'il y a plus de 1 024 groupes de surface ou 384 de fumée. Bancs : 500 à 1 040 lumières, même avec 200 lasers et 28 000 impacts.
+  - Calcul sur tous les cœurs (fils du moteur laser, `laser_parallel`), chaque fil dans sa propre grille.
+  - Sans lyre allumée, la fumée est maintenant calculée (le raccourci de `PLAN-OPTIM-LASERS.md` 0.9 ne s'applique plus que sans lumière des lasers).
+  - Aucun laser allumé : rien (le moteur garde les impacts de la dernière figure).
+- **Réglages** : case « Lumière des lasers dans la pièce » et sa force (onglet Rendu, catégorie Lasers), `--set lasergi=1`, `--set lasergiforce=x`. **Coupée par défaut** (à l'utilisateur de décider). Demande la lumière renvoyée (`gi`).
+- **Image** : murs, sol, décor et fumée prennent la couleur des lasers, en lumière douce et étendue (résolution des sondes) ; image moyenne +45 % (rideaux), +25 % (200 lasers). Pas de tache ni de scintillement. La lueur très locale autour d'une ligne d'impact (moins de 2 m) n'est pas rendue : plus fine que la grille des sondes.
+- **Coût** (banc des lasers complet, en mouvement, rapide ; même exécutable, option coupée puis active, en alternance) :
+  - GPU, lasers seuls : **+0,6 à +0,9 ms** (fumée et son accumulation, maintenant calculées, +0,55 ms ; sondes et composition, le reste) ;
+  - GPU, avec des lyres (M1) : +0 à +0,2 ms (sondes seulement) ; scène sans lasers : 0 ;
+  - CPU : +0,35 à +0,65 ms ; ILDA et tracés (jusqu'à 28 000 impacts) +0,65 à +1,3 ms (5,5 ms avant le calcul sur tous les cœurs).
+- **Banc des lyres** (option coupée par défaut) : images identiques (PSNR 75 à 84 dB, aucun pixel au-delà de 4/255), temps dans le bruit.
+- **Pas encore** : flou de mouvement (persistance), reflet des lasers dans le sol mouillé.

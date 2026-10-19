@@ -75,6 +75,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `floor` | Sol en béton texturé (1) ou béton uni (0). |
   | `floortile` | Taille de répétition de la texture du sol, en mètres (8 par défaut). |
   | `wet` | Eau au sol : 0 sec, 0,1 creux remplis et quelques flaques, 0,5 environ 30 % de flaques, 1 inondé. |
+| `refllaser`, `reflbeton`, `reflflou` | Reflet du sol mouillé : lasers dans le reflet (nappes, traits, lueur de sortie ; 0 non, 1 à 1/4 de la résolution du reflet par défaut, 2 à 1/2) ; reflet flou sur le béton mouillé hors des flaques (1 par défaut ; à partir d'environ 0,55 d'eau) ; flou du reflet (×1 : rugosité du béton mouillé, traînées verticales vu en rasant, et un peu de lumière étalée dans les flaques ; 0 : net). |
   | `shadows` | Ombres exactes des obstacles (1) ou non (0). |
   | `chroma`, `chromaforce` | Aberration chromatique des lyres sur les surfaces (1 par défaut, 0 coupée) et son intensité (1 = lyre courante). |
   | `flooraniso` | Filtrage anisotrope de la texture du sol (1 à 16, 4 par défaut). |
@@ -84,6 +85,7 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `laserfog` | Lasers : fumée de la pièce (amas, brume plus dense en bas) au point de chaque nappe (1 par défaut) ou fumée uniforme (0). |
   | `laserwhite`, `laserexit` | Lasers : blanchiment des lumières très intenses, comme une caméra (0,6 par défaut ; 0 : couleurs pures, comme l'œil) ; lueur de sortie (point chaud et halo, ×1 par défaut ; 0 : aucune). |
   | `lasercoll`, `laserimpacts`, `lasercache` | Lasers : arrêtés par les obstacles, impacts sur les surfaces, cache des figures fixes du moteur CPU (1 par défaut ; 0 pour couper). |
+  | `lasergi`, `lasergiforce` | Lasers : lumière des lasers dans la pièce (0 par défaut ; 1 : les impacts et les nappes éclairent les murs, le sol, le décor et la fumée, par les sondes de lumière indirecte, avec `gi`) ; sa force (×1 par défaut). |
   | `laserphase`, `laserfwd`, `laserg`, `laserg2` | Lasers : diffusion vers l'avant à deux lobes (1 par défaut) ou un seul comme les lyres (0) ; part du lobe très avant (0,42), son g (0,88), g du lobe doux (0,35). |
   | `laseredge`, `laseredgew` | Lasers : bords brillants des éventails (1 par défaut : balayage sinusoïdal, le scanner ralentit au bout de chaque aller-retour et la lumière s'y concentre ; 0 : nappe uniforme) ; largeur de la bande brillante (part de la demi-ouverture, 0,025). Même lumière en tout, répartie autrement. |
   | `laserhalo`, `laserhalosize` | Lasers : halo (0,1 par défaut ; 0 : aucun) : la lumière des nappes diffusée une 2e fois par la brume et la lueur de l'objectif, large et douce (pyramide du bloom sur l'image des lasers seule) ; étendue (0,5 par défaut : serré ; 1,5 très large). |
@@ -106,10 +108,10 @@ Il faut les outils Xcode : `xcode-select --install`.
   | `sferode`, `sfcloudsize`, `sfcloudcover`, `sfcloudrag`, `sfcloudsoft`, `sfcloudcore`, `sfcloudevol`, `sfcloudlod` | Fumée v2, nuages qui rongent les bancs et les amas : force de l'érosion (1 ; 0 : la carte seule, nappe lisse), taille du motif (11 m), part des nuages au cœur des bancs (0,55 ; le reste : trous), bords des bancs rongés (0,8 écart type), douceur du bord des nuages (0,25), cœurs plus denses (0,7), durée d'une évolution (20 s), niveau de détail où l'érosion s'efface (5). |
   | `sfswirl`, `sfswirlsize`, `sfswirlspeed` | Fumée v2, mouvement de fluide sans simulation : amplitude des tourbillons (0,4 m ; 0 : aucun), leur taille (4 m), leur vitesse (0,35 rad/s). Des tourbillons 3,3 fois plus petits et 2,5 fois plus rapides déforment en plus les filaments. |
   | `sffil`, `sffilsize`, `sffillod`, `sffilevol` | Fumée v2, filaments de près (texture des volutes, marbré) : force (1 ; 0 : aucun), taille du motif (2 m), portée (niveau 1 : pixel de moins de ~6 cm, lus presque partout ; −1 : seulement de près), durée d'une évolution (60 s) ; réglage de l'utilisateur. Seulement dans les bancs et les amas (structure). |
-  | `spectacle` | Spectacles (lyres + lasers) : lance la scène N (1 à 30, voir « Spectacles ») au démarrage, avec les réglages `sp...` ci-dessous (dans n'importe quel ordre). Exemple : `--set spectacle=8 --set spenergie=0.7 --set sppalette=1`. |
+  | `spectacle` | Spectacles (lyres + lasers) : lance la scène N (1 à 30, voir « Spectacles ») au démarrage, avec les réglages `sp...` ci-dessous (dans n'importe quel ordre). Exemple : `--set spectacle=8 --set spenergie=0.7 --set spcouleurs=2`. |
   | `spenergie`, `sptempo` | Spectacles : énergie (0 fixe … 1 très dynamique ; 0,5 par défaut) ; tempo en temps par minute (0 par défaut : selon l'énergie, de 72 à 140). |
-  | `spcouleurs`, `sptirage`, `sppalette`, `spperso` | Spectacles, couleurs : tirées au hasard (0) ou palette (1) ; graine du tirage (passe en tirage) ; palette n° N de la liste (1 à 31 dans l'ordre de la liste, 32 : personnalisée ; passe en palette) ; palette personnalisée `r,g,b/r,g,b/…` (1 à 6 couleurs, de 0 à 1). |
-  | `spgraine`, `spaleatoire` | Spectacles : graine des variantes des scènes (positions au hasard…) ; `spaleatoire=n` tire tout (scène, énergie, couleurs) avec la graine n, comme le bouton « Aléatoire » (les clés `sp...` suivantes s'appliquent par-dessus). |
+  | `spcouleurs`, `sptirage`, `sppalette`, `spperso` | Spectacles, couleurs : celles de la scène (0), choisies (1) ou au hasard, nouveau tirage à chaque scène (2) ; graine du tirage (passe au hasard) ; association n° N de la liste (1 à 52, pour les scènes qui ont son nombre de couleurs ; passe en choisies) ; couleurs choisies `r,g,b/r,g,b/…` (1 à 4 couleurs de 0 à 1, pour les scènes qui en ont autant ; passe en choisies). |
+  | `spgraine`, `spaleatoire` | Spectacles : graine des variantes des scènes (positions au hasard…) ; `spaleatoire=n` tire tout (scène, énergie, couleurs) avec la graine n, (les clés `sp...` suivantes s'appliquent par-dessus). |
   | `spauto`, `spmesures` | Spectacles : enchaîner les scènes (1), durée d'une scène (8 mesures de 4 temps). |
   | `spjournal` | Spectacles : `spjournal=fichier` ajoute au fichier une ligne par lancement : scène, énergie, temps réel moyen d'une image, temps GPU de chaque image (moyenne, médiane, 90e centile, maximum des images 120 à 420, en ms ; Direct3D 11), lasers allumés, segments, effets. À lancer en plein écran avec `--novsync --frames 460` (coût d'une scène). |
 
@@ -210,7 +212,7 @@ Chaque lyre a les canaux d'une vraie lyre :
 - pan et tilt, avec vitesse et accélération des moteurs ;
 - dimmer et strobe ;
 - couleur ;
-- roue de 14 gobos, avec indexation et rotation ;
+- roue de 34 gobos, avec indexation et rotation : ouvert, points, étoile, anneaux, rayons, fleur, breakup, triangles, barres, cercle de points, spirale, feuillage, galaxie, croix, anneau (faisceau en tube), hélice, soleil d'aiguilles, bulles, triangle (contour), rosace, eau, flammes, verre brisé, nuages, nid d'abeille, damier, vagues, fenêtre, vitrail, toile d'araignée, flocon, cœur, lune et étoiles, soleil (eau et nuages : bords doux, comme des gobos en verre) ;
 - prismes 3, 6, 8, **9 (8 + centre)**, **9 (grille 3×3)** et linéaire 4, avec écartement et rotation ;
 - zoom (de 1,5 à 50°), mise au point (le gobo est net à une distance donnée, flou ailleurs), frost et iris.
 
@@ -242,6 +244,7 @@ Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionn
 - **Moteur de tracé** (étape 9) : un laser projette un tracé de scanner, comme un fichier ILDA ; miroirs avec inertie (coins rapides un peu arrondis, tremblement lissé), faisceaux là où le point reste sur place, puis droites et arcs de cercle raccordés, rendus en nappes planes et en nappes coniques exactes. Voir « Lasers : fichiers ILDA » plus bas.
 - **Moteur CPU** : un laser par fil (tous les cœurs du processeur), même résultat que sur un seul cœur ; **cache des figures fixes** (case de l'onglet Rendu, `--set lasercache=0` pour couper) : une figure dont rien ne change reprend ses morceaux et ses impacts de l'image précédente.
 - **Blanc** (étape 4, en partie) : la lumière très intense déborde sur les autres couleurs, comme sur une caméra : la sortie et le cœur des traits virent au blanc, l'éventail garde sa couleur (`laserwhite`) ; **lueur de sortie** : point chaud blanc et halo de la couleur du laser à chaque sortie (`laserexit`, cachée par le boîtier vu de derrière). Cases de l'onglet Rendu.
+- **Lumière dans la pièce** (étape 7, case « Lumière des lasers dans la pièce » de l'onglet Rendu, `--set lasergi=1` ; coupée par défaut) : les impacts éclairent les murs, le sol et le décor autour d'eux, de la couleur du laser et de la surface ; la lumière diffusée par les nappes dans la fumée éclaire la salle. Lumières virtuelles dans les sondes, comme les lyres (voir « Lumière » plus bas).
 - Pas encore : étoile à branches à la sortie, éblouissement.
 
 ### Panneau
@@ -270,6 +273,11 @@ Onglet Lyres ou Lasers ouvert, souris libre : un clic dans la scène sélectionn
   - Chaque tache de lumière (sur le sol, les murs, le décor) renvoie sa couleur dans la pièce.
   - La lumière diffusée par la fumée éclaire aussi la salle.
   - Les deux sont réunis dans une grille 3D de sondes, qui éclaire les surfaces et la fumée.
+  - **Lasers** (`lasergi`, coupé par défaut) : leurs impacts et leurs nappes envoient aussi leur lumière dans les sondes.
+    - Impacts : points répartis en angle le long de chaque ligne d'impact déjà calculée pour le dessin. Chacun porte la puissance du morceau, multipliée par la couleur de la surface (sol texturé et mouillé comme pour les lyres) et atténuée par la fumée.
+    - Nappes et traits : quelques points le long de chaque nappe, comme les 3 points d'un faisceau de lyre (diffusion de l'air et de la fumée de la pièce).
+    - Les points sont regroupés par case de la grille des sondes (et par face pour les surfaces), puis dans des cases 2 fois plus grandes tant qu'il y en a trop : au plus ~1 400 lumières, même avec 200 lasers.
+    - Sans lyre allumée, la fumée est alors calculée (sa lumière indirecte n'est plus nulle).
 - **Aberration chromatique** (active par défaut depuis le 16 octobre 2026). Franges bleues d'un côté et orange de l'autre au bord des taches et des gobos, comme sur les photos de vraies lyres (voir plus bas).
 - **Bloom.** Le halo autour des lentilles et des zones très lumineuses.
 - **Tonemapping ACES.** Les couleurs saturées tirent vers le blanc quand elles sont très intenses, comme sur une photo.
@@ -382,7 +390,7 @@ Un laser est un seul faisceau renvoyé par deux miroirs. Chaque image ILDA passe
 
 Onglet Ambiances, catégorie « Spectacles », sous les ambiances : mêmes gros boutons teintés. Comme une ambiance, une scène change toutes les lumières d'un coup : elle repart des réglages de départ (fumée, sol, visée, tout éteint), puis programme les **lyres et les lasers** ensemble. Code : `src/spectacles.cpp` ; les effets ajoutés pour composer les scènes sont dans `src/lasers.cpp` (lasers) et `src/fixtures.cpp` (lyres : couleurs de la palette), avec les autres, et servent aussi à la main. Planche des 30 scènes : `docs/spectacles/`.
 
-- **30 scènes nommées** (survoler un bouton : sa description) : 1 Horizon, 2 Plafond, 3 Cathédrale, 4 Rideaux, 5 Portiques, 6 Pluie, 7 Convergence, 8 Ciseaux, 9 Rencontre, 10 Balayage, 11 Radar, 12 Kaléidoscope, 13 Hélice, 14 Tunnel, 15 Vortex, 16 Rosace, 17 Spirale, 18 Étoiles, 19 Géométrie, 20 Constellation, 21 Diamants, 22 Vague, 23 Ressac, 24 Aurore, 25 Chenillard, 26 Pulsation, 27 Étincelles, 28 Mur de lumière, 29 Toile, 30 Grand final. Lasers : nappes, éventails de traits, faisceaux, cônes, tunnels, étoiles, grilles en diffraction, du pont, du nez et du sol de scène, et des trusses. Lyres qui les accompagnent dans la même palette : faisceaux serrés en mouvement (cercles, huit, ciseaux, éventails, vagues), lavages doux du sol, gobos au sol qui tournent (barres, gouttes, étoiles, spirales…), prismes du pont qui tournent, couronnes qui visent le point de convergence des lasers. L'infobulle d'un bouton décrit les lasers et les lyres.
+- **30 scènes nommées** (survoler un bouton : sa description), écrites comme un spectacle, du calme au final : 1 Aube, 2 Fenêtres, 3 Océan, 4 Aurore boréale, 5 Constellations, 6 Glacier, 7 Cathédrale de verre, 8 Désert, 9 Jungle, 10 Bulles, 11 Cœurs, 12 Pluie d'or, 13 Ruche dorée, 14 Feu sacré, 15 Monolithe, 16 Vert laser, 17 Tubes, 18 Hélices, 19 Géométrie sacrée, 20 Mandala, 21 Kaléidoscope, 22 Néon, 23 Op art, 24 Toile d'araignée, 25 Matrice, 26 Vortex, 27 Éclats, 28 Tempête, 29 Pulsar, 30 Apothéose. Chacune a une idée, peu de couleurs et beaucoup de noir : lasers (nappes, éventails de traits, faisceaux, cônes, tunnels, vagues, étoiles, cœurs, triangles, carrés, grilles en diffraction) et lyres (gobos au sol ou dans la fumée, faisceaux serrés, lavages, prismes, stroboscope) ensemble, ou l'un des deux seulement. Les gobos 14 à 33 y servent presque tous.
 - **Énergie** (curseur de 0 à 1), la même règle pour toutes les scènes :
   - 0 : figures fixes, aucun effet, aucun clignotement ;
   - jusqu'à 0,3 (calme) : petits mouvements lents, couleurs fixes ;
@@ -390,12 +398,13 @@ Onglet Ambiances, catégorie « Spectacles », sous les ambiances : mêmes gros 
   - 0,55 à 0,8 (rythmé) : chenillards et clignotements sur le temps, couleurs pas à pas, rotations, sources en plus (le nez de scène répond au pont…) ;
   - 0,8 à 1 (dynamique) : flashs, sauts, scintillement, diffraction, rotations rapides dans tous les sens, décalages entre lasers.
 - **Tempo** : 72 à 140 temps par minute selon l'énergie, ou choisi. Chaque effet dure un nombre de temps (en puissance de 2 au-dessus de 0,4) et sa phase suit l'horloge du spectacle : tout reste calé sur le temps, et changer l'énergie ou les couleurs refait la scène sans la faire sauter.
-- **Couleurs** :
-  - « Couleurs au hasard » : le tirage choisit 1 couleur, 2 (complémentaires, voisines, ou une couleur et du blanc), 3 (triade, voisines, complémentaires partagées), 4 (carré, rectangle, voisines) ou l'arc-en-ciel (toutes les teintes) ; « Nouveau tirage » ;
-  - « Palette » : 31 palettes qui vont ensemble (9 couleurs seules, 10 paires comme orange + bleu ou rose + violet, 8 trios comme Feu ou Néon, 3 quatuors comme Synthwave, l'arc-en-ciel) et une palette personnalisée (1 à 6 couleurs) ;
-  - chaque scène répartit la palette à sa façon (un laser sur deux, deux moitiés, une couleur par ligne de trusses, dégradé le long des figures…) ; avec l'énergie, toute la palette tourne (fondu lent, puis pas à pas sur le temps).
-- **Aléatoire** : tire une scène, une énergie et des couleurs (tirage ou palette), puis lance la scène. Aussi : « < Précédente », « Suivante > », « Relancer », « Noir ».
-- **Enchaîner les scènes** : une autre scène au hasard toutes les N mesures, avec un nouveau tirage des couleurs en mode hasard ; s'arrête si le programme des lasers change (ambiance, effets).
+- **Couleurs** : chaque scène a ses couleurs (1 à 4), chacune avec un rôle (dominante, accent…). Trois choix :
+  - « De la scène » : les couleurs de la scène (bande du bas de son bouton) ;
+  - « Choisies » : autant de couleurs que la scène en a (une liste pour les scènes à 1 couleur, une pour celles à 2…) ; cliquer une case ouvre la bibliothèque (45 couleurs rangées par famille, et une couleur libre) ; « Au hasard » tire des couleurs qui vont ensemble ; « Celles de la scène » ; et 52 associations toutes faites de 2, 3 ou 4 couleurs (Feu et glace, Synthwave, Aurore boréale, Paon…) ;
+  - « Au hasard » : un nouveau tirage à chaque changement de scène, même en revenant sur la même (une association de la liste, ou une harmonie de la roue des teintes) ; « Nouveau tirage ».
+  - Avec l'énergie, les couleurs d'une scène peuvent tourner (fondu lent, puis pas à pas sur le temps).
+- On change de scène en cliquant un bouton, ou avec les flèches du clavier (grille des ambiances et des scènes).
+- **Enchaîner les scènes** : une autre scène au hasard toutes les N mesures, avec un nouveau tirage des couleurs en mode « Au hasard » ; s'arrête si le programme des lasers change (ambiance, effets).
 - Une scène est une programmation ordinaire : ses réglages et ses effets apparaissent dans les onglets Lyres, Effets et Lasers et se retouchent (bouger l'énergie ou les couleurs refait la scène). Choisir une ambiance arrête le spectacle.
 - **Effets ajoutés** (liste « Effets des lasers ») :
   - ciseaux : pan en sens opposés un laser sur deux ; miroir : les deux moitiés de la sélection balaient en sens opposés et se rejoignent au centre ;
@@ -404,8 +413,8 @@ Onglet Ambiances, catégorie « Spectacles », sous les ambiances : mêmes gros 
   - couleurs de la palette (pas à pas, ou en fondu avec la forme sinus) ; rotation par pas ;
   - convergence vers un point : chaque laser vise le point (réglable) ; il tourne sur un cercle (rayon) ; avec un décalage, chaque laser vise son propre point du cercle (couronne, rosace). Remplace pan et tilt : à placer avant les autres effets de mouvement.
   - figure « Vague » : défilement réglable (`wave_speed`, 0 : vague fixe ; 0,5 avant).
-- **Captures** : `LyreViz.exe --noui --play --frames 240 --cam 5,2.5,0,180,12 --set spectacle=8 --set spenergie=0.7 --set sppalette=1 --shot ciseaux.bmp`.
-- **Coût** (GTX 1080, 4K, lyres + lasers, vue du public, énergie 0,65, temps GPU moyen, un lancement par scène ; tableau dans `docs/spectacles/README.md`, mesure avec `--set spjournal=...`) : salle seule 3,3 ms ; 13 scènes tiennent le budget (5,2 à 8,1 ms), les autres vont de 9 à 20 ms (cônes, tunnels, vagues, diffraction, gobos et prismes ; les plus chères : Vague 19,9, Rosace 16,3, Tunnel 16,0). Le moteur de rendu ne change pas : banc des lasers identique (modification 40 de l'historique).
+- **Captures** : `LyreViz.exe --noui --play --frames 240 --cam 5,2.5,0,180,12 --set spectacle=8 --set spenergie=0.7 --shot desert.bmp`.
+- **Coût** des 30 scènes précédentes (à refaire pour les nouvelles ; GTX 1080, 4K, lyres + lasers, vue du public, énergie 0,65, temps GPU moyen, un lancement par scène ; tableau dans `docs/spectacles/README.md`, mesure avec `--set spjournal=...`) : salle seule 3,3 ms ; 13 scènes tiennent le budget (5,2 à 8,1 ms), les autres vont de 9 à 20 ms (cônes, tunnels, vagues, diffraction, gobos et prismes ; les plus chères : Vague 19,9, Rosace 16,3, Tunnel 16,0). Le moteur de rendu ne change pas : banc des lasers identique (modification 40 de l'historique).
 
 ### Ombres des obstacles
 
@@ -519,7 +528,7 @@ Les shaders sont écrits une seule fois en GLSL. L'outil `sokol-shdc` les tradui
 | `src/volutes.cpp` | Lasers : texture 3D des volutes fines (génération au lancement, mipmaps, compression BC5). |
 | `src/ilda.cpp` | Lasers : fichiers ILDA (lecture, bibliothèque, banques générées, complément des traits, morceaux de chaque image en cache). |
 | `src/trace.cpp` | Lasers : moteur de tracé (miroirs, faisceaux, ajustement en droites et arcs de cercle). |
-| `src/spectacles.cpp` | Spectacles (onglet Ambiances) : générateur de scènes lyres + lasers (30 scènes, énergie, tempo, couleurs, bouton « Aléatoire », clés `--set sp...`). |
+| `src/spectacles.cpp` | Spectacles (onglet Ambiances) : générateur de scènes lyres + lasers (30 scènes, énergie, tempo, couleurs de la scène / choisies / au hasard, clés `--set sp...`). |
 | `assets/Concrete031/` | Texture du sol (ambientCG, CC0). |
 | `shaders/lyreviz.glsl` | Tous les shaders (passes ci-dessus). |
 | `tools/compare_bench.py` | Compare deux résultats du banc d'essai (temps et images). |

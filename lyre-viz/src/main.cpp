@@ -149,7 +149,7 @@ std::vector<std::string> order;
 std::vector<float> totals, cpu_frames;
 std::vector<float> cpu_rig, cpu_fog, cpu_render, cpu_wait, cpu_total, beam_frags, gpu_gaps, outside;
 std::vector<float> present_ms, present_skip;   // duree du Present (image precedente), image non presentee (1)
-std::vector<float> cpu_laser, cpu_laser_build, cpu_laser_hits, laser_pairs, laser_tile_avg, laser_tile_max, laser_tiles_hit;
+std::vector<float> cpu_laser, cpu_laser_build, cpu_laser_hits, cpu_laser_gi, laser_pairs, laser_tile_avg, laser_tile_max, laser_tiles_hit;
 FILE* frames_csv = nullptr;   // une ligne par image (diagnostic)
 unsigned last_id = 0;
 FILE* out = nullptr;
@@ -363,7 +363,7 @@ void start_case() {
     outside.clear();
     present_ms.clear();
     present_skip.clear();
-    for (std::vector<float>* v : {&cpu_laser, &cpu_laser_build, &cpu_laser_hits, &laser_pairs, &laser_tile_avg, &laser_tile_max, &laser_tiles_hit}) v->clear();
+    for (std::vector<float>* v : {&cpu_laser, &cpu_laser_build, &cpu_laser_hits, &cpu_laser_gi, &laser_pairs, &laser_tile_avg, &laser_tile_max, &laser_tiles_hit}) v->clear();
 }
 
 void log(const char* fmt, ...) {
@@ -461,6 +461,7 @@ void after_frame(int w, int h) {
         cpu_laser.push_back(app.timings.laser_ms);
         cpu_laser_build.push_back(app.lasers.cpu_build_ms);
         cpu_laser_hits.push_back(app.lasers.cpu_hits_ms);
+        cpu_laser_gi.push_back(app.renderer.stats.laser_vpl_ms);
         {
             // chaque couple (tuile, segment) calcule les 256 pixels de la tuile
             const RenderStats& rs = app.renderer.stats;
@@ -555,6 +556,9 @@ void after_frame(int w, int h) {
         log("  Lasers : %d boitiers, %d segments, %d traits, %d impacts ; moteur CPU %.3f ms (morceaux %.3f, impacts %.3f) ; fumee : "
             "variante %d\n", app.lasers.lit, app.renderer.stats.laser_segments, app.lasers.total_traits, app.renderer.stats.laser_hits,
             mean(cpu_laser), mean(cpu_laser_build), mean(cpu_laser_hits), app.renderer.stats.laser_fog_variant);
+        if (app.renderer.stats.laser_vpls > 0)
+            log("  Lumiere des lasers dans la piece : %d lumieres virtuelles (sur %d), CPU %.3f ms\n", app.renderer.stats.laser_vpls,
+                app.renderer.stats.vpls, mean(cpu_laser_gi));
         if (app.lasers.ilda_points > 0)
             log("  ILDA : %d points, %d faisceaux, %d droites, %d arcs (niveau de tolerance %d)\n", app.lasers.ilda_points,
                 app.lasers.ilda_beams, app.lasers.ilda_sheets, app.lasers.ilda_arcs, app.lasers.ilda_bias);
@@ -1280,6 +1284,9 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "floor") r.floor_texture = v != 0;
     else if (k == "floortile") r.floor_tile = v;
     else if (k == "wet") r.floor_wet = v;
+    else if (k == "refllaser") r.refl_lasers = (int)v;
+    else if (k == "reflbeton") r.refl_concrete = v != 0;
+    else if (k == "reflflou") r.refl_blur = v;
     else if (k == "flooraniso") r.floor_aniso = (int)v;
     else if (k == "shadows") r.shadows = v != 0;
     else if (k == "chroma") r.chroma = v != 0;
@@ -1296,6 +1303,8 @@ static bool set_render_option(RenderSettings& r, const char* kv) {
     else if (k == "laserexit") r.laser_exit = v;
     else if (k == "laserimpacts") { r.laser_impacts = v != 0; app.lasers.impacts = v != 0; }
     else if (k == "laserhitgain") r.laser_hit_gain = v;
+    else if (k == "lasergi") r.laser_gi = v != 0;
+    else if (k == "lasergiforce") r.laser_gi_strength = v;
     else if (k == "laserphase") r.laser_fwd_lobe = v != 0;
     else if (k == "laserfwd") r.laser_fwd_weight = v;
     else if (k == "exposure") r.exposure = v;
